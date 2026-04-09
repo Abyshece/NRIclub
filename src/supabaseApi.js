@@ -247,6 +247,9 @@ export async function getUserLikes() {
 
 export async function sendNamaste(recipientId) {
   if (!currentUser) throw new Error("Not logged in");
+  // Check if connection already exists
+  const existing = await restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&recipient_id=eq.${recipientId}&select=id`);
+  if (existing && existing.length > 0) return existing; // Already sent
   return restCall("POST", "/rest/v1/connections", {
     requester_id: currentUser.id,
     recipient_id: recipientId,
@@ -480,13 +483,10 @@ export async function markNotificationsRead() {
 }
 
 export async function createNotification(userId, type, text, actorId = null, refId = null) {
-  return restCall("POST", "/rest/v1/notifications", {
-    user_id: userId,
-    type,
-    text,
-    actor_id: actorId,
-    reference_id: refId,
-  });
+  const body = { user_id: userId, type, text };
+  if (actorId) body.actor_id = actorId;
+  if (refId) body.reference_id = refId;
+  return restCall("POST", "/rest/v1/notifications", body);
 }
 
 // ============================================================================

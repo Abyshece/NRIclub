@@ -1671,12 +1671,19 @@ const Dashboard = ({ user, onLogout }) => {
 
   const handleSendNamaste = async (userId) => {
     setSentNamaste((prev) => { const s = new Set(prev); s.add(userId); return s; });
+    let connId = null;
     try {
       const result = await api.sendNamaste(userId);
-      const connId = result?.[0]?.id || null;
+      connId = result?.[0]?.id || null;
+    } catch (e) {
+      // Connection might already exist - that's ok
+      console.log("Connection may already exist:", e.message);
+    }
+    // Always try to create notification regardless of connection result
+    try {
       const actorId = user.id && !user.id.startsWith("user_") ? user.id : null;
-      try { await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, actorId, connId); } catch(ne) {}
-    } catch (e) {}
+      await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, actorId, connId);
+    } catch(ne) { console.log("Notification failed:", ne.message); }
   };
 
   // Load data on mount
@@ -1743,7 +1750,7 @@ const Dashboard = ({ user, onLogout }) => {
             setNotifications(dbNotifs.map(n => ({
               id: n.id, type: n.type, actor: n.actor?.name || null,
               text: n.text, time: new Date(n.created_at).toLocaleString(),
-              read: n.read,
+              read: n.read, reference_id: n.reference_id,
             })));
           }
         } catch (e) {}
