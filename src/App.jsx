@@ -1428,7 +1428,8 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
     try {
       await api.toggleLike(post.id);
       if (!liked && post.userId && post.userId !== user?.id) {
-        await api.createNotification(post.userId, "like", `${user?.name || "Someone"} liked your post "${post.content.substring(0, 30)}..."`, user?.id);
+        const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
+        try { await api.createNotification(post.userId, "like", `${user?.name || "Someone"} liked your post "${post.content.substring(0, 30)}..."`, actorId); } catch(ne) {}
       }
     } catch (e) {}
   };
@@ -1442,7 +1443,8 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
     try {
       await api.addComment(post.id, commentText);
       if (post.userId && post.userId !== user?.id) {
-        await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, user?.id);
+        const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
+        try { await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, actorId); } catch(ne) {}
       }
     } catch (e) {}
   };
@@ -1671,7 +1673,9 @@ const Dashboard = ({ user, onLogout }) => {
     setSentNamaste((prev) => { const s = new Set(prev); s.add(userId); return s; });
     try {
       await api.sendNamaste(userId);
-      await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, user.id);
+      // Only create notification if we have a valid user ID (UUID format)
+      const actorId = user.id && user.id.length > 10 && !user.id.startsWith("user_") ? user.id : null;
+      try { await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, actorId); } catch(ne) {}
     } catch (e) {}
   };
 
@@ -4546,14 +4550,26 @@ export default function App() {
         const session = await api.getSession();
         if (session && session.user) {
           const dbProfile = await api.getMyProfile();
+          const cached = JSON.parse(localStorage.getItem("indin_profile_cache") || "null");
           if (dbProfile) {
+            // Merge: prefer DB values, but fall back to cache for fields that might be empty in DB
             const mapped = {
-              ...dbProfile,
-              occupationStatus: dbProfile.occupation_status,
-              yearsAbroad: dbProfile.years_abroad,
-              linkedinUrl: dbProfile.linkedin_url,
-              isNRI: dbProfile.years_abroad !== "Not lived abroad",
+              id: dbProfile.id,
+              name: dbProfile.name || cached?.name || "",
+              email: dbProfile.email || cached?.email || "",
+              location: dbProfile.location || cached?.location || "",
+              hometown: dbProfile.hometown || cached?.hometown || "",
+              profession: dbProfile.profession || cached?.profession || "",
+              occupationStatus: dbProfile.occupation_status || cached?.occupationStatus || "",
+              yearsAbroad: dbProfile.years_abroad || cached?.yearsAbroad || "",
+              linkedinUrl: dbProfile.linkedin_url || cached?.linkedinUrl || "",
+              isNRI: (dbProfile.years_abroad || cached?.yearsAbroad) !== "Not lived abroad",
+              emailVerified: dbProfile.email_verified,
             };
+            // If DB has empty fields but cache has them, push cache values to DB
+            if (!dbProfile.location && cached?.location) {
+              try { await api.updateProfile({ location: cached.location, hometown: cached.hometown, profession: cached.profession, occupation_status: cached.occupationStatus, years_abroad: cached.yearsAbroad, linkedin_url: cached.linkedinUrl }); } catch(e) {}
+            }
             setUser(mapped);
             localStorage.setItem("indin_profile_cache", JSON.stringify(mapped));
             setAuthState("authenticated");
