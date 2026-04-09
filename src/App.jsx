@@ -1,0 +1,4771 @@
+import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import * as api from "./supabaseApi";
+
+
+// ============================================================================
+// CONTEXT & STATE MANAGEMENT
+// ============================================================================
+const AuthContext = createContext(null);
+const useAuth = () => useContext(AuthContext);
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+const INDIAN_CITIES = [
+  "Mumbai",
+  "Delhi",
+  "Bangalore",
+  "Hyderabad",
+  "Chennai",
+  "Kolkata",
+  "Pune",
+  "Ahmedabad",
+  "Jaipur",
+  "Surat",
+  "Lucknow",
+  "Chandigarh",
+  "Indore",
+  "Kochi",
+];
+
+const GLOBAL_CITIES = [
+  "Aachen", "Augsburg", "Berlin", "Bielefeld", "Bochum",
+  "Bonn", "Braunschweig", "Bremen", "Chemnitz", "Cologne",
+  "Darmstadt", "Dortmund", "Dresden", "Duisburg", "Düsseldorf",
+  "Erlangen", "Essen", "Frankfurt", "Freiburg", "Göttingen",
+  "Hamburg", "Hannover", "Heidelberg", "Ingolstadt", "Jena",
+  "Karlsruhe", "Kassel", "Kiel", "Leipzig", "Leverkusen",
+  "Lübeck", "Magdeburg", "Mainz", "Mannheim", "Mönchengladbach",
+  "Munich", "Münster", "Nuremberg", "Offenbach", "Oldenburg",
+  "Osnabrück", "Paderborn", "Potsdam", "Regensburg", "Rostock",
+  "Saarbrücken", "Stuttgart", "Ulm", "Wiesbaden", "Wolfsburg",
+];
+
+const OCCUPATION_TYPES = [
+  "Working Professional",
+  "Student",
+  "Business Owner",
+  "Homemaker",
+  "Looking for Opportunities",
+];
+
+const YEARS_OPTIONS = [
+  "Less than 1 year",
+  "1-3 years",
+  "3-5 years",
+  "5-10 years",
+  "10+ years",
+  "Born Abroad",
+];
+
+// ============================================================================
+// ICONS (inline SVG to avoid dependencies)
+// ============================================================================
+const Icon = ({ d, size = 20, fill = "none", stroke = "currentColor", strokeWidth = 1.8, className = "" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className}>
+    {Array.isArray(d) ? d.map((p, i) => <path key={i} d={p} />) : <path d={d} />}
+  </svg>
+);
+
+const Icons = {
+  globe: (p) => <Icon {...p} d={["M12 2a10 10 0 100 20 10 10 0 000-20z", "M2 12h20", "M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"]} />,
+  home: (p) => <Icon {...p} d={["M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z", "M9 22V12h6v10"]} />,
+  users: (p) => <Icon {...p} d={["M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2", "M9 7a4 4 0 100 8 4 4 0 000-8z", "M23 21v-2a4 4 0 00-3-3.87", "M16 3.13a4 4 0 010 7.75"]} />,
+  calendar: (p) => <Icon {...p} d={["M19 4H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2z", "M16 2v4", "M8 2v4", "M3 10h18"]} />,
+  search: (p) => <Icon {...p} d={["M11 19a8 8 0 100-16 8 8 0 000 16z", "M21 21l-4.35-4.35"]} />,
+  send: (p) => <Icon {...p} d={["M22 2L11 13", "M22 2l-7 20-4-9-9-4z"]} />,
+  heart: (p) => <Icon {...p} d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />,
+  message: (p) => <Icon {...p} d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />,
+  plus: (p) => <Icon {...p} d={["M12 5v14", "M5 12h14"]} />,
+  x: (p) => <Icon {...p} d={["M18 6L6 18", "M6 6l12 12"]} />,
+  check: (p) => <Icon {...p} d="M20 6L9 17l-5-5" />,
+  arrow: (p) => <Icon {...p} d={["M5 12h14", "M12 5l7 7-7 7"]} />,
+  mapPin: (p) => <Icon {...p} d={["M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z", "M12 7a3 3 0 100 6 3 3 0 000-6z"]} />,
+  logout: (p) => <Icon {...p} d={["M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4", "M16 17l5-5-5-5", "M21 12H9"]} />,
+  menu: (p) => <Icon {...p} d={["M3 12h18", "M3 6h18", "M3 18h18"]} />,
+  edit: (p) => <Icon {...p} d={["M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7", "M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"]} />,
+  trash: (p) => <Icon {...p} d={["M3 6h18", "M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"]} />,
+  image: (p) => <Icon {...p} d={["M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2z", "M8.5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3z", "M21 15l-5-5L5 21"]} />,
+  trending: (p) => <Icon {...p} d={["M23 6l-9.5 9.5-5-5L1 18", "M17 6h6v6"]} />,
+  bell: (p) => <Icon {...p} d={["M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9", "M13.73 21a2 2 0 01-3.46 0"]} />,
+  settings: (p) => <Icon {...p} d={["M12 15a3 3 0 100-6 3 3 0 000 6z", "M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"]} />,
+  share: (p) => <Icon {...p} d={["M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8", "M16 6l-4-4-4 4", "M12 2v13"]} />,
+  briefcase: (p) => <Icon {...p} d={["M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z", "M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"]} />,
+  shield: (p) => <Icon {...p} d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
+  star: (p) => <Icon {...p} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />,
+  user: (p) => <Icon {...p} d={["M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2", "M12 3a4 4 0 100 8 4 4 0 000-8z"]} />,
+  shop: (p) => <Icon {...p} d={["M6 2L3 8v12a2 2 0 002 2h14a2 2 0 002-2V8l-3-6z", "M3 8h18", "M16 12a4 4 0 01-8 0"]} />,
+  help: (p) => <Icon {...p} d={["M12 22a10 10 0 100-20 10 10 0 000 20z", "M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3", "M12 17h.01"]} />,
+  file: (p) => <Icon {...p} d={["M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z", "M14 2v6h6", "M16 13H8", "M16 17H8", "M10 9H8"]} />,
+  link: (p) => <Icon {...p} d={["M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71", "M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"]} />,
+  eye: (p) => <Icon {...p} d={["M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z", "M12 9a3 3 0 100 6 3 3 0 000-6z"]} />,
+  filter: (p) => <Icon {...p} d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />,
+  chevronLeft: (p) => <Icon {...p} d="M15 18l-6-6 6-6" />,
+  chevronRight: (p) => <Icon {...p} d="M9 18l6-6-6-6" />,
+  dots: (p) => <Icon {...p} d={["M12 13a1 1 0 100-2 1 1 0 000 2z", "M19 13a1 1 0 100-2 1 1 0 000 2z", "M5 13a1 1 0 100-2 1 1 0 000 2z"]} fill="currentColor" stroke="none" />,
+  linkedin: (p) => <Icon {...p} d={["M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6z", "M2 9h4v12H2z", "M4 2a2 2 0 100 4 2 2 0 000-4z"]} />,
+  clock: (p) => <Icon {...p} d={["M12 22a10 10 0 100-20 10 10 0 000 20z", "M12 6v6l4 2"]} />,
+  external: (p) => <Icon {...p} d={["M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6", "M15 3h6v6", "M10 14L21 3"]} />,
+  flag: (p) => <Icon {...p} d={["M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z", "M4 22v-7"]} />,
+};
+
+
+function getDefaultEvents() {
+  return [
+    { id: "e1", title: "Holi Festival 2026", date: "Mar 25, 2026 • 10:00 AM", location: "Central Park, New York", attendees: 450, organizer: "NYC Desi Club", description: "Celebrate the festival of colors with fellow Indians in NYC!" },
+    { id: "e2", title: "Networking Night: Tech", date: "Apr 10, 2026 • 6:00 PM", location: "WeWork, Berlin", attendees: 120, organizer: "Indian Professionals DE", description: "Connect with Indian tech professionals working in Germany." },
+    { id: "e3", title: "Bollywood Movie Night", date: "Apr 15, 2026 • 7:00 PM", location: "Hoyts Cinema, Melbourne", attendees: 85, organizer: "Melbourne Desi Club", description: "Watch the latest Bollywood blockbuster together!" },
+  ];
+}
+
+function getDefaultGroups() {
+  return [
+    { id: "g1", name: "Indians in Berlin", description: "The largest community of Indians living in Berlin.", members: 12500, category: "City", joined: false },
+    { id: "g2", name: "Techies Abroad", description: "Indian IT professionals working globally. Share referrals and tech news.", members: 45000, category: "Professional", joined: false },
+    { id: "g3", name: "Desi Students USA", description: "Support group for MS/PhD students in the United States.", members: 8900, category: "Support", joined: false },
+    { id: "g4", name: "Global Indian Foodies", description: "Sharing recipes and restaurant finds from around the world.", members: 32000, category: "Interest", joined: false },
+    { id: "g5", name: "Indians in London", description: "Community hub for Indians living in London and surrounding areas.", members: 28000, category: "City", joined: false },
+    { id: "g6", name: "Indians in Toronto", description: "Connect with the vibrant Indian community in Toronto.", members: 19000, category: "City", joined: false },
+  ];
+}
+
+function getDefaultPosts() {
+  return [
+    {
+      id: "p1", userId: "demo", content: "Finally found a place in London that serves authentic Gujarati Thali! If anyone is missing home food, check out 'Rasoi' near Wembley. 🍛 #DesiFood #LondonEats",
+      author: { name: "Priya Patel", profession: "Architect", location: "London, UK", hometown: "Ahmedabad, GJ" },
+      likes: 243, comments: [], tags: ["Food", "Recommendation"], timestamp: Date.now() - 7200000,
+      image: "https://picsum.photos/600/400?random=10",
+    },
+    {
+      id: "p2", userId: "demo", content: "Help needed regarding PR process in Canada. Has anyone recently applied under the STEM category? I have questions about the documentation.",
+      author: { name: "Rahul Verma", profession: "Student", location: "Toronto, Canada", hometown: "Delhi, DL" },
+      likes: 56, comments: [], tags: ["Visa", "Canada"], timestamp: Date.now() - 18000000,
+    },
+    {
+      id: "p3", userId: "demo", content: "Hosting a small Diwali get-together this weekend! Bring your own sparklers. DM for details!",
+      author: { name: "Sneha Gupta", profession: "Product Manager", location: "San Francisco, USA", hometown: "Bangalore, KA" },
+      likes: 189, comments: [], tags: ["Events", "Community"], timestamp: Date.now() - 86400000,
+    },
+  ];
+}
+
+function timeAgo(ts) {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function generateAvatar(name) {
+  const colors = ["#E8D5B7", "#B8C9A3", "#A3B8C9", "#C9A3B8", "#C9B8A3", "#A3C9B8"];
+  const initials = name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+  const color = colors[name.length % colors.length];
+  return { initials, color };
+}
+
+const Avatar = ({ name, size = 40, className = "" }) => {
+  const { initials, color } = generateAvatar(name || "U");
+  return (
+    <div
+      className={className}
+      style={{
+        width: size, height: size, borderRadius: "50%", background: color,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: size * 0.35, fontWeight: 700, color: "#37352F", flexShrink: 0,
+        border: "1px solid rgba(55,53,47,0.08)",
+      }}
+    >
+      {initials}
+    </div>
+  );
+};
+
+const InfoBanner = ({ text }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: "#EDF4FF", borderRadius: 10, border: "1px solid #DBEAFE", marginBottom: 20 }}>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5B9CFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+    </svg>
+    <p style={{ fontSize: 12, color: "#3D5A9F", lineHeight: 1.4, fontFamily: "'DM Sans', sans-serif" }}>{text}</p>
+  </div>
+);
+
+// ============================================================================
+// LANDING PAGE
+// ============================================================================
+
+// Exact SVG icons matching the screenshot
+const LandingIcons = {
+  // Globe icon for logo - filled dark square with globe outline
+  logoGlobe: () => (
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+      <rect width="28" height="28" rx="6" fill="#37352F"/>
+      <circle cx="14" cy="14" r="7" stroke="white" strokeWidth="1.5" fill="none"/>
+      <ellipse cx="14" cy="14" rx="3.5" ry="7" stroke="white" strokeWidth="1.2" fill="none"/>
+      <line x1="7" y1="14" x2="21" y2="14" stroke="white" strokeWidth="1.2"/>
+    </svg>
+  ),
+  // Community Groups icon - two people outline, matching screenshot
+  communityGroups: () => (
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 00-3-3.87"/>
+      <path d="M16 3.13a4 4 0 010 7.75"/>
+    </svg>
+  ),
+  // Mentorship icon - graduation cap, matching screenshot (purple)
+  mentorship: () => (
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 10l-10-5L2 10l10 5 10-5z"/>
+      <path d="M6 12v5c0 0 3 3 6 3s6-3 6-3v-5"/>
+    </svg>
+  ),
+  // Verified Events icon - shield with checkmark, matching screenshot (green)
+  verifiedEvents: () => (
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      <path d="M9 12l2 2 4-4"/>
+    </svg>
+  ),
+  // Arrow right for button
+  arrowRight: () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="5" y1="12" x2="19" y2="12"/>
+      <polyline points="12 5 19 12 12 19"/>
+    </svg>
+  ),
+};
+
+const LandingPage = ({ onJoin, onLogin }) => (
+  <div style={{
+    minHeight: "100vh",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    padding: "0 1.5rem",
+    background: "#ffffff",
+    fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  }}>
+    {/* Top Navigation */}
+    <nav style={{
+      width: "100%",
+      maxWidth: 1200,
+      padding: "24px 24px",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <LandingIcons.logoGlobe />
+        <span style={{
+          fontSize: 20,
+          fontWeight: 700,
+          letterSpacing: "-0.02em",
+          color: "#37352F",
+        }}>NRI<span style={{fontStyle:'italic',fontFamily:'"Times New Roman",serif'}}>Club</span></span>
+      </div>
+      <button
+        onClick={onLogin}
+        style={{
+          fontSize: 14,
+          fontWeight: 500,
+          padding: "8px 4px",
+          border: "none",
+          background: "transparent",
+          cursor: "pointer",
+          color: "#37352F",
+          letterSpacing: "-0.01em",
+        }}
+      >
+        Log in
+      </button>
+    </nav>
+
+    {/* Hero Section */}
+    <div style={{
+      maxWidth: 780,
+      textAlign: "center",
+      marginTop: "clamp(60px, 10vh, 120px)",
+      padding: "0 1rem",
+    }}>
+      {/* Main Heading */}
+      <h1 style={{
+        fontSize: "clamp(36px, 5.5vw, 60px)",
+        fontWeight: 700,
+        lineHeight: 1.12,
+        letterSpacing: "-0.03em",
+        color: "#37352F",
+        marginBottom: 0,
+      }}>
+        Connect with your roots,
+      </h1>
+      <h1 style={{
+        fontSize: "clamp(36px, 5.5vw, 60px)",
+        fontWeight: 700,
+        lineHeight: 1.12,
+        letterSpacing: "-0.03em",
+        color: "#9B9A97",
+        marginTop: 0,
+        marginBottom: 32,
+      }}>
+        wherever you are.
+      </h1>
+
+      {/* Subtitle paragraph - exact copy from screenshot */}
+      <p style={{
+        fontSize: "clamp(15px, 1.8vw, 18px)",
+        color: "#6B6B6B",
+        lineHeight: 1.7,
+        maxWidth: 620,
+        margin: "0 auto 40px",
+        fontWeight: 400,
+      }}>
+        Tired of scattered WhatsApp, Facebook, and Telegram groups? We are
+        uniting the Indian diaspora on one dedicated platform. A space for Indians,
+        by Indians—to find community, local events, and support for life abroad in
+        one umbrella network.
+      </p>
+
+      {/* CTA Button */}
+      <button
+        onClick={onJoin}
+        style={{
+          background: "#37352F",
+          color: "#ffffff",
+          padding: "16px 40px",
+          borderRadius: 8,
+          fontSize: 17,
+          fontWeight: 500,
+          border: "none",
+          cursor: "pointer",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 10,
+          letterSpacing: "-0.01em",
+          transition: "background 0.15s",
+        }}
+        onMouseOver={(e) => (e.currentTarget.style.background = "#2A2926")}
+        onMouseOut={(e) => (e.currentTarget.style.background = "#37352F")}
+      >
+        Join the Community
+        <LandingIcons.arrowRight />
+      </button>
+
+      {/* Sub-text under button */}
+      <p style={{
+        marginTop: 20,
+        fontSize: 12,
+        color: "#B0B0B0",
+        fontWeight: 400,
+        letterSpacing: "0.01em",
+      }}>
+        Free to join · 10,000+ Indians abroad
+      </p>
+    </div>
+
+    {/* Feature Cards - exact 3 cards from screenshot */}
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+      gap: 24,
+      marginTop: "clamp(60px, 8vh, 100px)",
+      maxWidth: 900,
+      width: "100%",
+      padding: "0 1rem 60px",
+    }}>
+      {/* Card 1: Community Groups */}
+      <div style={{
+        padding: "32px 28px",
+        borderRadius: 12,
+        border: "1px solid #E5E5E3",
+        background: "#FAFAF9",
+      }}>
+        <div style={{ marginBottom: 20 }}>
+          <LandingIcons.communityGroups />
+        </div>
+        <h3 style={{
+          fontWeight: 600,
+          fontSize: 18,
+          marginBottom: 8,
+          color: "#37352F",
+          letterSpacing: "-0.02em",
+        }}>
+          Community Groups
+        </h3>
+        <p style={{
+          fontSize: 14,
+          color: "#8C8C8C",
+          lineHeight: 1.55,
+          fontWeight: 400,
+        }}>
+          Find your tribe based on your city, hometown, or profession.
+        </p>
+      </div>
+
+      {/* Card 2: Mentorship */}
+      <div style={{
+        padding: "32px 28px",
+        borderRadius: 12,
+        border: "1px solid #E5E5E3",
+        background: "#FAFAF9",
+      }}>
+        <div style={{ marginBottom: 20 }}>
+          <LandingIcons.mentorship />
+        </div>
+        <h3 style={{
+          fontWeight: 600,
+          fontSize: 18,
+          marginBottom: 8,
+          color: "#37352F",
+          letterSpacing: "-0.02em",
+        }}>
+          Mentorship
+        </h3>
+        <p style={{
+          fontSize: 14,
+          color: "#8C8C8C",
+          lineHeight: 1.55,
+          fontWeight: 400,
+        }}>
+          Get guidance from seniors in your field who have been there.
+        </p>
+      </div>
+
+      {/* Card 3: Verified Events */}
+      <div style={{
+        padding: "32px 28px",
+        borderRadius: 12,
+        border: "1px solid #E5E5E3",
+        background: "#FAFAF9",
+      }}>
+        <div style={{ marginBottom: 20 }}>
+          <LandingIcons.verifiedEvents />
+        </div>
+        <h3 style={{
+          fontWeight: 600,
+          fontSize: 18,
+          marginBottom: 8,
+          color: "#37352F",
+          letterSpacing: "-0.02em",
+        }}>
+          Verified Events
+        </h3>
+        <p style={{
+          fontSize: 14,
+          color: "#8C8C8C",
+          lineHeight: 1.55,
+          fontWeight: 400,
+        }}>
+          Discover festivals, meetups, and networking events near you.
+        </p>
+      </div>
+    </div>
+  </div>
+);
+
+// ============================================================================
+// SIGN UP PAGE
+// ============================================================================
+
+// Small inline SVG icons for signup labels (matching screenshot exactly)
+const SignUpIcons = {
+  home: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+      <polyline points="9 22 9 12 15 12 15 22"/>
+    </svg>
+  ),
+  mapPin: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="10" r="3"/>
+      <path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 10-16 0c0 3 2.7 7 8 11.7z"/>
+    </svg>
+  ),
+  briefcase: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+      <path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>
+    </svg>
+  ),
+  linkedin: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6z"/>
+      <rect x="2" y="9" width="4" height="12"/>
+      <circle cx="4" cy="4" r="2"/>
+    </svg>
+  ),
+  info: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B7FD6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="12" y1="16" x2="12" y2="12"/>
+      <line x1="12" y1="8" x2="12.01" y2="8"/>
+    </svg>
+  ),
+  globe: () => (
+    <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
+      <rect width="40" height="40" rx="10" fill="#F0EFED"/>
+      <circle cx="20" cy="20" r="8" stroke="#37352F" strokeWidth="1.5" fill="none"/>
+      <ellipse cx="20" cy="20" rx="4" ry="8" stroke="#37352F" strokeWidth="1.2" fill="none"/>
+      <line x1="12" y1="20" x2="28" y2="20" stroke="#37352F" strokeWidth="1.2"/>
+    </svg>
+  ),
+  arrowRight: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="5" y1="12" x2="19" y2="12"/>
+      <polyline points="12 5 19 12 12 19"/>
+    </svg>
+  ),
+};
+
+const SignUpPage = ({ onComplete, onLogin }) => {
+  const [residencyStep, setResidencyStep] = useState(null); // null = show choice, 'abroad' | 'india'
+  const [form, setForm] = useState({
+    firstName: "", middleName: "", lastName: "", email: "",
+    password: "", confirmPassword: "",
+    location: "", hometown: "", profession: "",
+    occupationStatus: "Working Professional", yearsAbroad: "", linkedinUrl: "",
+    isNRI: true,
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // OTP state
+  const [otpStep, setOtpStep] = useState("form"); // "form" | "otp" | "complete"
+  const [otpCode, setOtpCode] = useState(["", "", "", "", "", ""]);
+  const [generatedOtp, setGeneratedOtp] = useState("");
+  const [otpError, setOtpError] = useState("");
+  const [otpTimer, setOtpTimer] = useState(0);
+  const [otpSending, setOtpSending] = useState(false);
+  const otpRefs = [useRef(null), useRef(null), useRef(null), useRef(null), useRef(null), useRef(null)];
+
+  // GDPR consent state
+  const [gdprConsent, setGdprConsent] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
+  const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const update = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+  const passwordsMatch = form.password && form.confirmPassword && form.password === form.confirmPassword;
+  const passwordLongEnough = form.password.length >= 8;
+  const valid = form.firstName && form.lastName && form.email && passwordLongEnough && passwordsMatch && form.location && form.hometown && form.profession && (residencyStep === "india" || form.yearsAbroad) && gdprConsent;
+
+  // OTP timer countdown
+  useEffect(() => {
+    if (otpTimer > 0) {
+      const t = setTimeout(() => setOtpTimer(otpTimer - 1), 1000);
+      return () => clearTimeout(t);
+    }
+  }, [otpTimer]);
+
+  const generateOtp = () => {
+    return "123456";
+  };
+
+  const handleSendOtp = async () => {
+    if (!form.email || !form.email.includes("@")) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    if (form.password.length < 8) {
+      setError("Password must be at least 8 characters long.");
+      return;
+    }
+    if (form.password !== form.confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+    if (!valid) return;
+
+    setOtpSending(true);
+    setError("");
+
+    try {
+      const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
+      
+      // Step 1: Create user in Supabase
+      try {
+        await api.signUp(form.email, form.password, {
+          full_name: fullName, location: form.location,
+          hometown: form.hometown, profession: form.profession,
+        });
+      } catch (signUpErr) {
+        const msg = signUpErr.message || "";
+        if (msg.toLowerCase().includes("already")) {
+          setError("An account with this email already exists. Please log in instead.");
+          setOtpSending(false);
+          return;
+        }
+      }
+
+      // Step 2: Send OTP (try real, fall back to local)
+      try {
+        await api.sendOtp(form.email);
+        setGeneratedOtp("");
+      } catch (otpErr) {
+        setGeneratedOtp("123456");
+      }
+
+      setOtpStep("otp");
+      setOtpTimer(60);
+      setOtpCode(["", "", "", "", "", ""]);
+      setOtpSending(false);
+
+    } catch (err) {
+      setError(err.message || "Something went wrong. Please try again.");
+      setOtpSending(false);
+    }
+  };
+
+  const handleOtpChange = (index, value) => {
+    if (value.length > 1) value = value[value.length - 1];
+    if (value && !/^\d$/.test(value)) return;
+
+    const newOtp = [...otpCode];
+    newOtp[index] = value;
+    setOtpCode(newOtp);
+    setOtpError("");
+
+    // Auto-focus next input
+    if (value && index < 5) {
+      otpRefs[index + 1].current?.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (index, e) => {
+    if (e.key === "Backspace" && !otpCode[index] && index > 0) {
+      otpRefs[index - 1].current?.focus();
+    }
+  };
+
+  const handleOtpPaste = (e) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (pasted.length === 6) {
+      const newOtp = pasted.split("");
+      setOtpCode(newOtp);
+      otpRefs[5].current?.focus();
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    const entered = otpCode.join("");
+    if (entered.length !== 6) {
+      setOtpError("Please enter the complete 6-digit code.");
+      return;
+    }
+
+    setLoading(true);
+    setOtpError("");
+
+    try {
+      // If we have a local OTP (sandbox mode), verify locally
+      if (generatedOtp) {
+        if (entered !== generatedOtp) {
+          setOtpError("Invalid code. Please try again.");
+          setLoading(false);
+          return;
+        }
+        // Local verification passed
+        const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
+        const profile = {
+          id: "user_" + Date.now(),
+          name: fullName,
+          email: form.email,
+          password: form.password,
+          location: form.location,
+          hometown: form.hometown,
+          profession: form.profession,
+          occupationStatus: form.occupationStatus,
+          yearsAbroad: form.yearsAbroad,
+          linkedinUrl: form.linkedinUrl,
+          emailVerified: true,
+          gdprConsent: true,
+          gdprConsentDate: new Date().toISOString(),
+          marketingConsent: marketingConsent,
+          isNRI: form.isNRI,
+          createdAt: Date.now(),
+        };
+        localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
+        setLoading(false);
+        onComplete(profile);
+        return;
+      }
+
+      // Real Supabase verification
+      try {
+        const verifyData = await api.verifyOtp(form.email, entered);
+        const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
+        try {
+          await api.updateProfile({
+            name: fullName, location: form.location, hometown: form.hometown,
+            profession: form.profession, occupation_status: form.occupationStatus,
+            years_abroad: form.yearsAbroad, linkedin_url: form.linkedinUrl,
+            email_verified: true, gdpr_consent: true, gdpr_consent_date: new Date().toISOString(),
+            marketing_consent: marketingConsent,
+          });
+        } catch (ue) {}
+        const profile = {
+          id: verifyData?.user?.id || ("user_" + Date.now()),
+          name: fullName, email: form.email, location: form.location,
+          hometown: form.hometown, profession: form.profession,
+          occupationStatus: form.occupationStatus, yearsAbroad: form.yearsAbroad,
+          linkedinUrl: form.linkedinUrl, emailVerified: true,
+          isNRI: form.isNRI,
+        };
+        localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
+        setLoading(false);
+        onComplete(profile);
+      } catch (verifyErr) {
+        setOtpError(verifyErr.message || "Invalid or expired code.");
+        setLoading(false);
+      }
+
+    } catch (err) {
+      setOtpError("Something went wrong. Please try again.");
+      setLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (otpTimer > 0) return;
+    setOtpSending(true);
+    setOtpError("");
+
+    if (generatedOtp) {
+      setGeneratedOtp("123456");
+      setOtpTimer(60);
+      setOtpCode(["", "", "", "", "", ""]);
+      setOtpSending(false);
+      return;
+    }
+
+    try {
+      await api.sendOtp(form.email);
+      setOtpTimer(60);
+      setOtpCode(["", "", "", "", "", ""]);
+    } catch {
+      setOtpError("Failed to resend. Please try again.");
+    }
+    setOtpSending(false);
+  };
+
+  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
+  const inputStyle = {
+    width: "100%",
+    padding: "14px 16px",
+    borderRadius: 8,
+    border: "1px solid #E0E0DE",
+    fontSize: 15,
+    background: "#fff",
+    outline: "none",
+    color: "#37352F",
+    fontFamily: font,
+    boxSizing: "border-box",
+    transition: "border-color 0.15s",
+  };
+
+  const labelStyle = {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#5F5E5B",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    marginBottom: 8,
+    fontFamily: font,
+  };
+
+  // ---- RESIDENCY CHOICE SCREEN ----
+  if (!residencyStep) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
+        <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
+          <div style={{ width: 56, height: 56, borderRadius: 16, background: "#37352F", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", color: "#fff" }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          </div>
+          <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>Where do you live?</h2>
+          <p style={{ fontSize: 14, color: "#9B9A97", marginBottom: 32 }}>This helps us personalize your experience on IndIn.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 320, margin: "0 auto" }}>
+            <button onClick={() => { setResidencyStep("abroad"); update("isNRI", true); }} style={{ padding: "18px 24px", borderRadius: 12, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
+              onMouseOver={(e) => { e.currentTarget.style.borderColor = "#37352F"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
+              onMouseOut={(e) => { e.currentTarget.style.borderColor = "#E0E0DE"; e.currentTarget.style.boxShadow = "none"; }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 10, background: "#E3FCEF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "#37352F" }}>I live outside India</div>
+                  <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>NRI, student abroad, or recently moved</div>
+                </div>
+              </div>
+            </button>
+            <button onClick={() => { setResidencyStep("india"); update("isNRI", false); update("yearsAbroad", "Not lived abroad"); }} style={{ padding: "18px 24px", borderRadius: 12, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
+              onMouseOver={(e) => { e.currentTarget.style.borderColor = "#37352F"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
+              onMouseOut={(e) => { e.currentTarget.style.borderColor = "#E0E0DE"; e.currentTarget.style.boxShadow = "none"; }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 10, background: "#FFF3E0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E65100" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/></svg>
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "#37352F" }}>I live in India</div>
+                  <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>Connect with NRIs for advice & support</div>
+                </div>
+              </div>
+            </button>
+          </div>
+          <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 24 }}>Already have an account? <button onClick={onLogin} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontSize: 12 }}>Log in</button></p>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- OTP VERIFICATION SCREEN ----
+  if (otpStep === "otp") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
+        <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
+          <div style={{ marginBottom: 24, display: "inline-block" }}>
+            <div style={{ width: 56, height: 56, borderRadius: 16, background: "#EDF4FF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#5B9CFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 6L2 7"/>
+              </svg>
+            </div>
+          </div>
+          <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>Check your email</h2>
+          <p style={{ fontSize: 14, color: "#9B9A97", marginBottom: 8, lineHeight: 1.6 }}>
+            We sent a 6-digit verification code to<br />
+            <strong style={{ color: "#37352F" }}>{form.email}</strong>
+          </p>
+          {generatedOtp ? (
+            <div style={{
+              padding: "10px 16px", background: "#FFF9E6", border: "1px solid #FFE082", borderRadius: 8,
+              marginBottom: 24, fontSize: 12, color: "#8D6E00", lineHeight: 1.5, textAlign: "left",
+              display: "flex", alignItems: "flex-start", gap: 8,
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8D6E00" strokeWidth="2" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              <span>
+                <strong>Demo mode:</strong> Enter <strong style={{ letterSpacing: 2 }}>123456</strong> as your verification code. When deployed to a real server, a unique code will be emailed to you.
+              </span>
+            </div>
+          ) : (
+            <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 24 }}>Check your inbox and spam folder.</p>
+          )}
+
+          {otpError && (
+            <div style={{ padding: "10px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#DC2626" }}>{otpError}</div>
+          )}
+
+          {/* OTP Input Boxes */}
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 28 }}>
+            {otpCode.map((digit, i) => (
+              <input
+                key={i}
+                ref={otpRefs[i]}
+                type="text"
+                inputMode="numeric"
+                maxLength={1}
+                value={digit}
+                onChange={(e) => handleOtpChange(i, e.target.value)}
+                onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                onPaste={i === 0 ? handleOtpPaste : undefined}
+                style={{
+                  width: 48, height: 56, borderRadius: 10,
+                  border: digit ? "2px solid #37352F" : "1px solid #E0E0DE",
+                  fontSize: 22, fontWeight: 700, textAlign: "center", outline: "none",
+                  color: "#37352F", fontFamily: font, background: "#fff",
+                  transition: "border-color 0.15s",
+                }}
+                autoFocus={i === 0}
+              />
+            ))}
+          </div>
+
+          {/* Verify Button */}
+          <button
+            onClick={handleVerifyOtp}
+            disabled={otpCode.join("").length !== 6 || loading}
+            style={{
+              width: "100%", padding: "14px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600,
+              background: otpCode.join("").length === 6 ? "#37352F" : "#EDEDEB",
+              color: otpCode.join("").length === 6 ? "#fff" : "#9B9A97",
+              cursor: otpCode.join("").length === 6 ? "pointer" : "not-allowed",
+              fontFamily: font, marginBottom: 20,
+            }}
+          >
+            {loading ? "Verifying..." : "Verify & Create Account"}
+          </button>
+
+          {/* Resend */}
+          <div style={{ fontSize: 13, color: "#9B9A97" }}>
+            Didn't receive the code?{" "}
+            {otpTimer > 0 ? (
+              <span>Resend in <strong style={{ color: "#37352F" }}>{otpTimer}s</strong></span>
+            ) : (
+              <button onClick={handleResendOtp} disabled={otpSending} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13 }}>
+                {otpSending ? "Sending..." : "Resend Code"}
+              </button>
+            )}
+          </div>
+
+          {/* Back button */}
+          <button
+            onClick={() => { setOtpStep("form"); setOtpError(""); }}
+            style={{ background: "none", border: "none", color: "#9B9A97", fontSize: 13, cursor: "pointer", marginTop: 20, fontFamily: font, display: "inline-flex", alignItems: "center", gap: 4 }}
+          >
+            ← Back to form
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- MAIN FORM ----
+  return (
+    <div style={{
+      minHeight: "100vh",
+      display: "flex",
+      alignItems: "flex-start",
+      justifyContent: "center",
+      padding: "48px 1rem 60px",
+      background: "#F7F7F5",
+      fontFamily: font,
+    }}>
+      <div style={{ maxWidth: 580, width: "100%" }}>
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: 48 }}>
+          <div style={{ marginBottom: 20, display: "inline-block" }}>
+            <SignUpIcons.globe />
+          </div>
+          <h2 style={{
+            fontSize: 28,
+            fontWeight: 700,
+            color: "#37352F",
+            letterSpacing: "-0.03em",
+            marginBottom: 8,
+          }}>Create your profile</h2>
+          <p style={{
+            color: "#9B9A97",
+            fontSize: 15,
+            fontWeight: 400,
+          }}>Join the NRIClub network to start connecting.</p>
+        </div>
+
+        {error && (
+          <div style={{ padding: "12px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#DC2626" }}>{error}</div>
+        )}
+
+        <form onSubmit={(e) => { e.preventDefault(); handleSendOtp(); }}>
+
+          {/* LEGAL NAME section */}
+          <div style={{ marginBottom: 28 }}>
+            <label style={{ ...labelStyle, marginBottom: 12 }}>
+              LEGAL NAME
+            </label>
+
+            {/* Blue info banner */}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "14px 16px",
+              background: "#EEF2FF",
+              borderRadius: 8,
+              marginBottom: 16,
+              border: "1px solid #E0E7FF",
+            }}>
+              <div style={{ flexShrink: 0 }}>
+                <SignUpIcons.info />
+              </div>
+              <p style={{
+                fontSize: 13,
+                color: "#4B5EAA",
+                lineHeight: 1.45,
+                margin: 0,
+                fontWeight: 400,
+              }}>
+                Please provide your real name as it appears on your Indian or current nationality passport.
+              </p>
+            </div>
+
+            {/* 3-column name fields */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <input style={inputStyle} value={form.firstName} onChange={(e) => update("firstName", e.target.value)} placeholder="First Name" required />
+              <input style={inputStyle} value={form.middleName} onChange={(e) => update("middleName", e.target.value)} placeholder="Middle (Optional)" />
+              <input style={inputStyle} value={form.lastName} onChange={(e) => update("lastName", e.target.value)} placeholder="Last Name" required />
+            </div>
+          </div>
+
+          {/* EMAIL */}
+          <div style={{ marginBottom: 28 }}>
+            <label style={labelStyle}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 6L2 7"/>
+              </svg>
+              EMAIL ADDRESS
+            </label>
+            <input
+              style={inputStyle}
+              type="email"
+              value={form.email}
+              onChange={(e) => update("email", e.target.value)}
+              placeholder="you@email.com"
+              required
+            />
+            <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 6, fontFamily: font }}>
+              A verification code will be sent to this email.
+            </p>
+          </div>
+
+          {/* PASSWORD */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
+            <div>
+              <label style={labelStyle}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
+                </svg>
+                PASSWORD
+              </label>
+              <div style={{ position: "relative" }}>
+                <input
+                  style={inputStyle}
+                  type={showPassword ? "text" : "password"}
+                  value={form.password}
+                  onChange={(e) => update("password", e.target.value)}
+                  placeholder="Min. 8 characters"
+                  required
+                  minLength={8}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}
+                >
+                  {showPassword ? Icons.eye({ size: 16 }) : Icons.eye({ size: 16 })}
+                </button>
+              </div>
+              {form.password && form.password.length < 8 && (
+                <p style={{ fontSize: 11, color: "#DC2626", marginTop: 5, fontFamily: font }}>Must be at least 8 characters</p>
+              )}
+              {form.password && form.password.length >= 8 && (
+                <p style={{ fontSize: 11, color: "#22A06B", marginTop: 5, fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                  Strong enough
+                </p>
+              )}
+            </div>
+            <div>
+              <label style={labelStyle}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
+                </svg>
+                CONFIRM PASSWORD
+              </label>
+              <div style={{ position: "relative" }}>
+                <input
+                  style={{
+                    ...inputStyle,
+                    borderColor: form.confirmPassword ? (passwordsMatch ? "#22A06B" : "#DC2626") : "#E0E0DE",
+                  }}
+                  type={showConfirmPassword ? "text" : "password"}
+                  value={form.confirmPassword}
+                  onChange={(e) => update("confirmPassword", e.target.value)}
+                  placeholder="Retype password"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}
+                >
+                  {showConfirmPassword ? Icons.eye({ size: 16 }) : Icons.eye({ size: 16 })}
+                </button>
+              </div>
+              {form.confirmPassword && !passwordsMatch && (
+                <p style={{ fontSize: 11, color: "#DC2626", marginTop: 5, fontFamily: font }}>Passwords do not match</p>
+              )}
+              {form.confirmPassword && passwordsMatch && (
+                <p style={{ fontSize: 11, color: "#22A06B", marginTop: 5, fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                  Passwords match
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* CURRENT CITY & HOMETOWN */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
+            <div>
+              <label style={labelStyle}><SignUpIcons.home /> CURRENT CITY</label>
+              <input style={inputStyle} value={form.location} onChange={(e) => update("location", e.target.value)} placeholder="Berlin, Germany" required />
+            </div>
+            <div>
+              <label style={labelStyle}><SignUpIcons.mapPin /> HOMETOWN (INDIA)</label>
+              <input style={inputStyle} value={form.hometown} onChange={(e) => update("hometown", e.target.value)} placeholder="Mumbai, MH" required />
+            </div>
+          </div>
+
+          {/* CURRENT STATUS & LIVING ABROAD SINCE */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
+            <div>
+              <label style={labelStyle}>CURRENT STATUS</label>
+              <div style={{ position: "relative" }}>
+                <select style={{ ...inputStyle, cursor: "pointer", appearance: "none", paddingRight: 36 }} value={form.occupationStatus} onChange={(e) => update("occupationStatus", e.target.value)}>
+                  {OCCUPATION_TYPES.map((o) => <option key={o}>{o}</option>)}
+                </select>
+                <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+              </div>
+            </div>
+            <div>
+              <label style={labelStyle}>LIVING ABROAD SINCE?</label>
+              <div style={{ position: "relative" }}>
+                {residencyStep === "india" ? (
+                  <div style={{ ...inputStyle, background: "#F0EFED", color: "#9B9A97", cursor: "not-allowed" }}>Not lived abroad</div>
+                ) : (
+                  <select style={{ ...inputStyle, cursor: "pointer", appearance: "none", paddingRight: 36, color: form.yearsAbroad ? "#37352F" : "#9B9A97" }} value={form.yearsAbroad} onChange={(e) => update("yearsAbroad", e.target.value)} required>
+                    <option value="" disabled>Select duration</option>
+                    {YEARS_OPTIONS.map((y) => <option key={y}>{y}</option>)}
+                  </select>
+                )}
+                {residencyStep !== "india" && <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>}
+              </div>
+            </div>
+          </div>
+
+          {/* JOB TITLE / INDUSTRY */}
+          <div style={{ marginBottom: 28 }}>
+            <label style={labelStyle}>
+              <SignUpIcons.briefcase />
+              {form.occupationStatus === "Student" ? "MAJOR / UNIVERSITY" : "JOB TITLE / INDUSTRY"}
+            </label>
+            <input style={inputStyle} value={form.profession} onChange={(e) => update("profession", e.target.value)} placeholder={form.occupationStatus === "Student" ? "e.g. Computer Science, TU Munich" : "e.g. Software Engineer"} required />
+          </div>
+
+          {/* LINKEDIN PROFILE */}
+          <div style={{ marginBottom: 28 }}>
+            <label style={labelStyle}>
+              <SignUpIcons.linkedin /> LINKEDIN PROFILE (REQUIRED FOR VERIFICATION)
+            </label>
+            <input style={inputStyle} value={form.linkedinUrl} onChange={(e) => update("linkedinUrl", e.target.value)} placeholder="https://linkedin.com/in/..." required />
+          </div>
+
+          {/* GDPR CONSENT SECTION */}
+          <div style={{
+            padding: "20px", borderRadius: 10, border: "1px solid #E0E0DE",
+            background: "#FAFAF8", marginBottom: 28,
+          }}>
+            <h4 style={{ fontSize: 12, fontWeight: 700, color: "#37352F", marginBottom: 14, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              Data Protection & Privacy
+            </h4>
+
+            {/* Required consent */}
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", marginBottom: 14 }}>
+              <input
+                type="checkbox"
+                checked={gdprConsent}
+                onChange={(e) => setGdprConsent(e.target.checked)}
+                style={{ marginTop: 3, accentColor: "#37352F", width: 16, height: 16, flexShrink: 0 }}
+              />
+              <span style={{ fontSize: 13, color: "#37352F", lineHeight: 1.5, fontFamily: font }}>
+                I agree to the{" "}
+                <button type="button" onClick={() => setPrivacyModalOpen(true)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
+                  Privacy Policy
+                </button>
+                {" "}and{" "}
+                <button type="button" onClick={() => setPrivacyModalOpen(true)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
+                  Terms of Service
+                </button>
+                . I consent to the processing of my personal data as described.
+                <span style={{ color: "#DC2626" }}> *</span>
+              </span>
+            </label>
+
+            {/* Optional marketing consent */}
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={marketingConsent}
+                onChange={(e) => setMarketingConsent(e.target.checked)}
+                style={{ marginTop: 3, accentColor: "#37352F", width: 16, height: 16, flexShrink: 0 }}
+              />
+              <span style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, fontFamily: font }}>
+                I'd like to receive community updates, event notifications, and tips for life abroad via email. <span style={{ color: "#9B9A97" }}>(Optional)</span>
+              </span>
+            </label>
+          </div>
+
+          {/* GDPR info note */}
+          <div style={{
+            display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px",
+            background: "#F0EFED", borderRadius: 8, marginBottom: 28, fontSize: 11, color: "#5F5E5B", lineHeight: 1.55, fontFamily: font,
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <span>
+              Your data is stored securely and processed in accordance with GDPR. You can request data export or deletion at any time from your account settings. We never sell your personal data to third parties.
+            </span>
+          </div>
+
+          {/* Submit button */}
+          <button
+            type="submit"
+            disabled={!valid || otpSending}
+            style={{
+              width: "100%",
+              padding: "14px",
+              borderRadius: 8,
+              border: "none",
+              fontSize: 15,
+              fontWeight: 600,
+              background: valid ? "#37352F" : "#EDEDEB",
+              color: valid ? "#fff" : "#9B9A97",
+              cursor: valid ? "pointer" : "not-allowed",
+              fontFamily: font,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              transition: "background 0.15s",
+            }}
+          >
+            {otpSending ? "Sending verification code..." : "Continue — Verify Email"}
+            {!otpSending && <SignUpIcons.arrowRight />}
+          </button>
+        </form>
+
+        {/* Bottom link */}
+        <p style={{ textAlign: "center", marginTop: 28, fontSize: 13, color: "#9B9A97", fontWeight: 400 }}>
+          <button onClick={onLogin} style={{ background: "none", border: "none", color: "#6B7280", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3, fontFamily: font, fontSize: 13, fontWeight: 400 }}>
+            Already have an account? Log in
+          </button>
+        </p>
+      </div>
+
+      {/* Privacy Policy Modal */}
+      {privacyModalOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setPrivacyModalOpen(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "80vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED", position: "sticky", top: 0, background: "#fff", zIndex: 1 }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy Policy & Terms</h3>
+              <button onClick={() => setPrivacyModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div style={{ padding: 24, fontSize: 13, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
+              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>1. Data We Collect</h4>
+              <p style={{ marginBottom: 16 }}>We collect the personal information you provide during registration: your name, email, location, hometown, profession, LinkedIn URL, and occupation status. We also collect usage data such as posts, comments, and interactions within the platform.</p>
+
+              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>2. How We Use Your Data</h4>
+              <p style={{ marginBottom: 16 }}>Your data is used to: provide and personalize the NRIClub service, connect you with relevant community members, send essential service notifications, and (with your consent) send marketing communications.</p>
+
+              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>3. Legal Basis (GDPR Art. 6)</h4>
+              <p style={{ marginBottom: 16 }}>We process your data based on: your explicit consent (Art. 6(1)(a)), performance of our service contract (Art. 6(1)(b)), and our legitimate interest in operating the platform (Art. 6(1)(f)).</p>
+
+              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>4. Your Rights</h4>
+              <p style={{ marginBottom: 16 }}>Under GDPR, you have the right to: access your personal data, rectify inaccurate data, request erasure ("right to be forgotten"), restrict processing, data portability (export your data), object to processing, and withdraw consent at any time. You can exercise these rights from your Account Settings.</p>
+
+              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>5. Data Retention</h4>
+              <p style={{ marginBottom: 16 }}>We retain your data for as long as your account is active. Upon account deletion, all personal data is permanently erased within 30 days.</p>
+
+              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>6. Data Sharing</h4>
+              <p style={{ marginBottom: 16 }}>We do not sell your personal data. Data is only shared with essential service providers (email delivery, hosting) under data processing agreements compliant with GDPR.</p>
+
+              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>7. Contact</h4>
+              <p>For any data protection inquiries, contact our Data Protection Officer at privacy@indin.com.</p>
+
+              <p style={{ marginTop: 20, fontSize: 11, color: "#9B9A97", fontStyle: "italic" }}>Last updated: April 2026</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
+// LOGIN PAGE
+// ============================================================================
+const LoginPage = ({ onComplete, onSignUp }) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await api.signIn(email, password);
+      const dbProfile = await api.getMyProfile();
+      if (dbProfile) {
+        const profile = {
+          id: dbProfile.id, name: dbProfile.name, email: dbProfile.email || email,
+          location: dbProfile.location, hometown: dbProfile.hometown,
+          profession: dbProfile.profession, occupationStatus: dbProfile.occupation_status,
+          yearsAbroad: dbProfile.years_abroad, linkedinUrl: dbProfile.linkedin_url,
+          emailVerified: dbProfile.email_verified,
+        };
+        localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
+        setLoading(false);
+        onComplete(profile);
+        return;
+      }
+      const user = data?.user || {};
+      const profile = {
+        id: user.id || "user_" + Date.now(),
+        name: user.user_metadata?.full_name || email.split("@")[0],
+        email, location: "", hometown: "", profession: "",
+        occupationStatus: "Working Professional", emailVerified: !!user.email_confirmed_at,
+      };
+      localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
+      setLoading(false);
+      onComplete(profile);
+    } catch (err) {
+      const cached = JSON.parse(localStorage.getItem("indin_profile_cache") || "null");
+      if (cached && cached.email === email) {
+        setLoading(false);
+        onComplete(cached);
+        return;
+      }
+      setError(err.message || "Invalid email or password.");
+      setLoading(false);
+    }
+  };
+
+  const inputStyle = {
+    width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE",
+    fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F",
+    fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box",
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", background: "#FAFAF8" }}>
+      <div style={{ maxWidth: 360, width: "100%" }}>
+        <div style={{ textAlign: "center", marginBottom: 40 }}>
+          <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
+            {Icons.globe({ size: 24, stroke: "#37352F" })}
+          </div>
+          <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: "'DM Sans', sans-serif" }}>Welcome back</h2>
+          <p style={{ color: "#9B9A97", fontSize: 14, marginTop: 8, fontFamily: "'DM Sans', sans-serif" }}>Log in to NRIClub</p>
+        </div>
+
+        {error && <div style={{ padding: "12px 16px", background: "#FEE", borderRadius: 8, marginBottom: 16, fontSize: 13, color: "#C00" }}>{error}</div>}
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>Email</label>
+            <input style={inputStyle} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" required autoFocus />
+          </div>
+          <div style={{ marginBottom: 24 }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>Password</label>
+            <input style={inputStyle} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
+          </div>
+          <button
+            type="submit" disabled={!email || !password || loading}
+            style={{
+              width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600,
+              background: email && password ? "#37352F" : "#E8E7E4", color: email && password ? "#fff" : "#9B9A97",
+              cursor: email && password ? "pointer" : "not-allowed", fontFamily: "'DM Sans', sans-serif",
+            }}
+          >
+            {loading ? "Logging in..." : "Continue"}
+          </button>
+        </form>
+
+        <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#9B9A97", fontFamily: "'DM Sans', sans-serif" }}>
+          Don't have an account?{" "}
+          <button onClick={onSignUp} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>
+            Sign up
+          </button>
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// POST CARD
+// ============================================================================
+const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
+  const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(post.likes || 0);
+  const [showComments, setShowComments] = useState(false);
+  const [comments, setComments] = useState(post.comments || []);
+  const [newComment, setNewComment] = useState("");
+  const [showMenu, setShowMenu] = useState(false);
+  const isOwner = user && post.userId === user.id;
+
+  const handleLike = async () => {
+    setLiked(!liked);
+    setLikeCount((p) => (liked ? p - 1 : p + 1));
+    if (onLike) onLike(post.id, !liked);
+    try { await api.toggleLike(post.id); } catch (e) {}
+  };
+
+  const addComment = async () => {
+    if (!newComment.trim()) return;
+    const c = { id: Date.now(), user: user?.name || "You", text: newComment, time: Date.now() };
+    setComments([c, ...comments]);
+    setNewComment("");
+    try { await api.addComment(post.id, newComment); } catch (e) {}
+  };
+
+  const author = post.author || {};
+  const cardStyle = {
+    background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4",
+    padding: 20, marginBottom: 16, transition: "box-shadow 0.15s",
+    fontFamily: "'DM Sans', sans-serif",
+  };
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 12 }}>
+          <Avatar name={author.name || "User"} size={40} />
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 14, color: "#37352F" }}>{author.name}</div>
+            <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>
+              {author.profession} • {author.location}
+            </div>
+            <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 1 }}>From: {author.hometown}</div>
+            {post.groupName && (
+              <div style={{ fontSize: 10, color: "#5B9CFF", marginTop: 3, display: "flex", alignItems: "center", gap: 3, fontWeight: 600 }}>
+                {Icons.users({ size: 10, stroke: "#5B9CFF" })} Posted in {post.groupName}
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ position: "relative" }}>
+          <button onClick={() => setShowMenu(!showMenu)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "#9B9A97" }}>
+            {Icons.dots({ size: 16 })}
+          </button>
+          {showMenu && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={() => setShowMenu(false)} />
+              <div style={{ position: "absolute", right: 0, top: "100%", background: "#fff", border: "1px solid #E8E7E4", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", zIndex: 20, minWidth: 120, overflow: "hidden" }}>
+                {isOwner && onDelete ? (
+                  <button onClick={() => { onDelete(post.id); setShowMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#E00", fontSize: 13 }}>
+                    {Icons.trash({ size: 14 })} Delete
+                  </button>
+                ) : (
+                  <button onClick={() => { setShowMenu(false); if (onReport) onReport(post.id); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13 }}>
+                    {Icons.flag({ size: 14 })} Report
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <p style={{ fontSize: 14, lineHeight: 1.65, color: "#37352F", marginBottom: 12 }}>{post.content}</p>
+
+      {/* Post Image */}
+      {post.image && (
+        <div style={{ marginBottom: 12, borderRadius: 10, overflow: "hidden", border: "1px solid #F0EFED" }}>
+          <img src={post.image} alt="" style={{ width: "100%", height: "auto", display: "block", maxHeight: 400, objectFit: "cover" }} />
+        </div>
+      )}
+
+      {post.tags?.length > 0 && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+          {post.tags.map((t) => (
+            <span key={t} style={{ fontSize: 11, background: "#F0EFED", color: "#5F5E5B", padding: "3px 8px", borderRadius: 4, fontWeight: 500 }}>
+              #{t}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div style={{ fontSize: 11, color: "#9B9A97", marginBottom: 12 }}>{timeAgo(post.timestamp)}</div>
+
+      <div style={{ display: "flex", gap: 20, paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
+        <button onClick={handleLike} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: liked ? "#E25555" : "#9B9A97", fontSize: 13, fontWeight: 500 }}>
+          {Icons.heart({ size: 16, fill: liked ? "#E25555" : "none", stroke: liked ? "#E25555" : "currentColor" })} {likeCount}
+        </button>
+        <button onClick={() => setShowComments(!showComments)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500 }}>
+          {Icons.message({ size: 16 })} {comments.length}
+        </button>
+      </div>
+
+      {showComments && (
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            <input
+              value={newComment} onChange={(e) => setNewComment(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addComment()}
+              placeholder="Write a comment..."
+              style={{ flex: 1, padding: "8px 14px", borderRadius: 20, border: "1px solid #E8E7E4", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: "'DM Sans', sans-serif" }}
+            />
+            <button onClick={addComment} disabled={!newComment.trim()} style={{ padding: "8px", borderRadius: "50%", background: newComment.trim() ? "#37352F" : "#E8E7E4", border: "none", cursor: newComment.trim() ? "pointer" : "default", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {Icons.send({ size: 14 })}
+            </button>
+          </div>
+          {comments.map((c) => (
+            <div key={c.id} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <Avatar name={c.user} size={28} />
+              <div style={{ flex: 1, background: "#F7F7F5", padding: "8px 12px", borderRadius: "0 10px 10px 10px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>{c.user}</span>
+                  <span style={{ fontSize: 10, color: "#9B9A97" }}>{timeAgo(c.time)}</span>
+                </div>
+                <p style={{ fontSize: 13, color: "#5F5E5B", margin: 0 }}>{c.text}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
+// DASHBOARD
+// ============================================================================
+const Dashboard = ({ user, onLogout }) => {
+  const [view, setView] = useState("home");
+  const [posts, setPosts] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [connections, setConnections] = useState([]);
+  const [myFollowers, setMyFollowers] = useState([]);
+  const [myFollowing, setMyFollowing] = useState([]);
+  const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
+  const [newPost, setNewPost] = useState("");
+  const [mobileMenu, setMobileMenu] = useState(false);
+  const [rsvps, setRsvps] = useState(new Set());
+  const [eventModal, setEventModal] = useState(false);
+  const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
+  const [helpRequests, setHelpRequests] = useState([]);
+  const [helpModal, setHelpModal] = useState(false);
+  const [selectedHelp, setSelectedHelp] = useState(null);
+  const [helpResponse, setHelpResponse] = useState("");
+  const [newHelp, setNewHelp] = useState({ title: "", description: "", category: "General", urgency: "Low" });
+  const [profileModal, setProfileModal] = useState(false);
+  const [editProfile, setEditProfile] = useState({ ...user });
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [feedSort, setFeedSort] = useState("new");
+  const [groupSearchQuery, setGroupSearchQuery] = useState("");
+  const [groupTab, setGroupTab] = useState("all");
+  const [groupRequestModal, setGroupRequestModal] = useState(false);
+  const [newGroupCity, setNewGroupCity] = useState("");
+  const [communityTab, setCommunityTab] = useState("feed");
+  const [eventViewMode, setEventViewMode] = useState("all");
+  const [eventCityFilter, setEventCityFilter] = useState("All");
+  // Messages state
+  const [selectedConvo, setSelectedConvo] = useState(null);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState({});
+  const [convos, setConvos] = useState([]);
+  const [convosLoaded, setConvosLoaded] = useState(false);
+  const [chatSettings, setChatSettings] = useState(false);
+  const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  // Notification & Settings state
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsModal, setSettingsModal] = useState(null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
+  const [notifications, setNotifications] = useState([]);
+  const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone" });
+  const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: false });
+  const [accountName, setAccountName] = useState(user.name);
+  // Filter modal state
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
+  const [feedFilters, setFeedFilters] = useState({ hometown: "", occupation: "All", yearsAbroad: "All", community: "All" });
+  // Docs state
+  const [docModal, setDocModal] = useState(false);
+  const [newDoc, setNewDoc] = useState({ title: "", city: "", category: "General", excerpt: "" });
+  const MOCK_DOCS = [];
+  const [docs, setDocs] = useState([]);
+  const [docCityFilter, setDocCityFilter] = useState("All");
+  const [selectedDoc, setSelectedDoc] = useState(null);
+  const [docComment, setDocComment] = useState("");
+  const [docLiked, setDocLiked] = useState(false);
+  const [reportConfirm, setReportConfirm] = useState(null); // { type, id, name }
+  const [selectedMarketItem, setSelectedMarketItem] = useState(null);
+  const [expandedMarketItem, setExpandedMarketItem] = useState(null);
+  const [contactMsg, setContactMsg] = useState("");
+  // Market state
+  const [marketSearch, setMarketSearch] = useState("");
+  const [marketCategory, setMarketCategory] = useState("All");
+  const [marketCityFilter, setMarketCityFilter] = useState("All");
+  const [marketModal, setMarketModal] = useState(false);
+  const [newMarket, setNewMarket] = useState({ title: "", price: "", category: "Items", city: "", description: "" });
+  const [marketPhotos, setMarketPhotos] = useState([]);
+  const MOCK_MARKET = [];
+  const [marketItems, setMarketItems] = useState([]);
+  // Help state with pre-populated data
+  const MOCK_HELP = [];
+
+  // Initialize help requests on mount
+  useEffect(() => {}, []);
+  const [networkSearch, setNetworkSearch] = useState("");
+  const [networkCityFilter, setNetworkCityFilter] = useState("All");
+  const [networkHometownFilter, setNetworkHometownFilter] = useState("All");
+  const [networkNearby, setNetworkNearby] = useState(false);
+  const [sentNamaste, setSentNamaste] = useState(new Set());
+
+  // Network users loaded from DB
+  const MOCK_NETWORK_USERS = [];
+
+  const isNetworkFilterActive = networkSearch.trim() !== "" || networkCityFilter !== "All" || networkHometownFilter !== "All" || networkNearby;
+
+  const filteredNetworkUsers = MOCK_NETWORK_USERS.filter((u) => {
+    if (u.id === user.id) return false;
+    const matchesSearch = networkSearch === "" ||
+      u.name.toLowerCase().includes(networkSearch.toLowerCase()) ||
+      u.profession.toLowerCase().includes(networkSearch.toLowerCase());
+    const matchesCity = networkCityFilter === "All" || u.location.includes(networkCityFilter);
+    const matchesHometown = networkHometownFilter === "All" || u.hometown.includes(networkHometownFilter);
+    const matchesNearby = !networkNearby || u.location.split(",")[0] === (user.location || "").split(",")[0];
+    return matchesSearch && matchesCity && matchesHometown && matchesNearby;
+  });
+
+  const clearNetworkFilters = () => {
+    setNetworkSearch("");
+    setNetworkCityFilter("All");
+    setNetworkHometownFilter("All");
+    setNetworkNearby(false);
+  };
+
+  const handleSendNamaste = async (userId) => {
+    setSentNamaste((prev) => { const s = new Set(prev); s.add(userId); return s; });
+    try { await api.sendNamaste(userId); } catch (e) {}
+  };
+
+  // Load data on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const dbPosts = await api.getPosts();
+        if (dbPosts && dbPosts.length) {
+          setPosts(dbPosts.map(p => ({
+            id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
+            tags: p.tags || [], likes: p.likes_count || 0, comments: [],
+            timestamp: new Date(p.created_at).getTime(),
+            author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown } : { name: "User" },
+          })));
+        } else { setPosts([]); }
+        const dbGroups = await api.getGroups();
+        if (dbGroups && dbGroups.length) {
+          const myGids = await api.getMyGroupIds();
+          setGroups(dbGroups.map(g => ({ id: g.id, name: g.name, description: g.description, members: g.members_count, category: g.category, joined: myGids.includes(g.id) })));
+        } else { setGroups([]); }
+        const dbEvents = await api.getEvents();
+        if (dbEvents && dbEvents.length) {
+          setEvents(dbEvents.map(e => ({ id: e.id, title: e.title, date: e.date, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description })));
+          const myR = await api.getMyRsvps();
+          setRsvps(new Set(myR));
+        } else { setEvents([]); }
+
+        // Load help requests
+        try {
+          const dbHelp = await api.getHelpRequests();
+          if (dbHelp && dbHelp.length) {
+            setHelpRequests(dbHelp.map(h => ({ id: h.id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status, user: h.profiles?.name || "User", timestamp: new Date(h.created_at).getTime(), responses: h.responses_count || 0 })));
+          }
+        } catch (e) {}
+
+        // Load connections (followers/following)
+        try {
+          const dbConns = await api.getMyConnections();
+          if (dbConns && dbConns.length) {
+            const followers = dbConns.filter(c => c.recipient_id === user.id).map(c => c.requester || { name: "User" });
+            const following = dbConns.filter(c => c.requester_id === user.id).map(c => c.recipient || { name: "User" });
+            // Also count where I'm the recipient (someone sent me a request I accepted)
+            const followers2 = dbConns.filter(c => c.requester?.id !== user.id).map(c => c.requester?.id === user.id ? c.recipient : c.requester).filter(Boolean);
+            const following2 = dbConns.filter(c => c.requester?.id === user.id).map(c => c.recipient).filter(Boolean);
+            setMyFollowers(followers2.length ? followers2 : followers);
+            setMyFollowing(following2.length ? following2 : following);
+          }
+        } catch (e) {}
+
+        // Load docs
+        try {
+          const dbDocs = await api.getDocs();
+          if (dbDocs && dbDocs.length) {
+            setDocs(dbDocs.map(d => ({ id: d.id, title: d.title, excerpt: d.excerpt, content: d.content || d.excerpt, category: d.category, readTime: d.read_time, author: d.profiles?.name || "User", profession: d.profiles?.profession || "", city: d.city, likes: d.likes_count || 0, timestamp: new Date(d.created_at).toLocaleDateString(), comments: [] })));
+          }
+        } catch (e) {}
+
+        // Load marketplace
+        try {
+          const dbMarket = await api.getMarketItems();
+          if (dbMarket && dbMarket.length) {
+            setMarketItems(dbMarket.map(m => ({ id: m.id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", date: new Date(m.created_at).toLocaleDateString(), color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] })));
+          }
+        } catch (e) {}
+      } catch (err) {
+        console.log("Falling back to defaults:", err.message);
+        setPosts([]); setGroups([]); setEvents([]);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {}, [posts]);
+
+  const createPost = async () => {
+    if (!newPost.trim()) return;
+    const tags = [];
+    const hashtags = newPost.match(/#(\w+)/g);
+    if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
+    const groupName = selectedGroup ? selectedGroup.name : null;
+    const post = {
+      id: "p_" + Date.now(), userId: user.id, content: newPost,
+      author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
+      likes: 0, comments: [], tags, timestamp: Date.now(), groupName,
+    };
+    setPosts([post, ...posts]);
+    setNewPost("");
+    try { const r = await api.createPost(newPost, tags); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch (e) {}
+  };
+
+  const deletePost = async (id) => {
+    setPosts(posts.filter((p) => p.id !== id));
+    try { await api.deletePost(id); } catch (e) {}
+  };
+
+  const createEvent = async () => {
+    if (!newEvent.title || !newEvent.date) return;
+    const e = {
+      id: "e_" + Date.now(), title: newEvent.title,
+      date: `${newEvent.date} • ${newEvent.time || "TBD"}`,
+      location: newEvent.location || "TBD", attendees: 1,
+      organizer: user.name, description: newEvent.description,
+    };
+    setEvents([e, ...events]);
+    setNewEvent({ title: "", date: "", time: "", location: "", description: "", link: "" });
+    setEventModal(false);
+    try { await api.createEvent({ title: newEvent.title, date: `${newEvent.date} • ${newEvent.time || "TBD"}`, location: newEvent.location, description: newEvent.description, organizer_name: user.name }); } catch (er) {}
+  };
+
+  const toggleRsvp = async (id) => {
+    const s = new Set(rsvps);
+    if (s.has(id)) s.delete(id); else s.add(id);
+    setRsvps(s);
+    try { await api.toggleRsvp(id); } catch (e) {}
+  };
+
+  const toggleGroup = async (id) => {
+    const g = groups.find(x => x.id === id);
+    const newJoined = !g?.joined;
+    const updated = groups.map((x) => x.id === id ? { ...x, joined: newJoined } : x);
+    setGroups(updated);
+    // Also update selectedGroup if it's the one being toggled
+    if (selectedGroup && selectedGroup.id === id) {
+      setSelectedGroup({ ...selectedGroup, joined: newJoined });
+    }
+    try { if (g?.joined) await api.leaveGroup(id); else await api.joinGroup(id); } catch (e) {}
+  };
+
+  const createHelp = async () => {
+    if (!newHelp.title || !newHelp.description) return;
+    const h = {
+      id: "h_" + Date.now(), ...newHelp, user: user.name,
+      timestamp: Date.now(), responses: 0, status: "Open",
+    };
+    setHelpRequests([h, ...helpRequests]);
+    setNewHelp({ title: "", description: "", category: "General", urgency: "Low", city: "" });
+    setHelpModal(false);
+    try { await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgency }); } catch (e) {}
+  };
+
+  const saveProfileChanges = async () => {
+    const updated = { ...user, ...editProfile };
+    try {
+      await api.updateProfile({
+        name: updated.name, location: updated.location, hometown: updated.hometown,
+        profession: updated.profession, linkedin_url: updated.linkedinUrl,
+      });
+    } catch (e) { console.log("Profile update:", e.message); }
+    localStorage.setItem("indin_profile_cache", JSON.stringify(updated));
+    // Update the user state so UI reflects changes immediately
+    Object.assign(user, updated);
+    setProfileModal(false);
+  };
+
+  // Styles
+  const font = "'DM Sans', sans-serif";
+  const navBtn = (v) => ({
+    padding: "7px 12px", borderRadius: 20, border: view === v ? "1px solid #E0E0DE" : "1px solid transparent",
+    fontSize: 12, fontWeight: view === v ? 600 : 500,
+    background: view === v ? "#fff" : "transparent",
+    color: view === v ? "#37352F" : "#9B9A97",
+    cursor: "pointer", fontFamily: font, transition: "all 0.2s ease",
+    whiteSpace: "nowrap", boxShadow: view === v ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
+  });
+  const inputStyle = {
+    width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE",
+    fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F",
+    fontFamily: font, boxSizing: "border-box",
+  };
+  const btnPrimary = {
+    padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600,
+    background: "#37352F", color: "#fff", cursor: "pointer", fontFamily: font,
+    display: "inline-flex", alignItems: "center", gap: 6,
+  };
+
+  // ---- RENDER CONTENT ----
+  const renderContent = () => {
+    switch (view) {
+      case "home":
+        return (
+          <div style={{ maxWidth: 600, margin: "0 auto" }}>
+            {/* Header with Filters button */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 2, fontFamily: font }}>Home Feed</h2>
+                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Updates from the global community</p>
+              </div>
+              <button onClick={() => setFilterModalOpen(true)} style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
+                borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff",
+                fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
+              }}>
+                {Icons.filter({ size: 14 })} Filters
+              </button>
+            </div>
+
+            {/* Create Post Box - matching screenshot layout */}
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "18px 20px", marginBottom: 16 }}>
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <Avatar name={user.name} size={40} />
+                <input
+                  value={newPost} onChange={(e) => setNewPost(e.target.value)}
+                  placeholder={`What's on your mind, ${user.name.split(" ")[0]}?`}
+                  style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, outline: "none", fontFamily: font, color: "#37352F" }}
+                  onKeyDown={(e) => e.key === "Enter" && createPost()}
+                />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, paddingTop: 14, borderTop: "1px solid #F0EFED" }}>
+                <input type="file" accept="image/*" id="post-photo-upload" style={{ display: "none" }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const url = await api.uploadPostImage(file);
+                      setNewPost(prev => prev + (prev ? "\n" : "") + `[Photo attached]`);
+                    } catch (err) { alert("Upload failed: " + err.message); }
+                  }}
+                />
+                <label htmlFor="post-photo-upload" style={{
+                  display: "flex", alignItems: "center", gap: 6, background: "none", border: "none",
+                  cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500, fontFamily: font,
+                }}>
+                  {Icons.image({ size: 16 })} Add Photo
+                </label>
+                <button onClick={createPost} disabled={!newPost.trim()} style={{
+                  padding: "8px 24px", borderRadius: 8, border: "1px solid #E0E0DE",
+                  fontSize: 14, fontWeight: 500, fontFamily: font, cursor: newPost.trim() ? "pointer" : "default",
+                  background: newPost.trim() ? "#37352F" : "#fff",
+                  color: newPost.trim() ? "#fff" : "#9B9A97",
+                  transition: "all 0.15s",
+                }}>
+                  Post
+                </button>
+              </div>
+            </div>
+
+            {/* Viral / New Toggle - matching screenshot */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 20 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "viral" ? "#37352F" : "#9B9A97", fontFamily: font }}>Viral</span>
+              <button
+                onClick={() => setFeedSort(feedSort === "new" ? "viral" : "new")}
+                style={{
+                  width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
+                  background: "#D4D4D2", position: "relative", padding: 0, transition: "background 0.2s",
+                }}
+              >
+                <div style={{
+                  width: 18, height: 18, borderRadius: "50%", background: "#37352F",
+                  position: "absolute", top: 3,
+                  left: feedSort === "new" ? 23 : 3,
+                  transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                }} />
+              </button>
+              <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "new" ? "#37352F" : "#9B9A97", fontFamily: font }}>New</span>
+            </div>
+
+            {/* Feed List */}
+            {[...posts].sort((a, b) => feedSort === "viral" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0)).map((p) => (
+              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />
+            ))}
+          </div>
+        );
+
+      case "network":
+        return (
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            {/* Header */}
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 4, fontFamily: font }}>Find Indians Abroad</h2>
+            <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 20, fontFamily: font }}>Connect with people from your community.</p>
+            <InfoBanner text="Search and connect with Indians in your city. Send a Namaste request to start a conversation." />
+
+            {/* Search & Filters Card */}
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "20px 20px 16px", marginBottom: 24 }}>
+              {/* Search Input */}
+              <div style={{ position: "relative", marginBottom: 14 }}>
+                <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>
+                  {Icons.search({ size: 16 })}
+                </div>
+                <input
+                  type="text"
+                  value={networkSearch}
+                  onChange={(e) => setNetworkSearch(e.target.value)}
+                  placeholder="Search by name, profession, or keyword..."
+                  style={{
+                    width: "100%", padding: "12px 16px 12px 40px", borderRadius: 8,
+                    border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8",
+                    outline: "none", color: "#37352F", fontFamily: font, boxSizing: "border-box",
+                  }}
+                />
+              </div>
+
+              {/* Filter Row */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                {/* Current City dropdown */}
+                <div style={{ position: "relative" }}>
+                  <select
+                    value={networkCityFilter}
+                    onChange={(e) => setNetworkCityFilter(e.target.value)}
+                    style={{
+                      padding: "7px 28px 7px 12px", fontSize: 12, border: "1px solid #E0E0DE",
+                      borderRadius: 6, background: "#fff", color: "#5F5E5B", cursor: "pointer",
+                      fontFamily: font, appearance: "none", outline: "none",
+                    }}
+                  >
+                    <option value="All">Current City: All</option>
+                    {GLOBAL_CITIES.map((c) => <option key={c} value={c.split(",")[0]}>{c}</option>)}
+                  </select>
+                  <div style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                </div>
+
+                {/* Hometown dropdown */}
+                <div style={{ position: "relative" }}>
+                  <select
+                    value={networkHometownFilter}
+                    onChange={(e) => setNetworkHometownFilter(e.target.value)}
+                    style={{
+                      padding: "7px 28px 7px 12px", fontSize: 12, border: "1px solid #E0E0DE",
+                      borderRadius: 6, background: "#fff", color: "#5F5E5B", cursor: "pointer",
+                      fontFamily: font, appearance: "none", outline: "none",
+                    }}
+                  >
+                    <option value="All">Hometown: All</option>
+                    {INDIAN_CITIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <div style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                </div>
+
+                {/* Nearby button */}
+                <button
+                  onClick={() => setNetworkNearby(!networkNearby)}
+                  style={{
+                    padding: "7px 14px", fontSize: 12, borderRadius: 6, cursor: "pointer",
+                    fontFamily: font, display: "flex", alignItems: "center", gap: 5, fontWeight: 500,
+                    border: networkNearby ? "1px solid #37352F" : "1px solid #E0E0DE",
+                    background: networkNearby ? "#37352F" : "#fff",
+                    color: networkNearby ? "#fff" : "#5F5E5B",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {Icons.mapPin({ size: 12 })} Nearby
+                </button>
+
+                {/* Clear All */}
+                {isNetworkFilterActive && (
+                  <button
+                    onClick={clearNetworkFilters}
+                    style={{
+                      background: "none", border: "none", color: "#E25555", fontSize: 12,
+                      fontWeight: 500, cursor: "pointer", fontFamily: font, marginLeft: "auto",
+                    }}
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Results */}
+            {isNetworkFilterActive ? (
+              filteredNetworkUsers.length > 0 ? (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }} className="network-grid">
+                  {filteredNetworkUsers.map((u) => (
+                    <div key={u.id} style={{
+                      background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4",
+                      padding: "28px 24px 20px", textAlign: "center", display: "flex", flexDirection: "column",
+                      alignItems: "center", transition: "box-shadow 0.15s",
+                    }}
+                    onMouseOver={(e) => (e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)")}
+                    onMouseOut={(e) => (e.currentTarget.style.boxShadow = "none")}
+                    >
+                      {/* Avatar */}
+                      <Avatar name={u.name} size={76} />
+
+                      {/* Name + verified badge + NRI badge */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 14, marginBottom: 2, flexWrap: "wrap", justifyContent: "center" }}>
+                        <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>{u.name}</h3>
+                        {u.linkedinUrl && (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="#22C55E" stroke="none">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                          </svg>
+                        )}
+                        <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em",
+                          background: u.yearsAbroad !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
+                          color: u.yearsAbroad !== "Not lived abroad" ? "#22A06B" : "#E65100",
+                          border: `1px solid ${u.yearsAbroad !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
+                        }}>{u.yearsAbroad !== "Not lived abroad" ? "NRI" : "IN"}</span>
+                      </div>
+
+                      {/* Profession */}
+                      <p style={{ fontSize: 13, color: "#5F5E5B", marginBottom: 14, fontFamily: font }}>{u.profession}</p>
+
+                      {/* Location pills */}
+                      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 6, marginBottom: 6 }}>
+                        <span style={{
+                          fontSize: 11, color: "#5F5E5B", background: "#F7F7F5", border: "1px solid #EDEDEB",
+                          padding: "4px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: font,
+                        }}>
+                          {Icons.mapPin({ size: 10 })} {u.location.split(",")[0]}
+                        </span>
+                        <span style={{
+                          fontSize: 11, color: "#5F5E5B", background: "#F7F7F5", border: "1px solid #EDEDEB",
+                          padding: "4px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: font,
+                        }}>
+                          {Icons.globe({ size: 10 })} From {u.hometown.split(",")[0]}
+                        </span>
+                      </div>
+                      {u.yearsAbroad && (
+                        <span style={{
+                          fontSize: 11, color: "#5F5E5B", background: "#F7F7F5", border: "1px solid #EDEDEB",
+                          padding: "4px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: font, marginBottom: 16,
+                        }}>
+                          {Icons.clock({ size: 10 })} {u.yearsAbroad}
+                        </span>
+                      )}
+
+                      {/* Followers / Following */}
+                      <div style={{
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                        fontSize: 13, fontFamily: font, padding: "14px 0", borderTop: "1px solid #F0EFED",
+                        width: "100%", marginBottom: 16,
+                      }}>
+                        <span><b style={{ color: "#37352F" }}>{u.followers}</b> <span style={{ color: "#9B9A97" }}>followers</span></span>
+                        <span style={{ color: "#D4D4D2" }}>·</span>
+                        <span><b style={{ color: "#37352F" }}>{u.following}</b> <span style={{ color: "#9B9A97" }}>following</span></span>
+                      </div>
+
+                      {/* Action buttons - Namaste + Message */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+                        <button
+                          onClick={() => handleSendNamaste(u.id)}
+                          disabled={sentNamaste.has(u.id)}
+                          style={{
+                            flex: 1, padding: "10px 0", borderRadius: 8, border: "none",
+                            fontSize: 13, fontWeight: 600, fontFamily: font, cursor: sentNamaste.has(u.id) ? "default" : "pointer",
+                            background: sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
+                            color: sentNamaste.has(u.id) ? "#9B9A97" : "#fff",
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                            transition: "all 0.15s",
+                          }}
+                        >
+                          {sentNamaste.has(u.id) ? (
+                            <>{Icons.check({ size: 14 })} Sent</>
+                          ) : (
+                            <>
+                              {Icons.users({ size: 14 })} Namaste
+                            </>
+                          )}
+                        </button>
+                        <button onClick={async () => {
+                          try {
+                            const convo = await api.getOrCreateConversation(u.id);
+                            if (convo) {
+                              setConvos(prev => {
+                                if (prev.find(c => c.id === convo.id)) return prev;
+                                return [{ id: convo.id, name: u.name, otherUserId: u.id, lastMsg: "", time: "", unread: false }, ...prev];
+                              });
+                              setSelectedConvo(convo.id);
+                              setView("messages");
+                            }
+                          } catch(e) { setView("messages"); }
+                        }} style={{
+                          padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE",
+                          background: "#fff", cursor: "pointer", color: "#5F5E5B", display: "flex",
+                          alignItems: "center", justifyContent: "center",
+                          transition: "all 0.1s",
+                        }}
+                        onMouseOver={(e) => { e.currentTarget.style.background = "#F7F7F5"; e.currentTarget.style.color = "#37352F"; }}
+                        onMouseOut={(e) => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#5F5E5B"; }}
+                        >
+                          {Icons.message({ size: 16 })}
+                        </button>
+                        <button onClick={async () => { setReportConfirm({ type: "user", id: u.id }); }} style={{ padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2", display: "flex", alignItems: "center" }}>
+                          {Icons.flag({ size: 14 })}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* No results state */
+                <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4" }}>
+                  <p style={{ fontSize: 14, fontFamily: font }}>No users found matching your criteria.</p>
+                  <button
+                    onClick={clearNetworkFilters}
+                    style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", fontSize: 13, cursor: "pointer", marginTop: 8, fontFamily: font }}
+                  >
+                    Clear Filters
+                  </button>
+                </div>
+              )
+            ) : (
+              /* Empty / Initial State - matching screenshot 2 */
+              <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "48px 32px", textAlign: "center" }}>
+                {/* Blue search icon circle */}
+                <div style={{
+                  width: 72, height: 72, borderRadius: "50%", background: "#EDF4FF",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20,
+                }}>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#5B9CFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                  </svg>
+                </div>
+
+                <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 10, fontFamily: font }}>Find your community</h3>
+                <p style={{ fontSize: 14, color: "#9B9A97", maxWidth: 440, margin: "0 auto 28px", lineHeight: 1.6, fontFamily: font }}>
+                  Search for people by name, profession, or location. Use the filters to find people from your hometown or current city.
+                </p>
+
+                {/* Search Tips box */}
+                <div style={{
+                  background: "#F7F7F5", borderRadius: 10, padding: "18px 22px", maxWidth: 360, margin: "0 auto",
+                  textAlign: "left", border: "1px solid #EDEDEB",
+                }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{ flexShrink: 0, marginTop: 1, color: "#9B9A97" }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="16" x2="12" y2="12"/>
+                        <line x1="12" y1="8" x2="12.01" y2="8"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Search Tips:</p>
+                      <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#5F5E5B", lineHeight: 1.8, fontFamily: font }}>
+                        <li>Type "Engineer" to find professionals</li>
+                        <li>Select "Mumbai" in Hometown filter</li>
+                        <li>Use "Nearby" to find locals</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+
+      case "groups":
+        if (selectedGroup) {
+          const groupPosts = posts.filter((p) => {
+            const name = selectedGroup.name.toLowerCase();
+            return p.content.toLowerCase().includes(name) || p.tags.some((t) => name.includes(t.toLowerCase()));
+          });
+          const thumbColors = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
+          const sgColor = thumbColors[groups.findIndex((g) => g.id === selectedGroup.id) % thumbColors.length];
+
+          return (
+            <div style={{ maxWidth: 700, margin: "0 auto" }}>
+              {/* Back link */}
+              <button onClick={() => { setSelectedGroup(null); setCommunityTab("feed"); }} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#9B9A97", background: "none", border: "none", cursor: "pointer", marginBottom: 16, fontFamily: font, fontWeight: 500 }}>
+                {Icons.chevronLeft({ size: 16 })} Back to Communities
+              </button>
+
+              {/* Hero Banner */}
+              <div style={{ borderRadius: 12, overflow: "hidden", marginBottom: 0, border: "1px solid #E8E7E4", background: "#fff" }}>
+                <div style={{
+                  height: 140, background: `linear-gradient(135deg, ${sgColor}CC, ${sgColor}88)`,
+                  display: "flex", flexDirection: "column", justifyContent: "flex-end", padding: "20px 24px",
+                  position: "relative",
+                }}>
+                  <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.25)" }} />
+                  <h1 style={{ fontSize: 26, fontWeight: 700, color: "#fff", position: "relative", zIndex: 1, fontFamily: font }}>{selectedGroup.name}</h1>
+                  <p style={{ fontSize: 13, color: "rgba(255,255,255,0.85)", position: "relative", zIndex: 1, fontFamily: font }}>{selectedGroup.category} Community</p>
+                </div>
+
+                {/* Description + Joined + Stats */}
+                <div style={{ padding: "18px 24px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+                    <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.55, fontFamily: font, flex: 1 }}>{selectedGroup.description}</p>
+                    <button
+                      onClick={() => toggleGroup(selectedGroup.id)}
+                      style={{
+                        padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer", flexShrink: 0,
+                        border: selectedGroup.joined ? "1px solid #E0E0DE" : "none",
+                        background: selectedGroup.joined ? "#fff" : "#37352F",
+                        color: selectedGroup.joined ? "#5F5E5B" : "#fff",
+                      }}
+                    >
+                      {selectedGroup.joined ? "Joined" : "Join Community"}
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", gap: 16, marginTop: 14, fontSize: 12, color: "#9B9A97" }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.users({ size: 14 })} {selectedGroup.joined ? (groups.filter(g => g.joined).length > 0 ? "You + others" : "1") : "0"} joined</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.shield({ size: 14 })} Admin Moderated</span>
+                  </div>
+
+                  {/* Community Guidelines */}
+                  <div style={{ marginTop: 20, padding: "16px 18px", background: "#F7F7F5", borderRadius: 10, border: "1px solid #EDEDEB" }}>
+                    <h4 style={{ fontSize: 11, fontWeight: 800, color: "#37352F", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, display: "flex", alignItems: "center", gap: 6, fontFamily: font }}>
+                      {Icons.shield({ size: 13 })} Community Guidelines
+                    </h4>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 20px" }}>
+                      {[
+                        "Be respectful and kind to all members. Harassment is not tolerated.",
+                        "No spam, self-promotion, or irrelevant links. Keep it clean.",
+                        "Verify information before sharing, especially regarding visas/legal.",
+                        "Report inappropriate behavior to admins immediately.",
+                      ].map((rule, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "#5F5E5B", lineHeight: 1.5, fontFamily: font }}>
+                          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#9B9A97", marginTop: 6, flexShrink: 0 }} />
+                          {rule}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Feed / Members Tabs */}
+              <div style={{ display: "flex", gap: 24, borderBottom: "1px solid #E8E7E4", margin: "24px 0 20px" }}>
+                {["feed", "members"].map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setCommunityTab(tab)}
+                    style={{
+                      padding: "0 0 12px", border: "none", background: "none", fontSize: 14, fontWeight: 500,
+                      color: communityTab === tab ? "#37352F" : "#9B9A97", cursor: "pointer", fontFamily: font,
+                      borderBottom: communityTab === tab ? "2px solid #37352F" : "2px solid transparent",
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {tab === "feed" ? "Feed" : "Members"}
+                  </button>
+                ))}
+              </div>
+
+              {communityTab === "feed" ? (
+                <>
+                  {/* Community post box */}
+                  <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "16px 20px", marginBottom: 20 }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <Avatar name={user.name} size={36} />
+                      <input
+                        value={newPost} onChange={(e) => setNewPost(e.target.value)}
+                        placeholder={`Share something with ${selectedGroup.name}...`}
+                        style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, outline: "none", fontFamily: font }}
+                        onKeyDown={(e) => e.key === "Enter" && createPost()}
+                      />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
+                      <button style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>
+                        {Icons.image({ size: 14 })} Add Photo
+                      </button>
+                      <button onClick={createPost} disabled={!newPost.trim()} style={{
+                        padding: "7px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, fontFamily: font,
+                        background: newPost.trim() ? "#37352F" : "#fff", color: newPost.trim() ? "#fff" : "#9B9A97", cursor: newPost.trim() ? "pointer" : "default",
+                      }}>
+                        Post
+                      </button>
+                    </div>
+                  </div>
+
+                  {groupPosts.length > 0 ? (
+                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />)
+                  ) : (
+                    <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
+                      No posts in this community yet. Be the first to say hello!
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* Members Tab */
+                (() => {
+                  const cityName = (selectedGroup.name || "").replace("Indians in ", "");
+                  const localMembers = MOCK_NETWORK_USERS.filter(u => (u.location || "").toLowerCase().includes(cityName.toLowerCase()));
+                  const outsideMembers = MOCK_NETWORK_USERS.filter(u => !(u.location || "").toLowerCase().includes(cityName.toLowerCase()));
+                  const MemberCard = ({ u, isLocal }) => (
+                    <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                      <Avatar name={u.name} size={44} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name}</h4>
+                          {isLocal && <span style={{ fontSize: 9, fontWeight: 600, padding: "2px 6px", borderRadius: 4, background: "#E3FCEF", color: "#22A06B", border: "1px solid #B5E4CA" }}>LOCAL</span>}
+                          <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 3,
+                            background: u.yearsAbroad !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
+                            color: u.yearsAbroad !== "Not lived abroad" ? "#22A06B" : "#E65100",
+                            border: `1px solid ${u.yearsAbroad !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
+                          }}>{u.yearsAbroad !== "Not lived abroad" ? "NRI" : "IN"}</span>
+                        </div>
+                        <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{u.profession}</p>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, fontSize: 11, color: "#9B9A97" }}>
+                          {Icons.mapPin({ size: 10 })} {(u.location || "").split(",")[0]}
+                        </div>
+                      </div>
+                      <button onClick={() => handleSendNamaste(u.id)} disabled={sentNamaste.has(u.id)}
+                        style={{ padding: 8, borderRadius: "50%", border: "none", cursor: sentNamaste.has(u.id) ? "default" : "pointer", flexShrink: 0, background: sentNamaste.has(u.id) ? "#F0EFED" : "#37352F", color: sentNamaste.has(u.id) ? "#9B9A97" : "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {sentNamaste.has(u.id) ? Icons.check({ size: 16 }) : Icons.users({ size: 16 })}
+                      </button>
+                    </div>
+                  );
+                  return (
+                    <div>
+                      {localMembers.length > 0 && (
+                        <>
+                          <h4 style={{ fontSize: 13, fontWeight: 700, color: "#22A06B", marginBottom: 10, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.mapPin({ size: 14, stroke: "#22A06B" })} Living in {cityName} ({localMembers.length})</h4>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+                            {localMembers.map(u => <MemberCard key={u.id} u={u} isLocal={true} />)}
+                          </div>
+                        </>
+                      )}
+                      {outsideMembers.length > 0 && (
+                        <>
+                          <h4 style={{ fontSize: 13, fontWeight: 700, color: "#9B9A97", marginBottom: 10, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.globe({ size: 14, stroke: "#9B9A97" })} From other cities ({outsideMembers.length})</h4>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                            {outsideMembers.map(u => <MemberCard key={u.id} u={u} isLocal={false} />)}
+                          </div>
+                        </>
+                      )}
+                      {localMembers.length === 0 && outsideMembers.length === 0 && (
+                        <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, fontFamily: font }}>No members yet. Be the first to join!</div>
+                      )}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+          );
+        }
+
+        // Groups List View
+        const myGroups = groups.filter(g => g.joined);
+        const groupTabList = groupTab === "my" ? myGroups.filter(g => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase())) : groups.filter((g) => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()));
+        const thumbColorsAll = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
+
+        return (
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            {/* Header with Request New + Search */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+              <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Communities</h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button
+                  onClick={() => setGroupRequestModal(true)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 6,
+                    border: "1px solid #E0E0DE", background: "#fff", fontSize: 12, fontWeight: 600, color: "#37352F",
+                    cursor: "pointer", fontFamily: font,
+                  }}
+                >
+                  {Icons.plus({ size: 13 })} Request New
+                </button>
+                <div style={{ position: "relative" }}>
+                  <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>
+                    {Icons.search({ size: 14 })}
+                  </div>
+                  <input
+                    value={groupSearchQuery} onChange={(e) => setGroupSearchQuery(e.target.value)}
+                    placeholder="Search..."
+                    style={{
+                      padding: "7px 12px 7px 30px", fontSize: 12, border: "1px solid #E0E0DE",
+                      borderRadius: 6, background: "#fff", outline: "none", width: 160, fontFamily: font, color: "#37352F",
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* My Groups / All Groups tabs */}
+            <div style={{ display: "flex", gap: 0, marginBottom: 20, background: "#fff", borderRadius: 8, border: "1px solid #E0E0DE", overflow: "hidden", width: "fit-content" }}>
+              {[{ key: "all", label: "All Communities" }, { key: "my", label: `My Groups (${myGroups.length})` }].map(t => (
+                <button key={t.key} onClick={() => setGroupTab(t.key)}
+                  style={{ padding: "8px 18px", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", fontFamily: font,
+                    background: groupTab === t.key ? "#37352F" : "#fff", color: groupTab === t.key ? "#fff" : "#5F5E5B" }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* 2-column grid of community cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              {groupTabList.map((g, i) => (
+                <div
+                  key={g.id}
+                  style={{
+                    background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4",
+                    display: "flex", flexDirection: "column", cursor: "pointer", transition: "box-shadow 0.15s", overflow: "hidden",
+                  }}
+                  onMouseOver={(e) => (e.currentTarget.style.boxShadow = "0 2px 10px rgba(0,0,0,0.06)")}
+                  onMouseOut={(e) => (e.currentTarget.style.boxShadow = "none")}
+                >
+                  {/* Card content - clickable to open */}
+                  <div onClick={() => setSelectedGroup(g)} style={{ padding: "16px 18px", flex: 1 }}>
+                    <div style={{ display: "flex", gap: 14, marginBottom: 8 }}>
+                      {/* Thumbnail */}
+                      <div style={{
+                        width: 48, height: 48, borderRadius: 8, flexShrink: 0, overflow: "hidden",
+                        background: `linear-gradient(135deg, ${thumbColorsAll[i % thumbColorsAll.length]}CC, ${thumbColorsAll[i % thumbColorsAll.length]}88)`,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="1.5">
+                          <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                          <path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
+                        </svg>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <h3 style={{ fontSize: 15, fontWeight: 600, color: "#37352F", fontFamily: font, marginBottom: 3 }}>{g.name}</h3>
+                        <span style={{ fontSize: 9, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", border: "1px solid #EDEDEB", padding: "2px 6px", borderRadius: 3 }}>
+                          {g.category}
+                        </span>
+                      </div>
+                    </div>
+                    <p style={{ fontSize: 12, color: "#9B9A97", lineHeight: 1.4, fontFamily: font, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                      {g.description}
+                    </p>
+                    <div style={{ fontSize: 12, color: "#9B9A97", display: "flex", alignItems: "center", gap: 4 }}>
+                      {Icons.users({ size: 13 })} {g.members.toLocaleString()} members
+                    </div>
+                  </div>
+
+                  {/* Join button - full width at bottom */}
+                  <div style={{ padding: "0 18px 16px" }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleGroup(g.id); }}
+                      style={{
+                        width: "100%", padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer",
+                        border: g.joined ? "1px solid #E0E0DE" : "none",
+                        background: g.joined ? "#fff" : "#37352F",
+                        color: g.joined ? "#5F5E5B" : "#fff",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      {g.joined ? "Joined" : "Join Community"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {groupTabList.length === 0 && (
+              <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", color: "#9B9A97", fontSize: 14, fontFamily: font }}>
+                No communities found.
+                <br />
+                <button onClick={() => setGroupSearchQuery("")} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", cursor: "pointer", marginTop: 8, fontSize: 13, fontFamily: font }}>
+                  Clear Search
+                </button>
+              </div>
+            )}
+          </div>
+        );
+
+      case "events":
+        const evtColors = ["#3D6B5A", "#5A4A3D", "#3D5A80", "#6B5B4E", "#4A6741"];
+        const filteredEvents = events.filter((e) => {
+          const matchesView = eventViewMode === "all" || rsvps.has(e.id);
+          const matchesCity = eventCityFilter === "All" || (e.location || "").includes(eventCityFilter);
+          return matchesView && matchesCity;
+        });
+
+        return (
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            {/* Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Events</h2>
+                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Discover festivals, meetups, and networking events.</p>
+              </div>
+              <button onClick={() => setEventModal(true)} style={btnPrimary}>
+                {Icons.plus({ size: 14 })} Host Event
+              </button>
+            </div>
+            <InfoBanner text="Browse and RSVP to events in your city. Host your own to bring the community together." />
+
+            {/* Filter bar - All Events / My RSVPs toggle + city filter */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 12, marginBottom: 20,
+              background: "#fff", padding: "8px 12px", borderRadius: 10, border: "1px solid #E8E7E4",
+            }}>
+              <div style={{ display: "flex", background: "#F0EFED", borderRadius: 6, padding: 3 }}>
+                <button
+                  onClick={() => setEventViewMode("all")}
+                  style={{
+                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font,
+                    background: eventViewMode === "all" ? "#fff" : "transparent",
+                    color: eventViewMode === "all" ? "#37352F" : "#9B9A97",
+                    boxShadow: eventViewMode === "all" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
+                  }}
+                >
+                  All Events
+                </button>
+                <button
+                  onClick={() => setEventViewMode("rsvped")}
+                  style={{
+                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font,
+                    background: eventViewMode === "rsvped" ? "#fff" : "transparent",
+                    color: eventViewMode === "rsvped" ? "#37352F" : "#9B9A97",
+                    boxShadow: eventViewMode === "rsvped" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
+                  }}
+                >
+                  My RSVPs
+                </button>
+              </div>
+              <div style={{ width: 1, height: 24, background: "#E8E7E4" }} />
+              <div style={{ position: "relative" }}>
+                <select
+                  value={eventCityFilter}
+                  onChange={(e) => setEventCityFilter(e.target.value)}
+                  style={{
+                    padding: "6px 28px 6px 10px", fontSize: 12, border: "none", background: "transparent",
+                    color: "#37352F", fontWeight: 500, cursor: "pointer", fontFamily: font, appearance: "none", outline: "none",
+                  }}
+                >
+                  <option value="All">All</option>
+                  {GLOBAL_CITIES.map((c) => <option key={c} value={c.split(",")[0]}>{c}</option>)}
+                </select>
+                <div style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+              </div>
+            </div>
+
+            {/* Event Cards */}
+            {filteredEvents.length > 0 ? filteredEvents.map((e, idx) => {
+              const datePart = (e.date || "").split("•")[0].trim();
+              const timePart = (e.date || "").split("•")[1]?.trim() || "TBD";
+              const timeMain = timePart.split(" ")[0] || timePart;
+              const timeAmPm = timePart.split(" ")[1] || "";
+              const locMain = (e.location || "").split(",")[0].trim();
+              const locCity = (e.location || "").split(",").slice(1).join(",").trim();
+              const evtColor = evtColors[idx % evtColors.length];
+
+              return (
+                <div key={e.id} style={{
+                  background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden",
+                  display: "flex", flexDirection: "row", marginBottom: 16, transition: "box-shadow 0.15s",
+                }}
+                onMouseOver={(ev) => (ev.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)")}
+                onMouseOut={(ev) => (ev.currentTarget.style.boxShadow = "none")}
+                >
+                  {/* Left Image */}
+                  <div style={{
+                    width: 220, minHeight: 240, flexShrink: 0, position: "relative",
+                    background: `linear-gradient(160deg, ${evtColor}DD, ${evtColor}99)`,
+                    overflow: "hidden",
+                  }}>
+                    {/* Date badge */}
+                    <div style={{
+                      position: "absolute", top: 14, left: 14, background: "#fff", padding: "6px 12px",
+                      borderRadius: 6, fontSize: 12, fontWeight: 700, color: "#37352F", fontFamily: font,
+                      boxShadow: "0 1px 4px rgba(0,0,0,0.1)",
+                    }}>
+                      {datePart}
+                    </div>
+                  </div>
+
+                  {/* Right Content */}
+                  <div style={{ flex: 1, padding: "20px 24px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                    <div>
+                      {/* Title + attendees */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                        <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", fontFamily: font, lineHeight: 1.25, flex: 1 }}>{e.title}</h3>
+                        <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 12 }}>
+                          <div style={{ fontSize: 16, fontWeight: 700, color: "#22A06B" }}>{e.attendees}</div>
+                          <div style={{ fontSize: 11, color: "#22A06B", fontWeight: 500 }}>going</div>
+                        </div>
+                      </div>
+
+                      {/* Time + Location */}
+                      <div style={{ display: "flex", gap: 28, marginBottom: 16 }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                          <div style={{ color: "#9B9A97", marginTop: 2 }}>{Icons.clock({ size: 16 })}</div>
+                          <div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{timeMain}</div>
+                            <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{timeAmPm}</div>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                          <div style={{ color: "#9B9A97", marginTop: 2 }}>{Icons.mapPin({ size: 16 })}</div>
+                          <div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{locMain}</div>
+                            <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{locCity}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Description */}
+                      <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.55, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                        {e.description || "Join us for this amazing community event. Connect with fellow Indians and enjoy a great time together."}
+                      </p>
+                    </div>
+
+                    {/* Footer: Hosted by + Going button */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 16, borderTop: "1px solid #F0EFED", marginTop: 16 }}>
+                      <div>
+                        <div style={{ fontSize: 9, color: "#9B9A97", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.08em", fontFamily: font }}>Hosted by:</div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{e.organizer}</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          onClick={() => toggleRsvp(e.id)}
+                          style={{
+                            padding: "9px 24px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer",
+                            border: "1px solid #B5E4CA",
+                            background: rsvps.has(e.id) ? "#E3FCEF" : "#fff",
+                            color: "#22A06B", transition: "all 0.15s",
+                          }}
+                        >
+                          Going
+                        </button>
+                        <button onClick={() => setReportConfirm({ type: "post", id: e.id })} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 14 })}</button>
+                      </div>
+                    </div>
+                    {/* Like / Comment / Share */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 16, paddingTop: 12, borderTop: "1px solid #F0EFED", marginTop: 12 }}>
+                      <button onClick={(ev) => { const btn = ev.currentTarget; if (btn.dataset.liked) { btn.dataset.liked = ""; btn.style.color = "#9B9A97"; } else { btn.dataset.liked = "1"; btn.style.color = "#DC2626"; } }} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.heart({ size: 15 })} Like</button>
+                      <button style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.message({ size: 15 })} Comment</button>
+                      <button onClick={() => { if (navigator.share) navigator.share({ title: e.title, text: e.description }); else { navigator.clipboard.writeText(window.location.href); alert("Link copied!"); } }} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font, marginLeft: "auto" }}>{Icons.share({ size: 15 })} Share</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            }) : (
+              <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", color: "#9B9A97", fontSize: 14, fontFamily: font }}>
+                No events found.
+              </div>
+            )}
+          </div>
+        );
+
+      case "trending":
+        const trendingTags = [];
+        return (
+          <div style={{ maxWidth: 560, margin: "0 auto" }}>
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 20, fontFamily: font }}>Trending Topics</h2>
+            <InfoBanner text="See what topics are buzzing in the community. Post with hashtags to start a trend." />
+            {trendingTags.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
+                {Icons.trending({ size: 32, stroke: "#D4D4D2" })}
+                <p style={{ marginTop: 12 }}>No trending topics yet. Start posting to see what's popular!</p>
+              </div>
+            ) : (
+              <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
+                {trendingTags.map((t, i) => (
+                  <div key={i} style={{ padding: "16px 20px", borderBottom: i < trendingTags.length - 1 ? "1px solid #F0EFED" : "none", cursor: "pointer" }}
+                    onMouseOver={(e) => (e.currentTarget.style.background = "#FAFAF8")} onMouseOut={(e) => (e.currentTarget.style.background = "#fff")}>
+                    <div style={{ fontSize: 11, color: "#9B9A97", marginBottom: 2, fontFamily: font }}>{t.category}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#37352F", fontFamily: font }}>{t.tag}</div>
+                    <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{t.count} posts</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+
+      case "help":
+        return (
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font, display: "flex", alignItems: "center", gap: 8 }}>
+                  {Icons.help({ size: 22, stroke: "#E25555" })} Community Help
+                </h2>
+                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Ask questions, share advice, and help fellow Indians.</p>
+              </div>
+              <button onClick={() => setHelpModal(true)} style={btnPrimary}>Ask for Help</button>
+            </div>
+            <InfoBanner text="Need advice on housing, visas, or daily life? Ask the community. Your city members will see it first." />
+            {helpRequests.map((h) => (
+              <div key={h.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px", marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 4, background: h.urgency === "High" ? "#FEE" : h.urgency === "Medium" ? "#FFF3E0" : "#E3FCEF", color: h.urgency === "High" ? "#DC2626" : h.urgency === "Medium" ? "#E65100" : "#22A06B", border: `1px solid ${h.urgency === "High" ? "#FECACA" : h.urgency === "Medium" ? "#FFE0B2" : "#B5E4CA"}` }}>
+                      {h.urgency} Priority
+                    </span>
+                    <span style={{ fontSize: 11, color: "#9B9A97" }}>· {h.category}</span>
+                  </div>
+                  <button onClick={async () => { setReportConfirm({ type: "user", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
+                </div>
+                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>{h.title}</h3>
+                <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 14, fontFamily: font }}>{h.description}</p>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Avatar name={h.user} size={24} />
+                    <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{h.user} · {timeAgo(h.timestamp)}</span>
+                  </div>
+                  <button onClick={() => setSelectedHelp(selectedHelp === h.id ? null : h.id)} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>{Icons.message({ size: 14 })} {h.responses} responses</button>
+                </div>
+                {selectedHelp === h.id && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
+                    <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                      <Avatar name={user.name} size={28} />
+                      <div style={{ flex: 1 }}>
+                        <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder="Write a response to help..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 60, resize: "none", boxSizing: "border-box" }} />
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                          <button disabled={!helpResponse.trim()} onClick={async () => {
+                            try { await api.addHelpResponse(h.id, helpResponse); } catch(e) {}
+                            setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, responses: (x.responses || 0) + 1 } : x));
+                            setHelpResponse("");
+                          }} style={{ ...btnPrimary, padding: "7px 16px", fontSize: 12, opacity: helpResponse.trim() ? 1 : 0.4 }}>Post Response</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+
+      case "docs":
+        if (selectedDoc) {
+          return (
+            <div style={{ maxWidth: 700, margin: "0 auto", background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden" }}>
+              {/* Header bar */}
+              <div style={{ padding: "14px 20px", borderBottom: "1px solid #F0EFED", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 56, background: "#fff", zIndex: 5 }}>
+                <button onClick={() => setSelectedDoc(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.chevronLeft({ size: 18 })}</button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedDoc.title}</h3>
+                  <p style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>By {selectedDoc.author}</p>
+                </div>
+                <button style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.dots({ size: 18 })}</button>
+              </div>
+              {/* Article content */}
+              <div style={{ padding: "32px 28px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 4, background: "#F0EFED", color: "#5F5E5B", fontFamily: font }}>{selectedDoc.category}</span>
+                  <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>· {selectedDoc.readTime} · {selectedDoc.timestamp}</span>
+                </div>
+                <h1 style={{ fontSize: 28, fontWeight: 700, color: "#37352F", lineHeight: 1.25, marginBottom: 24, fontFamily: font }}>{selectedDoc.title}</h1>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 32, paddingBottom: 32, borderBottom: "1px solid #F0EFED" }}>
+                  <Avatar name={selectedDoc.author} size={44} />
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{selectedDoc.author}</div>
+                    <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{selectedDoc.profession || "Community Member"} · {selectedDoc.city}</div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 15, color: "#37352F", lineHeight: 1.8, whiteSpace: "pre-wrap", fontFamily: font }}>{selectedDoc.content}</div>
+                {/* Actions */}
+                <div style={{ display: "flex", alignItems: "center", gap: 20, padding: "20px 0", margin: "32px 0 24px", borderTop: "1px solid #F0EFED", borderBottom: "1px solid #F0EFED" }}>
+                  <button onClick={() => { if (!docLiked) { setDocLiked(true); setSelectedDoc(prev => ({...prev, likes: (prev.likes || 0) + 1})); } else { setDocLiked(false); setSelectedDoc(prev => ({...prev, likes: Math.max(0, (prev.likes || 0) - 1)})); } }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: docLiked ? "#DC2626" : "#9B9A97", fontSize: 14, fontFamily: font }}>{Icons.heart({ size: 18, fill: docLiked ? "#DC2626" : "none", stroke: docLiked ? "#DC2626" : "currentColor" })} {selectedDoc.likes}</button>
+                  <button style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 14, fontFamily: font }}>{Icons.message({ size: 18 })} {(selectedDoc.comments || []).length}</button>
+                  <button onClick={() => { if (navigator.share) navigator.share({ title: selectedDoc.title, url: window.location.href }); else { navigator.clipboard.writeText(window.location.href); alert("Link copied!"); } }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 14, fontFamily: font, marginLeft: "auto" }}>{Icons.share({ size: 18 })} Share</button>
+                </div>
+                {/* Comments */}
+                <h3 style={{ fontSize: 18, fontWeight: 700, color: "#37352F", marginBottom: 20, fontFamily: font }}>Comments ({(selectedDoc.comments || []).length})</h3>
+                <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
+                  <Avatar name={user.name} size={32} />
+                  <div style={{ flex: 1 }}>
+                    <textarea value={docComment} onChange={(e) => setDocComment(e.target.value)} placeholder="Add a comment..." style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 70, resize: "none", boxSizing: "border-box" }} />
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                      <button disabled={!docComment.trim()} onClick={() => {
+                        const updated = docs.map(d => d.id === selectedDoc.id ? { ...d, comments: [...(d.comments || []), { id: "c_" + Date.now(), user: user.name, text: docComment, time: "Just now" }] } : d);
+                        setDocs(updated);
+                        setSelectedDoc(updated.find(d => d.id === selectedDoc.id));
+                        setDocComment("");
+                      }} style={{ ...btnPrimary, padding: "8px 18px", opacity: docComment.trim() ? 1 : 0.4 }}>Post Comment</button>
+                    </div>
+                  </div>
+                </div>
+                {(selectedDoc.comments || []).map(c => (
+                  <div key={c.id} style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+                    <Avatar name={c.user} size={32} />
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{c.user}</span>
+                        <span style={{ fontSize: 11, color: "#9B9A97" }}>· {c.time}</span>
+                      </div>
+                      <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, fontFamily: font }}>{c.text}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        const filteredDocs = docs.filter(d => docCityFilter === "All" || d.city.includes(docCityFilter));
+        return (
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Community Docs</h2>
+                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Essential guides and tips for your city.</p>
+              </div>
+              <button onClick={() => setDocModal(true)} style={btnPrimary}>{Icons.plus({ size: 14 })} Create Doc</button>
+            </div>
+            <InfoBanner text="Share guides, tips, and local knowledge. Help newcomers settle in your city." />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, background: "#fff", padding: "10px 16px", borderRadius: 10, border: "1px solid #E8E7E4" }}>
+              <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Filter by City:</span>
+              <div style={{ position: "relative" }}>
+                <select value={docCityFilter} onChange={(e) => setDocCityFilter(e.target.value)} style={{ padding: "4px 24px 4px 8px", fontSize: 13, border: "none", background: "transparent", fontWeight: 600, color: "#37352F", cursor: "pointer", fontFamily: font, appearance: "none", outline: "none" }}>
+                  <option value="All">All</option>
+                  {GLOBAL_CITIES.map(c => <option key={c} value={c.split(",")[0]}>{c}</option>)}
+                </select>
+                <div style={{ position: "absolute", right: 2, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="docs-grid">
+              {filteredDocs.map((d) => (
+                <div key={d.id} onClick={() => setSelectedDoc(d)} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 22px", cursor: "pointer", transition: "box-shadow 0.15s", display: "flex", flexDirection: "column" }}
+                  onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"}
+                  onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 4, background: "#F0EFED", color: "#5F5E5B", fontFamily: font }}>{d.category}</span>
+                    <span style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>{d.readTime}</span>
+                  </div>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", marginBottom: 6, lineHeight: 1.3, fontFamily: font }}>{d.title}</h3>
+                  <p style={{ fontSize: 13, color: "#9B9A97", lineHeight: 1.5, marginBottom: 16, flex: 1, fontFamily: font }}>{d.excerpt}</p>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 14, borderTop: "1px solid #F0EFED" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Avatar name={d.author} size={24} />
+                      <div>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#37352F", fontFamily: font }}>{d.author}</div>
+                        <div style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{d.city}</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 12, color: "#9B9A97", display: "flex", alignItems: "center", gap: 4 }}>{Icons.heart({ size: 13 })} {d.likes}</span>
+                      <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "post", id: item.id }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 12 })}</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+
+      case "market":
+        const filteredMarket = marketItems.filter(i => {
+          const catMatch = marketCategory === "All" || i.category === marketCategory;
+          const cityMatch = marketCityFilter === "All" || i.location.includes(marketCityFilter);
+          const searchMatch = i.title.toLowerCase().includes(marketSearch.toLowerCase()) || i.description.toLowerCase().includes(marketSearch.toLowerCase());
+          return catMatch && cityMatch && searchMatch;
+        });
+        return (
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Marketplace</h2>
+                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Buy, sell, rent, and find services within the community.</p>
+              </div>
+              <button onClick={() => setMarketModal(true)} style={btnPrimary}>{Icons.plus({ size: 14 })} Post Item</button>
+            </div>
+            <InfoBanner text="List housing, jobs, items, or services. Posts are visible to users in your city first." />
+            {/* Search + city */}
+            <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+              <div style={{ position: "relative", flex: 1 }}>
+                <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 15 })}</div>
+                <input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search items, vehicles, housing..." style={{ ...inputStyle, paddingLeft: 36 }} />
+              </div>
+              <div style={{ position: "relative", width: 160 }}>
+                <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.mapPin({ size: 14 })}</div>
+                <select value={marketCityFilter} onChange={(e) => setMarketCityFilter(e.target.value)} style={{ ...inputStyle, paddingLeft: 34, appearance: "none", cursor: "pointer" }}>
+                  <option value="All">All</option>
+                  {GLOBAL_CITIES.map(c => <option key={c} value={c.split(",")[0]}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+            {/* Category pills */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+              {["All", "Housing", "Jobs", "Items", "Vehicles", "Services"].map(c => (
+                <button key={c} onClick={() => setMarketCategory(c)} style={{ padding: "7px 16px", borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font, border: marketCategory === c ? "none" : "1px solid #E0E0DE", background: marketCategory === c ? "#37352F" : "#fff", color: marketCategory === c ? "#fff" : "#5F5E5B", transition: "all 0.1s" }}>
+                  {c}
+                </button>
+              ))}
+            </div>
+            {/* Items grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="market-grid">
+              {filteredMarket.map(item => (
+                <div key={item.id} onClick={() => setExpandedMarketItem(item)} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", transition: "box-shadow 0.15s", cursor: "pointer" }}
+                  onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"}
+                  onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
+                  {/* Image placeholder with price badge */}
+                  <div style={{ height: 160, background: `linear-gradient(135deg, ${item.color}DD, ${item.color}88)`, position: "relative" }}>
+                    <div style={{ position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,0.9)", backdropFilter: "blur(4px)", padding: "5px 10px", borderRadius: 4, fontSize: 12, fontWeight: 700, color: "#37352F" }}>{item.price}</div>
+                    <div style={{ position: "absolute", bottom: 12, left: 12, background: "rgba(0,0,0,0.6)", padding: "3px 8px", borderRadius: 4, fontSize: 9, fontWeight: 600, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>{item.category}</div>
+                  </div>
+                  <div style={{ padding: "14px 16px" }}>
+                    <h3 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 4, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</h3>
+                    <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 10, lineHeight: 1.4, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{item.description}</p>
+                    <div style={{ fontSize: 11, color: "#9B9A97", display: "flex", alignItems: "center", gap: 4, marginBottom: 12 }}>{Icons.mapPin({ size: 10 })} {item.location} · {item.date}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10, borderTop: "1px solid #F0EFED" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <Avatar name={item.seller} size={22} />
+                        <span style={{ fontSize: 12, fontWeight: 500, color: "#37352F", fontFamily: font }}>{item.seller}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
+                        <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "post", id: item.id }); }} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 12 })}</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+
+      case "messages":
+        // Load conversations from DB on first visit
+        if (!convosLoaded) {
+          setConvosLoaded(true);
+          (async () => {
+            try {
+              const dbConvos = await api.getConversations();
+              if (dbConvos && dbConvos.length) {
+                setConvos(dbConvos.map(c => ({
+                  id: c.id,
+                  name: c.otherUser?.name || "User",
+                  otherUserId: c.otherUser?.id,
+                  lastMsg: c.last_message_text || "",
+                  time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
+                  unread: false,
+                })));
+              }
+            } catch (e) {}
+          })();
+        }
+        const activeConvo = convos.find(c => c.id === selectedConvo);
+        const currentMsgs = selectedConvo ? (chatMessages[selectedConvo] || []) : [];
+
+        // Load messages when a convo is selected
+        const loadConvoMessages = async (convoId) => {
+          setSelectedConvo(convoId);
+          setChatSettings(false);
+          if (!chatMessages[convoId]) {
+            try {
+              const msgs = await api.getMessages(convoId);
+              if (msgs) {
+                setChatMessages(p => ({ ...p, [convoId]: msgs.map(m => ({
+                  id: m.id, text: m.content,
+                  sender: m.sender_id === user.id ? "me" : "them",
+                  time: new Date(m.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                })) }));
+              }
+            } catch (e) {}
+          }
+        };
+
+        const sendChatMessage = async () => {
+          if (!chatInput.trim() || !selectedConvo) return;
+          const msg = { id: Date.now().toString(), text: chatInput, sender: "me", time: "Just now" };
+          setChatMessages(p => ({ ...p, [selectedConvo]: [...(p[selectedConvo] || []), msg] }));
+          const text = chatInput;
+          setChatInput("");
+          try { await api.sendMessage(selectedConvo, text); } catch (e) {}
+          // Update convo list
+          setConvos(p => p.map(c => c.id === selectedConvo ? { ...c, lastMsg: text, time: "Just now" } : c));
+        };
+
+        return (
+          <div>
+          <InfoBanner text="Send direct messages to your connections. Start a conversation after sending a Namaste request." />
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: 520, display: "flex" }}>
+            {/* Conversation List */}
+            <div style={{ width: 240, borderRight: "1px solid #E8E7E4", background: "#FAFAF8", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+              <div style={{ padding: "16px 18px", borderBottom: "1px solid #E8E7E4" }}>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>Messages</h3>
+              </div>
+              <div style={{ flex: 1, overflow: "auto" }}>
+                {convos.length === 0 && (
+                  <div style={{ padding: 20, textAlign: "center", color: "#9B9A97", fontSize: 12, fontFamily: font }}>No conversations yet. Connect with someone first!</div>
+                )}
+                {convos.map(c => (
+                  <div key={c.id} onClick={() => loadConvoMessages(c.id)} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", cursor: "pointer", background: selectedConvo === c.id ? "#fff" : "transparent", borderLeft: selectedConvo === c.id ? "3px solid #37352F" : "3px solid transparent" }}>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <Avatar name={c.name} size={36} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                          <span style={{ fontSize: 13, fontWeight: 500, color: "#37352F", fontFamily: font }}>{c.name}</span>
+                          <span style={{ fontSize: 10, color: "#9B9A97" }}>{c.time}</span>
+                        </div>
+                        <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{c.lastMsg}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Chat Area */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              {selectedConvo && activeConvo ? (
+                <>
+                  <div style={{ padding: "12px 18px", borderBottom: "1px solid #E8E7E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ position: "relative" }}>
+                        <Avatar name={activeConvo.name} size={32} />
+                        <span style={{ position: "absolute", bottom: 0, right: 0, width: 8, height: 8, background: "#22C55E", borderRadius: "50%", border: "2px solid #fff" }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font }}>{activeConvo.name}</div>
+                        <div style={{ fontSize: 11, color: "#22C55E", fontWeight: 500 }}>Online</div>
+                      </div>
+                    </div>
+                    <div style={{ position: "relative" }}>
+                      <button onClick={() => setChatSettings(!chatSettings)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.settings({ size: 16 })}</button>
+                      {chatSettings && (
+                        <>
+                          <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={() => setChatSettings(false)} />
+                          <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, width: 150, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 10, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", zIndex: 20, overflow: "hidden" }}>
+                            <button onClick={() => { setBlockModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg> Block User
+                            </button>
+                            <button onClick={() => { setReportModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
+                              {Icons.flag({ size: 14 })} Report User
+                            </button>
+                            <button onClick={() => { setChatMessages(p => ({ ...p, [selectedConvo]: [] })); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontFamily: font }}>
+                              {Icons.trash({ size: 14 })} Clear Chat
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, padding: 18, overflow: "auto", background: "#FAFAF8", display: "flex", flexDirection: "column", gap: 12 }}>
+                    {currentMsgs.map(m => (
+                      <div key={m.id} style={{ maxWidth: "75%", alignSelf: m.sender === "me" ? "flex-end" : "flex-start" }}>
+                        <div style={{ padding: "10px 14px", borderRadius: m.sender === "me" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.sender === "me" ? "#37352F" : "#fff", color: m.sender === "me" ? "#fff" : "#37352F", border: m.sender === "me" ? "none" : "1px solid #E8E7E4", fontSize: 14, lineHeight: 1.5, fontFamily: font }}>
+                          {m.text}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#9B9A97", marginTop: 4, textAlign: m.sender === "me" ? "right" : "left" }}>{m.time}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ padding: "12px 18px", borderTop: "1px solid #E8E7E4" }}>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input value={chatInput} onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") sendChatMessage(); }}
+                        placeholder="Type a message..." style={{ flex: 1, padding: "10px 16px", borderRadius: 20, border: "1px solid #E0E0DE", fontSize: 13, outline: "none", fontFamily: font, background: "#FAFAF8" }} />
+                      <button onClick={sendChatMessage} style={{ padding: "8px 12px", borderRadius: "50%", background: chatInput.trim() ? "#37352F" : "#E8E7E4", border: "none", cursor: chatInput.trim() ? "pointer" : "default", color: "#fff", display: "flex", alignItems: "center" }}>
+                        {Icons.send({ size: 16 })}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#D4D4D2" }}>
+                  {Icons.message({ size: 40 })}
+                  <p style={{ fontSize: 13, marginTop: 12, color: "#9B9A97", fontFamily: font }}>Select a conversation</p>
+                </div>
+              )}
+            </div>
+          </div>
+          </div>
+        );
+
+      case "profile":
+        return (
+          <div style={{ maxWidth: 600, margin: "0 auto" }}>
+            <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: 32, textAlign: "center" }}>
+              <Avatar name={user.name} size={80} />
+              <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginTop: 16, fontFamily: font }}>{user.name}</h2>
+              {true && (
+                <span style={{ display: "inline-block", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 4, letterSpacing: "0.05em", marginTop: 6,
+                  background: user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
+                  color: user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#22A06B" : "#E65100",
+                  border: `1px solid ${user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
+                }}>{user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "NRI — Living Abroad" : "Based in India"}</span>
+              )}
+              <p style={{ fontSize: 14, color: "#5F5E5B", marginTop: 4, fontFamily: font }}>{user.profession}</p>
+              <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 16, flexWrap: "wrap" }}>
+                {user.location ? (
+                  <span style={{ fontSize: 12, color: "#5F5E5B", background: "#F0EFED", padding: "4px 12px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
+                    {Icons.mapPin({ size: 12 })} {user.location}
+                  </span>
+                ) : null}
+                {user.hometown ? (
+                  <span style={{ fontSize: 12, color: "#5F5E5B", background: "#F0EFED", padding: "4px 12px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
+                    {Icons.globe({ size: 12 })} From {user.hometown}
+                  </span>
+                ) : null}
+                {user.yearsAbroad && (
+                  <span style={{ fontSize: 12, color: "#5F5E5B", background: "#F0EFED", padding: "4px 12px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
+                    {Icons.clock({ size: 12 })} {user.yearsAbroad}
+                  </span>
+                )}
+              </div>
+              {user.linkedinUrl && (
+                <div style={{ marginTop: 16 }}>
+                  <span style={{ fontSize: 12, color: "#0077B5", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                    {Icons.linkedin({ size: 14, stroke: "#0077B5" })} LinkedIn Verified
+                  </span>
+                </div>
+              )}
+              <button onClick={() => { setEditProfile({ ...user }); setProfileModal(true); }} style={{ ...btnPrimary, marginTop: 24 }}>
+                {Icons.edit({ size: 14 })} Edit Profile
+              </button>
+            </div>
+
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#37352F", marginTop: 32, marginBottom: 16, fontFamily: font }}>My Posts</h3>
+            {posts.filter((p) => p.userId === user.id).length > 0 ? (
+              posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />)
+            ) : (
+              <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
+                You haven't posted anything yet.
+              </div>
+            )}
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: font }}>
+      {/* NAV */}
+      <nav style={{ background: "#fff", borderBottom: "1px solid #E8E7E4", position: "sticky", top: 0, zIndex: 30 }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 16px", height: 56, display: "grid", gridTemplateColumns: "240px 1fr 210px", gap: 28, alignItems: "center" }} className="nav-grid">
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ background: "#37352F", color: "#fff", padding: 4, borderRadius: 6 }}>
+              {Icons.globe({ size: 16 })}
+            </div>
+            <span style={{ fontSize: 18, fontWeight: 800, color: "#37352F", letterSpacing: -0.5 }}>NRI<span style={{fontStyle:'italic',fontFamily:'"Times New Roman",serif'}}>Club</span></span>
+          </div>
+
+          {/* Desktop Nav - aligned with center content column */}
+          <div style={{ display: "flex", alignItems: "center", background: "#F5F5F3", borderRadius: 24, padding: "3px 4px", gap: 2, justifyContent: "center" }} className="desktop-nav">
+            <button style={navBtn("home")} onClick={() => setView("home")}>Feed</button>
+            <button style={navBtn("network")} onClick={() => setView("network")}>Find</button>
+            <button style={navBtn("groups")} onClick={() => { setView("groups"); setSelectedGroup(null); }}>Groups</button>
+            <button style={navBtn("events")} onClick={() => setView("events")}>Events</button>
+            <button style={navBtn("trending")} onClick={() => setView("trending")}>Trending</button>
+            <button style={navBtn("docs")} onClick={() => setView("docs")}>Doc</button>
+            <button style={navBtn("market")} onClick={() => setView("market")}>Market</button>
+            <button style={navBtn("help")} onClick={() => setView("help")}>Help</button>
+          </div>
+
+          {/* Right side icons */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+            {/* Notification Bell */}
+            <div style={{ position: "relative" }}>
+              <button onClick={() => { setNotifOpen(!notifOpen); setSettingsOpen(false); }}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 6, color: "#9B9A97", position: "relative", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
+                onMouseOver={(e) => (e.currentTarget.style.background = "#F0EFED")}
+                onMouseOut={(e) => (e.currentTarget.style.background = "none")}>
+                {Icons.bell({ size: 20 })}
+                {notifications.some(n => !n.read) && <span style={{ position: "absolute", top: 5, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }} />}
+              </button>
+              {notifOpen && (
+                <>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setNotifOpen(false)} />
+                  <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 360, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", maxHeight: 440 }}>
+                    <div style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
+                      <h3 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", fontFamily: font }}>Notifications</h3>
+                      <button onClick={() => setNotifications(p => p.map(n => ({...n, read: true})))} style={{ background: "none", border: "none", fontSize: 12, color: "#9B9A97", cursor: "pointer", fontFamily: font }}>Mark all read</button>
+                    </div>
+                    <div style={{ overflow: "auto", maxHeight: 380 }}>
+                      {notifications.map(n => (
+                        <div key={n.id} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", gap: 12, background: n.read ? "#fff" : "#F5F8FF" }}>
+                          <div style={{ flexShrink: 0, marginTop: 2 }}>
+                            {n.actor ? (
+                              <div style={{ position: "relative" }}>
+                                <Avatar name={n.actor} size={36} />
+                                {n.type === "like" && <div style={{ position: "absolute", bottom: -2, left: -2, width: 16, height: 16, borderRadius: "50%", background: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{Icons.heart({ size: 8, fill: "#fff", stroke: "#fff" })}</div>}
+                                {n.type === "comment" && <div style={{ position: "absolute", bottom: -2, left: -2, width: 16, height: 16, borderRadius: "50%", background: "#22C55E", display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{Icons.message({ size: 8, stroke: "#fff" })}</div>}
+                              </div>
+                            ) : (
+                              <div style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: n.type === "event" ? "#FFF3E0" : n.type === "group" ? "#EDF4FF" : "#F0EFED", color: n.type === "event" ? "#E65100" : n.type === "group" ? "#5B9CFF" : "#5F5E5B" }}>
+                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : Icons.trending({ size: 16 })}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ fontSize: 13, color: "#37352F", lineHeight: 1.4, fontFamily: font, margin: 0 }}>
+                              {n.actor && <strong>{n.actor} </strong>}{n.text}
+                            </p>
+                            <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 3, fontFamily: font }}>{n.time}</p>
+                            {n.type === "request" && (
+                              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                                <button onClick={() => setNotifications(p => p.filter(x => x.id !== n.id))} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Accept</button>
+                                <button onClick={() => setNotifications(p => p.filter(x => x.id !== n.id))} style={{ padding: "5px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Ignore</button>
+                              </div>
+                            )}
+                          </div>
+                          {!n.read && <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#5B9CFF", marginTop: 6, flexShrink: 0 }} />}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            {/* Settings gear */}
+            <div style={{ position: "relative" }}>
+              <button onClick={() => { setSettingsOpen(!settingsOpen); setNotifOpen(false); }}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 6, color: "#9B9A97", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
+                onMouseOver={(e) => (e.currentTarget.style.background = "#F0EFED")}
+                onMouseOut={(e) => (e.currentTarget.style.background = "none")}>
+                {Icons.settings({ size: 20 })}
+              </button>
+              {settingsOpen && (
+                <>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setSettingsOpen(false)} />
+                  <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 220, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "6px 0" }}>
+                    {[
+                      { key: "account", icon: Icons.user, label: "Account Settings" },
+                      { key: "privacy", icon: Icons.shield, label: "Privacy & Safety" },
+                      { key: "notifications", icon: Icons.bell, label: "Notifications" },
+                      { key: "activity", icon: Icons.trending, label: "Activity Log" },
+                    ].map(item => (
+                      <button key={item.key} onClick={() => { setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
+                        onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
+                        onMouseOut={(e) => e.currentTarget.style.background = "none"}>
+                        {item.icon({ size: 16, stroke: "#9B9A97" })} {item.label}
+                      </button>
+                    ))}
+                    <div style={{ height: 1, background: "#F0EFED", margin: "4px 0" }} />
+                    {[
+                      { key: "helpCenter", icon: Icons.help, label: "Help Center" },
+                      { key: "terms", icon: Icons.file, label: "Terms & Policy" },
+                    ].map(item => (
+                      <button key={item.key} onClick={() => { setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
+                        onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
+                        onMouseOut={(e) => e.currentTarget.style.background = "none"}>
+                        {item.icon({ size: 16, stroke: "#9B9A97" })} {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            {/* Avatar */}
+            <button onClick={() => setView("profile")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+              <Avatar name={user.name} size={32} />
+            </button>
+            <button onClick={() => setMobileMenu(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#37352F", display: "none" }} className="mobile-menu-btn">
+              {Icons.menu({ size: 22 })}
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {/* Mobile Menu */}
+      {mobileMenu && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)", zIndex: 40 }} onClick={() => setMobileMenu(false)}>
+          <div style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 260, background: "#fff", padding: 20, boxShadow: "-4px 0 16px rgba(0,0,0,0.08)" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>Menu</span>
+              <button onClick={() => setMobileMenu(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 20 })}</button>
+            </div>
+            {[
+              { v: "home", icon: Icons.home, label: "Feed" },
+              { v: "network", icon: Icons.search, label: "Find" },
+              { v: "groups", icon: Icons.users, label: "Communities" },
+              { v: "events", icon: Icons.calendar, label: "Events" },
+              { v: "trending", icon: Icons.trending, label: "Trending" },
+              { v: "docs", icon: Icons.file, label: "Docs" },
+              { v: "market", icon: Icons.shop, label: "Marketplace" },
+              { v: "help", icon: Icons.help, label: "Help" },
+              { v: "messages", icon: Icons.message, label: "Messages" },
+              { v: "profile", icon: Icons.user, label: "Profile" },
+            ].map((item) => (
+              <button
+                key={item.v}
+                onClick={() => { setView(item.v); setMobileMenu(false); if (item.v === "groups") setSelectedGroup(null); }}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", background: view === item.v ? "#EFEFED" : "transparent", color: view === item.v ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 14, fontFamily: font, marginBottom: 4 }}
+              >
+                {item.icon({ size: 18 })} {item.label}
+              </button>
+            ))}
+            <div style={{ borderTop: "1px solid #F0EFED", marginTop: 12, paddingTop: 12 }}>
+              <button onClick={onLogout} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", background: "transparent", color: "#E25555", cursor: "pointer", fontSize: 14, fontFamily: font }}>
+                {Icons.logout({ size: 18 })} Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MAIN */}
+      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 100px", display: "grid", gridTemplateColumns: (view === "profile" || view === "trending") ? "1fr" : "240px 1fr 210px", gap: 28 }} className="main-grid">
+        {view !== "profile" && view !== "trending" && (
+          <aside className="sidebar-left" style={{ position: "sticky", top: 80, alignSelf: "start" }}>
+            <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "24px 20px", textAlign: "center", position: "relative" }}>
+              {/* Edit button top-right */}
+              <button
+                onClick={() => { setEditProfile({ ...user }); setProfileModal(true); }}
+                style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}
+              >
+                {Icons.edit({ size: 16 })}
+              </button>
+
+              {/* NRI/IN badge top-left */}
+              <span style={{ position: "absolute", top: 14, left: 14, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 4, letterSpacing: "0.05em",
+                background: user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
+                color: user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#22A06B" : "#E65100",
+                border: `1px solid ${user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
+              }}>{user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "NRI" : "IN"}</span>
+
+              {/* Profile photo with camera icon */}
+              <div style={{ position: "relative", display: "inline-block", marginBottom: 12 }}>
+                <Avatar name={user.name} size={80} />
+                <input type="file" accept="image/*" id="avatar-upload" style={{ display: "none" }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const url = await api.uploadAvatar(file);
+                      await api.updateProfile({ avatar_url: url });
+                      alert("Profile photo updated! It will show on next login.");
+                    } catch (err) { alert("Upload failed: " + err.message); }
+                  }}
+                />
+                <label htmlFor="avatar-upload" style={{
+                  position: "absolute", bottom: -2, right: -2,
+                  width: 24, height: 24, borderRadius: "50%", background: "#fff",
+                  border: "1px solid #E0E0DE", display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: "pointer",
+                }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                    <circle cx="12" cy="13" r="4"/>
+                  </svg>
+                </label>
+              </div>
+
+              {/* Name with green verified badge */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 2 }}>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>{user.name}</h3>
+                {user.linkedinUrl && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E" stroke="none">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                  </svg>
+                )}
+              </div>
+              <p style={{ fontSize: 13, color: "#5F5E5B", marginBottom: 14, fontFamily: font }}>{user.profession}</p>
+
+              {/* Location pills */}
+              <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 6, marginBottom: 6 }}>
+                {user.location ? (
+                  <span style={{
+                    fontSize: 11, color: "#5F5E5B", background: "#fff", border: "1px solid #E0E0DE",
+                    padding: "4px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: font,
+                  }}>
+                    {Icons.mapPin({ size: 10 })} {user.location.split(",")[0]}
+                  </span>
+                ) : null}
+                {user.hometown ? (
+                  <span style={{
+                    fontSize: 11, color: "#5F5E5B", background: "#fff", border: "1px solid #E0E0DE",
+                    padding: "4px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: font,
+                  }}>
+                    {Icons.globe({ size: 10 })} From {user.hometown.split(",")[0]}
+                  </span>
+                ) : null}
+              </div>
+              {user.yearsAbroad && (
+                <span style={{
+                  fontSize: 11, color: "#5F5E5B", background: "#fff", border: "1px solid #E0E0DE",
+                  padding: "4px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: font,
+                }}>
+                  {Icons.clock({ size: 10 })} {user.yearsAbroad}
+                </span>
+              )}
+
+              {/* Followers / Following */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "18px 0", fontSize: 13, fontFamily: font }}>
+                <span onClick={() => setFollowModal("followers")} style={{ cursor: "pointer" }}><b style={{ color: "#37352F" }}>{myFollowers.length}</b> <span style={{ color: "#9B9A97" }}>followers</span></span>
+                <span style={{ color: "#D4D4D2" }}>·</span>
+                <span onClick={() => setFollowModal("following")} style={{ cursor: "pointer" }}><b style={{ color: "#37352F" }}>{myFollowing.length}</b> <span style={{ color: "#9B9A97" }}>following</span></span>
+              </div>
+
+              {/* Divider */}
+              <div style={{ borderTop: "1px solid #F0EFED", margin: "0 0 16px" }} />
+
+              {/* Icon Grid - 4 across, 2 rows matching screenshot */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}>
+                {[
+                  { icon: Icons.message, view: "messages", label: "Messages" },
+                  { icon: Icons.calendar, view: "events", label: "Events" },
+                  { icon: Icons.users, view: "groups", label: "Groups" },
+                  { icon: Icons.linkedin, view: null, label: "LinkedIn", action: () => { if (user.linkedinUrl) window.open(user.linkedinUrl.startsWith("http") ? user.linkedinUrl : `https://${user.linkedinUrl}`, "_blank"); } },
+                ].map((item, i) => (
+                  <button key={i} onClick={() => item.action ? item.action() : item.view && setView(item.view)} style={{
+                    padding: 10, borderRadius: 8, border: "none", background: "none",
+                    cursor: "pointer", color: "#9B9A97", display: "flex", alignItems: "center", justifyContent: "center",
+                    transition: "all 0.1s",
+                  }}
+                  onMouseOver={(e) => { e.currentTarget.style.background = "#F0EFED"; e.currentTarget.style.color = "#37352F"; }}
+                  onMouseOut={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#9B9A97"; }}
+                  >
+                    {item.icon({ size: 20 })}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
+                {[
+                  { icon: Icons.file, view: "profile", label: "Posts" },
+                  { icon: Icons.image, view: "profile", label: "Gallery" },
+                ].map((item, i) => (
+                  <button key={i} onClick={() => setView(item.view)} style={{
+                    padding: 10, borderRadius: 8, border: "none", background: "none",
+                    cursor: "pointer", color: "#9B9A97", display: "flex", alignItems: "center", justifyContent: "center",
+                    transition: "all 0.1s",
+                  }}
+                  onMouseOver={(e) => { e.currentTarget.style.background = "#F0EFED"; e.currentTarget.style.color = "#37352F"; }}
+                  onMouseOut={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#9B9A97"; }}
+                  >
+                    {item.icon({ size: 20 })}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Sign Out link */}
+            <div style={{ textAlign: "center", marginTop: 16 }}>
+              <button onClick={onLogout} style={{
+                background: "none", border: "none", cursor: "pointer", color: "#9B9A97",
+                fontSize: 12, fontFamily: font, display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 500,
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.color = "#E25555")}
+              onMouseOut={(e) => (e.currentTarget.style.color = "#9B9A97")}
+              >
+                {Icons.logout({ size: 14 })} Sign Out
+              </button>
+            </div>
+          </aside>
+        )}
+
+        <div>{renderContent()}</div>
+
+        {view !== "profile" && view !== "trending" && (
+          <aside className="sidebar-right" style={{ position: "sticky", top: 80, alignSelf: "start" }}>
+            <div style={{ marginBottom: 28 }}>
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>Communities</h4>
+              {groups.slice(0, 3).map((g, i) => {
+                // Generate a color-coded thumbnail
+                const thumbColors = ["#C4B5A0", "#8B9E82", "#A0B0C4"];
+                return (
+                  <div key={g.id} onClick={() => { setView("groups"); setSelectedGroup(g); }} style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "7px 0", cursor: "pointer",
+                  }}
+                  onMouseOver={(e) => e.currentTarget.querySelector("span").style.textDecoration = "underline"}
+                  onMouseOut={(e) => e.currentTarget.querySelector("span").style.textDecoration = "none"}
+                  >
+                    <div style={{
+                      width: 36, height: 36, borderRadius: 8, flexShrink: 0, overflow: "hidden",
+                      background: thumbColors[i % 3], display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="1.5">
+                        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                        <circle cx="9" cy="7" r="4"/>
+                        <path d="M23 21v-2a4 4 0 00-3-3.87"/>
+                        <path d="M16 3.13a4 4 0 010 7.75"/>
+                      </svg>
+                    </div>
+                    <span style={{ fontSize: 13, color: "#37352F", fontWeight: 500, fontFamily: font }}>{g.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* EVENTS section */}
+            <div>
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>Events</h4>
+              {events.slice(0, 2).map((e) => (
+                <div key={e.id} onClick={() => setView("events")} style={{ marginBottom: 14, cursor: "pointer" }}
+                  onMouseOver={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "underline"}
+                  onMouseOut={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "none"}
+                >
+                  <div style={{ fontSize: 11, color: "#9B9A97", fontFamily: font, marginBottom: 2 }}>{e.date.split("•")[0].trim()}</div>
+                  <div className="ev-title" style={{ fontSize: 14, color: "#37352F", fontWeight: 600, fontFamily: font, lineHeight: 1.3 }}>{e.title}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* PEOPLE IN YOUR CITY */}
+            {user.location && (
+              <div style={{ marginTop: 28 }}>
+                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>People in {(user.location || "").split(",")[0]}</h4>
+                {MOCK_NETWORK_USERS.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).length > 0 ? (
+                  MOCK_NETWORK_USERS.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).slice(0, 4).map(u => (
+                    <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
+                      <Avatar name={u.name} size={32} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</div>
+                        <div style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{u.profession}</div>
+                      </div>
+                      <button onClick={() => handleSendNamaste(u.id)} disabled={sentNamaste.has(u.id)}
+                        style={{ padding: "4px 10px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 600, cursor: sentNamaste.has(u.id) ? "default" : "pointer",
+                          background: sentNamaste.has(u.id) ? "#F0EFED" : "#37352F", color: sentNamaste.has(u.id) ? "#9B9A97" : "#fff", fontFamily: font }}>
+                        {sentNamaste.has(u.id) ? "Sent" : "Namaste"}
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <p style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>No users found in your city yet. <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#37352F", cursor: "pointer", textDecoration: "underline", fontSize: 11, fontFamily: font }}>Find people</button></p>
+                )}
+                <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#5B9CFF", cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: font, marginTop: 8, padding: 0 }}>See all →</button>
+              </div>
+            )}
+          </aside>
+        )}
+      </main>
+
+      {/* Mobile Bottom Nav */}
+      <div className="mobile-nav" style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #E8E7E4", padding: "8px 16px", display: "none", justifyContent: "space-around", zIndex: 30 }}>
+        {[
+          { v: "home", icon: Icons.home, label: "Home" },
+          { v: "groups", icon: Icons.users, label: "Groups" },
+          { v: "events", icon: Icons.calendar, label: "Events" },
+          { v: "trending", icon: Icons.trending, label: "Trend" },
+          { v: "profile", icon: Icons.user, label: "Me" },
+        ].map((item) => (
+          <button
+            key={item.v}
+            onClick={() => { setView(item.v); if (item.v === "groups") setSelectedGroup(null); }}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: view === item.v ? "#37352F" : "#9B9A97", fontSize: 10, fontWeight: 500, fontFamily: font }}
+          >
+            {item.icon({ size: 20 })}
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Expanded Market Item Modal */}
+      {expandedMarketItem && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setExpandedMarketItem(null)}>
+          <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={(e) => e.stopPropagation()}>
+            {/* Hero image */}
+            <div style={{ height: 220, background: `linear-gradient(160deg, ${expandedMarketItem.color}EE, ${expandedMarketItem.color}AA)`, position: "relative", borderRadius: "18px 18px 0 0" }}>
+              <button onClick={() => setExpandedMarketItem(null)} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {Icons.x({ size: 16 })}
+              </button>
+              <div style={{ position: "absolute", top: 14, left: 14, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(4px)", padding: "6px 14px", borderRadius: 6, fontSize: 14, fontWeight: 700, color: "#37352F" }}>{expandedMarketItem.price}</div>
+              <div style={{ position: "absolute", bottom: 14, left: 14, background: "rgba(0,0,0,0.6)", padding: "4px 10px", borderRadius: 4, fontSize: 10, fontWeight: 600, color: "#fff", textTransform: "uppercase", letterSpacing: "0.06em" }}>{expandedMarketItem.category}</div>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: "24px 28px" }}>
+              <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font, lineHeight: 1.3 }}>{expandedMarketItem.title}</h2>
+              
+              {/* Price highlight */}
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "#F0EFED", borderRadius: 8, marginBottom: 20 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+                <span style={{ fontSize: 18, fontWeight: 700, color: "#37352F", fontFamily: font }}>{expandedMarketItem.price}</span>
+              </div>
+
+              {/* Description */}
+              <p style={{ fontSize: 15, color: "#5F5E5B", lineHeight: 1.7, marginBottom: 20, fontFamily: font }}>{expandedMarketItem.description}</p>
+
+              {/* Details grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+                <div style={{ padding: "12px 14px", background: "#FAFAF8", borderRadius: 8, border: "1px solid #EDEDEB" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4, fontFamily: font }}>Location</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>{Icons.mapPin({ size: 13 })} {expandedMarketItem.location}</div>
+                </div>
+                <div style={{ padding: "12px 14px", background: "#FAFAF8", borderRadius: 8, border: "1px solid #EDEDEB" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4, fontFamily: font }}>Posted</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>{Icons.clock({ size: 13 })} {expandedMarketItem.date}</div>
+                </div>
+                <div style={{ padding: "12px 14px", background: "#FAFAF8", borderRadius: 8, border: "1px solid #EDEDEB" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4, fontFamily: font }}>Category</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{expandedMarketItem.category}</div>
+                </div>
+                <div style={{ padding: "12px 14px", background: "#FAFAF8", borderRadius: 8, border: "1px solid #EDEDEB" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4, fontFamily: font }}>Seller</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}><Avatar name={expandedMarketItem.seller} size={18} /> {expandedMarketItem.seller}</div>
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div style={{ display: "flex", gap: 12 }}>
+                <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(`Hi ${expandedMarketItem.seller.split(" ")[0]}, is this still available?`); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
+                  {Icons.send({ size: 15 })} Contact Seller
+                </button>
+                <button onClick={() => setExpandedMarketItem(null)} style={{ padding: "12px 20px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: font }}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contact Seller Modal */}
+      {selectedMarketItem && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSelectedMarketItem(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Contact Seller</h3>
+              <button onClick={() => setSelectedMarketItem(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              {/* Item preview */}
+              <div style={{ display: "flex", gap: 12, padding: "12px 14px", background: "#FAFAF8", borderRadius: 10, border: "1px solid #EDEDEB", marginBottom: 20 }}>
+                <div style={{ width: 56, height: 56, borderRadius: 8, background: `linear-gradient(135deg, ${selectedMarketItem.color}DD, ${selectedMarketItem.color}88)`, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedMarketItem.title}</h4>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: "#5F5E5B", marginTop: 2, fontFamily: font }}>{selectedMarketItem.price}</p>
+                  <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 1, fontFamily: font }}>Listed by {selectedMarketItem.seller}</p>
+                </div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Message</label>
+                <textarea value={contactMsg} onChange={(e) => setContactMsg(e.target.value)} style={{ ...inputStyle, minHeight: 90, resize: "none" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                <button onClick={() => setSelectedMarketItem(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+                <button onClick={() => { setSelectedMarketItem(null); }} style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6 }}>{Icons.send({ size: 14 })} Send Message</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Account Settings Modal */}
+      {settingsModal === "account" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Account Settings</h3>
+              <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Personal Information</h4>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Full Name</label>
+                <input style={inputStyle} value={accountName} onChange={(e) => setAccountName(e.target.value)} />
+              </div>
+              <div style={{ marginBottom: 6 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Email Address</label>
+                <div style={{ position: "relative" }}>
+                  <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.message({ size: 14 })}</div>
+                  <input style={{ ...inputStyle, paddingLeft: 36, background: "#F0EFED", color: "#9B9A97" }} value={user.email || `${user.name.toLowerCase().replace(/\s+/g, ".")}@indin.com`} readOnly disabled />
+                </div>
+                <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 4, fontFamily: font }}>Contact support to change email.</p>
+              </div>
+              <div style={{ borderTop: "1px solid #F0EFED", marginTop: 20, paddingTop: 20 }}>
+                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Security</h4>
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Current Password</label>
+                  <div style={{ position: "relative" }}>
+                    <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+                    <input type="password" style={{ ...inputStyle, paddingLeft: 36 }} placeholder="••••••••" />
+                  </div>
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>New Password</label>
+                  <div style={{ position: "relative" }}>
+                    <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+                    <input type="password" style={{ ...inputStyle, paddingLeft: 36 }} placeholder="••••••••" />
+                  </div>
+                </div>
+              </div>
+              <div style={{ borderTop: "1px solid #F0EFED", paddingTop: 20 }}>
+                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  Danger Zone
+                </h4>
+                <button onClick={() => { if (confirm("Are you sure? This cannot be undone.")) { setSettingsModal(null); onLogout(); } }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  {Icons.trash({ size: 14 })} Delete Account
+                </button>
+              </div>
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 12, background: "#FAFAF8" }}>
+              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button onClick={() => setSettingsModal(null)} style={btnPrimary}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Privacy Settings Modal */}
+      {settingsModal === "privacy" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy Settings</h3>
+              <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              {[
+                { label: "Profile Visibility", desc: "Control who can see your profile details.", key: "visibility", type: "select", options: ["Everyone", "Connections", "Only Me"] },
+                { label: "Online Status", desc: "Show when you are active.", key: "onlineStatus", type: "toggle" },
+                { label: "Namaste Requests", desc: "Who can send you connection requests.", key: "namasteRequests", type: "select", options: ["Everyone", "Friends of Friends", "Nobody"] },
+              ].map((item, i) => (
+                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 2 ? "1px solid #F0EFED" : "none" }}>
+                  <div>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{item.label}</h4>
+                    <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{item.desc}</p>
+                  </div>
+                  {item.type === "toggle" ? (
+                    <button onClick={() => setPrivSettings(p => ({...p, [item.key]: !p[item.key]}))} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: privSettings[item.key] ? "#22C55E" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
+                      <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: privSettings[item.key] ? 23 : 3, transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
+                    </button>
+                  ) : (
+                    <select value={privSettings[item.key]} onChange={(e) => setPrivSettings(p => ({...p, [item.key]: e.target.value}))} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", fontSize: 12, background: "#F0EFED", color: "#37352F", fontFamily: font, cursor: "pointer", appearance: "none", paddingRight: 24 }}>
+                      {item.options.map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8" }}>
+              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notification Preferences Modal */}
+      {settingsModal === "notifications" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Notification Preferences</h3>
+              <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              {[
+                { label: "Email Notifications", desc: "Receive updates via email.", key: "email" },
+                { label: "Push Notifications", desc: "Receive push notifications on your device.", key: "push" },
+                { label: "Marketing Emails", desc: "Receive news and special offers.", key: "marketing" },
+              ].map((item, i) => (
+                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 2 ? "1px solid #F0EFED" : "none" }}>
+                  <div>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{item.label}</h4>
+                    <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{item.desc}</p>
+                  </div>
+                  <button onClick={() => setNotifSettings(p => ({...p, [item.key]: !p[item.key]}))} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: notifSettings[item.key] ? "#37352F" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
+                    <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: notifSettings[item.key] ? 23 : 3, transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8" }}>
+              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Activity Log Modal */}
+      {settingsModal === "activity" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Activity Log</h3>
+              <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ maxHeight: 400, overflow: "auto" }}>
+              {[
+                { action: "Liked a post", target: "Gujarati Thali in Berlin", time: "2 hours ago" },
+                { action: "Commented on", target: "Visa process help", time: "5 hours ago" },
+                { action: "Joined group", target: "Indians in Munich", time: "1 day ago" },
+                { action: "Updated profile", target: "Profile Picture", time: "2 days ago" },
+                { action: "Posted", target: "Looking for flatmates", time: "3 days ago" },
+              ].map((log, i) => (
+                <div key={i} style={{ padding: "16px 24px", borderBottom: "1px solid #F0EFED" }}>
+                  <p style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{log.action}</p>
+                  <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>"{log.target}" · {log.time}</p>
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8" }}>
+              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Help Center Modal */}
+      {settingsModal === "helpCenter" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Help & Support</h3>
+              <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <div style={{ background: "#EDF4FF", borderRadius: 10, padding: "18px 20px", marginBottom: 24, border: "1px solid #DBEAFE" }}>
+                <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.help({ size: 16 })} Need assistance?</h4>
+                <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, marginBottom: 14, fontFamily: font }}>Our support team is here to help you with any issues or questions you might have.</p>
+                <button style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#3B5EDB", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Contact Support</button>
+              </div>
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font }}>FAQs</h4>
+              <div style={{ border: "1px solid #E8E7E4", borderRadius: 10, overflow: "hidden" }}>
+                {["How do I verify my account?", "Can I change my username?", "How to report a user?"].map((q, i) => (
+                  <div key={i} style={{ padding: "14px 18px", borderBottom: i < 2 ? "1px solid #F0EFED" : "none", cursor: "pointer", fontSize: 14, color: "#37352F", fontFamily: font }}
+                    onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
+                    onMouseOut={(e) => e.currentTarget.style.background = "#fff"}>
+                    {q}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8" }}>
+              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Terms & Policies Modal */}
+      {settingsModal === "terms" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED", flexShrink: 0 }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Terms & Policies</h3>
+              <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24, overflow: "auto", flex: 1, fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
+              <p><strong style={{ color: "#37352F" }}>1. Acceptance of Terms</strong><br/>By accessing and using this platform, you accept and agree to be bound by the terms and provision of this agreement.</p>
+              <p style={{ marginTop: 16 }}><strong style={{ color: "#37352F" }}>2. Community Guidelines</strong><br/>We are committed to maintaining a safe and respectful community. Hate speech, harassment, and spam are strictly prohibited.</p>
+              <p style={{ marginTop: 16 }}><strong style={{ color: "#37352F" }}>3. Privacy Policy</strong><br/>We respect your privacy and are committed to protecting your personal data. Please review our full Privacy Policy to understand how we collect and use your information.</p>
+              <p style={{ marginTop: 16 }}><strong style={{ color: "#37352F" }}>4. User Content</strong><br/>You retain ownership of the content you post, but grant us a license to use, store, and display that content in connection with the service.</p>
+              <p style={{ marginTop: 16, fontSize: 11, color: "#9B9A97", fontStyle: "italic" }}>Last updated: October 2024</p>
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8", flexShrink: 0 }}>
+              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Followers / Following Modal */}
+      {followModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setFollowModal(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 400, maxHeight: "70vh", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED", flexShrink: 0 }}>
+              <div style={{ display: "flex", gap: 0, background: "#F5F5F3", borderRadius: 20, padding: "3px 4px" }}>
+                {["followers", "following"].map(t => (
+                  <button key={t} onClick={() => setFollowModal(t)} style={{ padding: "6px 16px", borderRadius: 18, border: followModal === t ? "1px solid #E0E0DE" : "1px solid transparent", fontSize: 13, fontWeight: followModal === t ? 600 : 500, background: followModal === t ? "#fff" : "transparent", color: followModal === t ? "#37352F" : "#9B9A97", cursor: "pointer", fontFamily: font, transition: "all 0.2s", textTransform: "capitalize", boxShadow: followModal === t ? "0 1px 3px rgba(0,0,0,0.06)" : "none" }}>
+                    {t} ({t === "followers" ? myFollowers.length : myFollowing.length})
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setFollowModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ overflow: "auto", flex: 1 }}>
+              {(followModal === "followers" ? myFollowers : myFollowing).length === 0 ? (
+                <div style={{ padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13, fontFamily: font }}>
+                  {followModal === "followers" ? "No followers yet. Share your profile to get connected!" : "You're not following anyone yet. Send a Namaste request to connect!"}
+                </div>
+              ) : (
+                (followModal === "followers" ? myFollowers : myFollowing).map((u, i) => (
+                  <div key={u.id || i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED" }}>
+                    <Avatar name={u.name || "User"} size={40} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name || "User"}</div>
+                      <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{u.profession || ""}</div>
+                    </div>
+                    <button onClick={() => { setFollowModal(null); setView("network"); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", fontSize: 11, fontWeight: 600, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>View</button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Report Confirmation Modal */}
+      {reportConfirm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportConfirm(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 380, padding: 28, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              {Icons.flag({ size: 22, stroke: "#DC2626" })}
+            </div>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Report this content?</h3>
+            <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 24, lineHeight: 1.5, fontFamily: font }}>This will be reviewed by our moderation team. False reports may result in account restrictions.</p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <button onClick={() => setReportConfirm(null)} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 13, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button onClick={async () => {
+                try {
+                  if (reportConfirm.type === "post") await api.reportPost(reportConfirm.id, "Inappropriate content");
+                  else await api.reportUser(reportConfirm.id, "Inappropriate content");
+                } catch(e) {}
+                setReportConfirm(null);
+                alert("Reported successfully. Thank you for keeping the community safe.");
+              }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Report</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Block User Modal */}
+      {blockModalOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setBlockModalOpen(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FEF2F2" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#DC2626" }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
+                <h3 style={{ fontSize: 16, fontWeight: 700, fontFamily: font }}>Block User</h3>
+              </div>
+              <button onClick={() => setBlockModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 4 }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 28, fontFamily: font }}>
+                Are you sure you want to block this user? They will no longer be able to message you or see your profile. This action is reversible in settings.
+              </p>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                <button onClick={() => setBlockModalOpen(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+                <button onClick={async () => { try { if (activeConvo) await api.blockUser(activeConvo.id); } catch(e) {} setBlockModalOpen(false); setSelectedConvo(null); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, background: "#DC2626", color: "#fff", cursor: "pointer", fontFamily: font }}>Confirm Block</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Report User Modal */}
+      {reportModalOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportModalOpen(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FEF2F2" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#DC2626" }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <h3 style={{ fontSize: 16, fontWeight: 700, fontFamily: font }}>Report User</h3>
+              </div>
+              <button onClick={() => setReportModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 4 }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <p style={{ fontSize: 14, color: "#5F5E5B", marginBottom: 20, fontFamily: font }}>Please select a reason for reporting this user:</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
+                {["Spam or misleading", "Harassment or hate speech", "Inappropriate content", "Violence or physical harm", "Impersonation", "Other"].map(reason => (
+                  <label key={reason} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 8, cursor: "pointer", border: reportReason === reason ? "1px solid #37352F" : "1px solid transparent", background: reportReason === reason ? "#FAFAF8" : "transparent", transition: "all 0.1s" }}
+                    onMouseOver={(e) => { if (reportReason !== reason) e.currentTarget.style.background = "#FAFAF8"; }}
+                    onMouseOut={(e) => { if (reportReason !== reason) e.currentTarget.style.background = "transparent"; }}>
+                    <input type="radio" name="reportReason" value={reason} checked={reportReason === reason} onChange={() => setReportReason(reason)} style={{ accentColor: "#37352F", width: 16, height: 16 }} />
+                    <span style={{ fontSize: 14, color: "#37352F", fontFamily: font }}>{reason}</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                <button onClick={() => { setReportModalOpen(false); setReportReason(""); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+                <button onClick={async () => { try { if (activeConvo) await api.reportUser(activeConvo.id, reportReason); } catch(e) {} setReportModalOpen(false); setReportReason(""); }} disabled={!reportReason} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, background: reportReason ? "#DC2626" : "#FECACA", color: "#fff", cursor: reportReason ? "pointer" : "default", fontFamily: font, transition: "background 0.15s" }}>Submit Report</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Filter Feed Modal */}
+      {filterModalOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setFilterModalOpen(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font, display: "flex", alignItems: "center", gap: 8 }}>{Icons.filter({ size: 16 })} Filter Feed</h3>
+              <button onClick={() => setFilterModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: "0 20px 20px" }}>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.mapPin({ size: 12 })} Hometown</label>
+                <div style={{ position: "relative" }}>
+                  <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 14 })}</div>
+                  <input value={feedFilters.hometown} onChange={(e) => setFeedFilters({...feedFilters, hometown: e.target.value})} placeholder="Search city..." style={{ ...inputStyle, paddingLeft: 34 }} />
+                </div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.briefcase({ size: 12 })} Occupation</label>
+                <select value={feedFilters.occupation} onChange={(e) => setFeedFilters({...feedFilters, occupation: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                  {["All", ...OCCUPATION_TYPES].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.clock({ size: 12 })} Duration Abroad</label>
+                <select value={feedFilters.yearsAbroad} onChange={(e) => setFeedFilters({...feedFilters, yearsAbroad: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                  {["All", ...YEARS_OPTIONS].map(y => <option key={y}>{y}</option>)}
+                </select>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.users({ size: 12 })} Specific Community</label>
+                <select value={feedFilters.community} onChange={(e) => setFeedFilters({...feedFilters, community: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                  <option value="All">All Communities</option>
+                  {groups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
+                </select>
+              </div>
+              <button onClick={() => setFilterModalOpen(false)} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px" }}>Apply Filters</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Doc Modal */}
+      {docModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setDocModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Create New Doc</h3>
+              <button onClick={() => setDocModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
+                <input style={inputStyle} value={newDoc.title} onChange={(e) => setNewDoc({...newDoc, title: e.target.value})} placeholder="e.g. 10 steps to do when you're in Berlin" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>City</label>
+                  <select style={{ ...inputStyle, appearance: "none", cursor: "pointer" }} value={newDoc.city} onChange={(e) => setNewDoc({...newDoc, city: e.target.value})}>
+                    <option value="">Select City</option>
+                    {GLOBAL_CITIES.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
+                  <select style={{ ...inputStyle, appearance: "none", cursor: "pointer" }} value={newDoc.category} onChange={(e) => setNewDoc({...newDoc, category: e.target.value})}>
+                    {["General", "Guide", "Food", "Finance", "Housing"].map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Excerpt / Summary</label>
+                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newDoc.excerpt} onChange={(e) => setNewDoc({...newDoc, excerpt: e.target.value})} placeholder="Brief summary of your doc..." />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
+                <button onClick={() => setDocModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+                <button onClick={async () => { if (!newDoc.title || !newDoc.city) return; setDocs([{ id: "d_"+Date.now(), ...newDoc, readTime: "1 min read", author: user.name, likes: 0 }, ...docs]); try { await api.createDoc({ title: newDoc.title, city: newDoc.city, category: newDoc.category, excerpt: newDoc.excerpt, content: newDoc.excerpt }); } catch(e) {} setNewDoc({ title: "", city: "", category: "General", excerpt: "" }); setDocModal(false); }} disabled={!newDoc.title || !newDoc.city} style={{ ...btnPrimary, opacity: newDoc.title && newDoc.city ? 1 : 0.4 }}>Create Doc</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Post Market Item Modal */}
+      {marketModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setMarketModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Post an Item</h3>
+              <button onClick={() => setMarketModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
+                <input style={inputStyle} value={newMarket.title} onChange={(e) => setNewMarket({...newMarket, title: e.target.value})} placeholder="What are you selling?" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Price</label>
+                  <input style={inputStyle} value={newMarket.price} onChange={(e) => setNewMarket({...newMarket, price: e.target.value})} placeholder="e.g. €50" />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
+                  <select style={{ ...inputStyle, appearance: "none", cursor: "pointer" }} value={newMarket.category} onChange={(e) => setNewMarket({...newMarket, category: e.target.value})}>
+                    {["Housing", "Jobs", "Items", "Vehicles", "Services"].map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>City</label>
+                <select style={{ ...inputStyle, cursor: "pointer" }} value={newMarket.city} onChange={(e) => setNewMarket({...newMarket, city: e.target.value})}>
+                  <option value="">Select a city...</option>
+                  {GLOBAL_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
+                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newMarket.description} onChange={(e) => setNewMarket({...newMarket, description: e.target.value})} placeholder="Describe your item..." />
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Photos (max 4)</label>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {marketPhotos.map((p, i) => (
+                    <div key={i} style={{ width: 72, height: 72, borderRadius: 8, overflow: "hidden", position: "relative", border: "1px solid #E0E0DE" }}>
+                      <img src={p} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <button onClick={() => setMarketPhotos(prev => prev.filter((_, j) => j !== i))} style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: "50%", background: "rgba(0,0,0,0.5)", border: "none", color: "#fff", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                    </div>
+                  ))}
+                  {marketPhotos.length < 4 && (
+                    <label style={{ width: 72, height: 72, borderRadius: 8, border: "2px dashed #E0E0DE", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#9B9A97" }}>
+                      <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (ev) => setMarketPhotos(prev => [...prev, ev.target.result].slice(0, 4));
+                        reader.readAsDataURL(file);
+                      }} />
+                      {Icons.plus({ size: 20 })}
+                      <span style={{ fontSize: 9, marginTop: 2 }}>Add</span>
+                    </label>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
+                <button onClick={() => { setMarketModal(false); setMarketPhotos([]); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+                <button disabled={!newMarket.title || !newMarket.price} onClick={async () => { try { await api.createMarketItem({ title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description }); } catch(e) {} setNewMarket({ title: "", price: "", category: "Items", city: "", description: "" }); setMarketPhotos([]); setMarketModal(false); }} style={{ ...btnPrimary, opacity: newMarket.title && newMarket.price ? 1 : 0.4 }}>Post Item</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Request New Community Modal */}
+      {groupRequestModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setGroupRequestModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Request New Community</h3>
+              <button onClick={() => setGroupRequestModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              {/* Yellow info box */}
+              <div style={{
+                background: "#FFFDE7", border: "1px solid #FFF9C4", borderRadius: 8, padding: "16px 18px", marginBottom: 24,
+              }}>
+                <p style={{ fontSize: 14, fontWeight: 700, color: "#8D6E00", marginBottom: 6, fontFamily: font }}>Standard Naming Convention</p>
+                <p style={{ fontSize: 13, color: "#8D6E00", lineHeight: 1.55, fontFamily: font }}>
+                  All community groups follow the format: <b>"Indians in [City Name]"</b>. This helps everyone find their local community easily.
+                </p>
+              </div>
+
+              {/* City Name input */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>
+                  City Name
+                </label>
+                <input
+                  value={newGroupCity} onChange={(e) => setNewGroupCity(e.target.value)}
+                  placeholder="e.g. Paris"
+                  style={{
+                    width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE",
+                    fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F", fontFamily: font, boxSizing: "border-box",
+                  }}
+                  autoFocus
+                />
+              </div>
+
+              {/* Preview */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>
+                  Preview
+                </label>
+                <div style={{
+                  padding: "12px 14px", borderRadius: 8, background: "#F0EFED", fontSize: 14, color: "#9B9A97", fontWeight: 500, fontFamily: font,
+                }}>
+                  Indians in {newGroupCity || "..."}
+                </div>
+              </div>
+
+              {/* Buttons */}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                <button onClick={() => setGroupRequestModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (!newGroupCity.trim()) return;
+                    alert(`Your request to create "Indians in ${newGroupCity}" has been sent to the admin for approval.`);
+                    setNewGroupCity("");
+                    setGroupRequestModal(false);
+                  }}
+                  disabled={!newGroupCity.trim()}
+                  style={{
+                    padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600,
+                    background: newGroupCity.trim() ? "#37352F" : "#E8E7E4", color: newGroupCity.trim() ? "#fff" : "#9B9A97",
+                    cursor: newGroupCity.trim() ? "pointer" : "default", fontFamily: font,
+                  }}
+                >
+                  Submit Request
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Event Modal */}
+      {eventModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setEventModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Host an Event</h3>
+              <button onClick={() => setEventModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Event Title</label>
+                <input style={inputStyle} value={newEvent.title} onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="e.g. Diwali Night 2024" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Date</label>
+                  <input style={inputStyle} type="date" value={newEvent.date} onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Time</label>
+                  <input style={inputStyle} type="time" value={newEvent.time} onChange={(e) => setNewEvent({ ...newEvent, time: e.target.value })} />
+                </div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Location / Venue</label>
+                <div style={{ position: "relative" }}>
+                  <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.mapPin({ size: 14 })}</div>
+                  <input style={{ ...inputStyle, paddingLeft: 36 }} value={newEvent.location} onChange={(e) => setNewEvent({ ...newEvent, location: e.target.value })} placeholder="e.g. Central Park, NY" />
+                </div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>City</label>
+                <select style={inputStyle} value={newEvent.city || ""} onChange={(e) => setNewEvent({ ...newEvent, city: e.target.value })}>
+                  <option value="">Select a city...</option>
+                  {GLOBAL_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Ticket / Info Link (Optional)</label>
+                <div style={{ position: "relative" }}>
+                  <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.link({ size: 14 })}</div>
+                  <input style={{ ...inputStyle, paddingLeft: 36 }} value={newEvent.link} onChange={(e) => setNewEvent({ ...newEvent, link: e.target.value })} placeholder="https://eventbrite.com/..." />
+                </div>
+              </div>
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
+                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newEvent.description} onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })} placeholder="Tell people what your event is about..." />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
+                <button onClick={() => setEventModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+                <button onClick={createEvent} disabled={!newEvent.title || !newEvent.date} style={{ ...btnPrimary, opacity: newEvent.title && newEvent.date ? 1 : 0.4 }}>Share Event</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Help Modal */}
+      {helpModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setHelpModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
+              <h3 style={{ fontSize: 15, fontWeight: 600 }}>Ask for Help</h3>
+              <button onClick={() => setHelpModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Title</label>
+                <input style={inputStyle} value={newHelp.title} onChange={(e) => setNewHelp({ ...newHelp, title: e.target.value })} placeholder="Summarize your need..." />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Category</label>
+                  <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.category} onChange={(e) => setNewHelp({ ...newHelp, category: e.target.value })}>
+                    {["General", "Housing", "Health", "Legal/Visa", "Education", "Jobs", "Travel"].map((c) => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Urgency</label>
+                  <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.urgency} onChange={(e) => setNewHelp({ ...newHelp, urgency: e.target.value })}>
+                    {["Low", "Medium", "High"].map((u) => <option key={u}>{u}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>City</label>
+                <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.city || ""} onChange={(e) => setNewHelp({ ...newHelp, city: e.target.value })}>
+                  <option value="">Select a city...</option>
+                  {GLOBAL_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Description</label>
+                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newHelp.description} onChange={(e) => setNewHelp({ ...newHelp, description: e.target.value })} placeholder="Provide details..." />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                <button onClick={() => setHelpModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>
+                <button onClick={createHelp} disabled={!newHelp.title || !newHelp.description} style={{ ...btnPrimary, opacity: newHelp.title && newHelp.description ? 1 : 0.4 }}>Post Request</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Profile Modal */}
+      {profileModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfileModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
+              <h3 style={{ fontSize: 15, fontWeight: 600 }}>Edit Profile</h3>
+              <button onClick={() => setProfileModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              {[
+                { key: "profession", label: "Profession" },
+                { key: "location", label: "Location" },
+                { key: "hometown", label: "Hometown" },
+                { key: "linkedinUrl", label: "LinkedIn URL" },
+              ].map((f) => (
+                <div key={f.key} style={{ marginBottom: 16 }}>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{f.label}</label>
+                  <input style={inputStyle} value={editProfile[f.key] || ""} onChange={(e) => setEditProfile({ ...editProfile, [f.key]: e.target.value })} />
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8 }}>
+                <button onClick={() => setProfileModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>
+                <button onClick={saveProfileChanges} style={btnPrimary}>Save Changes</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Responsive CSS */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=DM+Sans:wght@400;500;600;700;800&display=swap');
+        * { box-sizing: border-box; margin: 0; }
+        body { font-family: 'DM Sans', sans-serif; background: #FAFAF8; color: #37352F; }
+        input:focus, select:focus, textarea:focus { border-color: #37352F !important; background: #fff !important; }
+        button:hover { opacity: 0.92; }
+        .sidebar-left, .sidebar-right { display: block; }
+        .desktop-nav { display: flex !important; }
+        .mobile-menu-btn { display: none !important; }
+        .mobile-nav { display: none !important; }
+
+        @media (max-width: 900px) {
+          .nav-grid { display: flex !important; justify-content: space-between !important; }
+          .main-grid { grid-template-columns: 1fr !important; }
+          .sidebar-left, .sidebar-right { display: none !important; }
+          .desktop-nav { display: none !important; }
+          .mobile-menu-btn { display: block !important; }
+          .mobile-nav { display: flex !important; }
+          .docs-grid, .market-grid, .network-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+    </div>
+  );
+};
+
+// ============================================================================
+// APP (Root)
+// ============================================================================
+// Cookie Consent Banner Component
+const CookieConsent = () => {
+  const [visible, setVisible] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [analyticsConsent, setAnalyticsConsent] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const result = localStorage.getItem("indin_cookie_consent");
+        if (!result) setVisible(true);
+      } catch {
+        setVisible(true);
+      }
+    })();
+  }, []);
+
+  const acceptAll = async () => {
+    try { localStorage.setItem("indin_cookie_consent", JSON.stringify({ essential: true, analytics: true, date: new Date().toISOString() })); } catch (e) {}
+    setVisible(false);
+  };
+  const acceptEssential = async () => {
+    try { localStorage.setItem("indin_cookie_consent", JSON.stringify({ essential: true, analytics: analyticsConsent, date: new Date().toISOString() })); } catch (e) {}
+    setVisible(false);
+  };
+
+  if (!visible) return null;
+
+  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
+  return (
+    <div style={{
+      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
+      background: "#fff", borderTop: "1px solid #E0E0DE",
+      boxShadow: "0 -4px 24px rgba(0,0,0,0.08)", padding: "0",
+      fontFamily: font,
+    }}>
+      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 24px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 280 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              <h4 style={{ fontSize: 14, fontWeight: 700, color: "#37352F", margin: 0 }}>We value your privacy</h4>
+            </div>
+            <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, margin: 0 }}>
+              We use essential cookies to make NRIClub work. With your consent, we may also use analytics cookies to improve your experience.
+              {" "}
+              <button onClick={() => setShowDetails(!showDetails)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
+                {showDetails ? "Hide details" : "Learn more"}
+              </button>
+            </p>
+
+            {showDetails && (
+              <div style={{ marginTop: 14, padding: "14px 16px", background: "#F7F7F5", borderRadius: 8, border: "1px solid #EDEDEB" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>Essential Cookies</span>
+                    <p style={{ fontSize: 11, color: "#9B9A97", margin: "2px 0 0" }}>Required for the platform to function. Cannot be disabled.</p>
+                  </div>
+                  <span style={{ fontSize: 11, color: "#22A06B", fontWeight: 600, background: "#E3FCEF", padding: "3px 8px", borderRadius: 4 }}>Always on</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10, borderTop: "1px solid #E8E7E4" }}>
+                  <div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>Analytics Cookies</span>
+                    <p style={{ fontSize: 11, color: "#9B9A97", margin: "2px 0 0" }}>Help us understand how you use NRIClub to improve the experience.</p>
+                  </div>
+                  <button
+                    onClick={() => setAnalyticsConsent(!analyticsConsent)}
+                    style={{
+                      width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer",
+                      background: analyticsConsent ? "#37352F" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0,
+                    }}
+                  >
+                    <div style={{
+                      width: 14, height: 14, borderRadius: "50%", background: "#fff",
+                      position: "absolute", top: 3,
+                      left: analyticsConsent ? 19 : 3,
+                      transition: "left 0.2s",
+                    }} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
+            <button onClick={acceptEssential} style={{
+              padding: "10px 18px", borderRadius: 8, border: "1px solid #E0E0DE",
+              background: "#fff", fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
+            }}>
+              Essential Only
+            </button>
+            <button onClick={acceptAll} style={{
+              padding: "10px 18px", borderRadius: 8, border: "none",
+              background: "#37352F", fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font,
+            }}>
+              Accept All
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Admin credentials
+const ADMIN_USER = "admin@nriclub.com";
+const ADMIN_PASS = "NRIClub@2026!";
+
+export default function App() {
+  const [authState, setAuthState] = useState("loading");
+  const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPass, setAdminPass] = useState("");
+  const [adminErr, setAdminErr] = useState("");
+
+  useEffect(() => {
+    // Check for admin route
+    if (window.location.hash === "#admin") {
+      setAuthState("admin-login");
+      return;
+    }
+    (async () => {
+      try {
+        const session = await api.getSession();
+        if (session && session.user) {
+          const profile = await api.getMyProfile();
+          if (profile) {
+            setUser(profile);
+            setAuthState("authenticated");
+            return;
+          }
+        }
+      } catch (e) {}
+      // Fallback: check local cache
+      try {
+        const cached = JSON.parse(localStorage.getItem("indin_profile_cache") || "null");
+        if (cached) { setUser(cached); setAuthState("authenticated"); return; }
+      } catch (e) {}
+      setAuthState("landing");
+    })();
+  }, []);
+
+  const handleAuthComplete = (userData) => {
+    setUser(userData);
+    setAuthState("authenticated");
+  };
+
+  const handleLogout = async () => {
+    try { await api.signOut(); } catch (e) {}
+    try { localStorage.removeItem("indin_profile_cache"); } catch (e) {}
+    try { localStorage.removeItem("indin_token"); localStorage.removeItem("indin_refresh"); localStorage.removeItem("indin_profile_cache"); } catch (e) {}
+    setUser(null);
+    setAuthState("landing");
+  };
+
+  if (authState === "loading") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ width: 48, height: 48, background: "#37352F", borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16, color: "#fff" }}>
+            {Icons.globe({ size: 24 })}
+          </div>
+          <p style={{ color: "#9B9A97", fontSize: 14 }}>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const content = (() => {
+    if (authState === "admin-login") {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#1A1A1A", fontFamily: "'DM Sans', sans-serif" }}>
+          <div style={{ maxWidth: 360, width: "100%", background: "#fff", borderRadius: 16, padding: 32 }}>
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <h2 style={{ fontSize: 22, fontWeight: 800, color: "#37352F" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></h2>
+              <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 4 }}>Admin Panel Login</p>
+            </div>
+            {adminErr && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminErr}</div>}
+            <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
+            <input type="password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); } else setAdminErr("Invalid credentials"); } }} />
+            <button onClick={() => { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); } else setAdminErr("Invalid credentials"); }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign In</button>
+            <p style={{ fontSize: 11, color: "#9B9A97", textAlign: "center", marginTop: 16 }}><a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ""; setAuthState("landing"); }} style={{ color: "#5B9CFF" }}>← Back to NRIClub</a></p>
+          </div>
+        </div>
+      );
+    }
+    if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={() => { setIsAdmin(false); setAuthState("landing"); window.location.hash = ""; }} />;
+    if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
+    if (authState === "signup") return <SignUpPage onComplete={handleAuthComplete} onLogin={() => setAuthState("login")} />;
+    if (authState === "login") return <LoginPage onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
+    if (authState === "authenticated" && user) return <Dashboard user={user} onLogout={handleLogout} />;
+    return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
+  })();
+
+  return (
+    <>
+      {content}
+      <CookieConsent />
+    </>
+  );
+}
+
+// ============================================================================
+// ADMIN DASHBOARD
+// ============================================================================
+const AdminDashboard = ({ onLogout }) => {
+  const [tab, setTab] = useState("users");
+  const [users, setUsers] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [stats, setStats] = useState({ users: 0, posts: 0, groups: 0, events: 0 });
+  const [loading, setLoading] = useState(true);
+  const font = "'DM Sans', sans-serif";
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [u, g, r] = await Promise.all([
+          fetch(`https://uzzkdmybsbwknpsucuvv.supabase.co/rest/v1/profiles?select=*&order=created_at.desc`, { headers: { apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ" } }).then(r => r.json()),
+          fetch(`https://uzzkdmybsbwknpsucuvv.supabase.co/rest/v1/groups?select=*&order=members_count.desc`, { headers: { apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ" } }).then(r => r.json()),
+          fetch(`https://uzzkdmybsbwknpsucuvv.supabase.co/rest/v1/reports?select=*&order=created_at.desc`, { headers: { apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ" } }).then(r => r.json()),
+        ]);
+        setUsers(u || []);
+        setGroups(g || []);
+        setReports(r || []);
+        setStats({ users: (u || []).length, posts: 0, groups: (g || []).filter(x => x.is_approved).length, events: 0 });
+      } catch (e) {}
+      setLoading(false);
+    })();
+  }, []);
+
+  const approveGroup = async (id) => {
+    try {
+      await fetch(`https://uzzkdmybsbwknpsucuvv.supabase.co/rest/v1/groups?id=eq.${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ", Authorization: `Bearer ${localStorage.getItem("indin_token")}` },
+        body: JSON.stringify({ is_approved: true }),
+      });
+      setGroups(prev => prev.map(g => g.id === id ? { ...g, is_approved: true } : g));
+    } catch (e) {}
+  };
+
+  const deleteReport = async (id) => {
+    setReports(prev => prev.filter(r => r.id !== id));
+  };
+
+  const navItems = [
+    { key: "overview", icon: "📊", label: "Overview" },
+    { key: "users", icon: "👥", label: "Users" },
+    { key: "groups", icon: "🏘️", label: "Group Requests" },
+    { key: "reports", icon: "🚩", label: "Reports" },
+  ];
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", fontFamily: font }}>
+      {/* Sidebar */}
+      <div style={{ width: 240, background: "#1A1A1A", color: "#fff", padding: "24px 0", flexShrink: 0 }}>
+        <div style={{ padding: "0 20px 24px", borderBottom: "1px solid #333" }}>
+          <h2 style={{ fontSize: 18, fontWeight: 800 }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></h2>
+          <p style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Admin Panel</p>
+        </div>
+        <div style={{ marginTop: 16 }}>
+          {navItems.map(n => (
+            <button key={n.key} onClick={() => setTab(n.key)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "12px 20px", border: "none", background: tab === n.key ? "#333" : "transparent", color: tab === n.key ? "#fff" : "#999", cursor: "pointer", fontSize: 13, fontFamily: font, textAlign: "left", borderLeft: tab === n.key ? "3px solid #5B9CFF" : "3px solid transparent" }}>
+              <span style={{ fontSize: 16 }}>{n.icon}</span> {n.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ position: "absolute", bottom: 24, left: 0, width: 240, padding: "0 20px" }}>
+          <button onClick={onLogout} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", color: "#DC2626", cursor: "pointer", fontSize: 13, fontFamily: font }}>↩ Sign Out</button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div style={{ flex: 1, background: "#F7F7F5", padding: 32, overflow: "auto" }}>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 60, color: "#9B9A97" }}>Loading admin data...</div>
+        ) : tab === "overview" ? (
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Dashboard Overview</h1>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }}>
+              {[
+                { label: "Total Users", value: stats.users, color: "#5B9CFF", bg: "#EDF4FF" },
+                { label: "Communities", value: stats.groups, color: "#22A06B", bg: "#E3FCEF" },
+                { label: "Pending Groups", value: groups.filter(g => !g.is_approved).length, color: "#E65100", bg: "#FFF3E0" },
+                { label: "Open Reports", value: reports.filter(r => r.status === "pending").length, color: "#DC2626", bg: "#FEF2F2" },
+              ].map((s, i) => (
+                <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: 20 }}>
+                  <div style={{ fontSize: 11, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 8 }}>{s.label}</div>
+                  <div style={{ fontSize: 32, fontWeight: 700, color: s.color }}>{s.value}</div>
+                </div>
+              ))}
+            </div>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#37352F", marginBottom: 12 }}>Recent Signups</h3>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
+              {users.slice(0, 5).map((u, i) => (
+                <div key={u.id || i} style={{ padding: "12px 18px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{u.name}</div>
+                    <div style={{ fontSize: 12, color: "#9B9A97" }}>{u.email} · {u.location || "No location"}</div>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#9B9A97" }}>{new Date(u.created_at).toLocaleDateString()}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : tab === "users" ? (
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Users ({users.length})</h1>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1fr", padding: "12px 18px", background: "#FAFAF8", borderBottom: "1px solid #E8E7E4", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                <span>Name</span><span>Email</span><span>Location</span><span>Hometown</span><span>Joined</span>
+              </div>
+              {users.map((u, i) => (
+                <div key={u.id || i} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1fr", padding: "12px 18px", borderBottom: "1px solid #F0EFED", fontSize: 13, alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, color: "#37352F" }}>{u.name}</span>
+                  <span style={{ color: "#5F5E5B" }}>{u.email}</span>
+                  <span style={{ color: "#9B9A97" }}>{u.location || "—"}</span>
+                  <span style={{ color: "#9B9A97" }}>{u.hometown || "—"}</span>
+                  <span style={{ color: "#9B9A97", fontSize: 11 }}>{new Date(u.created_at).toLocaleDateString()}</span>
+                </div>
+              ))}
+              {users.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "#9B9A97" }}>No users yet.</div>}
+            </div>
+          </div>
+        ) : tab === "groups" ? (
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Group Requests</h1>
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: "#E65100", marginBottom: 12 }}>Pending Approval ({groups.filter(g => !g.is_approved).length})</h3>
+            {groups.filter(g => !g.is_approved).length === 0 ? (
+              <div style={{ background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", padding: 32, textAlign: "center", color: "#9B9A97", marginBottom: 24 }}>No pending group requests.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 12, marginBottom: 24 }}>
+                {groups.filter(g => !g.is_approved).map(g => (
+                  <div key={g.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 600, color: "#37352F" }}>{g.name}</div>
+                      <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>{g.description} · {g.category}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => approveGroup(g.id)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#22A06B", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Approve</button>
+                      <button onClick={() => setGroups(prev => prev.filter(x => x.id !== g.id))} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Reject</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: "#22A06B", marginBottom: 12 }}>Approved Communities ({groups.filter(g => g.is_approved).length})</h3>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
+              {groups.filter(g => g.is_approved).map(g => (
+                <div key={g.id} style={{ padding: "12px 18px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F" }}>{g.name}</span>
+                    <span style={{ fontSize: 11, color: "#9B9A97", marginLeft: 8 }}>{g.members_count} members · {g.category}</span>
+                  </div>
+                  <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: "#E3FCEF", color: "#22A06B", fontWeight: 600 }}>Active</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : tab === "reports" ? (
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports ({reports.length})</h1>
+            {reports.length === 0 ? (
+              <div style={{ background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", padding: 40, textAlign: "center", color: "#9B9A97" }}>No reports. Community is behaving well!</div>
+            ) : (
+              <div style={{ display: "grid", gap: 12 }}>
+                {reports.map((r, i) => (
+                  <div key={r.id || i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "18px 22px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                      <div>
+                        <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: r.status === "pending" ? "#FFF3E0" : "#E3FCEF", color: r.status === "pending" ? "#E65100" : "#22A06B", fontWeight: 600, textTransform: "uppercase" }}>{r.status}</span>
+                        <span style={{ fontSize: 11, color: "#9B9A97", marginLeft: 8 }}>{new Date(r.created_at).toLocaleString()}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={() => deleteReport(r.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#DC2626", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Delete Content</button>
+                        <button onClick={() => deleteReport(r.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", marginBottom: 4 }}>Reason: {r.reason}</div>
+                    <div style={{ fontSize: 12, color: "#9B9A97" }}>
+                      Reporter: {r.reporter_id?.substring(0, 8)}... · 
+                      {r.reported_user_id ? ` User: ${r.reported_user_id.substring(0, 8)}...` : ""}
+                      {r.reported_post_id ? ` Post: ${r.reported_post_id.substring(0, 8)}...` : ""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+};

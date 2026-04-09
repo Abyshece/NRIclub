@@ -1,0 +1,582 @@
+// ============================================================================
+// supabaseApi.js - Complete Supabase API layer for IndIn
+// ============================================================================
+
+const SUPABASE_URL = "https://uzzkdmybsbwknpsucuvv.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ";
+
+let accessToken = null;
+let currentUser = null;
+
+function headers(extra = {}) {
+  const h = {
+    "Content-Type": "application/json",
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${accessToken || SUPABASE_ANON_KEY}`,
+    ...extra,
+  };
+  return h;
+}
+
+async function restCall(method, path, body = null, extraHeaders = {}) {
+  const opts = { method, headers: headers(extraHeaders) };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(`${SUPABASE_URL}${path}`, opts);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+// ============================================================================
+// AUTH
+// ============================================================================
+
+export async function signUp(email, password, metadata = {}) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+    body: JSON.stringify({ email, password, data: metadata }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || "Signup failed");
+  return data;
+}
+
+export async function signIn(email, password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || "Login failed");
+  accessToken = data.access_token;
+  currentUser = data.user;
+  localStorage.setItem("indin_token", data.access_token);
+  localStorage.setItem("indin_refresh", data.refresh_token);
+  return data;
+}
+
+export async function signOut() {
+  try {
+    if (accessToken) {
+      await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+      });
+    }
+  } catch (e) {}
+  accessToken = null;
+  currentUser = null;
+  localStorage.removeItem("indin_token");
+  localStorage.removeItem("indin_refresh");
+}
+
+export async function sendOtp(email) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error_description || "Failed to send OTP");
+  }
+}
+
+export async function verifyOtp(email, token) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+    body: JSON.stringify({ email, token, type: "email" }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || "Invalid OTP");
+  if (data.access_token) {
+    accessToken = data.access_token;
+    currentUser = data.user;
+    localStorage.setItem("indin_token", data.access_token);
+    if (data.refresh_token) localStorage.setItem("indin_refresh", data.refresh_token);
+  }
+  return data;
+}
+
+export async function refreshSession() {
+  const refresh = localStorage.getItem("indin_refresh");
+  if (!refresh) return null;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+      body: JSON.stringify({ refresh_token: refresh }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    accessToken = data.access_token;
+    currentUser = data.user;
+    localStorage.setItem("indin_token", data.access_token);
+    if (data.refresh_token) localStorage.setItem("indin_refresh", data.refresh_token);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getSession() {
+  const token = localStorage.getItem("indin_token");
+  if (!token) return null;
+  accessToken = token;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      // Try refresh
+      return await refreshSession();
+    }
+    const user = await res.json();
+    currentUser = user;
+    return { user, access_token: token };
+  } catch {
+    return await refreshSession();
+  }
+}
+
+export function getCurrentUser() { return currentUser; }
+export function getToken() { return accessToken; }
+
+// ============================================================================
+// PROFILES
+// ============================================================================
+
+export async function getProfile(userId) {
+  const data = await restCall("GET", `/rest/v1/profiles?id=eq.${userId}&select=*`);
+  return data?.[0] || null;
+}
+
+export async function getMyProfile() {
+  if (!currentUser) return null;
+  return getProfile(currentUser.id);
+}
+
+export async function updateProfile(updates) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, updates, { Prefer: "return=representation" });
+}
+
+export async function searchProfiles(query = "", filters = {}) {
+  let url = `/rest/v1/profiles?select=*&order=created_at.desc`;
+  if (query) url += `&or=(name.ilike.%25${query}%25,profession.ilike.%25${query}%25)`;
+  if (filters.city && filters.city !== "All") url += `&location=ilike.%25${filters.city}%25`;
+  if (filters.hometown && filters.hometown !== "All") url += `&hometown=ilike.%25${filters.hometown}%25`;
+  if (currentUser) url += `&id=neq.${currentUser.id}`;
+  url += "&limit=20";
+  return restCall("GET", url);
+}
+
+// ============================================================================
+// POSTS
+// ============================================================================
+
+export async function getPosts(limit = 30, groupId = null) {
+  let url = `/rest/v1/posts?select=*,profiles:user_id(id,name,avatar_url,profession,location,hometown,linkedin_url)&order=created_at.desc&limit=${limit}`;
+  if (groupId) url += `&group_id=eq.${groupId}`;
+  return restCall("GET", url);
+}
+
+export async function createPost(content, tags = [], imageUrl = null, groupId = null) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/posts", {
+    user_id: currentUser.id,
+    content,
+    tags,
+    image_url: imageUrl,
+    group_id: groupId,
+  }, { Prefer: "return=representation" });
+}
+
+export async function deletePost(postId) {
+  return restCall("DELETE", `/rest/v1/posts?id=eq.${postId}&user_id=eq.${currentUser.id}`);
+}
+
+// ============================================================================
+// COMMENTS
+// ============================================================================
+
+export async function getComments(postId) {
+  return restCall("GET", `/rest/v1/comments?post_id=eq.${postId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.desc`);
+}
+
+export async function addComment(postId, content) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/comments", {
+    post_id: postId,
+    user_id: currentUser.id,
+    content,
+  }, { Prefer: "return=representation" });
+}
+
+// ============================================================================
+// LIKES
+// ============================================================================
+
+export async function toggleLike(postId) {
+  if (!currentUser) throw new Error("Not logged in");
+  // Check if already liked
+  const existing = await restCall("GET", `/rest/v1/likes?post_id=eq.${postId}&user_id=eq.${currentUser.id}`);
+  if (existing && existing.length > 0) {
+    await restCall("DELETE", `/rest/v1/likes?post_id=eq.${postId}&user_id=eq.${currentUser.id}`);
+    return false; // unliked
+  } else {
+    await restCall("POST", "/rest/v1/likes", { post_id: postId, user_id: currentUser.id });
+    return true; // liked
+  }
+}
+
+export async function getUserLikes() {
+  if (!currentUser) return [];
+  return restCall("GET", `/rest/v1/likes?user_id=eq.${currentUser.id}&select=post_id`);
+}
+
+// ============================================================================
+// CONNECTIONS (Namaste)
+// ============================================================================
+
+export async function sendNamaste(recipientId) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/connections", {
+    requester_id: currentUser.id,
+    recipient_id: recipientId,
+    status: "pending",
+  }, { Prefer: "return=representation" });
+}
+
+export async function respondToNamaste(connectionId, accept) {
+  return restCall("PATCH", `/rest/v1/connections?id=eq.${connectionId}`, {
+    status: accept ? "accepted" : "blocked",
+  });
+}
+
+export async function getMyConnections() {
+  if (!currentUser) return [];
+  return restCall("GET", `/rest/v1/connections?or=(requester_id.eq.${currentUser.id},recipient_id.eq.${currentUser.id})&status=eq.accepted&select=*,requester:requester_id(id,name,avatar_url,profession),recipient:recipient_id(id,name,avatar_url,profession)`);
+}
+
+export async function getSentNamastes() {
+  if (!currentUser) return [];
+  return restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&select=recipient_id`);
+}
+
+// ============================================================================
+// GROUPS
+// ============================================================================
+
+export async function getGroups() {
+  return restCall("GET", "/rest/v1/groups?is_approved=eq.true&select=*&order=members_count.desc");
+}
+
+export async function joinGroup(groupId) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/group_members", {
+    group_id: groupId,
+    user_id: currentUser.id,
+  }, { Prefer: "return=representation" });
+}
+
+export async function leaveGroup(groupId) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("DELETE", `/rest/v1/group_members?group_id=eq.${groupId}&user_id=eq.${currentUser.id}`);
+}
+
+export async function getMyGroupIds() {
+  if (!currentUser) return [];
+  const data = await restCall("GET", `/rest/v1/group_members?user_id=eq.${currentUser.id}&select=group_id`);
+  return (data || []).map(d => d.group_id);
+}
+
+export async function getGroupMembers(groupId) {
+  return restCall("GET", `/rest/v1/group_members?group_id=eq.${groupId}&select=*,profiles:user_id(id,name,avatar_url,profession,location)`);
+}
+
+export async function requestNewGroup(cityName) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/groups", {
+    name: `Indians in ${cityName}`,
+    description: `Community for Indians living in ${cityName}.`,
+    category: "City",
+    created_by: currentUser.id,
+    is_approved: false,
+  }, { Prefer: "return=representation" });
+}
+
+// ============================================================================
+// EVENTS
+// ============================================================================
+
+export async function getEvents() {
+  return restCall("GET", "/rest/v1/events?select=*&order=created_at.desc");
+}
+
+export async function createEvent(eventData) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/events", {
+    ...eventData,
+    organizer_id: currentUser.id,
+  }, { Prefer: "return=representation" });
+}
+
+export async function toggleRsvp(eventId) {
+  if (!currentUser) throw new Error("Not logged in");
+  const existing = await restCall("GET", `/rest/v1/event_rsvps?event_id=eq.${eventId}&user_id=eq.${currentUser.id}`);
+  if (existing && existing.length > 0) {
+    await restCall("DELETE", `/rest/v1/event_rsvps?event_id=eq.${eventId}&user_id=eq.${currentUser.id}`);
+    return false;
+  } else {
+    await restCall("POST", "/rest/v1/event_rsvps", { event_id: eventId, user_id: currentUser.id });
+    return true;
+  }
+}
+
+export async function getMyRsvps() {
+  if (!currentUser) return [];
+  const data = await restCall("GET", `/rest/v1/event_rsvps?user_id=eq.${currentUser.id}&select=event_id`);
+  return (data || []).map(d => d.event_id);
+}
+
+// ============================================================================
+// MESSAGES
+// ============================================================================
+
+export async function getConversations() {
+  if (!currentUser) return [];
+  const data = await restCall("GET", `/rest/v1/conversations?or=(participant_1.eq.${currentUser.id},participant_2.eq.${currentUser.id})&select=*,p1:participant_1(id,name,avatar_url),p2:participant_2(id,name,avatar_url)&order=last_message_at.desc`);
+  return (data || []).map(c => ({
+    ...c,
+    otherUser: c.participant_1 === currentUser.id ? c.p2 : c.p1,
+  }));
+}
+
+export async function getOrCreateConversation(otherUserId) {
+  if (!currentUser) throw new Error("Not logged in");
+  // Check existing
+  const existing = await restCall("GET", `/rest/v1/conversations?or=(and(participant_1.eq.${currentUser.id},participant_2.eq.${otherUserId}),and(participant_1.eq.${otherUserId},participant_2.eq.${currentUser.id}))&select=*`);
+  if (existing && existing.length > 0) return existing[0];
+  // Create new
+  const result = await restCall("POST", "/rest/v1/conversations", {
+    participant_1: currentUser.id,
+    participant_2: otherUserId,
+  }, { Prefer: "return=representation" });
+  return result[0];
+}
+
+export async function getMessages(conversationId) {
+  return restCall("GET", `/rest/v1/messages?conversation_id=eq.${conversationId}&select=*,sender:sender_id(id,name,avatar_url)&order=created_at.asc`);
+}
+
+export async function sendMessage(conversationId, content) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/messages", {
+    conversation_id: conversationId,
+    sender_id: currentUser.id,
+    content,
+  }, { Prefer: "return=representation" });
+}
+
+// ============================================================================
+// MARKETPLACE
+// ============================================================================
+
+export async function getMarketItems(filters = {}) {
+  let url = "/rest/v1/marketplace?status=eq.active&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.desc";
+  if (filters.category && filters.category !== "All") url += `&category=eq.${filters.category}`;
+  if (filters.city && filters.city !== "All") url += `&location=ilike.%25${filters.city}%25`;
+  if (filters.search) url += `&or=(title.ilike.%25${filters.search}%25,description.ilike.%25${filters.search}%25)`;
+  return restCall("GET", url);
+}
+
+export async function createMarketItem(item) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/marketplace", {
+    ...item,
+    user_id: currentUser.id,
+  }, { Prefer: "return=representation" });
+}
+
+// ============================================================================
+// DOCS
+// ============================================================================
+
+export async function getDocs(cityFilter = "All") {
+  let url = "/rest/v1/docs?select=*,profiles:user_id(id,name,avatar_url,profession)&order=created_at.desc";
+  if (cityFilter !== "All") url += `&city=ilike.%25${cityFilter}%25`;
+  return restCall("GET", url);
+}
+
+export async function createDoc(doc) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/docs", {
+    ...doc,
+    user_id: currentUser.id,
+  }, { Prefer: "return=representation" });
+}
+
+export async function getDocComments(docId) {
+  return restCall("GET", `/rest/v1/doc_comments?doc_id=eq.${docId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+}
+
+export async function addDocComment(docId, content) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/doc_comments", {
+    doc_id: docId,
+    user_id: currentUser.id,
+    content,
+  }, { Prefer: "return=representation" });
+}
+
+// ============================================================================
+// HELP REQUESTS
+// ============================================================================
+
+export async function getHelpRequests() {
+  return restCall("GET", "/rest/v1/help_requests?select=*,profiles:user_id(id,name,avatar_url)&order=created_at.desc");
+}
+
+export async function createHelpRequest(req) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/help_requests", {
+    ...req,
+    user_id: currentUser.id,
+  }, { Prefer: "return=representation" });
+}
+
+export async function getHelpResponses(requestId) {
+  return restCall("GET", `/rest/v1/help_responses?request_id=eq.${requestId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+}
+
+export async function addHelpResponse(requestId, content) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/help_responses", {
+    request_id: requestId,
+    user_id: currentUser.id,
+    content,
+  }, { Prefer: "return=representation" });
+}
+
+// ============================================================================
+// NOTIFICATIONS
+// ============================================================================
+
+export async function getNotifications() {
+  if (!currentUser) return [];
+  return restCall("GET", `/rest/v1/notifications?user_id=eq.${currentUser.id}&select=*,actor:actor_id(id,name,avatar_url)&order=created_at.desc&limit=20`);
+}
+
+export async function markNotificationsRead() {
+  if (!currentUser) return;
+  return restCall("PATCH", `/rest/v1/notifications?user_id=eq.${currentUser.id}&read=eq.false`, { read: true });
+}
+
+export async function createNotification(userId, type, text, actorId = null, refId = null) {
+  return restCall("POST", "/rest/v1/notifications", {
+    user_id: userId,
+    type,
+    text,
+    actor_id: actorId,
+    reference_id: refId,
+  });
+}
+
+// ============================================================================
+// REPORTS & BLOCKS
+// ============================================================================
+
+export async function reportUser(userId, reason) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/reports", {
+    reporter_id: currentUser.id,
+    reported_user_id: userId,
+    reason,
+  });
+}
+
+export async function reportPost(postId, reason) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/reports", {
+    reporter_id: currentUser.id,
+    reported_post_id: postId,
+    reason,
+  });
+}
+
+export async function blockUser(userId) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/blocks", {
+    blocker_id: currentUser.id,
+    blocked_id: userId,
+  });
+}
+
+export async function unblockUser(userId) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("DELETE", `/rest/v1/blocks?blocker_id=eq.${currentUser.id}&blocked_id=eq.${userId}`);
+}
+
+// ============================================================================
+// REALTIME SUBSCRIPTIONS
+// ============================================================================
+
+export function subscribeToMessages(conversationId, callback) {
+  // Using Supabase Realtime via WebSocket
+  // For the artifact environment, we'll use polling as fallback
+  const interval = setInterval(async () => {
+    try {
+      const msgs = await getMessages(conversationId);
+      callback(msgs);
+    } catch (e) {}
+  }, 3000);
+  return () => clearInterval(interval);
+}
+
+export function subscribeToNotifications(callback) {
+  const interval = setInterval(async () => {
+    try {
+      const notifs = await getNotifications();
+      callback(notifs);
+    } catch (e) {}
+  }, 10000);
+  return () => clearInterval(interval);
+}
+
+// ============================================================================
+// FILE UPLOAD
+// ============================================================================
+
+export async function uploadFile(bucket, filePath, file) {
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${filePath}`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: file,
+  });
+  if (!res.ok) throw new Error("Upload failed");
+  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${filePath}`;
+}
+
+export async function uploadAvatar(file) {
+  if (!currentUser) throw new Error("Not logged in");
+  const ext = file.name.split(".").pop();
+  const path = `${currentUser.id}/avatar.${ext}`;
+  return uploadFile("avatars", path, file);
+}
+
+export async function uploadPostImage(file) {
+  if (!currentUser) throw new Error("Not logged in");
+  const ext = file.name.split(".").pop();
+  const path = `${currentUser.id}/${Date.now()}.${ext}`;
+  return uploadFile("post-images", path, file);
+}
