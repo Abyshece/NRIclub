@@ -1632,11 +1632,12 @@ const Dashboard = ({ user, onLogout }) => {
   const [sentNamaste, setSentNamaste] = useState(new Set());
 
   // Network users loaded from DB
-  const MOCK_NETWORK_USERS = [];
+  const [networkUsers, setNetworkUsers] = useState([]);
+  const [networkLoaded, setNetworkLoaded] = useState(false);
 
   const isNetworkFilterActive = networkSearch.trim() !== "" || networkCityFilter !== "All" || networkHometownFilter !== "All" || networkNearby;
 
-  const filteredNetworkUsers = MOCK_NETWORK_USERS.filter((u) => {
+  const filteredNetworkUsers = networkUsers.filter((u) => {
     if (u.id === user.id) return false;
     const matchesSearch = networkSearch === "" ||
       u.name.toLowerCase().includes(networkSearch.toLowerCase()) ||
@@ -1711,6 +1712,18 @@ const Dashboard = ({ user, onLogout }) => {
           const dbDocs = await api.getDocs();
           if (dbDocs && dbDocs.length) {
             setDocs(dbDocs.map(d => ({ id: d.id, title: d.title, excerpt: d.excerpt, content: d.content || d.excerpt, category: d.category, readTime: d.read_time, author: d.profiles?.name || "User", profession: d.profiles?.profession || "", city: d.city, likes: d.likes_count || 0, timestamp: new Date(d.created_at).toLocaleDateString(), comments: [] })));
+          }
+        } catch (e) {}
+
+        // Load notifications
+        try {
+          const dbNotifs = await api.getNotifications();
+          if (dbNotifs && dbNotifs.length) {
+            setNotifications(dbNotifs.map(n => ({
+              id: n.id, type: n.type, actor: n.actor?.name || null,
+              text: n.text, time: new Date(n.created_at).toLocaleString(),
+              read: n.read,
+            })));
           }
         } catch (e) {}
 
@@ -1920,6 +1933,22 @@ const Dashboard = ({ user, onLogout }) => {
         );
 
       case "network":
+        // Load users from DB on first visit
+        if (!networkLoaded) {
+          setNetworkLoaded(true);
+          (async () => {
+            try {
+              const dbUsers = await api.searchProfiles();
+              if (dbUsers && dbUsers.length) {
+                setNetworkUsers(dbUsers.map(u => ({
+                  id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
+                  hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
+                  followers: 0, following: 0,
+                })));
+              }
+            } catch (e) {}
+          })();
+        }
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
             {/* Header */}
@@ -2324,8 +2353,8 @@ const Dashboard = ({ user, onLogout }) => {
                 /* Members Tab */
                 (() => {
                   const cityName = (selectedGroup.name || "").replace("Indians in ", "");
-                  const localMembers = MOCK_NETWORK_USERS.filter(u => (u.location || "").toLowerCase().includes(cityName.toLowerCase()));
-                  const outsideMembers = MOCK_NETWORK_USERS.filter(u => !(u.location || "").toLowerCase().includes(cityName.toLowerCase()));
+                  const localMembers = networkUsers.filter(u => (u.location || "").toLowerCase().includes(cityName.toLowerCase()));
+                  const outsideMembers = networkUsers.filter(u => !(u.location || "").toLowerCase().includes(cityName.toLowerCase()));
                   const MemberCard = ({ u, isLocal }) => (
                     <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
                       <Avatar name={u.name} size={44} />
@@ -3196,7 +3225,7 @@ const Dashboard = ({ user, onLogout }) => {
                   <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 360, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", maxHeight: 440 }}>
                     <div style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
                       <h3 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", fontFamily: font }}>Notifications</h3>
-                      <button onClick={() => setNotifications(p => p.map(n => ({...n, read: true})))} style={{ background: "none", border: "none", fontSize: 12, color: "#9B9A97", cursor: "pointer", fontFamily: font }}>Mark all read</button>
+                      <button onClick={async () => { setNotifications(p => p.map(n => ({...n, read: true}))); try { await api.markNotificationsRead(); } catch(e) {} }} style={{ background: "none", border: "none", fontSize: 12, color: "#9B9A97", cursor: "pointer", fontFamily: font }}>Mark all read</button>
                     </div>
                     <div style={{ overflow: "auto", maxHeight: 380 }}>
                       {notifications.map(n => (
@@ -3522,8 +3551,8 @@ const Dashboard = ({ user, onLogout }) => {
             {user.location && (
               <div style={{ marginTop: 28 }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>People in {(user.location || "").split(",")[0]}</h4>
-                {MOCK_NETWORK_USERS.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).length > 0 ? (
-                  MOCK_NETWORK_USERS.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).slice(0, 4).map(u => (
+                {networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).length > 0 ? (
+                  networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).slice(0, 4).map(u => (
                     <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
                       <Avatar name={u.name} size={32} />
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -3794,18 +3823,19 @@ const Dashboard = ({ user, onLogout }) => {
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ maxHeight: 400, overflow: "auto" }}>
-              {[
-                { action: "Liked a post", target: "Gujarati Thali in Berlin", time: "2 hours ago" },
-                { action: "Commented on", target: "Visa process help", time: "5 hours ago" },
-                { action: "Joined group", target: "Indians in Munich", time: "1 day ago" },
-                { action: "Updated profile", target: "Profile Picture", time: "2 days ago" },
-                { action: "Posted", target: "Looking for flatmates", time: "3 days ago" },
-              ].map((log, i) => (
-                <div key={i} style={{ padding: "16px 24px", borderBottom: "1px solid #F0EFED" }}>
-                  <p style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{log.action}</p>
-                  <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>"{log.target}" · {log.time}</p>
-                </div>
-              ))}
+              {(() => {
+                const activities = [];
+                posts.filter(p => p.userId === user.id).forEach(p => activities.push({ action: "Posted", target: p.content.substring(0, 40) + (p.content.length > 40 ? "..." : ""), time: new Date(p.timestamp).toLocaleString() }));
+                groups.filter(g => g.joined).forEach(g => activities.push({ action: "Joined group", target: g.name, time: "Recently" }));
+                helpRequests.filter(h => h.user === user.name).forEach(h => activities.push({ action: "Asked for help", target: h.title, time: new Date(h.timestamp).toLocaleString() }));
+                if (activities.length === 0) activities.push({ action: "No activity yet", target: "Start posting or joining communities!", time: "" });
+                return activities.slice(0, 10).map((log, i) => (
+                  <div key={i} style={{ padding: "16px 24px", borderBottom: "1px solid #F0EFED" }}>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{log.action}</p>
+                    <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>"{log.target}"{log.time ? ` · ${log.time}` : ""}</p>
+                  </div>
+                ));
+              })()}
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8" }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
@@ -4630,14 +4660,14 @@ const AdminDashboard = ({ onLogout }) => {
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: font }}>
       {/* Sidebar */}
-      <div style={{ width: 240, background: "#1A1A1A", color: "#fff", padding: "24px 0", flexShrink: 0 }}>
-        <div style={{ padding: "0 20px 24px", borderBottom: "1px solid #333" }}>
-          <h2 style={{ fontSize: 18, fontWeight: 800 }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></h2>
-          <p style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Admin Panel</p>
+      <div style={{ width: 240, background: "#fff", borderRight: "1px solid #E8E7E4", padding: "24px 0", flexShrink: 0, position: "relative" }}>
+        <div style={{ padding: "0 20px 24px", borderBottom: "1px solid #F0EFED" }}>
+          <h2 style={{ fontSize: 18, fontWeight: 800, color: "#37352F" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></h2>
+          <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 4 }}>Admin Panel</p>
         </div>
         <div style={{ marginTop: 16 }}>
           {navItems.map(n => (
-            <button key={n.key} onClick={() => setTab(n.key)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "12px 20px", border: "none", background: tab === n.key ? "#333" : "transparent", color: tab === n.key ? "#fff" : "#999", cursor: "pointer", fontSize: 13, fontFamily: font, textAlign: "left", borderLeft: tab === n.key ? "3px solid #5B9CFF" : "3px solid transparent" }}>
+            <button key={n.key} onClick={() => setTab(n.key)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "12px 20px", border: "none", background: tab === n.key ? "#F5F5F3" : "transparent", color: tab === n.key ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 13, fontWeight: tab === n.key ? 600 : 400, fontFamily: font, textAlign: "left", borderLeft: tab === n.key ? "3px solid #37352F" : "3px solid transparent", transition: "all 0.15s" }}>
               <span style={{ fontSize: 16 }}>{n.icon}</span> {n.label}
             </button>
           ))}
@@ -4648,7 +4678,7 @@ const AdminDashboard = ({ onLogout }) => {
       </div>
 
       {/* Main Content */}
-      <div style={{ flex: 1, background: "#F7F7F5", padding: 32, overflow: "auto" }}>
+      <div style={{ flex: 1, background: "#FAFAF8", padding: 32, overflow: "auto" }}>
         {loading ? (
           <div style={{ textAlign: "center", padding: 60, color: "#9B9A97" }}>Loading admin data...</div>
         ) : tab === "overview" ? (
@@ -4683,20 +4713,33 @@ const AdminDashboard = ({ onLogout }) => {
         ) : tab === "users" ? (
           <div>
             <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Users ({users.length})</h1>
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1fr", padding: "12px 18px", background: "#FAFAF8", borderBottom: "1px solid #E8E7E4", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                <span>Name</span><span>Email</span><span>Location</span><span>Hometown</span><span>Joined</span>
-              </div>
+            <div style={{ display: "grid", gap: 14 }}>
               {users.map((u, i) => (
-                <div key={u.id || i} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1fr", padding: "12px 18px", borderBottom: "1px solid #F0EFED", fontSize: 13, alignItems: "center" }}>
-                  <span style={{ fontWeight: 600, color: "#37352F" }}>{u.name}</span>
-                  <span style={{ color: "#5F5E5B" }}>{u.email}</span>
-                  <span style={{ color: "#9B9A97" }}>{u.location || "—"}</span>
-                  <span style={{ color: "#9B9A97" }}>{u.hometown || "—"}</span>
-                  <span style={{ color: "#9B9A97", fontSize: 11 }}>{new Date(u.created_at).toLocaleDateString()}</span>
+                <div key={u.id || i} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+                    <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                      <div style={{ width: 44, height: 44, borderRadius: "50%", background: "#A3C9B8", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16 }}>{(u.name || "U").substring(0, 2).toUpperCase()}</div>
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: "#37352F" }}>{u.name}</div>
+                        <div style={{ fontSize: 12, color: "#9B9A97" }}>{u.email}</div>
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: u.years_abroad === "Not lived abroad" ? "#FFF3E0" : "#E3FCEF", color: u.years_abroad === "Not lived abroad" ? "#E65100" : "#22A06B", fontWeight: 600 }}>{u.years_abroad === "Not lived abroad" ? "IN" : "NRI"}</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px 20px", fontSize: 12 }}>
+                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Location</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.location || "—"}</div></div>
+                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Hometown</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.hometown || "—"}</div></div>
+                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Profession</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.profession || "—"}</div></div>
+                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Status</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.occupation_status || "—"}</div></div>
+                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Years Abroad</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.years_abroad || "—"}</div></div>
+                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>LinkedIn</span><div style={{ color: "#37352F", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis" }}>{u.linkedin_url ? <a href={u.linkedin_url} target="_blank" style={{ color: "#5B9CFF", textDecoration: "none" }}>{u.linkedin_url.replace("https://", "")}</a> : "—"}</div></div>
+                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>GDPR Consent</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.gdpr_consent ? "✅ Yes" : "❌ No"}</div></div>
+                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Email Verified</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.email_verified ? "✅ Yes" : "❌ No"}</div></div>
+                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Joined</span><div style={{ color: "#37352F", marginTop: 2 }}>{new Date(u.created_at).toLocaleDateString()}</div></div>
+                  </div>
                 </div>
               ))}
-              {users.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "#9B9A97" }}>No users yet.</div>}
+              {users.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "#9B9A97", background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4" }}>No users yet.</div>}
             </div>
           </div>
         ) : tab === "groups" ? (
