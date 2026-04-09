@@ -1329,6 +1329,7 @@ const LoginPage = ({ onComplete, onSignUp }) => {
           profession: dbProfile.profession, occupationStatus: dbProfile.occupation_status,
           yearsAbroad: dbProfile.years_abroad, linkedinUrl: dbProfile.linkedin_url,
           emailVerified: dbProfile.email_verified,
+          isNRI: dbProfile.years_abroad !== "Not lived abroad",
         };
         localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
         setLoading(false);
@@ -1424,15 +1425,26 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
     setLiked(!liked);
     setLikeCount((p) => (liked ? p - 1 : p + 1));
     if (onLike) onLike(post.id, !liked);
-    try { await api.toggleLike(post.id); } catch (e) {}
+    try {
+      await api.toggleLike(post.id);
+      if (!liked && post.userId && post.userId !== user?.id) {
+        await api.createNotification(post.userId, "like", `${user?.name || "Someone"} liked your post "${post.content.substring(0, 30)}..."`, user?.id);
+      }
+    } catch (e) {}
   };
 
   const addComment = async () => {
     if (!newComment.trim()) return;
     const c = { id: Date.now(), user: user?.name || "You", text: newComment, time: Date.now() };
     setComments([c, ...comments]);
+    const commentText = newComment;
     setNewComment("");
-    try { await api.addComment(post.id, newComment); } catch (e) {}
+    try {
+      await api.addComment(post.id, commentText);
+      if (post.userId && post.userId !== user?.id) {
+        await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, user?.id);
+      }
+    } catch (e) {}
   };
 
   const author = post.author || {};
@@ -1657,7 +1669,10 @@ const Dashboard = ({ user, onLogout }) => {
 
   const handleSendNamaste = async (userId) => {
     setSentNamaste((prev) => { const s = new Set(prev); s.add(userId); return s; });
-    try { await api.sendNamaste(userId); } catch (e) {}
+    try {
+      await api.sendNamaste(userId);
+      await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, user.id);
+    } catch (e) {}
   };
 
   // Load data on mount
@@ -4530,9 +4545,17 @@ export default function App() {
       try {
         const session = await api.getSession();
         if (session && session.user) {
-          const profile = await api.getMyProfile();
-          if (profile) {
-            setUser(profile);
+          const dbProfile = await api.getMyProfile();
+          if (dbProfile) {
+            const mapped = {
+              ...dbProfile,
+              occupationStatus: dbProfile.occupation_status,
+              yearsAbroad: dbProfile.years_abroad,
+              linkedinUrl: dbProfile.linkedin_url,
+              isNRI: dbProfile.years_abroad !== "Not lived abroad",
+            };
+            setUser(mapped);
+            localStorage.setItem("indin_profile_cache", JSON.stringify(mapped));
             setAuthState("authenticated");
             return;
           }
