@@ -1672,10 +1672,10 @@ const Dashboard = ({ user, onLogout }) => {
   const handleSendNamaste = async (userId) => {
     setSentNamaste((prev) => { const s = new Set(prev); s.add(userId); return s; });
     try {
-      await api.sendNamaste(userId);
-      // Only create notification if we have a valid user ID (UUID format)
-      const actorId = user.id && user.id.length > 10 && !user.id.startsWith("user_") ? user.id : null;
-      try { await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, actorId); } catch(ne) {}
+      const result = await api.sendNamaste(userId);
+      const connId = result?.[0]?.id || null;
+      const actorId = user.id && !user.id.startsWith("user_") ? user.id : null;
+      try { await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, actorId, connId); } catch(ne) {}
     } catch (e) {}
   };
 
@@ -1712,17 +1712,19 @@ const Dashboard = ({ user, onLogout }) => {
           }
         } catch (e) {}
 
-        // Load connections (followers/following)
+        // Load connections (followers/following) and sent namastes
         try {
           const dbConns = await api.getMyConnections();
           if (dbConns && dbConns.length) {
-            const followers = dbConns.filter(c => c.recipient_id === user.id).map(c => c.requester || { name: "User" });
-            const following = dbConns.filter(c => c.requester_id === user.id).map(c => c.recipient || { name: "User" });
-            // Also count where I'm the recipient (someone sent me a request I accepted)
-            const followers2 = dbConns.filter(c => c.requester?.id !== user.id).map(c => c.requester?.id === user.id ? c.recipient : c.requester).filter(Boolean);
-            const following2 = dbConns.filter(c => c.requester?.id === user.id).map(c => c.recipient).filter(Boolean);
-            setMyFollowers(followers2.length ? followers2 : followers);
-            setMyFollowing(following2.length ? following2 : following);
+            const followers = dbConns.filter(c => c.recipient?.id === user.id || c.recipient_id === user.id).map(c => c.requester || { name: "User" }).filter(Boolean);
+            const following = dbConns.filter(c => c.requester?.id === user.id || c.requester_id === user.id).map(c => c.recipient || { name: "User" }).filter(Boolean);
+            setMyFollowers(followers);
+            setMyFollowing(following);
+          }
+          // Load sent namastes so buttons show "Sent" after refresh
+          const sentData = await api.getSentNamastes();
+          if (sentData && sentData.length) {
+            setSentNamaste(new Set(sentData.map(s => s.recipient_id)));
           }
         } catch (e) {}
 
@@ -3269,8 +3271,23 @@ const Dashboard = ({ user, onLogout }) => {
                             <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 3, fontFamily: font }}>{n.time}</p>
                             {n.type === "request" && (
                               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                                <button onClick={() => setNotifications(p => p.filter(x => x.id !== n.id))} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Accept</button>
-                                <button onClick={() => setNotifications(p => p.filter(x => x.id !== n.id))} style={{ padding: "5px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Ignore</button>
+                                <button onClick={async () => {
+                                  // Accept the connection request
+                                  if (n.reference_id) {
+                                    try { await api.respondToNamaste(n.reference_id, true); } catch(e) {}
+                                  }
+                                  // Add to followers
+                                  if (n.actor) setMyFollowers(prev => [...prev, { name: n.actor }]);
+                                  setNotifications(p => p.filter(x => x.id !== n.id));
+                                  // Mark notification as read
+                                  try { await api.markNotificationsRead(); } catch(e) {}
+                                }} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Accept</button>
+                                <button onClick={async () => {
+                                  if (n.reference_id) {
+                                    try { await api.respondToNamaste(n.reference_id, false); } catch(e) {}
+                                  }
+                                  setNotifications(p => p.filter(x => x.id !== n.id));
+                                }} style={{ padding: "5px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Ignore</button>
                               </div>
                             )}
                           </div>
