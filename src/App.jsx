@@ -1599,6 +1599,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [chatMessages, setChatMessages] = useState({});
   const [convos, setConvos] = useState([]);
   const [convosLoaded, setConvosLoaded] = useState(false);
+  const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
   const [chatSettings, setChatSettings] = useState(false);
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
@@ -1782,7 +1783,56 @@ const Dashboard = ({ user, onLogout }) => {
     })();
   }, []);
 
-  useEffect(() => {}, [posts]);
+  // Live polling for messages and notifications (every 5 seconds)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        // Poll for new conversations/messages
+        const dbConvos = await api.getConversations();
+        if (dbConvos && dbConvos.length) {
+          const newConvos = dbConvos.map(c => ({
+            id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
+            lastMsg: c.last_message_text || "", time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
+            unread: false,
+          }));
+          setConvos(newConvos);
+          // Check for unread: if any convo has a newer message than what we've seen
+          if (newConvos.some(c => c.lastMsg && view !== "messages")) {
+            setHasUnreadMessages(true);
+          }
+        }
+        // Poll for new notifications
+        const dbNotifs = await api.getNotifications();
+        if (dbNotifs && dbNotifs.length) {
+          setNotifications(dbNotifs.map(n => ({
+            id: n.id, type: n.type, actor: n.actor?.name || null,
+            text: n.text, time: new Date(n.created_at).toLocaleString(),
+            read: n.read, reference_id: n.reference_id,
+          })));
+        }
+      } catch (e) {}
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [view]);
+
+  // Also poll current conversation messages when in messages view
+  useEffect(() => {
+    if (view !== "messages" || !selectedConvo) return;
+    setHasUnreadMessages(false);
+    const interval = setInterval(async () => {
+      try {
+        const msgs = await api.getMessages(selectedConvo);
+        if (msgs) {
+          setChatMessages(p => ({ ...p, [selectedConvo]: msgs.map(m => ({
+            id: m.id, text: m.content,
+            sender: m.sender_id === user.id ? "me" : "them",
+            time: new Date(m.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+          })) }));
+        }
+      } catch (e) {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [view, selectedConvo]);
 
   const createPost = async () => {
     if (!newPost.trim()) return;
@@ -3506,20 +3556,22 @@ const Dashboard = ({ user, onLogout }) => {
               {/* Icon Grid - 4 across, 2 rows matching screenshot */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}>
                 {[
-                  { icon: Icons.message, view: "messages", label: "Messages" },
+                  { icon: Icons.message, view: "messages", label: "Messages", hasNotif: hasUnreadMessages },
                   { icon: Icons.calendar, view: "events", label: "Events" },
                   { icon: Icons.users, view: "groups", label: "Groups" },
                   { icon: Icons.linkedin, view: null, label: "LinkedIn", action: () => { if (user.linkedinUrl) window.open(user.linkedinUrl.startsWith("http") ? user.linkedinUrl : `https://${user.linkedinUrl}`, "_blank"); } },
                 ].map((item, i) => (
-                  <button key={i} onClick={() => item.action ? item.action() : item.view && setView(item.view)} style={{
+                  <button key={i} onClick={() => { if (item.action) item.action(); else if (item.view) { setView(item.view); if (item.view === "messages") setHasUnreadMessages(false); } }} style={{
                     padding: 10, borderRadius: 8, border: "none", background: "none",
                     cursor: "pointer", color: "#9B9A97", display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "all 0.1s",
+                    transition: "all 0.1s", position: "relative",
                   }}
                   onMouseOver={(e) => { e.currentTarget.style.background = "#F0EFED"; e.currentTarget.style.color = "#37352F"; }}
                   onMouseOut={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#9B9A97"; }}
                   >
                     {item.icon({ size: 20 })}
+                    {item.hasNotif && <span style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }} />}
+                  </button>
                   </button>
                 ))}
               </div>
