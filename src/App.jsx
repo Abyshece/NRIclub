@@ -1570,6 +1570,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [myFollowers, setMyFollowers] = useState([]);
   const [myFollowing, setMyFollowing] = useState([]);
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
+  const [profilePreview, setProfilePreview] = useState(null); // user object or null
+  const [acceptedConnections, setAcceptedConnections] = useState(new Set()); // IDs of users with accepted connections
   const [newPost, setNewPost] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
   const [rsvps, setRsvps] = useState(new Set());
@@ -1732,6 +1734,17 @@ const Dashboard = ({ user, onLogout }) => {
           const sentData = await api.getSentNamastes();
           if (sentData && sentData.length) {
             setSentNamaste(new Set(sentData.map(s => s.recipient_id)));
+          }
+          // Load accepted connections to show "Following" instead of "Sent"
+          const acceptedData = await api.getMyConnections();
+          if (acceptedData && acceptedData.length) {
+            const acceptedIds = new Set();
+            acceptedData.forEach(c => {
+              if (c.requester?.id) acceptedIds.add(c.requester.id);
+              if (c.recipient?.id) acceptedIds.add(c.recipient.id);
+            });
+            acceptedIds.delete(user.id);
+            setAcceptedConnections(acceptedIds);
           }
         } catch (e) {}
 
@@ -2146,23 +2159,24 @@ const Dashboard = ({ user, onLogout }) => {
                       {/* Action buttons - Namaste + Message */}
                       <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
                         <button
-                          onClick={() => handleSendNamaste(u.id)}
-                          disabled={sentNamaste.has(u.id)}
+                          onClick={() => { if (!acceptedConnections.has(u.id)) handleSendNamaste(u.id); }}
+                          disabled={sentNamaste.has(u.id) || acceptedConnections.has(u.id)}
                           style={{
-                            flex: 1, padding: "10px 0", borderRadius: 8, border: "none",
-                            fontSize: 13, fontWeight: 600, fontFamily: font, cursor: sentNamaste.has(u.id) ? "default" : "pointer",
-                            background: sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
-                            color: sentNamaste.has(u.id) ? "#9B9A97" : "#fff",
+                            flex: 1, padding: "10px 0", borderRadius: 8,
+                            border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "none",
+                            fontSize: 13, fontWeight: 600, fontFamily: font, cursor: (sentNamaste.has(u.id) || acceptedConnections.has(u.id)) ? "default" : "pointer",
+                            background: acceptedConnections.has(u.id) ? "#E3FCEF" : sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
+                            color: acceptedConnections.has(u.id) ? "#22A06B" : sentNamaste.has(u.id) ? "#9B9A97" : "#fff",
                             display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
                             transition: "all 0.15s",
                           }}
                         >
-                          {sentNamaste.has(u.id) ? (
+                          {acceptedConnections.has(u.id) ? (
+                            <>{Icons.check({ size: 14 })} Following</>
+                          ) : sentNamaste.has(u.id) ? (
                             <>{Icons.check({ size: 14 })} Sent</>
                           ) : (
-                            <>
-                              {Icons.users({ size: 14 })} Namaste
-                            </>
+                            <>{Icons.users({ size: 14 })} Namaste</>
                           )}
                         </button>
                         <button onClick={async () => {
@@ -3602,10 +3616,11 @@ const Dashboard = ({ user, onLogout }) => {
                         <div style={{ fontSize: 12, fontWeight: 600, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</div>
                         <div style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{u.profession}</div>
                       </div>
-                      <button onClick={() => handleSendNamaste(u.id)} disabled={sentNamaste.has(u.id)}
-                        style={{ padding: "4px 10px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 600, cursor: sentNamaste.has(u.id) ? "default" : "pointer",
-                          background: sentNamaste.has(u.id) ? "#F0EFED" : "#37352F", color: sentNamaste.has(u.id) ? "#9B9A97" : "#fff", fontFamily: font }}>
-                        {sentNamaste.has(u.id) ? "Sent" : "Namaste"}
+                      <button onClick={() => { if (!acceptedConnections.has(u.id)) handleSendNamaste(u.id); }} disabled={sentNamaste.has(u.id) || acceptedConnections.has(u.id)}
+                        style={{ padding: "4px 10px", borderRadius: 6, border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "none", fontSize: 10, fontWeight: 600, cursor: (sentNamaste.has(u.id) || acceptedConnections.has(u.id)) ? "default" : "pointer",
+                          background: acceptedConnections.has(u.id) ? "#E3FCEF" : sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
+                          color: acceptedConnections.has(u.id) ? "#22A06B" : sentNamaste.has(u.id) ? "#9B9A97" : "#fff", fontFamily: font }}>
+                        {acceptedConnections.has(u.id) ? "Following" : sentNamaste.has(u.id) ? "Sent" : "Namaste"}
                       </button>
                     </div>
                   ))
@@ -3968,10 +3983,76 @@ const Dashboard = ({ user, onLogout }) => {
                       <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name || "User"}</div>
                       <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{u.profession || ""}</div>
                     </div>
-                    <button onClick={() => { setFollowModal(null); setView("network"); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", fontSize: 11, fontWeight: 600, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>View</button>
+                    <button onClick={() => { setFollowModal(null); setProfilePreview(u); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", fontSize: 11, fontWeight: 600, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>View</button>
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profile Preview Modal */}
+      {profilePreview && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfilePreview(null)}>
+          <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 380, padding: "32px 28px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", position: "relative" }} onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setProfilePreview(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            
+            {/* NRI Badge */}
+            <span style={{ position: "absolute", top: 14, left: 14, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 4, letterSpacing: "0.05em",
+              background: (profilePreview.yearsAbroad || profilePreview.years_abroad) !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
+              color: (profilePreview.yearsAbroad || profilePreview.years_abroad) !== "Not lived abroad" ? "#22A06B" : "#E65100",
+              border: `1px solid ${(profilePreview.yearsAbroad || profilePreview.years_abroad) !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
+            }}>{(profilePreview.yearsAbroad || profilePreview.years_abroad) !== "Not lived abroad" ? "NRI" : "IN"}</span>
+
+            <Avatar name={profilePreview.name || "User"} size={80} />
+            <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginTop: 14, fontFamily: font }}>{profilePreview.name}</h3>
+            <p style={{ fontSize: 14, color: "#5F5E5B", marginTop: 4, fontFamily: font }}>{profilePreview.profession || ""}</p>
+            
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+              {(profilePreview.location || profilePreview.location) && (
+                <span style={{ fontSize: 12, color: "#5F5E5B", background: "#F0EFED", padding: "4px 12px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
+                  {Icons.mapPin({ size: 11 })} {(profilePreview.location || "").split(",")[0]}
+                </span>
+              )}
+              {(profilePreview.hometown) && (
+                <span style={{ fontSize: 12, color: "#5F5E5B", background: "#F0EFED", padding: "4px 12px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
+                  {Icons.globe({ size: 11 })} From {(profilePreview.hometown || "").split(",")[0]}
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "16px 0", fontSize: 13, fontFamily: font }}>
+              <span><b style={{ color: "#37352F" }}>{profilePreview.followers || 0}</b> <span style={{ color: "#9B9A97" }}>followers</span></span>
+              <span style={{ color: "#D4D4D2" }}>·</span>
+              <span><b style={{ color: "#37352F" }}>{profilePreview.following || 0}</b> <span style={{ color: "#9B9A97" }}>following</span></span>
+            </div>
+
+            {profilePreview.linkedinUrl && (
+              <div style={{ marginBottom: 16 }}>
+                <a href={profilePreview.linkedinUrl.startsWith("http") ? profilePreview.linkedinUrl : `https://${profilePreview.linkedinUrl}`} target="_blank" style={{ fontSize: 12, color: "#0077B5", textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                  {Icons.linkedin({ size: 14, stroke: "#0077B5" })} LinkedIn Profile
+                </a>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+              <button onClick={() => { setProfilePreview(null); if (!acceptedConnections.has(profilePreview.id) && !sentNamaste.has(profilePreview.id)) handleSendNamaste(profilePreview.id); }}
+                disabled={sentNamaste.has(profilePreview.id) || acceptedConnections.has(profilePreview.id)}
+                style={{ flex: 1, padding: "10px", borderRadius: 8, border: acceptedConnections.has(profilePreview.id) ? "1px solid #B5E4CA" : "none", fontSize: 13, fontWeight: 600, cursor: (sentNamaste.has(profilePreview.id) || acceptedConnections.has(profilePreview.id)) ? "default" : "pointer",
+                  background: acceptedConnections.has(profilePreview.id) ? "#E3FCEF" : sentNamaste.has(profilePreview.id) ? "#F0EFED" : "#37352F",
+                  color: acceptedConnections.has(profilePreview.id) ? "#22A06B" : sentNamaste.has(profilePreview.id) ? "#9B9A97" : "#fff", fontFamily: font }}>
+                {acceptedConnections.has(profilePreview.id) ? "Following" : sentNamaste.has(profilePreview.id) ? "Sent" : "Namaste"}
+              </button>
+              <button onClick={async () => {
+                try {
+                  const convo = await api.getOrCreateConversation(profilePreview.id);
+                  if (convo) { setConvos(prev => { if (prev.find(c => c.id === convo.id)) return prev; return [{ id: convo.id, name: profilePreview.name, otherUserId: profilePreview.id, lastMsg: "", time: "", unread: false }, ...prev]; }); setSelectedConvo(convo.id); }
+                } catch(e) {}
+                setProfilePreview(null); setView("messages");
+              }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>
+                {Icons.message({ size: 14 })} Message
+              </button>
             </div>
           </div>
         </div>
