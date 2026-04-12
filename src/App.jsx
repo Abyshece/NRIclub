@@ -1777,7 +1777,7 @@ const Dashboard = ({ user, onLogout }) => {
           const dbNotifs = await api.getNotifications();
           if (dbNotifs && dbNotifs.length) {
             setNotifications(dbNotifs.map(n => ({
-              id: n.id, type: n.type, actor: n.actor?.name || null,
+              id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
               text: n.text, time: new Date(n.created_at).toLocaleString(),
               read: n.read, reference_id: n.reference_id,
             })));
@@ -1827,7 +1827,7 @@ const Dashboard = ({ user, onLogout }) => {
         const dbNotifs = await api.getNotifications();
         if (dbNotifs && dbNotifs.length) {
           setNotifications(dbNotifs.map(n => ({
-            id: n.id, type: n.type, actor: n.actor?.name || null,
+            id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
             text: n.text, time: new Date(n.created_at).toLocaleString(),
             read: n.read, reference_id: n.reference_id,
           })));
@@ -3398,16 +3398,22 @@ const Dashboard = ({ user, onLogout }) => {
                                     try { await api.respondToNamaste(n.reference_id, true); } catch(e) {}
                                   }
                                   // Add to followers
-                                  if (n.actor) setMyFollowers(prev => [...prev, { name: n.actor }]);
+                                  if (n.actor) {
+                                    setMyFollowers(prev => [...prev, { name: n.actor }]);
+                                    setAcceptedConnections(prev => { const s = new Set(prev); if (n.actor_id) s.add(n.actor_id); return s; });
+                                  }
+                                  // Remove from local state
                                   setNotifications(p => p.filter(x => x.id !== n.id));
-                                  // Mark notification as read
-                                  try { await api.markNotificationsRead(); } catch(e) {}
+                                  // Mark as handled in DB so it never comes back
+                                  try { await api.markNotificationHandled(n.id); } catch(e) {}
                                 }} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Accept</button>
                                 <button onClick={async () => {
                                   if (n.reference_id) {
                                     try { await api.respondToNamaste(n.reference_id, false); } catch(e) {}
                                   }
                                   setNotifications(p => p.filter(x => x.id !== n.id));
+                                  // Mark as handled in DB
+                                  try { await api.markNotificationHandled(n.id); } catch(e) {}
                                 }} style={{ padding: "5px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Ignore</button>
                               </div>
                             )}

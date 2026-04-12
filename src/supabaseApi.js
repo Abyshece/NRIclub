@@ -474,12 +474,27 @@ export async function addHelpResponse(requestId, content) {
 
 export async function getNotifications() {
   if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/notifications?user_id=eq.${currentUser.id}&select=*,actor:actor_id(id,name,avatar_url)&order=created_at.desc&limit=20`);
+  // Get all unread + non-request read notifications (exclude handled requests)
+  const all = await restCall("GET", `/rest/v1/notifications?user_id=eq.${currentUser.id}&select=*,actor:actor_id(id,name,avatar_url)&order=created_at.desc&limit=20`);
+  if (!all) return [];
+  // Filter out request notifications that have been read (they were accepted/ignored)
+  return all.filter(n => !(n.type === "request" && n.read === true));
 }
 
 export async function markNotificationsRead() {
   if (!currentUser) return;
   return restCall("PATCH", `/rest/v1/notifications?user_id=eq.${currentUser.id}&read=eq.false`, { read: true });
+}
+
+export async function deleteNotification(notifId) {
+  if (!currentUser) return;
+  return restCall("DELETE", `/rest/v1/notifications?id=eq.${notifId}`);
+}
+
+export async function markNotificationHandled(notifId) {
+  if (!currentUser) return;
+  // Mark as read - we track handled state by checking if request type + read=true
+  return restCall("PATCH", `/rest/v1/notifications?id=eq.${notifId}`, { read: true });
 }
 
 export async function createNotification(userId, type, text, actorId = null, refId = null) {
