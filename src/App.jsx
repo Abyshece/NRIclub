@@ -1004,7 +1004,7 @@ const SignUpPage = ({ onComplete, onLogin }) => {
             </div>
 
             {/* 3-column name fields */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <div className="form-grid-3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <input style={inputStyle} value={form.firstName} onChange={(e) => update("firstName", e.target.value)} placeholder="First Name" required />
               <input style={inputStyle} value={form.middleName} onChange={(e) => update("middleName", e.target.value)} placeholder="Middle (Optional)" />
               <input style={inputStyle} value={form.lastName} onChange={(e) => update("lastName", e.target.value)} placeholder="Last Name" required />
@@ -1033,7 +1033,7 @@ const SignUpPage = ({ onComplete, onLogin }) => {
           </div>
 
           {/* PASSWORD */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
+          <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
             <div>
               <label style={labelStyle}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1109,7 +1109,7 @@ const SignUpPage = ({ onComplete, onLogin }) => {
           </div>
 
           {/* CURRENT CITY & HOMETOWN */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
+          <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
             <div>
               <label style={labelStyle}><SignUpIcons.home /> CURRENT CITY</label>
               <input style={inputStyle} value={form.location} onChange={(e) => update("location", e.target.value)} placeholder="Berlin, Germany" required />
@@ -1121,7 +1121,7 @@ const SignUpPage = ({ onComplete, onLogin }) => {
           </div>
 
           {/* CURRENT STATUS & LIVING ABROAD SINCE */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
+          <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
             <div>
               <label style={labelStyle}>CURRENT STATUS</label>
               <div style={{ position: "relative" }}>
@@ -1266,7 +1266,7 @@ const SignUpPage = ({ onComplete, onLogin }) => {
 
       {/* Privacy Policy Modal */}
       {privacyModalOpen && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setPrivacyModalOpen(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setPrivacyModalOpen(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "80vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED", position: "sticky", top: 0, background: "#fff", zIndex: 1 }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy Policy & Terms</h3>
@@ -1627,6 +1627,21 @@ const Dashboard = ({ user, onLogout }) => {
   const [reportConfirm, setReportConfirm] = useState(null); // { type, id, name }
   const [selectedMarketItem, setSelectedMarketItem] = useState(null);
   const [expandedMarketItem, setExpandedMarketItem] = useState(null);
+  const [marketPhotoIdx, setMarketPhotoIdx] = useState(0);
+  
+  // Keyboard navigation for market photo gallery
+  useEffect(() => {
+    if (!expandedMarketItem) return;
+    const photos = expandedMarketItem.photos || [];
+    if (photos.length <= 1) return;
+    const handler = (e) => {
+      if (e.key === "ArrowRight") setMarketPhotoIdx(p => (p + 1) % photos.length);
+      else if (e.key === "ArrowLeft") setMarketPhotoIdx(p => (p - 1 + photos.length) % photos.length);
+      else if (e.key === "Escape") { setExpandedMarketItem(null); setMarketPhotoIdx(0); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [expandedMarketItem]);
   const [contactMsg, setContactMsg] = useState("");
   // Market state
   const [marketSearch, setMarketSearch] = useState("");
@@ -1773,7 +1788,11 @@ const Dashboard = ({ user, onLogout }) => {
         try {
           const dbMarket = await api.getMarketItems();
           if (dbMarket && dbMarket.length) {
-            setMarketItems(dbMarket.map(m => ({ id: m.id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", date: new Date(m.created_at).toLocaleDateString(), color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] })));
+            setMarketItems(dbMarket.map(m => {
+              let photos = [];
+              try { photos = JSON.parse(m.image_url || "[]"); } catch(e) { if (m.image_url) photos = [m.image_url]; }
+              return { id: m.id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
+            }));
           }
         } catch (e) {}
       } catch (err) {
@@ -1795,11 +1814,14 @@ const Dashboard = ({ user, onLogout }) => {
             lastMsg: c.last_message_text || "", time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
             unread: false,
           }));
-          setConvos(newConvos);
-          // Check for unread: if any convo has a newer message than what we've seen
-          if (newConvos.some(c => c.lastMsg && view !== "messages")) {
-            setHasUnreadMessages(true);
-          }
+          setConvos(prev => {
+            const changed = newConvos.some((nc, i) => {
+              const old = prev[i];
+              return !old || old.lastMsg !== nc.lastMsg;
+            });
+            if (changed && view !== "messages") setHasUnreadMessages(true);
+            return newConvos;
+          });
         }
         // Poll for new notifications
         const dbNotifs = await api.getNotifications();
@@ -1815,14 +1837,32 @@ const Dashboard = ({ user, onLogout }) => {
     return () => clearInterval(interval);
   }, [view]);
 
-  // Also poll current conversation messages when in messages view
+  // Realtime messages via WebSocket + fast fallback polling
   useEffect(() => {
     if (view !== "messages" || !selectedConvo) return;
     setHasUnreadMessages(false);
+    
+    // Subscribe to realtime inserts
+    api.subscribeToMessages(selectedConvo, (record) => {
+      const newMsg = {
+        id: record.id, text: record.content,
+        sender: record.sender_id === user.id ? "me" : "them",
+        time: new Date(record.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+      };
+      setChatMessages(p => {
+        const existing = p[selectedConvo] || [];
+        if (existing.find(m => m.id === newMsg.id)) return p;
+        return { ...p, [selectedConvo]: [...existing, newMsg] };
+      });
+    });
+    
+    // Also poll every 2s as fallback (realtime can be unreliable on free tier)
+    let lastCount = 0;
     const interval = setInterval(async () => {
       try {
         const msgs = await api.getMessages(selectedConvo);
-        if (msgs) {
+        if (msgs && msgs.length !== lastCount) {
+          lastCount = msgs.length;
           setChatMessages(p => ({ ...p, [selectedConvo]: msgs.map(m => ({
             id: m.id, text: m.content,
             sender: m.sender_id === user.id ? "me" : "them",
@@ -1830,8 +1870,12 @@ const Dashboard = ({ user, onLogout }) => {
           })) }));
         }
       } catch (e) {}
-    }, 3000);
-    return () => clearInterval(interval);
+    }, 2000);
+    
+    return () => {
+      clearInterval(interval);
+      api.unsubscribeFromMessages();
+    };
   }, [view, selectedConvo]);
 
   const createPost = async () => {
@@ -2549,7 +2593,7 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
 
             {/* 2-column grid of community cards */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="groups-grid">
               {groupTabList.map((g, i) => (
                 <div
                   key={g.id}
@@ -2701,7 +2745,7 @@ const Dashboard = ({ user, onLogout }) => {
               const evtColor = evtColors[idx % evtColors.length];
 
               return (
-                <div key={e.id} style={{
+                <div key={e.id} className="event-card" style={{
                   background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden",
                   display: "flex", flexDirection: "row", marginBottom: 16, transition: "box-shadow 0.15s",
                 }}
@@ -3040,13 +3084,19 @@ const Dashboard = ({ user, onLogout }) => {
             {/* Items grid */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="market-grid">
               {filteredMarket.map(item => (
-                <div key={item.id} onClick={() => setExpandedMarketItem(item)} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", transition: "box-shadow 0.15s", cursor: "pointer" }}
+                <div key={item.id} onClick={() => { setMarketPhotoIdx(0); setExpandedMarketItem(item); }} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", transition: "box-shadow 0.15s", cursor: "pointer" }}
                   onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"}
                   onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
-                  {/* Image placeholder with price badge */}
-                  <div style={{ height: 160, background: `linear-gradient(135deg, ${item.color}DD, ${item.color}88)`, position: "relative" }}>
+                  {/* Image/Photo with price badge */}
+                  <div style={{ height: 160, background: item.photos && item.photos.length > 0 ? "#F0EFED" : `linear-gradient(135deg, ${item.color}DD, ${item.color}88)`, position: "relative", overflow: "hidden" }}>
+                    {item.photos && item.photos.length > 0 && (
+                      <img src={item.photos[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    )}
                     <div style={{ position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,0.9)", backdropFilter: "blur(4px)", padding: "5px 10px", borderRadius: 4, fontSize: 12, fontWeight: 700, color: "#37352F" }}>{item.price}</div>
                     <div style={{ position: "absolute", bottom: 12, left: 12, background: "rgba(0,0,0,0.6)", padding: "3px 8px", borderRadius: 4, fontSize: 9, fontWeight: 600, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>{item.category}</div>
+                    {item.photos && item.photos.length > 1 && (
+                      <div style={{ position: "absolute", top: 12, left: 12, background: "rgba(0,0,0,0.5)", padding: "3px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, color: "#fff" }}>{item.photos.length} photos</div>
+                    )}
                   </div>
                   <div style={{ padding: "14px 16px" }}>
                     <h3 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 4, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</h3>
@@ -3124,9 +3174,9 @@ const Dashboard = ({ user, onLogout }) => {
         return (
           <div>
           <InfoBanner text="Send direct messages to your connections. Start a conversation after sending a Namaste request." />
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: 520, display: "flex" }}>
+          <div className="msg-layout" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: 520, display: "flex" }}>
             {/* Conversation List */}
-            <div style={{ width: 240, borderRight: "1px solid #E8E7E4", background: "#FAFAF8", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+            <div className="msg-sidebar" style={{ width: 240, borderRight: "1px solid #E8E7E4", background: "#FAFAF8", display: "flex", flexDirection: "column", flexShrink: 0 }}>
               <div style={{ padding: "16px 18px", borderBottom: "1px solid #E8E7E4" }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>Messages</h3>
               </div>
@@ -3314,7 +3364,7 @@ const Dashboard = ({ user, onLogout }) => {
               {notifOpen && (
                 <>
                   <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setNotifOpen(false)} />
-                  <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 360, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", maxHeight: 440 }}>
+                  <div className="notif-dropdown" style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 360, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", maxHeight: 440 }}>
                     <div style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
                       <h3 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", fontFamily: font }}>Notifications</h3>
                       <button onClick={async () => { setNotifications(p => p.map(n => ({...n, read: true}))); try { await api.markNotificationsRead(); } catch(e) {} }} style={{ background: "none", border: "none", fontSize: 12, color: "#9B9A97", cursor: "pointer", fontFamily: font }}>Mark all read</button>
@@ -3381,7 +3431,7 @@ const Dashboard = ({ user, onLogout }) => {
               {settingsOpen && (
                 <>
                   <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setSettingsOpen(false)} />
-                  <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 220, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "6px 0" }}>
+                  <div className="settings-dropdown" style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 220, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "6px 0" }}>
                     {[
                       { key: "account", icon: Icons.user, label: "Account Settings" },
                       { key: "privacy", icon: Icons.shield, label: "Privacy & Safety" },
@@ -3687,36 +3737,95 @@ const Dashboard = ({ user, onLogout }) => {
       </main>
 
       {/* Mobile Bottom Nav */}
-      <div className="mobile-nav" style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #E8E7E4", padding: "8px 16px", display: "none", justifyContent: "space-around", zIndex: 30 }}>
+      <div className="mobile-nav" style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #E8E7E4", padding: "6px 8px", display: "none", justifyContent: "space-around", zIndex: 30 }}>
         {[
           { v: "home", icon: Icons.home, label: "Home" },
+          { v: "network", icon: Icons.search, label: "Find" },
+          { v: "messages", icon: Icons.message, label: "Chat", notif: hasUnreadMessages },
           { v: "groups", icon: Icons.users, label: "Groups" },
-          { v: "events", icon: Icons.calendar, label: "Events" },
-          { v: "trending", icon: Icons.trending, label: "Trend" },
           { v: "profile", icon: Icons.user, label: "Me" },
         ].map((item) => (
           <button
             key={item.v}
-            onClick={() => { setView(item.v); if (item.v === "groups") setSelectedGroup(null); }}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: view === item.v ? "#37352F" : "#9B9A97", fontSize: 10, fontWeight: 500, fontFamily: font }}
+            onClick={() => { setView(item.v); if (item.v === "groups") setSelectedGroup(null); if (item.v === "messages") setHasUnreadMessages(false); }}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: view === item.v ? "#37352F" : "#9B9A97", fontSize: 9, fontWeight: 500, fontFamily: font, position: "relative" }}
           >
             {item.icon({ size: 20 })}
+            {item.notif && <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }} />}
             {item.label}
           </button>
         ))}
       </div>
 
       {/* Expanded Market Item Modal */}
-      {expandedMarketItem && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setExpandedMarketItem(null)}>
+      {expandedMarketItem && (() => {
+        const photos = expandedMarketItem.photos || [];
+        const hasPhotos = photos.length > 0;
+        const touchRef = { startX: 0, startY: 0 };
+        return (
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setExpandedMarketItem(null); setMarketPhotoIdx(0); }}>
           <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={(e) => e.stopPropagation()}>
-            {/* Hero image */}
-            <div style={{ height: 220, background: `linear-gradient(160deg, ${expandedMarketItem.color}EE, ${expandedMarketItem.color}AA)`, position: "relative", borderRadius: "18px 18px 0 0" }}>
-              <button onClick={() => setExpandedMarketItem(null)} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {/* Photo Gallery with Touch Swipe */}
+            <div
+              style={{ height: 280, position: "relative", borderRadius: "18px 18px 0 0", overflow: "hidden", touchAction: "pan-y",
+                background: hasPhotos ? "#F0EFED" : `linear-gradient(160deg, ${expandedMarketItem.color}EE, ${expandedMarketItem.color}AA)`,
+              }}
+              onTouchStart={(e) => { touchRef.startX = e.touches[0].clientX; touchRef.startY = e.touches[0].clientY; }}
+              onTouchEnd={(e) => {
+                if (!hasPhotos || photos.length <= 1) return;
+                const dx = e.changedTouches[0].clientX - touchRef.startX;
+                const dy = e.changedTouches[0].clientY - touchRef.startY;
+                if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
+                  if (dx < 0) setMarketPhotoIdx(p => (p + 1) % photos.length);
+                  else setMarketPhotoIdx(p => (p - 1 + photos.length) % photos.length);
+                }
+              }}
+            >
+              {hasPhotos ? (
+                <img src={photos[marketPhotoIdx]} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", background: "#F0EFED", userSelect: "none", pointerEvents: "none" }} />
+              ) : null}
+              
+              {/* Left arrow */}
+              {hasPhotos && photos.length > 1 && (
+                <button onClick={(e) => { e.stopPropagation(); setMarketPhotoIdx(p => (p - 1 + photos.length) % photos.length); }} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.9)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+                  {Icons.chevronLeft({ size: 18 })}
+                </button>
+              )}
+              {/* Right arrow */}
+              {hasPhotos && photos.length > 1 && (
+                <button onClick={(e) => { e.stopPropagation(); setMarketPhotoIdx(p => (p + 1) % photos.length); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.9)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+              )}
+              
+              {/* Photo counter dots */}
+              {hasPhotos && photos.length > 1 && (
+                <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 6 }}>
+                  {photos.map((_, i) => (
+                    <button key={i} onClick={(e) => { e.stopPropagation(); setMarketPhotoIdx(i); }} style={{ width: i === marketPhotoIdx ? 20 : 8, height: 8, borderRadius: 4, border: "none", background: i === marketPhotoIdx ? "#fff" : "rgba(255,255,255,0.5)", cursor: "pointer", transition: "all 0.2s" }} />
+                  ))}
+                </div>
+              )}
+
+              {/* Thumbnail strip */}
+              {hasPhotos && photos.length > 1 && (
+                <div style={{ position: "absolute", bottom: 28, right: 14, display: "flex", gap: 4 }}>
+                  {photos.map((p, i) => (
+                    <button key={i} onClick={(e) => { e.stopPropagation(); setMarketPhotoIdx(i); }} style={{ width: 36, height: 36, borderRadius: 6, border: i === marketPhotoIdx ? "2px solid #fff" : "2px solid transparent", overflow: "hidden", cursor: "pointer", padding: 0, opacity: i === marketPhotoIdx ? 1 : 0.6, transition: "all 0.2s" }}>
+                      <img src={p} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <button onClick={() => { setExpandedMarketItem(null); setMarketPhotoIdx(0); }} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {Icons.x({ size: 16 })}
               </button>
               <div style={{ position: "absolute", top: 14, left: 14, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(4px)", padding: "6px 14px", borderRadius: 6, fontSize: 14, fontWeight: 700, color: "#37352F" }}>{expandedMarketItem.price}</div>
-              <div style={{ position: "absolute", bottom: 14, left: 14, background: "rgba(0,0,0,0.6)", padding: "4px 10px", borderRadius: 4, fontSize: 10, fontWeight: 600, color: "#fff", textTransform: "uppercase", letterSpacing: "0.06em" }}>{expandedMarketItem.category}</div>
+              <div style={{ position: "absolute", bottom: hasPhotos && photos.length > 1 ? 70 : 14, left: 14, background: "rgba(0,0,0,0.6)", padding: "4px 10px", borderRadius: 4, fontSize: 10, fontWeight: 600, color: "#fff", textTransform: "uppercase", letterSpacing: "0.06em" }}>{expandedMarketItem.category}</div>
+              {hasPhotos && photos.length > 1 && (
+                <div style={{ position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.5)", padding: "3px 10px", borderRadius: 10, fontSize: 11, color: "#fff", fontWeight: 600 }}>{marketPhotoIdx + 1} / {photos.length}</div>
+              )}
             </div>
 
             {/* Content */}
@@ -3764,11 +3873,12 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Contact Seller Modal */}
       {selectedMarketItem && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSelectedMarketItem(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSelectedMarketItem(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Contact Seller</h3>
@@ -3799,7 +3909,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Account Settings Modal */}
       {settingsModal === "account" && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Account Settings</h3>
@@ -3856,7 +3966,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Privacy Settings Modal */}
       {settingsModal === "privacy" && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy Settings</h3>
@@ -3894,7 +4004,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Notification Preferences Modal */}
       {settingsModal === "notifications" && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Notification Preferences</h3>
@@ -3926,7 +4036,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Activity Log Modal */}
       {settingsModal === "activity" && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Activity Log</h3>
@@ -3956,7 +4066,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Help Center Modal */}
       {settingsModal === "helpCenter" && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Help & Support</h3>
@@ -3988,7 +4098,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Terms & Policies Modal */}
       {settingsModal === "terms" && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED", flexShrink: 0 }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Terms & Policies</h3>
@@ -4010,7 +4120,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Followers / Following Modal */}
       {followModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setFollowModal(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setFollowModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 400, maxHeight: "70vh", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED", flexShrink: 0 }}>
               <div style={{ display: "flex", gap: 0, background: "#F5F5F3", borderRadius: 20, padding: "3px 4px" }}>
@@ -4046,7 +4156,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Profile Preview Modal */}
       {profilePreview && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfilePreview(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfilePreview(null)}>
           <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 380, padding: "32px 28px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", position: "relative" }} onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setProfilePreview(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             
@@ -4112,7 +4222,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Report Confirmation Modal */}
       {reportConfirm && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportConfirm(null)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportConfirm(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 380, padding: 28, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
               {Icons.flag({ size: 22, stroke: "#DC2626" })}
@@ -4136,7 +4246,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Block User Modal */}
       {blockModalOpen && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setBlockModalOpen(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setBlockModalOpen(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FEF2F2" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#DC2626" }}>
@@ -4160,7 +4270,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Report User Modal */}
       {reportModalOpen && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportModalOpen(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportModalOpen(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FEF2F2" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#DC2626" }}>
@@ -4192,7 +4302,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Filter Feed Modal */}
       {filterModalOpen && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setFilterModalOpen(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setFilterModalOpen(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font, display: "flex", alignItems: "center", gap: 8 }}>{Icons.filter({ size: 16 })} Filter Feed</h3>
@@ -4233,7 +4343,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Create Doc Modal */}
       {docModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setDocModal(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setDocModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Create New Doc</h3>
@@ -4244,7 +4354,7 @@ const Dashboard = ({ user, onLogout }) => {
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
                 <input style={inputStyle} value={newDoc.title} onChange={(e) => setNewDoc({...newDoc, title: e.target.value})} placeholder="e.g. 10 steps to do when you're in Berlin" />
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+              <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>City</label>
                   <select style={{ ...inputStyle, appearance: "none", cursor: "pointer" }} value={newDoc.city} onChange={(e) => setNewDoc({...newDoc, city: e.target.value})}>
@@ -4274,7 +4384,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Post Market Item Modal */}
       {marketModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setMarketModal(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setMarketModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Post an Item</h3>
@@ -4285,7 +4395,7 @@ const Dashboard = ({ user, onLogout }) => {
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
                 <input style={inputStyle} value={newMarket.title} onChange={(e) => setNewMarket({...newMarket, title: e.target.value})} placeholder="What are you selling?" />
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+              <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Price</label>
                   <input style={inputStyle} value={newMarket.price} onChange={(e) => setNewMarket({...newMarket, price: e.target.value})} placeholder="e.g. €50" />
@@ -4334,7 +4444,26 @@ const Dashboard = ({ user, onLogout }) => {
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => { setMarketModal(false); setMarketPhotos([]); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button disabled={!newMarket.title || !newMarket.price} onClick={async () => { try { await api.createMarketItem({ title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description }); } catch(e) {} setNewMarket({ title: "", price: "", category: "Items", city: "", description: "" }); setMarketPhotos([]); setMarketModal(false); }} style={{ ...btnPrimary, opacity: newMarket.title && newMarket.price ? 1 : 0.4 }}>Post Item</button>
+                <button disabled={!newMarket.title || !newMarket.price} onClick={async () => {
+                  try {
+                    // Upload photos to Supabase Storage
+                    let imageUrls = [];
+                    for (const photo of marketPhotos) {
+                      try {
+                        // Convert base64 to blob
+                        const res = await fetch(photo);
+                        const blob = await res.blob();
+                        const file = new File([blob], `market_${Date.now()}_${imageUrls.length}.jpg`, { type: 'image/jpeg' });
+                        const url = await api.uploadMarketImage(file);
+                        if (url) imageUrls.push(url);
+                      } catch(ue) { imageUrls.push(photo); } // Fallback: store base64
+                    }
+                    await api.createMarketItem({ title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
+                    // Add to local state immediately
+                    setMarketItems(prev => [{ id: "m_" + Date.now(), title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
+                  } catch(e) {}
+                  setNewMarket({ title: "", price: "", category: "Items", city: "", description: "" }); setMarketPhotos([]); setMarketModal(false);
+                }} style={{ ...btnPrimary, opacity: newMarket.title && newMarket.price ? 1 : 0.4 }}>Post Item</button>
               </div>
             </div>
           </div>
@@ -4343,7 +4472,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Request New Community Modal */}
       {groupRequestModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setGroupRequestModal(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setGroupRequestModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Request New Community</h3>
@@ -4417,7 +4546,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Event Modal */}
       {eventModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setEventModal(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setEventModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Host an Event</h3>
@@ -4428,7 +4557,7 @@ const Dashboard = ({ user, onLogout }) => {
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Event Title</label>
                 <input style={inputStyle} value={newEvent.title} onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="e.g. Diwali Night 2024" />
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+              <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Date</label>
                   <input style={inputStyle} type="date" value={newEvent.date} onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })} />
@@ -4562,12 +4691,62 @@ const Dashboard = ({ user, onLogout }) => {
 
         @media (max-width: 900px) {
           .nav-grid { display: flex !important; justify-content: space-between !important; }
-          .main-grid { grid-template-columns: 1fr !important; }
+          .main-grid { grid-template-columns: 1fr !important; padding: 16px 12px 80px !important; }
           .sidebar-left, .sidebar-right { display: none !important; }
           .desktop-nav { display: none !important; }
           .mobile-menu-btn { display: block !important; }
           .mobile-nav { display: flex !important; }
-          .docs-grid, .market-grid, .network-grid { grid-template-columns: 1fr !important; }
+          .docs-grid, .market-grid, .network-grid, .groups-grid { grid-template-columns: 1fr !important; }
+        }
+
+        @media (max-width: 600px) {
+          /* Messages */
+          .msg-layout { flex-direction: column !important; height: auto !important; min-height: 500px !important; }
+          .msg-sidebar { width: 100% !important; max-height: 180px !important; border-right: none !important; border-bottom: 1px solid #E8E7E4 !important; overflow-y: auto !important; }
+          .msg-chat { min-height: 320px !important; }
+
+          /* Event cards */
+          .event-card { flex-direction: column !important; }
+          .event-card > div:first-child { height: 160px !important; width: 100% !important; min-width: unset !important; border-radius: 12px 12px 0 0 !important; }
+
+          /* Notification dropdown */
+          .notif-dropdown { width: calc(100vw - 24px) !important; right: -80px !important; max-height: 70vh !important; overflow-y: auto !important; }
+
+          /* Signup form grids */
+          .form-grid-2, .form-grid-3 { grid-template-columns: 1fr !important; }
+
+          /* Signup container */
+          .signup-container { padding: 20px 16px !important; max-width: 100% !important; }
+
+          /* All modals */
+          .modal-overlay > div { max-width: calc(100vw - 24px) !important; max-height: 90vh !important; overflow-y: auto !important; margin: 12px !important; }
+
+          /* Fix filter row wrapping */
+          .filter-row { flex-wrap: wrap !important; gap: 8px !important; }
+
+          /* Settings dropdown */
+          .settings-dropdown { width: calc(100vw - 32px) !important; right: -40px !important; }
+
+          /* Post composer */
+          .post-actions { flex-wrap: wrap !important; }
+
+          /* Profile page */
+          .profile-full { padding: 20px 16px !important; }
+
+          /* Headings */
+          h1 { font-size: 20px !important; }
+          h2 { font-size: 18px !important; }
+
+          /* Admin dashboard */
+          .admin-stats { grid-template-columns: 1fr 1fr !important; }
+          .admin-user-card .user-fields { grid-template-columns: 1fr 1fr !important; }
+        }
+
+        @media (max-width: 400px) {
+          .form-grid-2, .form-grid-3 { grid-template-columns: 1fr !important; }
+          .admin-stats { grid-template-columns: 1fr !important; }
+          .admin-user-card .user-fields { grid-template-columns: 1fr !important; }
+          .notif-dropdown { right: -100px !important; }
         }
       `}</style>
     </div>
@@ -4854,14 +5033,14 @@ const AdminDashboard = ({ onLogout }) => {
   ];
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", fontFamily: font }}>
+    <div className="admin-layout" style={{ display: "flex", minHeight: "100vh", fontFamily: font }}>
       {/* Sidebar */}
-      <div style={{ width: 240, background: "#fff", borderRight: "1px solid #E8E7E4", padding: "24px 0", flexShrink: 0, position: "relative" }}>
+      <div className="admin-sidebar" style={{ width: 240, background: "#fff", borderRight: "1px solid #E8E7E4", padding: "24px 0", flexShrink: 0, position: "relative" }}>
         <div style={{ padding: "0 20px 24px", borderBottom: "1px solid #F0EFED" }}>
           <h2 style={{ fontSize: 18, fontWeight: 800, color: "#37352F" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></h2>
           <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 4 }}>Admin Panel</p>
         </div>
-        <div style={{ marginTop: 16 }}>
+        <div className="admin-nav" style={{ marginTop: 16 }}>
           {navItems.map(n => (
             <button key={n.key} onClick={() => setTab(n.key)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "12px 20px", border: "none", background: tab === n.key ? "#F5F5F3" : "transparent", color: tab === n.key ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 13, fontWeight: tab === n.key ? 600 : 400, fontFamily: font, textAlign: "left", borderLeft: tab === n.key ? "3px solid #37352F" : "3px solid transparent", transition: "all 0.15s" }}>
               <span style={{ fontSize: 16 }}>{n.icon}</span> {n.label}
@@ -4874,13 +5053,13 @@ const AdminDashboard = ({ onLogout }) => {
       </div>
 
       {/* Main Content */}
-      <div style={{ flex: 1, background: "#FAFAF8", padding: 32, overflow: "auto" }}>
+      <div className="admin-main" style={{ flex: 1, background: "#FAFAF8", padding: 32, overflow: "auto" }}>
         {loading ? (
           <div style={{ textAlign: "center", padding: 60, color: "#9B9A97" }}>Loading admin data...</div>
         ) : tab === "overview" ? (
           <div>
             <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Dashboard Overview</h1>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }}>
+            <div className="admin-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }}>
               {[
                 { label: "Total Users", value: stats.users, color: "#5B9CFF", bg: "#EDF4FF" },
                 { label: "Communities", value: stats.groups, color: "#22A06B", bg: "#E3FCEF" },
@@ -4911,7 +5090,7 @@ const AdminDashboard = ({ onLogout }) => {
             <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Users ({users.length})</h1>
             <div style={{ display: "grid", gap: 14 }}>
               {users.map((u, i) => (
-                <div key={u.id || i} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px" }}>
+                <div key={u.id || i} className="admin-user-card" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
                     <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
                       <div style={{ width: 44, height: 44, borderRadius: "50%", background: "#A3C9B8", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16 }}>{(u.name || "U").substring(0, 2).toUpperCase()}</div>
@@ -4922,7 +5101,7 @@ const AdminDashboard = ({ onLogout }) => {
                     </div>
                     <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: u.years_abroad === "Not lived abroad" ? "#FFF3E0" : "#E3FCEF", color: u.years_abroad === "Not lived abroad" ? "#E65100" : "#22A06B", fontWeight: 600 }}>{u.years_abroad === "Not lived abroad" ? "IN" : "NRI"}</span>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px 20px", fontSize: 12 }}>
+                  <div className="user-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px 20px", fontSize: 12 }}>
                     <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Location</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.location || "—"}</div></div>
                     <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Hometown</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.hometown || "—"}</div></div>
                     <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Profession</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.profession || "—"}</div></div>
@@ -5005,6 +5184,15 @@ const AdminDashboard = ({ onLogout }) => {
           </div>
         ) : null}
       </div>
+      <style>{`
+        @media (max-width: 768px) {
+          .admin-layout { flex-direction: column !important; }
+          .admin-sidebar { width: 100% !important; position: relative !important; }
+          .admin-nav { display: flex !important; flex-wrap: wrap !important; gap: 4px !important; padding: 8px 12px !important; }
+          .admin-nav button { flex: 1 !important; min-width: 0 !important; padding: 10px 8px !important; font-size: 11px !important; justify-content: center !important; border-left: none !important; }
+          .admin-main { padding: 16px !important; }
+        }
+      `}</style>
     </div>
   );
 };

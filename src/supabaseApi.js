@@ -580,3 +580,67 @@ export async function uploadPostImage(file) {
   const path = `${currentUser.id}/${Date.now()}.${ext}`;
   return uploadFile("post-images", path, file);
 }
+
+export async function uploadMarketImage(file) {
+  if (!currentUser) throw new Error("Not logged in");
+  const ext = file.name.split(".").pop();
+  const path = `${currentUser.id}/${Date.now()}.${ext}`;
+  return uploadFile("marketplace-images", path, file);
+}
+
+// ============================================================================
+// REALTIME - WebSocket subscription for instant messages
+// ============================================================================
+let realtimeSocket = null;
+let realtimeHeartbeat = null;
+let messageCallbacks = [];
+
+export function subscribeToMessages(conversationId, callback) {
+  // Clean up any existing connection
+  unsubscribeFromMessages();
+  
+  const wsUrl = SUPABASE_URL.replace("https://", "wss://") + "/realtime/v1/websocket?apikey=" + SUPABASE_ANON_KEY + "&vsn=1.0.0";
+  
+  try {
+    realtimeSocket = new WebSocket(wsUrl);
+    
+    realtimeSocket.onopen = () => {
+      // Join the realtime channel for messages in this conversation
+      const joinMsg = JSON.stringify({
+        topic: `realtime:public:messages:conversation_id=eq.${conversationId}`,
+        event: "phx_join",
+        payload: { config: { broadcast: { self: false }, presence: { key: "" }, postgres_changes: [{ event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` }] } },
+        ref: "1",
+      });
+      realtimeSocket.send(joinMsg);
+      
+      // Heartbeat to keep connection alive
+      realtimeHeartbeat = setInterval(() => {
+        if (realtimeSocket && realtimeSocket.readyState === WebSocket.OPEN) {
+          realtimeSocket.send(JSON.stringify({ topic: "phoenix", event: "heartbeat", payload: {}, ref: "hb" }));
+        }
+      }, 30000);
+    };
+    
+    realtimeSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.event === "postgres_changes" && data.payload?.data?.record) {
+          const record = data.payload.data.record;
+          callback(record);
+        }
+      } catch (e) {}
+    };
+    
+    realtimeSocket.onerror = () => {};
+    realtimeSocket.onclose = () => {};
+  } catch (e) {}
+  
+  messageCallbacks.push(callback);
+}
+
+export function unsubscribeFromMessages() {
+  if (realtimeHeartbeat) { clearInterval(realtimeHeartbeat); realtimeHeartbeat = null; }
+  if (realtimeSocket) { try { realtimeSocket.close(); } catch(e) {} realtimeSocket = null; }
+  messageCallbacks = [];
+}
