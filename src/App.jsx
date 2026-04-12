@@ -1417,9 +1417,24 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
   const [likeCount, setLikeCount] = useState(post.likes || 0);
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState(post.comments || []);
+  const [commentsLoaded, setCommentsLoaded] = useState(false);
   const [newComment, setNewComment] = useState("");
   const [showMenu, setShowMenu] = useState(false);
   const isOwner = user && post.userId === user.id;
+
+  const toggleComments = async () => {
+    const newShow = !showComments;
+    setShowComments(newShow);
+    if (newShow && !commentsLoaded) {
+      setCommentsLoaded(true);
+      try {
+        const dbComments = await api.getComments(post.id);
+        if (dbComments && dbComments.length) {
+          setComments(dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).getTime() })));
+        }
+      } catch(e) {}
+    }
+  };
 
   const handleLike = async () => {
     setLiked(!liked);
@@ -1522,8 +1537,8 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
         <button onClick={handleLike} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: liked ? "#E25555" : "#9B9A97", fontSize: 13, fontWeight: 500 }}>
           {Icons.heart({ size: 16, fill: liked ? "#E25555" : "none", stroke: liked ? "#E25555" : "currentColor" })} {likeCount}
         </button>
-        <button onClick={() => setShowComments(!showComments)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500 }}>
-          {Icons.message({ size: 16 })} {comments.length}
+        <button onClick={toggleComments} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500 }}>
+          {Icons.message({ size: 16 })} {comments.length || post.commentsCount || 0}
         </button>
       </div>
 
@@ -1581,6 +1596,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [helpModal, setHelpModal] = useState(false);
   const [selectedHelp, setSelectedHelp] = useState(null);
   const [helpResponse, setHelpResponse] = useState("");
+  const [helpResponses, setHelpResponses] = useState({});
   const [newHelp, setNewHelp] = useState({ title: "", description: "", category: "General", urgency: "Low" });
   const [profileModal, setProfileModal] = useState(false);
   const [editProfile, setEditProfile] = useState({ ...user });
@@ -1713,8 +1729,9 @@ const Dashboard = ({ user, onLogout }) => {
         if (dbPosts && dbPosts.length) {
           setPosts(dbPosts.map(p => ({
             id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
-            tags: p.tags || [], likes: p.likes_count || 0, comments: [],
+            tags: p.tags || [], likes: p.likes_count || 0, commentsCount: p.comments_count || 0, comments: [],
             timestamp: new Date(p.created_at).getTime(),
+            groupName: p.group_id ? null : null,
             author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown } : { name: "User" },
           })));
         } else { setPosts([]); }
@@ -2900,18 +2917,43 @@ const Dashboard = ({ user, onLogout }) => {
                     <Avatar name={h.user} size={24} />
                     <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{h.user} · {timeAgo(h.timestamp)}</span>
                   </div>
-                  <button onClick={() => setSelectedHelp(selectedHelp === h.id ? null : h.id)} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>{Icons.message({ size: 14 })} {h.responses} responses</button>
+                  <button onClick={async () => {
+                    const newId = selectedHelp === h.id ? null : h.id;
+                    setSelectedHelp(newId);
+                    if (newId && !helpResponses[newId]) {
+                      try {
+                        const resp = await api.getHelpResponses(newId);
+                        if (resp) setHelpResponses(prev => ({ ...prev, [newId]: resp.map(r => ({ id: r.id, text: r.content, user: r.profiles?.name || "User", time: new Date(r.created_at).toLocaleString() })) }));
+                      } catch(e) {}
+                    }
+                  }} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>{Icons.message({ size: 14 })} {h.responses} responses</button>
                 </div>
                 {selectedHelp === h.id && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
-                    <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                    {/* Existing responses */}
+                    {(helpResponses[h.id] || []).map((r, ri) => (
+                      <div key={r.id || ri} style={{ display: "flex", gap: 10, marginBottom: 14, padding: "10px 12px", background: "#FAFAF8", borderRadius: 8 }}>
+                        <Avatar name={r.user} size={28} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{r.user}</span>
+                            <span style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{r.time}</span>
+                          </div>
+                          <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 4, lineHeight: 1.5, fontFamily: font }}>{r.text}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {/* Write new response */}
+                    <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                       <Avatar name={user.name} size={28} />
                       <div style={{ flex: 1 }}>
                         <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder="Write a response to help..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 60, resize: "none", boxSizing: "border-box" }} />
                         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                           <button disabled={!helpResponse.trim()} onClick={async () => {
-                            try { await api.addHelpResponse(h.id, helpResponse); } catch(e) {}
+                            const text = helpResponse;
+                            try { await api.addHelpResponse(h.id, text); } catch(e) {}
                             setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, responses: (x.responses || 0) + 1 } : x));
+                            setHelpResponses(prev => ({ ...prev, [h.id]: [...(prev[h.id] || []), { id: Date.now(), text, user: user.name, time: "Just now" }] }));
                             setHelpResponse("");
                           }} style={{ ...btnPrimary, padding: "7px 16px", fontSize: 12, opacity: helpResponse.trim() ? 1 : 0.4 }}>Post Response</button>
                         </div>
