@@ -539,31 +539,6 @@ export async function unblockUser(userId) {
   return restCall("DELETE", `/rest/v1/blocks?blocker_id=eq.${currentUser.id}&blocked_id=eq.${userId}`);
 }
 
-// ============================================================================
-// REALTIME SUBSCRIPTIONS
-// ============================================================================
-
-export function subscribeToMessages(conversationId, callback) {
-  // Using Supabase Realtime via WebSocket
-  // For the artifact environment, we'll use polling as fallback
-  const interval = setInterval(async () => {
-    try {
-      const msgs = await getMessages(conversationId);
-      callback(msgs);
-    } catch (e) {}
-  }, 3000);
-  return () => clearInterval(interval);
-}
-
-export function subscribeToNotifications(callback) {
-  const interval = setInterval(async () => {
-    try {
-      const notifs = await getNotifications();
-      callback(notifs);
-    } catch (e) {}
-  }, 10000);
-  return () => clearInterval(interval);
-}
 
 // ============================================================================
 // FILE UPLOAD

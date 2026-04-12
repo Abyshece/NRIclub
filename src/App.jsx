@@ -1628,6 +1628,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [selectedMarketItem, setSelectedMarketItem] = useState(null);
   const [expandedMarketItem, setExpandedMarketItem] = useState(null);
   const [marketPhotoIdx, setMarketPhotoIdx] = useState(0);
+  const marketTouchRef = useRef({ startX: 0, startY: 0 });
   
   // Keyboard navigation for market photo gallery
   useEffect(() => {
@@ -3359,7 +3360,7 @@ const Dashboard = ({ user, onLogout }) => {
                 onMouseOver={(e) => (e.currentTarget.style.background = "#F0EFED")}
                 onMouseOut={(e) => (e.currentTarget.style.background = "none")}>
                 {Icons.bell({ size: 20 })}
-                {notifications.some(n => !n.read) && <span style={{ position: "absolute", top: 5, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }} />}
+                {notifications.some(n => !n.read) ? <span style={{ position: "absolute", top: 5, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
               </button>
               {notifOpen && (
                 <>
@@ -3418,7 +3419,7 @@ const Dashboard = ({ user, onLogout }) => {
                               </div>
                             )}
                           </div>
-                          {!n.read && <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#5B9CFF", marginTop: 6, flexShrink: 0 }} />}
+                          {!n.read ? <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#5B9CFF", marginTop: 6, flexShrink: 0 }}>{""}</div> : null}
                         </div>
                       ))}
                     </div>
@@ -3626,8 +3627,7 @@ const Dashboard = ({ user, onLogout }) => {
                   onMouseOut={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#9B9A97"; }}
                   >
                     {item.icon({ size: 20 })}
-                    {item.hasNotif && <span style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }} />}
-                  </button>
+                    {item.hasNotif ? <span style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
                   </button>
                 ))}
               </div>
@@ -3757,7 +3757,7 @@ const Dashboard = ({ user, onLogout }) => {
             style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: view === item.v ? "#37352F" : "#9B9A97", fontSize: 9, fontWeight: 500, fontFamily: font, position: "relative" }}
           >
             {item.icon({ size: 20 })}
-            {item.notif && <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }} />}
+            {item.notif ? <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
             {item.label}
           </button>
         ))}
@@ -3767,7 +3767,7 @@ const Dashboard = ({ user, onLogout }) => {
       {expandedMarketItem && (() => {
         const photos = expandedMarketItem.photos || [];
         const hasPhotos = photos.length > 0;
-        const touchRef = { startX: 0, startY: 0 };
+        
         return (
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setExpandedMarketItem(null); setMarketPhotoIdx(0); }}>
           <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={(e) => e.stopPropagation()}>
@@ -3776,11 +3776,11 @@ const Dashboard = ({ user, onLogout }) => {
               style={{ height: 280, position: "relative", borderRadius: "18px 18px 0 0", overflow: "hidden", touchAction: "pan-y",
                 background: hasPhotos ? "#F0EFED" : `linear-gradient(160deg, ${expandedMarketItem.color}EE, ${expandedMarketItem.color}AA)`,
               }}
-              onTouchStart={(e) => { touchRef.startX = e.touches[0].clientX; touchRef.startY = e.touches[0].clientY; }}
+              onTouchStart={(e) => { marketTouchRef.current.startX = e.touches[0].clientX; marketTouchRef.current.startY = e.touches[0].clientY; }}
               onTouchEnd={(e) => {
                 if (!hasPhotos || photos.length <= 1) return;
-                const dx = e.changedTouches[0].clientX - touchRef.startX;
-                const dy = e.changedTouches[0].clientY - touchRef.startY;
+                const dx = e.changedTouches[0].clientX - marketTouchRef.current.startX;
+                const dy = e.changedTouches[0].clientY - marketTouchRef.current.startY;
                 if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
                   if (dx < 0) setMarketPhotoIdx(p => (p + 1) % photos.length);
                   else setMarketPhotoIdx(p => (p - 1 + photos.length) % photos.length);
