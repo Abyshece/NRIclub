@@ -1752,6 +1752,15 @@ const Dashboard = ({ user, onLogout }) => {
           const dbHelp = await api.getHelpRequests();
           if (dbHelp && dbHelp.length) {
             setHelpRequests(dbHelp.map(h => ({ id: h.id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status, user: h.profiles?.name || "User", timestamp: new Date(h.created_at).getTime(), responses: h.responses_count || 0 })));
+            // Fix response counts by fetching actual counts
+            try {
+              const allResponses = await api.getHelpResponses(null);
+              if (allResponses && allResponses.length) {
+                const counts = {};
+                allResponses.forEach(r => { counts[r.request_id] = (counts[r.request_id] || 0) + 1; });
+                setHelpRequests(prev => prev.map(h => ({ ...h, responses: counts[h.id] || 0 })));
+              }
+            } catch(e) {}
           }
         } catch (e) {}
 
@@ -3007,11 +3016,14 @@ const Dashboard = ({ user, onLogout }) => {
                   <div style={{ flex: 1 }}>
                     <textarea value={docComment} onChange={(e) => setDocComment(e.target.value)} placeholder="Add a comment..." style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 70, resize: "none", boxSizing: "border-box" }} />
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                      <button disabled={!docComment.trim()} onClick={() => {
-                        const updated = docs.map(d => d.id === selectedDoc.id ? { ...d, comments: [...(d.comments || []), { id: "c_" + Date.now(), user: user.name, text: docComment, time: "Just now" }] } : d);
+                      <button disabled={!docComment.trim()} onClick={async () => {
+                        const text = docComment;
+                        const newComment = { id: "c_" + Date.now(), user: user.name, text, time: "Just now" };
+                        const updated = docs.map(d => d.id === selectedDoc.id ? { ...d, comments: [...(d.comments || []), newComment] } : d);
                         setDocs(updated);
                         setSelectedDoc(updated.find(d => d.id === selectedDoc.id));
                         setDocComment("");
+                        try { await api.addDocComment(selectedDoc.id, text); } catch(e) {}
                       }} style={{ ...btnPrimary, padding: "8px 18px", opacity: docComment.trim() ? 1 : 0.4 }}>Post Comment</button>
                     </div>
                   </div>
@@ -3057,7 +3069,16 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="docs-grid">
               {filteredDocs.map((d) => (
-                <div key={d.id} onClick={() => setSelectedDoc(d)} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 22px", cursor: "pointer", transition: "box-shadow 0.15s", display: "flex", flexDirection: "column" }}
+                <div key={d.id} onClick={async () => {
+                  setSelectedDoc(d);
+                  try {
+                    const dbComments = await api.getDocComments(d.id);
+                    if (dbComments && dbComments.length) {
+                      const withComments = { ...d, comments: dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).toLocaleString() })) };
+                      setSelectedDoc(withComments);
+                    }
+                  } catch(e) {}
+                }} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 22px", cursor: "pointer", transition: "box-shadow 0.15s", display: "flex", flexDirection: "column" }}
                   onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"}
                   onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>

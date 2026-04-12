@@ -456,7 +456,11 @@ export async function createHelpRequest(req) {
 }
 
 export async function getHelpResponses(requestId) {
-  return restCall("GET", `/rest/v1/help_responses?request_id=eq.${requestId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+  if (requestId) {
+    return restCall("GET", `/rest/v1/help_responses?request_id=eq.${requestId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+  }
+  // Fetch all responses (for counting)
+  return restCall("GET", `/rest/v1/help_responses?select=id,request_id&order=created_at.desc`);
 }
 
 export async function addHelpResponse(requestId, content) {
