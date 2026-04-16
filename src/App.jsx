@@ -28,6 +28,25 @@ const INDIAN_CITIES = [
   "Kochi",
 ];
 
+// Helper to check if a user is NRI based on their current city
+// Returns true if user lives OUTSIDE India, false if they live in an Indian city
+const isUserNRI = (userOrLocation) => {
+  const loc = typeof userOrLocation === "string" ? userOrLocation : (userOrLocation?.location || userOrLocation?.currentCity || "");
+  if (!loc) {
+    // No location - fall back to isNRI flag or yearsAbroad
+    if (typeof userOrLocation === "object" && userOrLocation) {
+      if (userOrLocation.isNRI === false) return false;
+      if (userOrLocation.yearsAbroad === "Not lived abroad") return false;
+      if (userOrLocation.isNRI === true) return true;
+    }
+    return false; // default to non-NRI if we can't tell
+  }
+  // Check if location matches any Indian city (case-insensitive, partial match)
+  const locLower = loc.toLowerCase().trim();
+  const isInIndianCity = INDIAN_CITIES.some(c => locLower.includes(c.toLowerCase()) || c.toLowerCase().includes(locLower));
+  return !isInIndianCity;
+};
+
 const GLOBAL_CITIES = [
   "Aachen", "Augsburg", "Berlin", "Bielefeld", "Bochum",
   "Bonn", "Braunschweig", "Bremen", "Chemnitz", "Cologne",
@@ -2299,10 +2318,10 @@ const Dashboard = ({ user, onLogout }) => {
                           </svg>
                         )}
                         <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em",
-                          background: u.yearsAbroad !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
-                          color: u.yearsAbroad !== "Not lived abroad" ? "#22A06B" : "#E65100",
-                          border: `1px solid ${u.yearsAbroad !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
-                        }}>{u.yearsAbroad !== "Not lived abroad" ? "NRI" : "IN"}</span>
+                          background: isUserNRI(u) ? "#E3FCEF" : "#FFF3E0",
+                          color: isUserNRI(u) ? "#22A06B" : "#E65100",
+                          border: `1px solid ${isUserNRI(u) ? "#B5E4CA" : "#FFE0B2"}`,
+                        }}>{isUserNRI(u) ? "NRI" : "IN"}</span>
                       </div>
 
                       {/* Profession */}
@@ -2609,10 +2628,10 @@ const Dashboard = ({ user, onLogout }) => {
                           <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name}</h4>
                           {isLocal && <span style={{ fontSize: 9, fontWeight: 600, padding: "2px 6px", borderRadius: 4, background: "#E3FCEF", color: "#22A06B", border: "1px solid #B5E4CA" }}>LOCAL</span>}
                           <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 3,
-                            background: u.yearsAbroad !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
-                            color: u.yearsAbroad !== "Not lived abroad" ? "#22A06B" : "#E65100",
-                            border: `1px solid ${u.yearsAbroad !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
-                          }}>{u.yearsAbroad !== "Not lived abroad" ? "NRI" : "IN"}</span>
+                            background: isUserNRI(u) ? "#E3FCEF" : "#FFF3E0",
+                            color: isUserNRI(u) ? "#22A06B" : "#E65100",
+                            border: `1px solid ${isUserNRI(u) ? "#B5E4CA" : "#FFE0B2"}`,
+                          }}>{isUserNRI(u) ? "NRI" : "IN"}</span>
                         </div>
                         <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{u.profession}</p>
                         <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, fontSize: 11, color: "#9B9A97" }}>
@@ -3455,10 +3474,10 @@ const Dashboard = ({ user, onLogout }) => {
               <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginTop: 16, fontFamily: font }}>{user.name}</h2>
               {true && (
                 <span style={{ display: "inline-block", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 4, letterSpacing: "0.05em", marginTop: 6,
-                  background: user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
-                  color: user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#22A06B" : "#E65100",
-                  border: `1px solid ${user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
-                }}>{user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "NRI — Living Abroad" : "Based in India"}</span>
+                  background: isUserNRI(user) ? "#E3FCEF" : "#FFF3E0",
+                  color: isUserNRI(user) ? "#22A06B" : "#E65100",
+                  border: `1px solid ${isUserNRI(user) ? "#B5E4CA" : "#FFE0B2"}`,
+                }}>{isUserNRI(user) ? "NRI — Living Abroad" : "Based in India"}</span>
               )}
               <p style={{ fontSize: 14, color: "#5F5E5B", marginTop: 4, fontFamily: font }}>{user.profession}</p>
               <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 16, flexWrap: "wrap" }}>
@@ -3775,10 +3794,10 @@ const Dashboard = ({ user, onLogout }) => {
 
               {/* NRI/IN badge top-left */}
               <span style={{ position: "absolute", top: 14, left: 14, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 4, letterSpacing: "0.05em",
-                background: user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
-                color: user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#22A06B" : "#E65100",
-                border: `1px solid ${user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
-              }}>{user.isNRI !== false && user.yearsAbroad !== "Not lived abroad" ? "NRI" : "IN"}</span>
+                background: isUserNRI(user) ? "#E3FCEF" : "#FFF3E0",
+                color: isUserNRI(user) ? "#22A06B" : "#E65100",
+                border: `1px solid ${isUserNRI(user) ? "#B5E4CA" : "#FFE0B2"}`,
+              }}>{isUserNRI(user) ? "NRI" : "IN"}</span>
 
               {/* Profile photo with camera icon */}
               <div style={{ position: "relative", display: "inline-block", marginBottom: 12 }}>
@@ -4538,10 +4557,10 @@ const Dashboard = ({ user, onLogout }) => {
             
             {/* NRI Badge */}
             <span style={{ position: "absolute", top: 14, left: 14, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 4, letterSpacing: "0.05em",
-              background: (profilePreview.yearsAbroad || profilePreview.years_abroad) !== "Not lived abroad" ? "#E3FCEF" : "#FFF3E0",
-              color: (profilePreview.yearsAbroad || profilePreview.years_abroad) !== "Not lived abroad" ? "#22A06B" : "#E65100",
-              border: `1px solid ${(profilePreview.yearsAbroad || profilePreview.years_abroad) !== "Not lived abroad" ? "#B5E4CA" : "#FFE0B2"}`,
-            }}>{(profilePreview.yearsAbroad || profilePreview.years_abroad) !== "Not lived abroad" ? "NRI" : "IN"}</span>
+              background: isUserNRI(profilePreview) ? "#E3FCEF" : "#FFF3E0",
+              color: isUserNRI(profilePreview) ? "#22A06B" : "#E65100",
+              border: `1px solid ${isUserNRI(profilePreview) ? "#B5E4CA" : "#FFE0B2"}`,
+            }}>{isUserNRI(profilePreview) ? "NRI" : "IN"}</span>
 
             <Avatar name={profilePreview.name || "User"} size={80} />
             <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginTop: 14, fontFamily: font }}>{profilePreview.name}</h3>
@@ -5475,7 +5494,7 @@ const AdminDashboard = ({ onLogout }) => {
                         <div style={{ fontSize: 12, color: "#9B9A97" }}>{u.email}</div>
                       </div>
                     </div>
-                    <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: u.years_abroad === "Not lived abroad" ? "#FFF3E0" : "#E3FCEF", color: u.years_abroad === "Not lived abroad" ? "#E65100" : "#22A06B", fontWeight: 600 }}>{u.years_abroad === "Not lived abroad" ? "IN" : "NRI"}</span>
+                    <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: isUserNRI(u) ? "#E3FCEF" : "#FFF3E0", color: isUserNRI(u) ? "#22A06B" : "#E65100", fontWeight: 600 }}>{isUserNRI(u) ? "NRI" : "IN"}</span>
                   </div>
                   <div className="user-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px 20px", fontSize: 12 }}>
                     <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Location</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.location || "—"}</div></div>
