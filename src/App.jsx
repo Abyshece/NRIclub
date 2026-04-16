@@ -2717,6 +2717,14 @@ const Dashboard = ({ user, onLogout }) => {
                   const allMembers = groupMembers.length > 0 ? groupMembers : (selectedGroup.joined ? [{ id: user.id, name: user.name, profession: user.profession, location: user.location, yearsAbroad: user.yearsAbroad }] : []);
                   const localMembers = allMembers.filter(u => (u.location || "").toLowerCase().includes(cityName.toLowerCase()));
                   const outsideMembers = allMembers.filter(u => !(u.location || "").toLowerCase().includes(cityName.toLowerCase()));
+                  // Group outside members by their city
+                  const outsideByCities = {};
+                  outsideMembers.forEach(u => {
+                    const city = (u.location || "").split(",")[0].trim() || "Unknown";
+                    if (!outsideByCities[city]) outsideByCities[city] = [];
+                    outsideByCities[city].push(u);
+                  });
+                  const outsideCityNames = Object.keys(outsideByCities).sort();
                   const MemberCard = ({ u, isLocal }) => (
                     <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
                       <Avatar name={u.name} size={44} />
@@ -2732,12 +2740,12 @@ const Dashboard = ({ user, onLogout }) => {
                         </div>
                         <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{u.profession}</p>
                         <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, fontSize: 11, color: "#9B9A97" }}>
-                          {Icons.mapPin({ size: 10 })} {(u.location || "").split(",")[0]}
+                          {Icons.mapPin({ size: 10 })} {(u.location || "").split(",")[0] || "—"}
                         </div>
                       </div>
-                      <button onClick={() => handleSendNamaste(u.id)} disabled={sentNamaste.has(u.id)}
-                        style={{ padding: 8, borderRadius: "50%", border: "none", cursor: sentNamaste.has(u.id) ? "default" : "pointer", flexShrink: 0, background: sentNamaste.has(u.id) ? "#F0EFED" : "#37352F", color: sentNamaste.has(u.id) ? "#9B9A97" : "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {sentNamaste.has(u.id) ? Icons.check({ size: 16 }) : Icons.users({ size: 16 })}
+                      <button onClick={() => handleSendNamaste(u.id)} disabled={sentNamaste.has(u.id) || u.id === user.id}
+                        style={{ padding: 8, borderRadius: "50%", border: "none", cursor: (sentNamaste.has(u.id) || u.id === user.id) ? "default" : "pointer", flexShrink: 0, background: (sentNamaste.has(u.id) || u.id === user.id) ? "#F0EFED" : "#37352F", color: (sentNamaste.has(u.id) || u.id === user.id) ? "#9B9A97" : "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {(sentNamaste.has(u.id) || u.id === user.id) ? Icons.check({ size: 16 }) : Icons.users({ size: 16 })}
                       </button>
                     </div>
                   );
@@ -2751,14 +2759,14 @@ const Dashboard = ({ user, onLogout }) => {
                           </div>
                         </>
                       )}
-                      {outsideMembers.length > 0 && (
-                        <>
-                          <h4 style={{ fontSize: 13, fontWeight: 700, color: "#9B9A97", marginBottom: 10, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.globe({ size: 14, stroke: "#9B9A97" })} From other cities ({outsideMembers.length})</h4>
+                      {outsideCityNames.map(city => (
+                        <div key={city} style={{ marginBottom: 16 }}>
+                          <h4 style={{ fontSize: 13, fontWeight: 700, color: "#9B9A97", marginBottom: 10, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.mapPin({ size: 14, stroke: "#9B9A97" })} {city} ({outsideByCities[city].length})</h4>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                            {outsideMembers.map(u => <MemberCard key={u.id} u={u} isLocal={false} />)}
+                            {outsideByCities[city].map(u => <MemberCard key={u.id} u={u} isLocal={false} />)}
                           </div>
-                        </>
-                      )}
+                        </div>
+                      ))}
                       {localMembers.length === 0 && outsideMembers.length === 0 && (
                         <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, fontFamily: font }}>No members yet. Be the first to join!</div>
                       )}
