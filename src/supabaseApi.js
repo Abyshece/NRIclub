@@ -268,6 +268,10 @@ export async function getMyConnections() {
   return restCall("GET", `/rest/v1/connections?or=(requester_id.eq.${currentUser.id},recipient_id.eq.${currentUser.id})&status=eq.accepted&select=*,requester:requester_id(id,name,avatar_url,profession),recipient:recipient_id(id,name,avatar_url,profession)`);
 }
 
+export async function getAllConnections() {
+  return restCall("GET", `/rest/v1/connections?status=eq.accepted&select=requester_id,recipient_id`);
+}
+
 export async function getSentNamastes() {
   if (!currentUser) return [];
   return restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&select=recipient_id`);
@@ -580,6 +584,37 @@ export async function uploadMarketImage(file) {
   const ext = file.name.split(".").pop();
   const path = `${currentUser.id}/${Date.now()}.${ext}`;
   return uploadFile("marketplace-images", path, file);
+}
+
+// ============================================================================
+// USER SETTINGS
+// ============================================================================
+
+export async function getUserSettings() {
+  if (!currentUser) return null;
+  const data = await restCall("GET", `/rest/v1/user_settings?user_id=eq.${currentUser.id}&select=*`);
+  return data && data.length > 0 ? data[0] : null;
+}
+
+export async function saveUserSettings(settings) {
+  if (!currentUser) throw new Error("Not logged in");
+  // Try update first, then insert if not exists
+  const existing = await getUserSettings();
+  if (existing) {
+    return restCall("PATCH", `/rest/v1/user_settings?user_id=eq.${currentUser.id}`, {
+      ...settings, updated_at: new Date().toISOString(),
+    });
+  } else {
+    return restCall("POST", "/rest/v1/user_settings", {
+      user_id: currentUser.id, ...settings,
+    }, { Prefer: "return=representation" });
+  }
+}
+
+export async function getOtherUserSettings(userId) {
+  // Fetch another user's public settings (for checking if they accept messages/requests)
+  const data = await restCall("GET", `/rest/v1/user_settings?user_id=eq.${userId}&select=namaste_requests,receive_messages,profile_visibility`);
+  return data && data.length > 0 ? data[0] : null;
 }
 
 // ============================================================================

@@ -571,7 +571,7 @@ const SignUpPage = ({ onComplete, onLogin }) => {
   }, [otpTimer]);
 
   const generateOtp = () => {
-    return "123456";
+    return "";
   };
 
   const handleSendOtp = async () => {
@@ -610,13 +610,13 @@ const SignUpPage = ({ onComplete, onLogin }) => {
         }
       }
 
-      // Step 2: Send OTP (try real, fall back to local)
+      // Step 2: Send OTP via Supabase
       try {
         await api.sendOtp(form.email);
-        setGeneratedOtp("");
       } catch (otpErr) {
-        setGeneratedOtp("123456");
+        // OTP send failed - allow manual code entry
       }
+      setGeneratedOtp("");
 
       setOtpStep("otp");
       setOtpTimer(60);
@@ -744,14 +744,6 @@ const SignUpPage = ({ onComplete, onLogin }) => {
     setOtpSending(true);
     setOtpError("");
 
-    if (generatedOtp) {
-      setGeneratedOtp("123456");
-      setOtpTimer(60);
-      setOtpCode(["", "", "", "", "", ""]);
-      setOtpSending(false);
-      return;
-    }
-
     try {
       await api.sendOtp(form.email);
       setOtpTimer(60);
@@ -852,20 +844,7 @@ const SignUpPage = ({ onComplete, onLogin }) => {
             We sent a 6-digit verification code to<br />
             <strong style={{ color: "#37352F" }}>{form.email}</strong>
           </p>
-          {generatedOtp ? (
-            <div style={{
-              padding: "10px 16px", background: "#FFF9E6", border: "1px solid #FFE082", borderRadius: 8,
-              marginBottom: 24, fontSize: 12, color: "#8D6E00", lineHeight: 1.5, textAlign: "left",
-              display: "flex", alignItems: "flex-start", gap: 8,
-            }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8D6E00" strokeWidth="2" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              <span>
-                <strong>Demo mode:</strong> Enter <strong style={{ letterSpacing: 2 }}>123456</strong> as your verification code. When deployed to a real server, a unique code will be emailed to you.
-              </span>
-            </div>
-          ) : (
-            <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 24 }}>Check your inbox and spam folder.</p>
-          )}
+          <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 24 }}>Check your inbox and spam folder for the 6-digit code.</p>
 
           {otpError && (
             <div style={{ padding: "10px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#DC2626" }}>{otpError}</div>
@@ -1329,7 +1308,7 @@ const LoginPage = ({ onComplete, onSignUp }) => {
           profession: dbProfile.profession, occupationStatus: dbProfile.occupation_status,
           yearsAbroad: dbProfile.years_abroad, linkedinUrl: dbProfile.linkedin_url,
           emailVerified: dbProfile.email_verified,
-          isNRI: dbProfile.years_abroad !== "Not lived abroad",
+          isNRI: dbProfile.years_abroad && dbProfile.years_abroad !== "Not lived abroad",
         };
         localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
         setLoading(false);
@@ -1584,15 +1563,23 @@ const Dashboard = ({ user, onLogout }) => {
   const [connections, setConnections] = useState([]);
   const [myFollowers, setMyFollowers] = useState([]);
   const [myFollowing, setMyFollowing] = useState([]);
-  const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
-  const [profilePreview, setProfilePreview] = useState(null); // user object or null
-  const [acceptedConnections, setAcceptedConnections] = useState(new Set()); // IDs of users with accepted connections
+  const [followModal, setFollowModal] = useState(null);
+  const [profilePreview, setProfilePreview] = useState(null);
+  const [acceptedConnections, setAcceptedConnections] = useState(new Set());
   const [newPost, setNewPost] = useState("");
+  const [postImage, setPostImage] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [rsvps, setRsvps] = useState(new Set());
   const [eventModal, setEventModal] = useState(false);
   const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
   const [helpRequests, setHelpRequests] = useState([]);
+  const [linkedinBannerDismissed, setLinkedinBannerDismissed] = useState(false);
+
+  // Check if profile is incomplete (no LinkedIn) and older than 72 hours
+  const profileAge = user.createdAt ? (Date.now() - user.createdAt) : (user.created_at ? (Date.now() - new Date(user.created_at).getTime()) : 0);
+  const hoursOld = profileAge / (1000 * 60 * 60);
+  const hasLinkedin = user.linkedinUrl && user.linkedinUrl.trim().length > 5;
+  const isBlocked = !hasLinkedin && hoursOld > 72;
   const [helpModal, setHelpModal] = useState(false);
   const [selectedHelp, setSelectedHelp] = useState(null);
   const [helpResponse, setHelpResponse] = useState("");
@@ -1604,6 +1591,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [feedSort, setFeedSort] = useState("new");
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
   const [groupTab, setGroupTab] = useState("all");
+  const [groupMembers, setGroupMembers] = useState([]);
   const [groupRequestModal, setGroupRequestModal] = useState(false);
   const [newGroupCity, setNewGroupCity] = useState("");
   const [communityTab, setCommunityTab] = useState("feed");
@@ -1625,7 +1613,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModal, setSettingsModal] = useState(null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
   const [notifications, setNotifications] = useState([]);
-  const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone" });
+  const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
+  const [privSettingsLoaded, setPrivSettingsLoaded] = useState(false);
   const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: false });
   const [accountName, setAccountName] = useState(user.name);
   // Filter modal state
@@ -1705,6 +1694,14 @@ const Dashboard = ({ user, onLogout }) => {
   };
 
   const handleSendNamaste = async (userId) => {
+    // Check if target user allows Namaste requests
+    try {
+      const targetSettings = await api.getOtherUserSettings(userId);
+      if (targetSettings && targetSettings.namaste_requests === "Nobody") {
+        alert("This user is not accepting connection requests.");
+        return;
+      }
+    } catch(e) {}
     setSentNamaste((prev) => { const s = new Set(prev); s.add(userId); return s; });
     let connId = null;
     try {
@@ -1796,6 +1793,25 @@ const Dashboard = ({ user, onLogout }) => {
           const dbDocs = await api.getDocs();
           if (dbDocs && dbDocs.length) {
             setDocs(dbDocs.map(d => ({ id: d.id, title: d.title, excerpt: d.excerpt, content: d.content || d.excerpt, category: d.category, readTime: d.read_time, author: d.profiles?.name || "User", profession: d.profiles?.profession || "", city: d.city, likes: d.likes_count || 0, timestamp: new Date(d.created_at).toLocaleDateString(), comments: [] })));
+          }
+        } catch (e) {}
+
+        // Load user settings from DB
+        try {
+          const dbSettings = await api.getUserSettings();
+          if (dbSettings) {
+            setPrivSettings({
+              visibility: dbSettings.profile_visibility || "Everyone",
+              onlineStatus: dbSettings.online_status !== false,
+              namasteRequests: dbSettings.namaste_requests || "Everyone",
+              receiveMessages: dbSettings.receive_messages || "Everyone",
+            });
+            setNotifSettings({
+              email: dbSettings.email_notifications !== false,
+              push: dbSettings.push_notifications !== false,
+              marketing: dbSettings.marketing_emails === true,
+            });
+            setPrivSettingsLoaded(true);
           }
         } catch (e) {}
 
@@ -1906,19 +1922,22 @@ const Dashboard = ({ user, onLogout }) => {
   }, [view, selectedConvo]);
 
   const createPost = async () => {
-    if (!newPost.trim()) return;
+    if (!newPost.trim() && !postImage) return;
     const tags = [];
     const hashtags = newPost.match(/#(\w+)/g);
     if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
     const groupName = selectedGroup ? selectedGroup.name : null;
+    const imageUrl = postImage?.url || null;
     const post = {
       id: "p_" + Date.now(), userId: user.id, content: newPost,
       author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
       likes: 0, comments: [], tags, timestamp: Date.now(), groupName,
+      image: imageUrl,
     };
     setPosts([post, ...posts]);
     setNewPost("");
-    try { const r = await api.createPost(newPost, tags); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch (e) {}
+    setPostImage(null);
+    try { const r = await api.createPost(newPost, tags, imageUrl); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch (e) {}
   };
 
   const deletePost = async (id) => {
@@ -2044,22 +2063,29 @@ const Dashboard = ({ user, onLogout }) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
                     try {
+                      const preview = URL.createObjectURL(file);
                       const url = await api.uploadPostImage(file);
-                      setNewPost(prev => prev + (prev ? "\n" : "") + `[Photo attached]`);
+                      setPostImage({ url, preview });
                     } catch (err) { alert("Upload failed: " + err.message); }
                   }}
                 />
                 <label htmlFor="post-photo-upload" style={{
                   display: "flex", alignItems: "center", gap: 6, background: "none", border: "none",
-                  cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500, fontFamily: font,
+                  cursor: "pointer", color: postImage ? "#22A06B" : "#9B9A97", fontSize: 13, fontWeight: 500, fontFamily: font,
                 }}>
-                  {Icons.image({ size: 16 })} Add Photo
+                  {Icons.image({ size: 16 })} {postImage ? "Photo added" : "Add Photo"}
                 </label>
-                <button onClick={createPost} disabled={!newPost.trim()} style={{
+                {postImage && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <img src={postImage.preview} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: "cover" }} />
+                    <button onClick={() => setPostImage(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", fontSize: 11 }}>Remove</button>
+                  </div>
+                )}
+                <button onClick={createPost} disabled={!newPost.trim() && !postImage} style={{
                   padding: "8px 24px", borderRadius: 8, border: "1px solid #E0E0DE",
-                  fontSize: 14, fontWeight: 500, fontFamily: font, cursor: newPost.trim() ? "pointer" : "default",
-                  background: newPost.trim() ? "#37352F" : "#fff",
-                  color: newPost.trim() ? "#fff" : "#9B9A97",
+                  fontSize: 14, fontWeight: 500, fontFamily: font, cursor: (newPost.trim() || postImage) ? "pointer" : "default",
+                  background: (newPost.trim() || postImage) ? "#37352F" : "#fff",
+                  color: (newPost.trim() || postImage) ? "#fff" : "#9B9A97",
                   transition: "all 0.15s",
                 }}>
                   Post
@@ -2088,7 +2114,13 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
 
             {/* Feed List */}
-            {[...posts].sort((a, b) => feedSort === "viral" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0)).map((p) => (
+            {[...posts].filter(p => {
+              const a = p.author || {};
+              if (feedFilters.hometown && !(a.hometown || "").toLowerCase().includes(feedFilters.hometown.toLowerCase()) && !(a.location || "").toLowerCase().includes(feedFilters.hometown.toLowerCase())) return false;
+              if (feedFilters.occupation !== "All" && !(a.profession || "").toLowerCase().includes(feedFilters.occupation.toLowerCase())) return false;
+              if (feedFilters.community !== "All" && p.groupName !== feedFilters.community) return false;
+              return true;
+            }).sort((a, b) => feedSort === "viral" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0)).map((p) => (
               <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />
             ))}
           </div>
@@ -2102,10 +2134,23 @@ const Dashboard = ({ user, onLogout }) => {
             try {
               const dbUsers = await api.searchProfiles();
               if (dbUsers && dbUsers.length) {
+                // Fetch all connections to count followers/following
+                let connCounts = {};
+                try {
+                  const allConns = await api.getAllConnections();
+                  if (allConns) {
+                    allConns.forEach(c => {
+                      if (!connCounts[c.recipient_id]) connCounts[c.recipient_id] = { followers: 0, following: 0 };
+                      if (!connCounts[c.requester_id]) connCounts[c.requester_id] = { followers: 0, following: 0 };
+                      connCounts[c.recipient_id].followers++;
+                      connCounts[c.requester_id].following++;
+                    });
+                  }
+                } catch(ce) {}
                 setNetworkUsers(dbUsers.map(u => ({
                   id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
                   hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
-                  followers: 0, following: 0,
+                  followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
                 })));
               }
             } catch (e) {}
@@ -2516,8 +2561,25 @@ const Dashboard = ({ user, onLogout }) => {
                 /* Members Tab */
                 (() => {
                   const cityName = (selectedGroup.name || "").replace("Indians in ", "");
-                  const localMembers = networkUsers.filter(u => (u.location || "").toLowerCase().includes(cityName.toLowerCase()));
-                  const outsideMembers = networkUsers.filter(u => !(u.location || "").toLowerCase().includes(cityName.toLowerCase()));
+                  // Load group members on first render of members tab
+                  if (groupMembers.length === 0 && selectedGroup.id) {
+                    (async () => {
+                      try {
+                        const members = await api.getGroupMembers(selectedGroup.id);
+                        if (members && members.length) {
+                          setGroupMembers(members.map(m => ({
+                            id: m.profiles?.id || m.user_id, name: m.profiles?.name || "User",
+                            profession: m.profiles?.profession || "", location: m.profiles?.location || "",
+                            yearsAbroad: "", linkedinUrl: "",
+                          })));
+                        }
+                      } catch(e) {}
+                    })();
+                  }
+                  // Also include current user if they joined
+                  const allMembers = groupMembers.length > 0 ? groupMembers : (selectedGroup.joined ? [{ id: user.id, name: user.name, profession: user.profession, location: user.location, yearsAbroad: user.yearsAbroad }] : []);
+                  const localMembers = allMembers.filter(u => (u.location || "").toLowerCase().includes(cityName.toLowerCase()));
+                  const outsideMembers = allMembers.filter(u => !(u.location || "").toLowerCase().includes(cityName.toLowerCase()));
                   const MemberCard = ({ u, isLocal }) => (
                     <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
                       <Avatar name={u.name} size={44} />
@@ -2632,7 +2694,7 @@ const Dashboard = ({ user, onLogout }) => {
                   onMouseOut={(e) => (e.currentTarget.style.boxShadow = "none")}
                 >
                   {/* Card content - clickable to open */}
-                  <div onClick={() => setSelectedGroup(g)} style={{ padding: "16px 18px", flex: 1 }}>
+                  <div onClick={() => { setGroupMembers([]); setSelectedGroup(g); }} style={{ padding: "16px 18px", flex: 1 }}>
                     <div style={{ display: "flex", gap: 14, marginBottom: 8 }}>
                       {/* Thumbnail */}
                       <div style={{
@@ -3226,6 +3288,21 @@ const Dashboard = ({ user, onLogout }) => {
 
         const sendChatMessage = async () => {
           if (!chatInput.trim() || !selectedConvo) return;
+          // Check if recipient allows messages
+          const otherUser = activeConvo ? convos.find(c => c.id === selectedConvo) : null;
+          if (otherUser?.otherUserId) {
+            try {
+              const targetSettings = await api.getOtherUserSettings(otherUser.otherUserId);
+              if (targetSettings?.receive_messages === "Nobody") {
+                alert("This user is not accepting messages.");
+                return;
+              }
+              if (targetSettings?.receive_messages === "Connections Only" && !acceptedConnections.has(otherUser.otherUserId)) {
+                alert("This user only accepts messages from connections. Send a Namaste request first.");
+                return;
+              }
+            } catch(e) {}
+          }
           const msg = { id: Date.now().toString(), text: chatInput, sender: "me", time: "Just now" };
           setChatMessages(p => ({ ...p, [selectedConvo]: [...(p[selectedConvo] || []), msg] }));
           const text = chatInput;
@@ -3372,6 +3449,13 @@ const Dashboard = ({ user, onLogout }) => {
               <button onClick={() => { setEditProfile({ ...user }); setProfileModal(true); }} style={{ ...btnPrimary, marginTop: 24 }}>
                 {Icons.edit({ size: 14 })} Edit Profile
               </button>
+
+              {/* Followers / Following */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, marginTop: 20, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
+                <span onClick={() => setFollowModal("followers")} style={{ cursor: "pointer" }}><b style={{ color: "#37352F", fontSize: 16 }}>{myFollowers.length}</b> <span style={{ color: "#9B9A97", fontSize: 13 }}>followers</span></span>
+                <span style={{ color: "#D4D4D2" }}>·</span>
+                <span onClick={() => setFollowModal("following")} style={{ cursor: "pointer" }}><b style={{ color: "#37352F", fontSize: 16 }}>{myFollowing.length}</b> <span style={{ color: "#9B9A97", fontSize: 13 }}>following</span></span>
+              </div>
             </div>
 
             <h3 style={{ fontSize: 16, fontWeight: 600, color: "#37352F", marginTop: 32, marginBottom: 16, fontFamily: font }}>My Posts</h3>
@@ -3392,6 +3476,22 @@ const Dashboard = ({ user, onLogout }) => {
 
   return (
     <div style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: font }}>
+      {/* LinkedIn block overlay - blocks after 72 hours without LinkedIn */}
+      {isBlocked && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.85)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: "#fff", borderRadius: 18, padding: "40px 32px", maxWidth: 420, width: "100%", textAlign: "center", boxShadow: "0 12px 40px rgba(0,0,0,0.1)", border: "1px solid #E8E7E4" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
+              {Icons.shield({ size: 28, stroke: "#DC2626" })}
+            </div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Complete Your Profile</h2>
+            <p style={{ fontSize: 14, color: "#9B9A97", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>Your account has been temporarily restricted because your LinkedIn profile is missing. Please add your LinkedIn URL to verify your identity and continue using NRIClub.</p>
+            <button onClick={() => { setView("profile"); setEditProfile({ ...user }); setProfileModal(true); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "14px", fontSize: 15 }}>
+              {Icons.edit({ size: 16 })} Complete Profile Now
+            </button>
+            <button onClick={onLogout} style={{ background: "none", border: "none", color: "#9B9A97", cursor: "pointer", fontSize: 12, marginTop: 16, fontFamily: font }}>Sign Out</button>
+          </div>
+        </div>
+      )}
       {/* NAV */}
       <nav style={{ background: "#fff", borderBottom: "1px solid #E8E7E4", position: "sticky", top: 0, zIndex: 30 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 16px", height: 56, display: "grid", gridTemplateColumns: "240px 1fr 210px", gap: 28, alignItems: "center" }} className="nav-grid">
@@ -3574,6 +3674,17 @@ const Dashboard = ({ user, onLogout }) => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* LinkedIn warning banner */}
+      {!hasLinkedin && !linkedinBannerDismissed && !isBlocked && (
+        <div style={{ background: "#FEF2F2", borderBottom: "1px solid #FECACA", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+          <p style={{ fontSize: 12, color: "#991B1B", margin: 0, fontFamily: font }}>
+            {Icons.info({ size: 14, stroke: "#DC2626" })} Your profile is incomplete. Please add your LinkedIn URL within {Math.max(0, Math.ceil(72 - hoursOld))} hours to keep your account active.
+          </p>
+          <button onClick={() => { setView("profile"); setEditProfile({ ...user }); setProfileModal(true); setLinkedinBannerDismissed(true); }} style={{ padding: "4px 12px", borderRadius: 6, border: "none", background: "#DC2626", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", fontFamily: font }}>Add LinkedIn</button>
+          <button onClick={() => setLinkedinBannerDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#991B1B", padding: 2 }}>{Icons.x({ size: 14 })}</button>
         </div>
       )}
 
@@ -4043,12 +4154,13 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
             <div style={{ padding: 24 }}>
               {[
-                { label: "Profile Visibility", desc: "Control who can see your profile details.", key: "visibility", type: "select", options: ["Everyone", "Connections", "Only Me"] },
+                { label: "Profile Visibility", desc: "Control who can see your profile details.", key: "visibility", type: "select", options: ["Everyone", "Connections Only", "Only Me"] },
                 { label: "Online Status", desc: "Show when you are active.", key: "onlineStatus", type: "toggle" },
-                { label: "Namaste Requests", desc: "Who can send you connection requests.", key: "namasteRequests", type: "select", options: ["Everyone", "Friends of Friends", "Nobody"] },
+                { label: "Namaste Requests", desc: "Who can send you connection requests.", key: "namasteRequests", type: "select", options: ["Everyone", "Nobody"] },
+                { label: "Receive Messages", desc: "Who can send you direct messages.", key: "receiveMessages", type: "select", options: ["Everyone", "Connections Only", "Nobody"] },
               ].map((item, i) => (
-                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 2 ? "1px solid #F0EFED" : "none" }}>
-                  <div>
+                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 3 ? "1px solid #F0EFED" : "none" }}>
+                  <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
                     <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{item.label}</h4>
                     <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{item.desc}</p>
                   </div>
@@ -4057,15 +4169,26 @@ const Dashboard = ({ user, onLogout }) => {
                       <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: privSettings[item.key] ? 23 : 3, transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
                     </button>
                   ) : (
-                    <select value={privSettings[item.key]} onChange={(e) => setPrivSettings(p => ({...p, [item.key]: e.target.value}))} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", fontSize: 12, background: "#F0EFED", color: "#37352F", fontFamily: font, cursor: "pointer", appearance: "none", paddingRight: 24 }}>
+                    <select value={privSettings[item.key]} onChange={(e) => setPrivSettings(p => ({...p, [item.key]: e.target.value}))} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", fontSize: 12, background: "#F0EFED", color: "#37352F", fontFamily: font, cursor: "pointer", flexShrink: 0 }}>
                       {item.options.map(o => <option key={o}>{o}</option>)}
                     </select>
                   )}
                 </div>
               ))}
             </div>
-            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8" }}>
-              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
+              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button onClick={async () => {
+                try {
+                  await api.saveUserSettings({
+                    profile_visibility: privSettings.visibility,
+                    online_status: privSettings.onlineStatus,
+                    namaste_requests: privSettings.namasteRequests,
+                    receive_messages: privSettings.receiveMessages,
+                  });
+                } catch(e) {}
+                setSettingsModal(null);
+              }} style={{ ...btnPrimary, padding: "10px 20px" }}>Save Settings</button>
             </div>
           </div>
         </div>
@@ -4096,8 +4219,18 @@ const Dashboard = ({ user, onLogout }) => {
                 </div>
               ))}
             </div>
-            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8" }}>
-              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
+              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button onClick={async () => {
+                try {
+                  await api.saveUserSettings({
+                    email_notifications: notifSettings.email,
+                    push_notifications: notifSettings.push,
+                    marketing_emails: notifSettings.marketing,
+                  });
+                } catch(e) {}
+                setSettingsModal(null);
+              }} style={{ ...btnPrimary, padding: "10px 20px" }}>Save Settings</button>
             </div>
           </div>
         </div>
@@ -4968,7 +5101,7 @@ export default function App() {
               occupationStatus: dbProfile.occupation_status || cached?.occupationStatus || "",
               yearsAbroad: dbProfile.years_abroad || cached?.yearsAbroad || "",
               linkedinUrl: dbProfile.linkedin_url || cached?.linkedinUrl || "",
-              isNRI: (dbProfile.years_abroad || cached?.yearsAbroad) !== "Not lived abroad",
+              isNRI: !!(dbProfile.years_abroad || cached?.yearsAbroad) && (dbProfile.years_abroad || cached?.yearsAbroad) !== "Not lived abroad",
               emailVerified: dbProfile.email_verified,
             };
             // If DB has empty fields but cache has them, push cache values to DB
