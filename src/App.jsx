@@ -3715,11 +3715,15 @@ const Dashboard = ({ user, onLogout }) => {
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
+                    if (file.size > 5 * 1024 * 1024) { alert("Photo must be under 5MB"); return; }
                     try {
                       const url = await api.uploadAvatar(file);
                       await api.updateProfile({ avatar_url: url });
-                      alert("Profile photo updated! It will show on next login.");
-                    } catch (err) { alert("Upload failed: " + err.message); }
+                      // Update local user state immediately
+                      const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
+                      localStorage.setItem("indin_profile_cache", JSON.stringify(updatedUser));
+                      alert("Profile photo updated! Refresh the page to see the change.");
+                    } catch (err) { alert("Upload failed: " + (err.message || "Unknown error") + ". Make sure the 'avatars' storage bucket exists in Supabase."); }
                   }}
                 />
                 <label htmlFor="avatar-upload" style={{

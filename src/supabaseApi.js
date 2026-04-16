@@ -558,10 +558,16 @@ export async function uploadFile(bucket, filePath, file) {
     headers: {
       apikey: SUPABASE_ANON_KEY,
       Authorization: `Bearer ${accessToken}`,
+      "Content-Type": file.type || "application/octet-stream",
+      "x-upsert": "true",
     },
     body: file,
   });
-  if (!res.ok) throw new Error("Upload failed");
+  if (!res.ok) {
+    let err = "";
+    try { const j = await res.json(); err = j.message || j.error || ""; } catch(e) {}
+    throw new Error(err || `Upload failed (${res.status})`);
+  }
   return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${filePath}`;
 }
 
