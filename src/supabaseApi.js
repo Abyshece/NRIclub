@@ -417,7 +417,7 @@ export async function createMarketItem(item) {
 // ============================================================================
 
 export async function getDocs(cityFilter = "All") {
-  let url = "/rest/v1/docs?select=*,profiles:user_id(id,name,avatar_url,profession)&order=created_at.desc";
+  let url = "/rest/v1/docs?select=*,profiles:user_id(id,name,avatar_url,profession,location)&order=created_at.desc";
   if (cityFilter !== "All") url += `&city=ilike.%25${cityFilter}%25`;
   return restCall("GET", url);
 }

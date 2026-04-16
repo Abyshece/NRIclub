@@ -1571,6 +1571,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [postImage, setPostImage] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [rsvps, setRsvps] = useState(new Set());
+  const [profileTab, setProfileTab] = useState("posts");
+  const [chatTab, setChatTab] = useState("personal"); // 'personal' | 'marketplace'
   const [expandedEvent, setExpandedEvent] = useState(null);
   const [eventLikes, setEventLikes] = useState({}); // {eventId: boolean}
   const [eventComment, setEventComment] = useState("");
@@ -1579,6 +1581,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
   const [helpRequests, setHelpRequests] = useState([]);
   const [linkedinBannerDismissed, setLinkedinBannerDismissed] = useState(false);
+  const [linkedinReviewBannerDismissed, setLinkedinReviewBannerDismissed] = useState(false);
 
   // Check if profile is incomplete (no LinkedIn) and older than 72 hours
   const profileAge = user?.createdAt ? (Date.now() - user.createdAt) : (user?.created_at ? (Date.now() - new Date(user.created_at).getTime()) : 0);
@@ -1797,7 +1800,7 @@ const Dashboard = ({ user, onLogout }) => {
         try {
           const dbDocs = await api.getDocs();
           if (dbDocs && dbDocs.length) {
-            setDocs(dbDocs.map(d => ({ id: d.id, title: d.title, excerpt: d.excerpt, content: d.content || d.excerpt, category: d.category, readTime: d.read_time, author: d.profiles?.name || "User", profession: d.profiles?.profession || "", city: d.city, likes: d.likes_count || 0, timestamp: new Date(d.created_at).toLocaleDateString(), comments: [] })));
+            setDocs(dbDocs.map(d => ({ id: d.id, title: d.title, excerpt: d.excerpt, content: d.content || d.excerpt, category: d.category, readTime: d.read_time, author: d.profiles?.name || "User", profession: d.profiles?.profession || "", authorLocation: d.profiles?.location || "", city: d.city, likes: d.likes_count || 0, timestamp: new Date(d.created_at).toLocaleDateString(), comments: [] })));
           }
         } catch (e) {}
 
@@ -1839,7 +1842,7 @@ const Dashboard = ({ user, onLogout }) => {
             setMarketItems(dbMarket.map(m => {
               let photos = [];
               try { photos = JSON.parse(m.image_url || "[]"); } catch(e) { if (m.image_url) photos = [m.image_url]; }
-              return { id: m.id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
+              return { id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
             }));
           }
         } catch (e) {}
@@ -3166,8 +3169,11 @@ const Dashboard = ({ user, onLogout }) => {
                 }} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 22px", cursor: "pointer", transition: "box-shadow 0.15s", display: "flex", flexDirection: "column" }}
                   onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"}
                   onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 4, background: "#F0EFED", color: "#5F5E5B", fontFamily: font }}>{d.category}</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 4, background: "#F0EFED", color: "#5F5E5B", fontFamily: font }}>{d.category}</span>
+                      {d.city && <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 4, background: "#E3FCEF", color: "#22A06B", fontFamily: font, display: "flex", alignItems: "center", gap: 3 }}>{Icons.mapPin({ size: 10, stroke: "#22A06B" })} {d.city}</span>}
+                    </div>
                     <span style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>{d.readTime}</span>
                   </div>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", marginBottom: 6, lineHeight: 1.3, fontFamily: font }}>{d.title}</h3>
@@ -3177,7 +3183,7 @@ const Dashboard = ({ user, onLogout }) => {
                       <Avatar name={d.author} size={24} />
                       <div>
                         <div style={{ fontSize: 11, fontWeight: 600, color: "#37352F", fontFamily: font }}>{d.author}</div>
-                        <div style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{d.city}</div>
+                        <div style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{d.authorLocation || "—"}</div>
                       </div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -3342,24 +3348,33 @@ const Dashboard = ({ user, onLogout }) => {
             {/* Conversation List */}
             <div className="msg-sidebar" style={{ width: 240, borderRight: "1px solid #E8E7E4", background: "#FAFAF8", display: "flex", flexDirection: "column", flexShrink: 0 }}>
               <div style={{ padding: "16px 18px", borderBottom: "1px solid #E8E7E4" }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>Messages</h3>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font, marginBottom: 10 }}>Messages</h3>
+                {/* Personal / Marketplace Tabs */}
+                <div style={{ display: "flex", gap: 4, background: "#F0EFED", padding: 3, borderRadius: 8 }}>
+                  <button onClick={() => setChatTab("personal")} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "none", background: chatTab === "personal" ? "#fff" : "transparent", color: chatTab === "personal" ? "#37352F" : "#9B9A97", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: chatTab === "personal" ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>Personal</button>
+                  <button onClick={() => setChatTab("marketplace")} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "none", background: chatTab === "marketplace" ? "#fff" : "transparent", color: chatTab === "marketplace" ? "#37352F" : "#9B9A97", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: chatTab === "marketplace" ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>Marketplace</button>
+                </div>
               </div>
               <div style={{ flex: 1, overflow: "auto" }}>
-                {convos.length === 0 && (
-                  <div style={{ padding: 20, textAlign: "center", color: "#9B9A97", fontSize: 12, fontFamily: font }}>No conversations yet. Connect with someone first!</div>
-                )}
-                {convos.map(c => (
-                  <div key={c.id} onClick={() => loadConvoMessages(c.id)} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", cursor: "pointer", background: selectedConvo === c.id ? "#fff" : "transparent", borderLeft: selectedConvo === c.id ? "3px solid #37352F" : "3px solid transparent" }}>
-                    <div style={{ display: "flex", gap: 10 }}>
-                      <Avatar name={c.name} size={36} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                          <span style={{ fontSize: 13, fontWeight: 500, color: "#37352F", fontFamily: font }}>{c.name}</span>
-                          <span style={{ fontSize: 10, color: "#9B9A97" }}>{c.time}</span>
+                {(() => {
+                  const filteredConvos = convos.filter(c => {
+                    const isMarket = (c.lastMsg || "").startsWith("[MARKETPLACE:");
+                    return chatTab === "marketplace" ? isMarket : !isMarket;
+                  });
+                  return filteredConvos.length === 0 ? (
+                    <div style={{ padding: 20, textAlign: "center", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{chatTab === "marketplace" ? "No marketplace messages yet." : "No conversations yet. Connect with someone first!"}</div>
+                  ) : filteredConvos.map(c => (
+                    <div key={c.id} onClick={() => loadConvoMessages(c.id)} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", cursor: "pointer", background: selectedConvo === c.id ? "#fff" : "transparent", borderLeft: selectedConvo === c.id ? "3px solid #37352F" : "3px solid transparent" }}>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <Avatar name={c.name} size={36} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                            <span style={{ fontSize: 13, fontWeight: 500, color: "#37352F", fontFamily: font }}>{c.name}</span>
+                            <span style={{ fontSize: 10, color: "#9B9A97" }}>{c.time}</span>
+                          </div>
+                          <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{(c.lastMsg || "").replace(/^\[MARKETPLACE: [^\]]+\]\s*/, "🛒 ")}</p>
                         </div>
-                        <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{c.lastMsg}</p>
                       </div>
-                    </div>
                   </div>
                 ))}
               </div>
@@ -3481,13 +3496,36 @@ const Dashboard = ({ user, onLogout }) => {
               </div>
             </div>
 
-            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#37352F", marginTop: 32, marginBottom: 16, fontFamily: font }}>My Posts</h3>
-            {posts.filter((p) => p.userId === user.id).length > 0 ? (
-              posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />)
+            {/* Posts / Photos Tabs */}
+            <div style={{ display: "flex", gap: 8, background: "#F0EFED", padding: 4, borderRadius: 10, marginTop: 32, marginBottom: 16, maxWidth: 300 }}>
+              <button onClick={() => setProfileTab("posts")} style={{ flex: 1, padding: "8px 16px", borderRadius: 8, border: "none", background: profileTab === "posts" ? "#fff" : "transparent", color: profileTab === "posts" ? "#37352F" : "#9B9A97", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: profileTab === "posts" ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>My Posts</button>
+              <button onClick={() => setProfileTab("photos")} style={{ flex: 1, padding: "8px 16px", borderRadius: 8, border: "none", background: profileTab === "photos" ? "#fff" : "transparent", color: profileTab === "photos" ? "#37352F" : "#9B9A97", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: profileTab === "photos" ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>My Photos</button>
+            </div>
+            {profileTab === "posts" ? (
+              posts.filter((p) => p.userId === user.id).length > 0 ? (
+                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />)
+              ) : (
+                <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
+                  You haven't posted anything yet.
+                </div>
+              )
             ) : (
-              <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
-                You haven't posted anything yet.
-              </div>
+              (() => {
+                const myPhotoPosts = posts.filter(p => p.userId === user.id && p.image);
+                return myPhotoPosts.length > 0 ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                    {myPhotoPosts.map(p => (
+                      <div key={p.id} style={{ aspectRatio: "1", overflow: "hidden", borderRadius: 8, background: "#F0EFED", cursor: "pointer" }}>
+                        <img src={p.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
+                    No photos yet. Photos from your posts will appear here.
+                  </div>
+                );
+              })()
             )}
           </div>
         );
@@ -3702,12 +3740,22 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* LinkedIn warning banner */}
       {!hasLinkedin && !linkedinBannerDismissed && !isBlocked && (
-        <div style={{ background: "#FEF2F2", borderBottom: "1px solid #FECACA", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+        <div style={{ background: "#FEF2F2", borderBottom: "1px solid #FECACA", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
           <p style={{ fontSize: 12, color: "#991B1B", margin: 0, fontFamily: font }}>
             {Icons.info({ size: 14, stroke: "#DC2626" })} Your profile is incomplete. Please add your LinkedIn URL within {Math.max(0, Math.ceil(72 - hoursOld))} hours to keep your account active.
           </p>
           <button onClick={() => { setView("profile"); setEditProfile({ ...user }); setProfileModal(true); setLinkedinBannerDismissed(true); }} style={{ padding: "4px 12px", borderRadius: 6, border: "none", background: "#DC2626", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", fontFamily: font }}>Add LinkedIn</button>
           <button onClick={() => setLinkedinBannerDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#991B1B", padding: 2 }}>{Icons.x({ size: 14 })}</button>
+        </div>
+      )}
+
+      {/* LinkedIn review pending banner (blue) */}
+      {hasLinkedin && !user?.linkedin_verified && !linkedinReviewBannerDismissed && (
+        <div style={{ background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+          <p style={{ fontSize: 12, color: "#1E40AF", margin: 0, fontFamily: font, lineHeight: 1.5, maxWidth: 720 }}>
+            {Icons.info({ size: 14, stroke: "#2563EB" })} Your LinkedIn profile is being reviewed by our team. Once verified, this banner will disappear. If your LinkedIn doesn't match your signup details, your profile may be blocked. Please ensure your LinkedIn is up-to-date and matches what you provided during signup.
+          </p>
+          <button onClick={() => setLinkedinReviewBannerDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#1E40AF", padding: 2 }}>{Icons.x({ size: 14 })}</button>
         </div>
       )}
 
@@ -3834,10 +3882,10 @@ const Dashboard = ({ user, onLogout }) => {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
                 {[
-                  { icon: Icons.file, view: "profile", label: "Posts" },
-                  { icon: Icons.image, view: "profile", label: "Gallery" },
+                  { icon: Icons.file, tab: "posts", label: "Posts" },
+                  { icon: Icons.image, tab: "photos", label: "Gallery" },
                 ].map((item, i) => (
-                  <button key={i} onClick={() => setView(item.view)} style={{
+                  <button key={i} onClick={() => { setView("profile"); setProfileTab(item.tab); }} style={{
                     padding: 10, borderRadius: 8, border: "none", background: "none",
                     cursor: "pointer", color: "#9B9A97", display: "flex", alignItems: "center", justifyContent: "center",
                     transition: "all 0.1s",
@@ -4168,7 +4216,44 @@ const Dashboard = ({ user, onLogout }) => {
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setSelectedMarketItem(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button onClick={() => { setSelectedMarketItem(null); }} style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6 }}>{Icons.send({ size: 14 })} Send Message</button>
+                <button onClick={async () => {
+                  if (!contactMsg.trim()) return;
+                  try {
+                    const sellerId = selectedMarketItem.user_id;
+                    if (!sellerId) {
+                      alert("Could not find seller's user ID. Please try again.");
+                      return;
+                    }
+                    // Tag message as marketplace with item title for filtering
+                    const taggedMsg = `[MARKETPLACE: ${selectedMarketItem.title}] ${contactMsg}`;
+                    const convo = await api.getOrCreateConversation(sellerId);
+                    const cid = convo?.id || convo?.[0]?.id;
+                    if (cid) {
+                      await api.sendMessage(cid, taggedMsg);
+                      // Refresh convo list so it shows up in Marketplace tab
+                      try {
+                        const dbConvos = await api.getConversations();
+                        if (dbConvos) {
+                          setConvos(dbConvos.map(c => ({
+                            id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
+                            lastMsg: c.last_message_text || "", 
+                            time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
+                            unread: false,
+                          })));
+                        }
+                      } catch(re) {}
+                      setChatTab("marketplace");
+                      setSelectedMarketItem(null);
+                      setContactMsg("");
+                      setView("messages");
+                      return;
+                    } else {
+                      alert("Could not create conversation. Please try again.");
+                    }
+                  } catch (e) { alert("Failed to send: " + (e.message || "")); }
+                  setSelectedMarketItem(null);
+                  setContactMsg("");
+                }} style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6 }}>{Icons.send({ size: 14 })} Send Message</button>
               </div>
             </div>
           </div>
@@ -4665,7 +4750,7 @@ const Dashboard = ({ user, onLogout }) => {
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => setDocModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button onClick={async () => { if (!newDoc.title || !newDoc.city) return; setDocs([{ id: "d_"+Date.now(), ...newDoc, readTime: "1 min read", author: user.name, likes: 0 }, ...docs]); try { await api.createDoc({ title: newDoc.title, city: newDoc.city, category: newDoc.category, excerpt: newDoc.excerpt, content: newDoc.excerpt }); } catch(e) {} setNewDoc({ title: "", city: "", category: "General", excerpt: "" }); setDocModal(false); }} disabled={!newDoc.title || !newDoc.city} style={{ ...btnPrimary, opacity: newDoc.title && newDoc.city ? 1 : 0.4 }}>Create Doc</button>
+                <button onClick={async () => { if (!newDoc.title || !newDoc.city) return; const tempDoc = { id: "d_"+Date.now(), ...newDoc, content: newDoc.excerpt, readTime: "1 min read", author: user.name, authorLocation: user.location || "", likes: 0, timestamp: new Date().toLocaleDateString(), comments: [] }; setDocs([tempDoc, ...docs]); try { const r = await api.createDoc({ title: newDoc.title, city: newDoc.city, category: newDoc.category, excerpt: newDoc.excerpt, content: newDoc.excerpt }); if (r?.[0]) setDocs(prev => prev.map(d => d.id === tempDoc.id ? { ...d, id: r[0].id } : d)); } catch(e) {} setNewDoc({ title: "", city: "", category: "General", excerpt: "" }); setDocModal(false); }} disabled={!newDoc.title || !newDoc.city} style={{ ...btnPrimary, opacity: newDoc.title && newDoc.city ? 1 : 0.4 }}>Create Doc</button>
               </div>
             </div>
           </div>
