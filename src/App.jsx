@@ -1511,7 +1511,38 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
         </div>
       </div>
 
-      <p style={{ fontSize: 14, lineHeight: 1.65, color: "#37352F", marginBottom: 12 }}>{post.content}</p>
+      <p style={{ fontSize: 14, lineHeight: 1.65, color: "#37352F", marginBottom: 12, whiteSpace: "pre-wrap" }}>{post.externalUrl ? post.content.replace(post.externalUrl, "").trim() : post.content}</p>
+
+      {/* External Link Preview Card */}
+      {post.externalUrl && (() => {
+        const url = post.externalUrl;
+        const getPlatform = (u) => {
+          const lower = u.toLowerCase();
+          if (lower.includes("tiktok.com")) return { name: "TikTok", color: "#000", emoji: "🎵", gradient: "linear-gradient(135deg, #25F4EE, #FE2C55)" };
+          if (lower.includes("instagram.com")) return { name: "Instagram", color: "#E4405F", emoji: "📷", gradient: "linear-gradient(135deg, #833AB4, #FD1D1D, #FCB045)" };
+          if (lower.includes("youtube.com") || lower.includes("youtu.be")) return { name: "YouTube", color: "#FF0000", emoji: "▶️", gradient: "linear-gradient(135deg, #FF0000, #CC0000)" };
+          if (lower.includes("x.com") || lower.includes("twitter.com")) return { name: "X (Twitter)", color: "#000", emoji: "𝕏", gradient: "linear-gradient(135deg, #000, #333)" };
+          if (lower.includes("linkedin.com")) return { name: "LinkedIn", color: "#0A66C2", emoji: "💼", gradient: "linear-gradient(135deg, #0A66C2, #004182)" };
+          if (lower.includes("facebook.com") || lower.includes("fb.com")) return { name: "Facebook", color: "#1877F2", emoji: "👥", gradient: "linear-gradient(135deg, #1877F2, #0C5ECD)" };
+          if (lower.includes("reddit.com")) return { name: "Reddit", color: "#FF4500", emoji: "🔺", gradient: "linear-gradient(135deg, #FF4500, #CC3700)" };
+          if (lower.includes("spotify.com")) return { name: "Spotify", color: "#1DB954", emoji: "🎧", gradient: "linear-gradient(135deg, #1DB954, #169C46)" };
+          try { const host = new URL(u).hostname.replace("www.", ""); return { name: host, color: "#5B9CFF", emoji: "🔗", gradient: "linear-gradient(135deg, #5B9CFF, #3B7BD8)" }; }
+          catch { return { name: "Link", color: "#5B9CFF", emoji: "🔗", gradient: "linear-gradient(135deg, #5B9CFF, #3B7BD8)" }; }
+        };
+        const p = getPlatform(url);
+        return (
+          <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ display: "block", marginBottom: 12, borderRadius: 12, overflow: "hidden", border: "1px solid #E8E7E4", textDecoration: "none", cursor: "pointer", transition: "box-shadow 0.15s" }} onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)"} onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
+            <div style={{ height: 110, background: p.gradient, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 44 }}>
+              <span>{p.emoji}</span>
+            </div>
+            <div style={{ padding: "12px 14px", background: "#fff" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: p.color, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{p.name}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", wordBreak: "break-all", lineHeight: 1.4 }}>Tap to open →</div>
+              <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{url}</div>
+            </div>
+          </a>
+        );
+      })()}
 
       {/* Post Image */}
       {post.image && (
@@ -1520,9 +1551,9 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
         </div>
       )}
 
-      {post.tags?.length > 0 && (
+      {post.tags?.filter(t => t !== "__external__").length > 0 && (
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
-          {post.tags.map((t) => (
+          {post.tags.filter(t => t !== "__external__").map((t) => (
             <span key={t} style={{ fontSize: 11, background: "#F0EFED", color: "#5F5E5B", padding: "3px 8px", borderRadius: 4, fontWeight: 500 }}>
               #{t}
             </span>
@@ -1647,12 +1678,17 @@ const Dashboard = ({ user, onLogout }) => {
   // Filter modal state
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [feedFilters, setFeedFilters] = useState({ hometown: "", occupation: "All", yearsAbroad: "All", community: "All" });
+  const [feedPostType, setFeedPostType] = useState("all"); // 'all' | 'posts' | 'links'
+  const [linkModal, setLinkModal] = useState(false);
+  const [externalLinkInput, setExternalLinkInput] = useState("");
+  const [externalLinkNote, setExternalLinkNote] = useState("");
   // Docs state
   const [docModal, setDocModal] = useState(false);
   const [newDoc, setNewDoc] = useState({ title: "", city: "", category: "General", excerpt: "" });
   const MOCK_DOCS = [];
   const [docs, setDocs] = useState([]);
   const [docCityFilter, setDocCityFilter] = useState("All");
+  const [docSearch, setDocSearch] = useState("");
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [docComment, setDocComment] = useState("");
   const [docLiked, setDocLiked] = useState(false);
@@ -1751,13 +1787,17 @@ const Dashboard = ({ user, onLogout }) => {
       try {
         const dbPosts = await api.getPosts();
         if (dbPosts && dbPosts.length) {
-          setPosts(dbPosts.map(p => ({
-            id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
-            tags: p.tags || [], likes: p.likes_count || 0, commentsCount: p.comments_count || 0, comments: [],
-            timestamp: new Date(p.created_at).getTime(),
-            groupName: p.group_id ? null : null,
-            author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown } : { name: "User" },
-          })));
+          setPosts(dbPosts.map(p => {
+            const urlMatch = (p.content || "").match(/https?:\/\/[^\s]+/i);
+            return {
+              id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
+              tags: p.tags || [], likes: p.likes_count || 0, commentsCount: p.comments_count || 0, comments: [],
+              timestamp: new Date(p.created_at).getTime(),
+              groupName: p.group_id ? null : null,
+              author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown } : { name: "User" },
+              externalUrl: urlMatch ? urlMatch[0] : null,
+            };
+          }));
         } else { setPosts([]); }
         const dbGroups = await api.getGroups();
         if (dbGroups && dbGroups.length) {
@@ -1953,13 +1993,17 @@ const Dashboard = ({ user, onLogout }) => {
     const tags = [];
     const hashtags = newPost.match(/#(\w+)/g);
     if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
+    // Detect external URLs (TikTok, Instagram, YouTube, etc.)
+    const urlMatch = newPost.match(/https?:\/\/[^\s]+/i);
+    const externalUrl = urlMatch ? urlMatch[0] : null;
+    if (externalUrl) tags.push("__external__");
     const groupName = selectedGroup ? selectedGroup.name : null;
     const imageUrl = postImage?.url || null;
     const post = {
       id: "p_" + Date.now(), userId: user.id, content: newPost,
       author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
       likes: 0, comments: [], tags, timestamp: Date.now(), groupName,
-      image: imageUrl,
+      image: imageUrl, externalUrl,
     };
     setPosts([post, ...posts]);
     setNewPost("");
@@ -2102,6 +2146,9 @@ const Dashboard = ({ user, onLogout }) => {
                 }}>
                   {Icons.image({ size: 16 })} {postImage ? "Photo added" : "Add Photo"}
                 </label>
+                <button onClick={() => setLinkModal(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500, fontFamily: font }}>
+                  {Icons.link({ size: 16 })} Share Link
+                </button>
                 {postImage && (
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <img src={postImage.preview} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: "cover" }} />
@@ -2133,6 +2180,13 @@ const Dashboard = ({ user, onLogout }) => {
               </div>
             )}
 
+            {/* Post Type Filter Tabs */}
+            <div style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8, marginBottom: 14, width: "fit-content" }}>
+              {[{ k: "all", l: "All" }, { k: "posts", l: "Posts" }, { k: "links", l: "Links" }].map(tab => (
+                <button key={tab.k} onClick={() => setFeedPostType(tab.k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: feedPostType === tab.k ? "#fff" : "transparent", color: feedPostType === tab.k ? "#37352F" : "#9B9A97", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: feedPostType === tab.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{tab.l}</button>
+              ))}
+            </div>
+
             {/* Viral / New Toggle - matching screenshot */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 20 }}>
               <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "viral" ? "#37352F" : "#9B9A97", fontFamily: font }}>Viral</span>
@@ -2159,6 +2213,9 @@ const Dashboard = ({ user, onLogout }) => {
               if (feedFilters.hometown && !(a.hometown || "").toLowerCase().includes(feedFilters.hometown.toLowerCase()) && !(a.location || "").toLowerCase().includes(feedFilters.hometown.toLowerCase())) return false;
               if (feedFilters.occupation !== "All" && !(a.profession || "").toLowerCase().includes(feedFilters.occupation.toLowerCase())) return false;
               if (feedFilters.community !== "All" && p.groupName !== feedFilters.community) return false;
+              // Post type filter
+              if (feedPostType === "links" && !p.externalUrl) return false;
+              if (feedPostType === "posts" && p.externalUrl) return false;
               return true;
             }).sort((a, b) => feedSort === "viral" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0)).map((p) => (
               <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />
@@ -3151,7 +3208,14 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
           );
         }
-        const filteredDocs = docs.filter(d => docCityFilter === "All" || d.city.includes(docCityFilter));
+        const filteredDocs = docs.filter(d => {
+          if (docCityFilter !== "All" && !(d.city || "").includes(docCityFilter)) return false;
+          if (docSearch.trim()) {
+            const q = docSearch.toLowerCase();
+            return (d.title || "").toLowerCase().includes(q) || (d.excerpt || "").toLowerCase().includes(q) || (d.content || "").toLowerCase().includes(q) || (d.category || "").toLowerCase().includes(q) || (d.author || "").toLowerCase().includes(q);
+          }
+          return true;
+        });
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
@@ -3162,6 +3226,14 @@ const Dashboard = ({ user, onLogout }) => {
               <button onClick={() => setDocModal(true)} style={btnPrimary}>{Icons.plus({ size: 14 })} Create Doc</button>
             </div>
             <InfoBanner text="Share guides, tips, and local knowledge. Help newcomers settle in your city." />
+            {/* Search Bar */}
+            <div style={{ position: "relative", marginBottom: 12 }}>
+              <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 16 })}</div>
+              <input value={docSearch} onChange={(e) => setDocSearch(e.target.value)} placeholder="Search docs by title, content, category, or author..." style={{ width: "100%", padding: "12px 14px 12px 40px", borderRadius: 10, border: "1px solid #E8E7E4", background: "#fff", fontSize: 13, fontFamily: font, boxSizing: "border-box", outline: "none" }} />
+              {docSearch && (
+                <button onClick={() => setDocSearch("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 14 })}</button>
+              )}
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, background: "#fff", padding: "10px 16px", borderRadius: 10, border: "1px solid #E8E7E4" }}>
               <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Filter by City:</span>
               <div style={{ position: "relative" }}>
@@ -4207,6 +4279,45 @@ const Dashboard = ({ user, onLogout }) => {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share External Link Modal */}
+      {linkModal && (
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setLinkModal(false); setExternalLinkInput(""); setExternalLinkNote(""); }}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Share an External Link</h3>
+              <button onClick={() => { setLinkModal(false); setExternalLinkInput(""); setExternalLinkNote(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#5F5E5B", fontFamily: font, display: "block", marginBottom: 6 }}>Paste a link (TikTok, Instagram, YouTube, X, etc.)</label>
+              <input value={externalLinkInput} onChange={(e) => setExternalLinkInput(e.target.value)} placeholder="https://..." style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", marginBottom: 14 }} />
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#5F5E5B", fontFamily: font, display: "block", marginBottom: 6 }}>Add a caption (optional)</label>
+              <textarea value={externalLinkNote} onChange={(e) => setExternalLinkNote(e.target.value)} placeholder="What's this about?" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", minHeight: 70, resize: "none" }} />
+            </div>
+            <div style={{ padding: "14px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
+              <button onClick={() => { setLinkModal(false); setExternalLinkInput(""); setExternalLinkNote(""); }} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button disabled={!externalLinkInput.trim() || !externalLinkInput.match(/^https?:\/\//i)} onClick={async () => {
+                const url = externalLinkInput.trim();
+                const content = externalLinkNote.trim() ? `${externalLinkNote.trim()}\n\n${url}` : url;
+                const tags = ["__external__"];
+                const hashtags = content.match(/#(\w+)/g);
+                if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
+                const post = {
+                  id: "p_" + Date.now(), userId: user.id, content,
+                  author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
+                  likes: 0, comments: [], tags, timestamp: Date.now(), groupName: null,
+                  image: null, externalUrl: url,
+                };
+                setPosts([post, ...posts]);
+                setLinkModal(false);
+                setExternalLinkInput("");
+                setExternalLinkNote("");
+                try { const r = await api.createPost(content, tags, null); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch(e) {}
+              }} style={{ ...btnPrimary, padding: "10px 20px", opacity: (externalLinkInput.trim() && externalLinkInput.match(/^https?:\/\//i)) ? 1 : 0.4 }}>Share Link</button>
             </div>
           </div>
         </div>
