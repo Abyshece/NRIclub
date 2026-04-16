@@ -42,6 +42,10 @@ export async function signUp(email, password, metadata = {}) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error_description || data.msg || "Signup failed");
+  // Supabase returns identities=[] for existing emails (doesn't error)
+  if (data.user && data.user.identities && data.user.identities.length === 0) {
+    throw new Error("An account with this email already exists. Please log in instead.");
+  }
   return data;
 }
 

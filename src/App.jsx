@@ -30,6 +30,12 @@ const INDIAN_CITIES = [
 
 // Helper to check if a user is NRI based on their current city
 // Returns true if user lives OUTSIDE India, false if they live in an Indian city
+// Sanitize user inputs to prevent XSS
+const sanitize = (str) => {
+  if (typeof str !== "string") return str;
+  return str.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/javascript:/gi, "").replace(/on\w+=/gi, "");
+};
+
 const isUserNRI = (userOrLocation) => {
   const loc = typeof userOrLocation === "string" ? userOrLocation : (userOrLocation?.location || userOrLocation?.currentCity || "");
   if (!loc) {
@@ -1328,6 +1334,7 @@ const LoginPage = ({ onComplete, onSignUp }) => {
           profession: dbProfile.profession, occupationStatus: dbProfile.occupation_status,
           yearsAbroad: dbProfile.years_abroad, linkedinUrl: dbProfile.linkedin_url,
           emailVerified: dbProfile.email_verified,
+          linkedin_verified: dbProfile.linkedin_verified || false,
           isNRI: dbProfile.years_abroad && dbProfile.years_abroad !== "Not lived abroad",
         };
         localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
@@ -1629,6 +1636,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [eventComments, setEventComments] = useState({}); // {eventId: [{user, text, time}]}
   const [eventModal, setEventModal] = useState(false);
   const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
+  const [eventPhoto, setEventPhoto] = useState(null); // { url, preview }
   const [helpRequests, setHelpRequests] = useState([]);
   const [linkedinBannerDismissed, setLinkedinBannerDismissed] = useState(false);
   const [linkedinReviewBannerDismissed, setLinkedinReviewBannerDismissed] = useState(false);
@@ -1654,6 +1662,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [newGroupCity, setNewGroupCity] = useState("");
   const [communityTab, setCommunityTab] = useState("feed");
   const [eventViewMode, setEventViewMode] = useState("all");
+  const [eventSearch, setEventSearch] = useState("");
   const [eventCityFilter, setEventCityFilter] = useState("All");
   // Messages state
   const [selectedConvo, setSelectedConvo] = useState(null);
@@ -1662,6 +1671,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [convos, setConvos] = useState([]);
   const [convosLoaded, setConvosLoaded] = useState(false);
   const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
+  const lastSeenMsgRef = useRef(null); // Track last seen conversation state
   const [chatSettings, setChatSettings] = useState(false);
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
@@ -1757,6 +1767,8 @@ const Dashboard = ({ user, onLogout }) => {
   };
 
   const handleSendNamaste = async (userId) => {
+    // Block self-requests
+    if (userId === user.id) return;
     // Check if target user allows Namaste requests
     try {
       const targetSettings = await api.getOtherUserSettings(userId);
@@ -1806,7 +1818,7 @@ const Dashboard = ({ user, onLogout }) => {
         } else { setGroups([]); }
         const dbEvents = await api.getEvents();
         if (dbEvents && dbEvents.length) {
-          setEvents(dbEvents.map(e => ({ id: e.id, title: e.title, date: e.date, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description })));
+          setEvents(dbEvents.map(e => ({ id: e.id, title: e.title, date: e.date, time: e.time, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
           const myR = await api.getMyRsvps();
           setRsvps(new Set(myR));
         } else { setEvents([]); }
@@ -1925,11 +1937,23 @@ const Dashboard = ({ user, onLogout }) => {
             unread: false,
           }));
           setConvos(prev => {
-            const changed = newConvos.some((nc, i) => {
-              const old = prev[i];
-              return !old || old.lastMsg !== nc.lastMsg;
-            });
-            if (changed && view !== "messages") setHasUnreadMessages(true);
+            // Only flag unread if this is NOT the first load and a message actually changed
+            if (lastSeenMsgRef.current !== null) {
+              const changed = newConvos.some(nc => {
+                const old = lastSeenMsgRef.current.find(o => o.id === nc.id);
+                return !old || old.lastMsg !== nc.lastMsg;
+              });
+              if (changed && view !== "messages") setHasUnreadMessages(true);
+              // Mark individual convos as unread if their message changed
+              newConvos.forEach(nc => {
+                const old = lastSeenMsgRef.current.find(o => o.id === nc.id);
+                if (old && old.lastMsg !== nc.lastMsg && nc.id !== selectedConvo) {
+                  nc.unread = true;
+                }
+              });
+            }
+            // Store current state as "seen"
+            lastSeenMsgRef.current = newConvos;
             return newConvos;
           });
         }
@@ -1990,8 +2014,9 @@ const Dashboard = ({ user, onLogout }) => {
 
   const createPost = async () => {
     if (!newPost.trim() && !postImage) return;
+    const cleanContent = sanitize(newPost);
     const tags = [];
-    const hashtags = newPost.match(/#(\w+)/g);
+    const hashtags = cleanContent.match(/#(\w+)/g);
     if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
     // Detect external URLs (TikTok, Instagram, YouTube, etc.)
     const urlMatch = newPost.match(/https?:\/\/[^\s]+/i);
@@ -2020,14 +2045,15 @@ const Dashboard = ({ user, onLogout }) => {
     if (!newEvent.title || !newEvent.date) return;
     const e = {
       id: "e_" + Date.now(), title: newEvent.title,
-      date: `${newEvent.date} • ${newEvent.time || "TBD"}`,
+      date: newEvent.date, time: newEvent.time || "TBD",
       location: newEvent.location || "TBD", attendees: 1,
       organizer: user.name, description: newEvent.description,
+      link: newEvent.link || "", image: eventPhoto?.url || "",
     };
     setEvents([e, ...events]);
-    setNewEvent({ title: "", date: "", time: "", location: "", description: "", link: "" });
+    setNewEvent({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" }); setEventPhoto(null);
     setEventModal(false);
-    try { await api.createEvent({ title: newEvent.title, date: `${newEvent.date} • ${newEvent.time || "TBD"}`, location: newEvent.location, description: newEvent.description, organizer_name: user.name }); } catch (er) {}
+    try { await api.createEvent({ title: newEvent.title, date: newEvent.date, time: newEvent.time || "TBD", location: newEvent.location, description: newEvent.description, organizer_name: user.name, link: newEvent.link || "", image_url: eventPhoto?.url || "" }); } catch (er) {}
   };
 
   const toggleRsvp = async (id) => {
@@ -2128,7 +2154,7 @@ const Dashboard = ({ user, onLogout }) => {
                   onKeyDown={(e) => e.key === "Enter" && createPost()}
                 />
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, paddingTop: 14, borderTop: "1px solid #F0EFED" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, paddingTop: 14, borderTop: "1px solid #F0EFED", flexWrap: "wrap", gap: 8 }}>
                 <input type="file" accept="image/*" id="post-photo-upload" style={{ display: "none" }}
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
@@ -2168,43 +2194,44 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
 
             {/* Active Filters Status */}
-            {(feedFilters.hometown || feedFilters.occupation !== "All" || feedFilters.community !== "All") && (
+            {(feedFilters.hometown || feedFilters.occupation !== "All" || feedFilters.yearsAbroad !== "All" || feedFilters.community !== "All") && (
               <div style={{ background: "#E3FCEF", border: "1px solid #B5E4CA", borderRadius: 8, padding: "8px 14px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: "#22A06B", textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: font }}>{Icons.filter({ size: 12, stroke: "#22A06B" })} Filters:</span>
                   {feedFilters.hometown && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>City: {feedFilters.hometown}</span>}
                   {feedFilters.occupation !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Profession: {feedFilters.occupation}</span>}
+                  {feedFilters.yearsAbroad !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Status: {feedFilters.yearsAbroad}</span>}
                   {feedFilters.community !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Community: {feedFilters.community}</span>}
                 </div>
                 <button onClick={() => setFeedFilters({ hometown: "", occupation: "All", yearsAbroad: "All", community: "All" })} style={{ background: "none", border: "none", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap" }}>Clear All</button>
               </div>
             )}
 
-            {/* Post Type Filter Tabs */}
-            <div style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8, marginBottom: 14, width: "fit-content" }}>
-              {[{ k: "all", l: "All" }, { k: "posts", l: "Posts" }, { k: "links", l: "Links" }].map(tab => (
-                <button key={tab.k} onClick={() => setFeedPostType(tab.k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: feedPostType === tab.k ? "#fff" : "transparent", color: feedPostType === tab.k ? "#37352F" : "#9B9A97", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: feedPostType === tab.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{tab.l}</button>
-              ))}
-            </div>
-
-            {/* Viral / New Toggle - matching screenshot */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 20 }}>
-              <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "viral" ? "#37352F" : "#9B9A97", fontFamily: font }}>Viral</span>
-              <button
-                onClick={() => setFeedSort(feedSort === "new" ? "viral" : "new")}
-                style={{
-                  width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
-                  background: "#D4D4D2", position: "relative", padding: 0, transition: "background 0.2s",
-                }}
-              >
-                <div style={{
-                  width: 18, height: 18, borderRadius: "50%", background: "#37352F",
-                  position: "absolute", top: 3,
-                  left: feedSort === "new" ? 23 : 3,
-                  transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
-                }} />
-              </button>
-              <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "new" ? "#37352F" : "#9B9A97", fontFamily: font }}>New</span>
+            {/* Post Type Filter + Viral/New Toggle - same row */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+              <div style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8 }}>
+                {[{ k: "all", l: "All" }, { k: "posts", l: "Posts" }, { k: "links", l: "Links" }].map(tab => (
+                  <button key={tab.k} onClick={() => setFeedPostType(tab.k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: feedPostType === tab.k ? "#fff" : "transparent", color: feedPostType === tab.k ? "#37352F" : "#9B9A97", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: feedPostType === tab.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{tab.l}</button>
+                ))}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "viral" ? "#37352F" : "#9B9A97", fontFamily: font }}>Viral</span>
+                <button
+                  onClick={() => setFeedSort(feedSort === "new" ? "viral" : "new")}
+                  style={{
+                    width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
+                    background: "#D4D4D2", position: "relative", padding: 0, transition: "background 0.2s",
+                  }}
+                >
+                  <div style={{
+                    width: 18, height: 18, borderRadius: "50%", background: "#37352F",
+                    position: "absolute", top: 3,
+                    left: feedSort === "new" ? 23 : 3,
+                    transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                  }} />
+                </button>
+                <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "new" ? "#37352F" : "#9B9A97", fontFamily: font }}>New</span>
+              </div>
             </div>
 
             {/* Feed List */}
@@ -2212,6 +2239,11 @@ const Dashboard = ({ user, onLogout }) => {
               const a = p.author || {};
               if (feedFilters.hometown && !(a.hometown || "").toLowerCase().includes(feedFilters.hometown.toLowerCase()) && !(a.location || "").toLowerCase().includes(feedFilters.hometown.toLowerCase())) return false;
               if (feedFilters.occupation !== "All" && !(a.profession || "").toLowerCase().includes(feedFilters.occupation.toLowerCase())) return false;
+              if (feedFilters.yearsAbroad !== "All") {
+                // Filter by NRI vs non-NRI based on author location
+                if (feedFilters.yearsAbroad === "NRI" && !isUserNRI(a)) return false;
+                if (feedFilters.yearsAbroad === "Based in India" && isUserNRI(a)) return false;
+              }
               if (feedFilters.community !== "All" && p.groupName !== feedFilters.community) return false;
               // Post type filter
               if (feedPostType === "links" && !p.externalUrl) return false;
@@ -2855,7 +2887,9 @@ const Dashboard = ({ user, onLogout }) => {
         const filteredEvents = events.filter((e) => {
           const matchesView = eventViewMode === "all" || rsvps.has(e.id);
           const matchesCity = eventCityFilter === "All" || (e.location || "").includes(eventCityFilter);
-          return matchesView && matchesCity;
+          const q = eventSearch.trim().toLowerCase();
+          const matchesSearch = !q || (e.title || "").toLowerCase().includes(q) || (e.description || "").toLowerCase().includes(q) || (e.location || "").toLowerCase().includes(q) || (e.organizer || "").toLowerCase().includes(q);
+          return matchesView && matchesCity && matchesSearch;
         });
 
         return (
@@ -2871,6 +2905,15 @@ const Dashboard = ({ user, onLogout }) => {
               </button>
             </div>
             <InfoBanner text="Browse and RSVP to events in your city. Host your own to bring the community together." />
+
+            {/* Search Bar */}
+            <div style={{ position: "relative", marginBottom: 12 }}>
+              <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 16 })}</div>
+              <input value={eventSearch} onChange={(ev) => setEventSearch(ev.target.value)} placeholder="Search events by name, description, location, or host..." style={{ width: "100%", padding: "12px 14px 12px 40px", borderRadius: 10, border: "1px solid #E8E7E4", background: "#fff", fontSize: 13, fontFamily: font, boxSizing: "border-box", outline: "none" }} />
+              {eventSearch && (
+                <button onClick={() => setEventSearch("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 14 })}</button>
+              )}
+            </div>
 
             {/* Filter bar - All Events / My RSVPs toggle + city filter */}
             <div style={{
@@ -2941,9 +2984,10 @@ const Dashboard = ({ user, onLogout }) => {
                   {/* Left Image */}
                   <div style={{
                     width: 220, minHeight: 240, flexShrink: 0, position: "relative",
-                    background: `linear-gradient(160deg, ${evtColor}DD, ${evtColor}99)`,
+                    background: e.image ? "#F0EFED" : `linear-gradient(160deg, ${evtColor}DD, ${evtColor}99)`,
                     overflow: "hidden",
                   }}>
+                    {e.image && <img src={e.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0 }} />}
                     {/* Date badge */}
                     <div style={{
                       position: "absolute", top: 14, left: 14, background: "#fff", padding: "6px 12px",
@@ -3008,7 +3052,7 @@ const Dashboard = ({ user, onLogout }) => {
                         >
                           Going
                         </button>
-                        <button onClick={() => setReportConfirm({ type: "post", id: e.id })} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 14 })}</button>
+                        <button onClick={() => setReportConfirm({ type: "event", id: e.id, name: e.title })} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 14 })}</button>
                       </div>
                     </div>
                     {/* Like / Comment / Share */}
@@ -3034,24 +3078,50 @@ const Dashboard = ({ user, onLogout }) => {
         );
 
       case "trending":
-        const trendingTags = [];
+        // Compute trending hashtags from actual posts
+        const tagCounts = {};
+        const tagCategories = {};
+        const extractHashtags = (text) => {
+          const matches = (text || "").match(/#(\w+)/g) || [];
+          return matches.map(h => h.replace("#", ""));
+        };
+        posts.forEach(p => {
+          const inline = extractHashtags(p.content);
+          const fromTags = (p.tags || []).filter(t => t !== "__external__");
+          const all = [...new Set([...inline, ...fromTags])];
+          all.forEach(tag => {
+            tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            if (!tagCategories[tag]) {
+              // Guess category based on post author profession
+              tagCategories[tag] = p.author?.profession || "Community";
+            }
+          });
+        });
+        const trendingTags = Object.entries(tagCounts)
+          .map(([tag, count]) => ({ tag, count, category: tagCategories[tag] || "Community" }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10);
         return (
           <div style={{ maxWidth: 560, margin: "0 auto" }}>
             <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 20, fontFamily: font }}>Trending Topics</h2>
-            <InfoBanner text="See what topics are buzzing in the community. Post with hashtags to start a trend." />
+            <InfoBanner text="Top 10 trending hashtags in the community. Post with #hashtags to start a trend." />
             {trendingTags.length === 0 ? (
               <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                 {Icons.trending({ size: 32, stroke: "#D4D4D2" })}
-                <p style={{ marginTop: 12 }}>No trending topics yet. Start posting to see what's popular!</p>
+                <p style={{ marginTop: 12 }}>No trending topics yet. Post with hashtags like #Diwali to start a trend!</p>
               </div>
             ) : (
               <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
                 {trendingTags.map((t, i) => (
-                  <div key={i} style={{ padding: "16px 20px", borderBottom: i < trendingTags.length - 1 ? "1px solid #F0EFED" : "none", cursor: "pointer" }}
+                  <div key={t.tag} onClick={() => { setFeedFilters(prev => ({ ...prev })); setView("home"); }} style={{ padding: "16px 20px", borderBottom: i < trendingTags.length - 1 ? "1px solid #F0EFED" : "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}
                     onMouseOver={(e) => (e.currentTarget.style.background = "#FAFAF8")} onMouseOut={(e) => (e.currentTarget.style.background = "#fff")}>
-                    <div style={{ fontSize: 11, color: "#9B9A97", marginBottom: 2, fontFamily: font }}>{t.category}</div>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "#37352F", fontFamily: font }}>{t.tag}</div>
-                    <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{t.count} posts</div>
+                    <div style={{ width: 32, height: 32, borderRadius: "50%", background: i < 3 ? "#FFF3E0" : "#F0EFED", color: i < 3 ? "#E65100" : "#5F5E5B", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontFamily: font, flexShrink: 0 }}>#{i + 1}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, color: "#9B9A97", marginBottom: 2, fontFamily: font, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>{t.category}</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>#{t.tag}</div>
+                      <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{t.count} {t.count === 1 ? "post" : "posts"}</div>
+                    </div>
+                    {Icons.trending({ size: 18, stroke: "#22A06B" })}
                   </div>
                 ))}
               </div>
@@ -3081,7 +3151,7 @@ const Dashboard = ({ user, onLogout }) => {
                     </span>
                     <span style={{ fontSize: 11, color: "#9B9A97" }}>· {h.category}</span>
                   </div>
-                  <button onClick={async () => { setReportConfirm({ type: "user", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
+                  <button onClick={async () => { setReportConfirm({ type: "help", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
                 </div>
                 <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>{h.title}</h3>
                 <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 14, fontFamily: font }}>{h.description}</p>
@@ -3279,7 +3349,7 @@ const Dashboard = ({ user, onLogout }) => {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 12, color: "#9B9A97", display: "flex", alignItems: "center", gap: 4 }}>{Icons.heart({ size: 13 })} {d.likes}</span>
-                      <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "post", id: item.id }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 12 })}</button>
+                      <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "doc", id: d.id, name: d.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 12 })}</button>
                     </div>
                   </div>
                 </div>
@@ -3355,7 +3425,7 @@ const Dashboard = ({ user, onLogout }) => {
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
                         <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
-                        <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "post", id: item.id }); }} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 12 })}</button>
+                        <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "marketplace", id: item.id, name: item.title }); }} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 12 })}</button>
                       </div>
                     </div>
                   </div>
@@ -3435,7 +3505,7 @@ const Dashboard = ({ user, onLogout }) => {
         return (
           <div>
           <InfoBanner text="Send direct messages to your connections. Start a conversation after sending a Namaste request." />
-          <div className="msg-layout" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: 520, display: "flex" }}>
+          <div className="msg-layout" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: "calc(100vh - 220px)", minHeight: 500, maxHeight: 800, display: "flex" }}>
             {/* Conversation List */}
             <div className="msg-sidebar" style={{ width: 240, borderRight: "1px solid #E8E7E4", background: "#FAFAF8", display: "flex", flexDirection: "column", flexShrink: 0 }}>
               <div style={{ padding: "16px 18px", borderBottom: "1px solid #E8E7E4" }}>
@@ -3455,15 +3525,18 @@ const Dashboard = ({ user, onLogout }) => {
                   return filteredConvos.length === 0 ? (
                     <div style={{ padding: 20, textAlign: "center", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{chatTab === "marketplace" ? "No marketplace messages yet." : "No conversations yet. Connect with someone first!"}</div>
                   ) : filteredConvos.map(c => (
-                    <div key={c.id} onClick={() => loadConvoMessages(c.id)} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", cursor: "pointer", background: selectedConvo === c.id ? "#fff" : "transparent", borderLeft: selectedConvo === c.id ? "3px solid #37352F" : "3px solid transparent" }}>
-                      <div style={{ display: "flex", gap: 10 }}>
-                        <Avatar name={c.name} size={36} />
+                    <div key={c.id} onClick={() => { loadConvoMessages(c.id); setConvos(prev => prev.map(x => x.id === c.id ? { ...x, unread: false } : x)); }} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", cursor: "pointer", background: selectedConvo === c.id ? "#fff" : c.unread ? "#F5F8FF" : "transparent", borderLeft: selectedConvo === c.id ? "3px solid #37352F" : "3px solid transparent" }}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <div style={{ position: "relative" }}>
+                          <Avatar name={c.name} size={36} />
+                          {c.unread ? <span style={{ position: "absolute", top: 0, right: 0, width: 8, height: 8, background: "#DC2626", borderRadius: "50%", border: "2px solid #fff" }}>{""}</span> : null}
+                        </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                            <span style={{ fontSize: 13, fontWeight: 500, color: "#37352F", fontFamily: font }}>{c.name}</span>
-                            <span style={{ fontSize: 10, color: "#9B9A97" }}>{c.time}</span>
+                            <span style={{ fontSize: 13, fontWeight: c.unread ? 700 : 500, color: "#37352F", fontFamily: font }}>{c.name}</span>
+                            <span style={{ fontSize: 10, color: c.unread ? "#DC2626" : "#9B9A97" }}>{c.time}</span>
                           </div>
-                          <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{(c.lastMsg || "").replace(/^\[MARKETPLACE: [^\]]+\]\s*/, "🛒 ")}</p>
+                          <p style={{ fontSize: 12, color: c.unread ? "#37352F" : "#9B9A97", fontWeight: c.unread ? 600 : 400, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{(c.lastMsg || "").replace(/^\[MARKETPLACE: [^\]]+\]\s*/, "🛒 ")}</p>
                         </div>
                       </div>
                   </div>
@@ -3688,7 +3761,27 @@ const Dashboard = ({ user, onLogout }) => {
                     </div>
                     <div style={{ overflow: "auto", maxHeight: 380 }}>
                       {notifications.map(n => (
-                        <div key={n.id} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", gap: 12, background: n.read ? "#fff" : "#F5F8FF" }}>
+                        <div key={n.id} onClick={() => {
+                          // Navigate based on notification type
+                          if (n.type === "like" || n.type === "comment") {
+                            setView("home");
+                            setShowNotifications(false);
+                            // Mark as read
+                            try { api.markNotificationHandled(n.id); } catch(e) {}
+                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+                          } else if (n.type === "request") {
+                            // Don't navigate for requests - they have Accept/Ignore buttons
+                          } else if (n.type === "event") {
+                            setView("events");
+                            setShowNotifications(false);
+                          } else if (n.type === "group") {
+                            setView("groups");
+                            setShowNotifications(false);
+                          } else if (n.type === "message") {
+                            setView("messages");
+                            setShowNotifications(false);
+                          }
+                        }} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", gap: 12, background: n.read ? "#fff" : "#F5F8FF", cursor: n.type !== "request" ? "pointer" : "default" }}>
                           <div style={{ flexShrink: 0, marginTop: 2 }}>
                             {n.actor ? (
                               <div style={{ position: "relative" }}>
@@ -3841,13 +3934,15 @@ const Dashboard = ({ user, onLogout }) => {
         </div>
       )}
 
-      {/* LinkedIn review pending banner (blue) */}
-      {hasLinkedin && !user?.linkedin_verified && !linkedinReviewBannerDismissed && (
-        <div style={{ background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-          <p style={{ fontSize: 12, color: "#1E40AF", margin: 0, fontFamily: font, lineHeight: 1.5, maxWidth: 720 }}>
-            {Icons.info({ size: 14, stroke: "#2563EB" })} Your LinkedIn profile is being reviewed by our team. Once verified, this banner will disappear. If your LinkedIn doesn't match your signup details, your profile may be blocked. Please ensure your LinkedIn is up-to-date and matches what you provided during signup.
+      {/* Profile under review banner (blue) - shows until admin approves */}
+      {!user?.linkedin_verified && (
+        <div style={{ background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            {Icons.shield({ size: 14, stroke: "#2563EB" })}
+          </div>
+          <p style={{ fontSize: 12, color: "#1E40AF", margin: 0, fontFamily: font, lineHeight: 1.5 }}>
+            Your profile is pending review by our team. Once approved, this banner will disappear. Please ensure your LinkedIn profile is up-to-date and your signup details are accurate.
           </p>
-          <button onClick={() => setLinkedinReviewBannerDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#1E40AF", padding: 2 }}>{Icons.x({ size: 14 })}</button>
         </div>
       )}
 
@@ -4243,7 +4338,9 @@ const Dashboard = ({ user, onLogout }) => {
               </div>
               <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, marginBottom: 20, fontFamily: font, whiteSpace: "pre-wrap" }}>{expandedEvent.description}</p>
               {expandedEvent.link && (
-                <a href={expandedEvent.link.startsWith("http") ? expandedEvent.link : `https://${expandedEvent.link}`} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#5B9CFF", marginBottom: 20, wordBreak: "break-all" }}>{Icons.link({ size: 14 })} {expandedEvent.link}</a>
+                <a href={expandedEvent.link.startsWith("http") ? expandedEvent.link : `https://${expandedEvent.link}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 14, color: "#fff", padding: "12px", background: "#5B9CFF", borderRadius: 8, textDecoration: "none", fontWeight: 600, marginBottom: 16, fontFamily: font }}>
+                  {Icons.link({ size: 15 })} Get Tickets / More Info
+                </a>
               )}
               <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED", marginBottom: 14 }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>
               <button onClick={() => { toggleRsvp(expandedEvent.id); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px", background: rsvps.has(expandedEvent.id) ? "#E3FCEF" : "#37352F", color: rsvps.has(expandedEvent.id) ? "#22A06B" : "#fff", border: rsvps.has(expandedEvent.id) ? "1px solid #B5E4CA" : "none" }}>
@@ -4733,14 +4830,16 @@ const Dashboard = ({ user, onLogout }) => {
             <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
               {Icons.flag({ size: 22, stroke: "#DC2626" })}
             </div>
-            <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Report this content?</h3>
-            <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 24, lineHeight: 1.5, fontFamily: font }}>This will be reviewed by our moderation team. False reports may result in account restrictions.</p>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>Report this {reportConfirm.type}?</h3>
+            {reportConfirm.name && <p style={{ fontSize: 12, color: "#5F5E5B", marginBottom: 8, fontFamily: font }}>"{reportConfirm.name}"</p>}
+            <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 20, lineHeight: 1.5, fontFamily: font }}>This will be reviewed by our moderation team.</p>
             <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
               <button onClick={() => setReportConfirm(null)} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 13, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>Cancel</button>
               <button onClick={async () => {
+                const reason = `[${reportConfirm.type.toUpperCase()}] ${reportConfirm.name ? reportConfirm.name + " — " : ""}Reported as inappropriate`;
                 try {
-                  if (reportConfirm.type === "post") await api.reportPost(reportConfirm.id, "Inappropriate content");
-                  else await api.reportUser(reportConfirm.id, "Inappropriate content");
+                  if (reportConfirm.type === "user") await api.reportUser(reportConfirm.id, reason);
+                  else await api.reportPost(reportConfirm.id, reason);
                 } catch(e) {}
                 setReportConfirm(null);
                 alert("Reported successfully. Thank you for keeping the community safe.");
@@ -4829,9 +4928,9 @@ const Dashboard = ({ user, onLogout }) => {
                 </select>
               </div>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.clock({ size: 12 })} Duration Abroad</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.globe({ size: 12 })} NRI / Based in India</label>
                 <select value={feedFilters.yearsAbroad} onChange={(e) => setFeedFilters({...feedFilters, yearsAbroad: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
-                  {["All", ...YEARS_OPTIONS].map(y => <option key={y}>{y}</option>)}
+                  {["All", "NRI", "Based in India"].map(y => <option key={y}>{y}</option>)}
                 </select>
               </div>
               <div style={{ marginBottom: 20 }}>
@@ -5093,6 +5192,26 @@ const Dashboard = ({ user, onLogout }) => {
                   <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.link({ size: 14 })}</div>
                   <input style={{ ...inputStyle, paddingLeft: 36 }} value={newEvent.link} onChange={(e) => setNewEvent({ ...newEvent, link: e.target.value })} placeholder="https://eventbrite.com/..." />
                 </div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Event Photo (Optional)</label>
+                {eventPhoto ? (
+                  <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: "1px solid #E0E0DE" }}>
+                    <img src={eventPhoto.preview} alt="" style={{ width: "100%", height: 140, objectFit: "cover" }} />
+                    <button onClick={() => setEventPhoto(null)} style={{ position: "absolute", top: 8, right: 8, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 12 })}</button>
+                  </div>
+                ) : (
+                  <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "20px 16px", borderRadius: 10, border: "2px dashed #E0E0DE", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontFamily: font, background: "#FAFAF8" }}>
+                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={async (ev) => {
+                      const file = ev.target.files?.[0];
+                      if (!file) return;
+                      const preview = URL.createObjectURL(file);
+                      try { const url = await api.uploadPostImage(file); setEventPhoto({ url, preview }); }
+                      catch(err) { setEventPhoto({ url: preview, preview }); }
+                    }} />
+                    {Icons.image({ size: 18 })} Click to add a cover photo
+                  </label>
+                )}
               </div>
               <div style={{ marginBottom: 24 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
@@ -5407,6 +5526,7 @@ export default function App() {
               linkedinUrl: dbProfile.linkedin_url || cached?.linkedinUrl || "",
               isNRI: !!(dbProfile.years_abroad || cached?.yearsAbroad) && (dbProfile.years_abroad || cached?.yearsAbroad) !== "Not lived abroad",
               emailVerified: dbProfile.email_verified,
+              linkedin_verified: dbProfile.linkedin_verified || false,
             };
             // If DB has empty fields but cache has them, push cache values to DB
             if (!dbProfile.location && cached?.location) {
@@ -5492,201 +5612,273 @@ export default function App() {
 // ADMIN DASHBOARD
 // ============================================================================
 const AdminDashboard = ({ onLogout }) => {
-  const [tab, setTab] = useState("users");
+  const [tab, setTab] = useState("overview");
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
   const [reports, setReports] = useState([]);
   const [stats, setStats] = useState({ users: 0, posts: 0, groups: 0, events: 0 });
   const [loading, setLoading] = useState(true);
+  const [userSearch, setUserSearch] = useState("");
   const font = "'DM Sans', sans-serif";
+  const KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ";
+  const URL = "https://uzzkdmybsbwknpsucuvv.supabase.co";
+  const hdrs = { apikey: KEY, "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("indin_token")}` };
 
   useEffect(() => {
     (async () => {
       try {
         const [u, g, r] = await Promise.all([
-          fetch(`https://uzzkdmybsbwknpsucuvv.supabase.co/rest/v1/profiles?select=*&order=created_at.desc`, { headers: { apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ" } }).then(r => r.json()),
-          fetch(`https://uzzkdmybsbwknpsucuvv.supabase.co/rest/v1/groups?select=*&order=members_count.desc`, { headers: { apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ" } }).then(r => r.json()),
-          fetch(`https://uzzkdmybsbwknpsucuvv.supabase.co/rest/v1/reports?select=*&order=created_at.desc`, { headers: { apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ" } }).then(r => r.json()),
+          fetch(`${URL}/rest/v1/profiles?select=*&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
+          fetch(`${URL}/rest/v1/groups?select=*&order=members_count.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
+          fetch(`${URL}/rest/v1/reports?select=*&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
         ]);
-        setUsers(u || []);
-        setGroups(g || []);
-        setReports(r || []);
-        setStats({ users: (u || []).length, posts: 0, groups: (g || []).filter(x => x.is_approved).length, events: 0 });
+        setUsers(u || []); setGroups(g || []); setReports(r || []);
+        setStats({ users: (u || []).length, posts: 0, groups: (g || []).filter(x => x.is_approved).length, events: 0, pending: (u || []).filter(x => !x.linkedin_verified).length });
       } catch (e) {}
       setLoading(false);
     })();
   }, []);
 
-  const approveGroup = async (id) => {
-    try {
-      await fetch(`https://uzzkdmybsbwknpsucuvv.supabase.co/rest/v1/groups?id=eq.${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json", apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ", Authorization: `Bearer ${localStorage.getItem("indin_token")}` },
-        body: JSON.stringify({ is_approved: true }),
-      });
-      setGroups(prev => prev.map(g => g.id === id ? { ...g, is_approved: true } : g));
-    } catch (e) {}
+  const approveUser = async (id) => {
+    try { await fetch(`${URL}/rest/v1/profiles?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ linkedin_verified: true }) }); } catch(e) {}
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: true } : u));
   };
 
-  const deleteReport = async (id) => {
-    setReports(prev => prev.filter(r => r.id !== id));
+  const blockUser = async (id) => {
+    try { await fetch(`${URL}/rest/v1/profiles?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ linkedin_verified: false, linkedin_url: "" }) }); } catch(e) {}
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: false, linkedin_url: "" } : u));
   };
+
+  const approveGroup = async (id) => {
+    try { await fetch(`${URL}/rest/v1/groups?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ is_approved: true }) }); } catch(e) {}
+    setGroups(prev => prev.map(g => g.id === id ? { ...g, is_approved: true } : g));
+  };
+
+  const deleteReport = async (id) => { setReports(prev => prev.filter(r => r.id !== id)); };
 
   const navItems = [
-    { key: "overview", icon: "📊", label: "Overview" },
-    { key: "users", icon: "👥", label: "Users" },
-    { key: "groups", icon: "🏘️", label: "Group Requests" },
-    { key: "reports", icon: "🚩", label: "Reports" },
+    { key: "overview", label: "Overview" },
+    { key: "approvals", label: "Pending Approvals" },
+    { key: "users", label: "All Users" },
+    { key: "groups", label: "Communities" },
+    { key: "reports", label: "Reports" },
   ];
 
+  const pendingUsers = users.filter(u => !u.linkedin_verified);
+  const approvedUsers = users.filter(u => u.linkedin_verified);
+  const filteredUsers = users.filter(u => !userSearch || (u.name || "").toLowerCase().includes(userSearch.toLowerCase()) || (u.email || "").toLowerCase().includes(userSearch.toLowerCase()));
+
+  const fieldStyle = { fontSize: 12, color: "#37352F", padding: "6px 10px", background: "#FAFAF8", borderRadius: 4, border: "1px solid #F0EFED" };
+  const labelStyle = { fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 };
+
   return (
-    <div className="admin-layout" style={{ display: "flex", minHeight: "100vh", fontFamily: font }}>
+    <div className="admin-layout" style={{ display: "flex", minHeight: "100vh", fontFamily: font, background: "#FAFAF8" }}>
       {/* Sidebar */}
-      <div className="admin-sidebar" style={{ width: 240, background: "#fff", borderRight: "1px solid #E8E7E4", padding: "24px 0", flexShrink: 0, position: "relative" }}>
-        <div style={{ padding: "0 20px 24px", borderBottom: "1px solid #F0EFED" }}>
-          <h2 style={{ fontSize: 18, fontWeight: 800, color: "#37352F" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></h2>
-          <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 4 }}>Admin Panel</p>
+      <div className="admin-sidebar" style={{ width: 220, background: "#fff", borderRight: "1px solid #EDEDEB", padding: "20px 0", flexShrink: 0 }}>
+        <div style={{ padding: "0 16px 20px" }}>
+          <h2 style={{ fontSize: 16, fontWeight: 800, color: "#37352F", margin: 0 }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></h2>
+          <p style={{ fontSize: 10, color: "#9B9A97", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.1em" }}>Admin</p>
         </div>
-        <div className="admin-nav" style={{ marginTop: 16 }}>
+        <div className="admin-nav" style={{ padding: "0 8px" }}>
           {navItems.map(n => (
-            <button key={n.key} onClick={() => setTab(n.key)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "12px 20px", border: "none", background: tab === n.key ? "#F5F5F3" : "transparent", color: tab === n.key ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 13, fontWeight: tab === n.key ? 600 : 400, fontFamily: font, textAlign: "left", borderLeft: tab === n.key ? "3px solid #37352F" : "3px solid transparent", transition: "all 0.15s" }}>
-              <span style={{ fontSize: 16 }}>{n.icon}</span> {n.label}
+            <button key={n.key} onClick={() => setTab(n.key)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 12px", border: "none", borderRadius: 6, background: tab === n.key ? "#F5F5F3" : "transparent", color: tab === n.key ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 13, fontWeight: tab === n.key ? 600 : 400, fontFamily: font, textAlign: "left", marginBottom: 2, transition: "all 0.1s" }}>
+              {n.label}
+              {n.key === "approvals" && pendingUsers.length > 0 && <span style={{ marginLeft: "auto", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{pendingUsers.length}</span>}
             </button>
           ))}
         </div>
-        <div style={{ position: "absolute", bottom: 24, left: 0, width: 240, padding: "0 20px" }}>
-          <button onClick={onLogout} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", color: "#DC2626", cursor: "pointer", fontSize: 13, fontFamily: font }}>↩ Sign Out</button>
+        <div style={{ position: "absolute", bottom: 20, padding: "0 16px" }}>
+          <button onClick={onLogout} style={{ background: "none", border: "none", color: "#9B9A97", cursor: "pointer", fontSize: 12, fontFamily: font }}>Sign out</button>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="admin-main" style={{ flex: 1, background: "#FAFAF8", padding: 32, overflow: "auto" }}>
-        {loading ? (
-          <div style={{ textAlign: "center", padding: 60, color: "#9B9A97" }}>Loading admin data...</div>
-        ) : tab === "overview" ? (
+      {/* Main */}
+      <div className="admin-main" style={{ flex: 1, padding: "28px 36px", overflow: "auto", maxWidth: 900 }}>
+        {loading ? <div style={{ padding: 60, textAlign: "center", color: "#9B9A97" }}>Loading...</div>
+
+        : tab === "overview" ? (
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Dashboard Overview</h1>
-            <div className="admin-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }}>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Overview</h1>
+            <div className="admin-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 32 }}>
               {[
-                { label: "Total Users", value: stats.users, color: "#5B9CFF", bg: "#EDF4FF" },
-                { label: "Communities", value: stats.groups, color: "#22A06B", bg: "#E3FCEF" },
-                { label: "Pending Groups", value: groups.filter(g => !g.is_approved).length, color: "#E65100", bg: "#FFF3E0" },
-                { label: "Open Reports", value: reports.filter(r => r.status === "pending").length, color: "#DC2626", bg: "#FEF2F2" },
+                { label: "Total Users", value: stats.users, color: "#37352F" },
+                { label: "Approved", value: approvedUsers.length, color: "#22A06B" },
+                { label: "Pending Review", value: pendingUsers.length, color: "#E65100" },
+                { label: "Reports", value: reports.length, color: "#DC2626" },
               ].map((s, i) => (
-                <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: 20 }}>
-                  <div style={{ fontSize: 11, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 8 }}>{s.label}</div>
-                  <div style={{ fontSize: 32, fontWeight: 700, color: s.color }}>{s.value}</div>
+                <div key={i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 18px" }}>
+                  <div style={{ fontSize: 10, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 6 }}>{s.label}</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: s.color }}>{s.value}</div>
                 </div>
               ))}
             </div>
-            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#37352F", marginBottom: 12 }}>Recent Signups</h3>
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
-              {users.slice(0, 5).map((u, i) => (
-                <div key={u.id || i} style={{ padding: "12px 18px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{u.name}</div>
-                    <div style={{ fontSize: 12, color: "#9B9A97" }}>{u.email} · {u.location || "No location"}</div>
-                  </div>
-                  <div style={{ fontSize: 11, color: "#9B9A97" }}>{new Date(u.created_at).toLocaleDateString()}</div>
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", marginBottom: 10 }}>Recent Signups</h3>
+            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr", padding: "8px 16px", background: "#FAFAF8", borderBottom: "1px solid #EDEDEB", fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                <span>Name</span><span>Email</span><span>Location</span><span>Status</span>
+              </div>
+              {users.slice(0, 8).map((u, i) => (
+                <div key={u.id || i} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr", padding: "10px 16px", borderBottom: "1px solid #F5F5F3", alignItems: "center", fontSize: 13 }}>
+                  <span style={{ fontWeight: 500, color: "#37352F" }}>{u.name || "—"}</span>
+                  <span style={{ color: "#9B9A97" }}>{u.email || "—"}</span>
+                  <span style={{ color: "#9B9A97" }}>{u.location || "—"}</span>
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: u.linkedin_verified ? "#E3FCEF" : "#FFF3E0", color: u.linkedin_verified ? "#22A06B" : "#E65100", fontWeight: 600, width: "fit-content" }}>{u.linkedin_verified ? "Approved" : "Pending"}</span>
                 </div>
               ))}
             </div>
           </div>
+
+        ) : tab === "approvals" ? (
+          <div>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 6 }}>Pending Approvals</h1>
+            <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 24 }}>Review and approve new user profiles. Users see a "pending review" banner until approved.</p>
+            {pendingUsers.length === 0 ? (
+              <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No pending approvals. All users are verified.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {pendingUsers.map((u) => (
+                  <div key={u.id} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#A3C9B8", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 14 }}>{(u.name || "U").substring(0, 2).toUpperCase()}</div>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{u.name || "—"}</div>
+                          <div style={{ fontSize: 11, color: "#9B9A97" }}>{u.email} · Joined {new Date(u.created_at).toLocaleDateString()}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={() => approveUser(u.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#22A06B", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Approve</button>
+                        <button onClick={() => blockUser(u.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Block</button>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                      <div><div style={labelStyle}>Location</div><div style={fieldStyle}>{u.location || "—"}</div></div>
+                      <div><div style={labelStyle}>Hometown</div><div style={fieldStyle}>{u.hometown || "—"}</div></div>
+                      <div><div style={labelStyle}>Profession</div><div style={fieldStyle}>{u.profession || "—"}</div></div>
+                      <div><div style={labelStyle}>LinkedIn</div><div style={fieldStyle}>{u.linkedin_url ? <a href={u.linkedin_url.startsWith("http") ? u.linkedin_url : `https://${u.linkedin_url}`} target="_blank" rel="noopener noreferrer" style={{ color: "#5B9CFF", textDecoration: "none", fontSize: 11 }}>View Profile →</a> : "Not provided"}</div></div>
+                      <div><div style={labelStyle}>Years Abroad</div><div style={fieldStyle}>{u.years_abroad || "—"}</div></div>
+                      <div><div style={labelStyle}>Type</div><div style={fieldStyle}><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3, background: isUserNRI(u) ? "#E3FCEF" : "#FFF3E0", color: isUserNRI(u) ? "#22A06B" : "#E65100", fontWeight: 600 }}>{isUserNRI(u) ? "NRI" : "IN"}</span></div></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
         ) : tab === "users" ? (
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Users ({users.length})</h1>
-            <div style={{ display: "grid", gap: 14 }}>
-              {users.map((u, i) => (
-                <div key={u.id || i} className="admin-user-card" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-                    <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-                      <div style={{ width: 44, height: 44, borderRadius: "50%", background: "#A3C9B8", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16 }}>{(u.name || "U").substring(0, 2).toUpperCase()}</div>
-                      <div>
-                        <div style={{ fontSize: 16, fontWeight: 700, color: "#37352F" }}>{u.name}</div>
-                        <div style={{ fontSize: 12, color: "#9B9A97" }}>{u.email}</div>
-                      </div>
-                    </div>
-                    <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: isUserNRI(u) ? "#E3FCEF" : "#FFF3E0", color: isUserNRI(u) ? "#22A06B" : "#E65100", fontWeight: 600 }}>{isUserNRI(u) ? "NRI" : "IN"}</span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", margin: 0 }}>All Users ({users.length})</h1>
+              <div style={{ position: "relative" }}>
+                <input value={userSearch} onChange={(e) => setUserSearch(e.target.value)} placeholder="Search users..." style={{ padding: "8px 14px 8px 32px", borderRadius: 6, border: "1px solid #EDEDEB", fontSize: 12, background: "#fff", outline: "none", width: 200, fontFamily: font }} />
+                <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9B9A97", fontSize: 12 }}>🔍</span>
+              </div>
+            </div>
+            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 80px", padding: "8px 16px", background: "#FAFAF8", borderBottom: "1px solid #EDEDEB", fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                <span>User</span><span>Details</span><span>Location</span><span>Status</span><span>Actions</span>
+              </div>
+              {filteredUsers.map((u, i) => (
+                <div key={u.id || i} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 80px", padding: "12px 16px", borderBottom: "1px solid #F5F5F3", alignItems: "center", fontSize: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: "#37352F", fontSize: 13 }}>{u.name || "—"}</div>
+                    <div style={{ color: "#9B9A97", fontSize: 11 }}>{u.email}</div>
                   </div>
-                  <div className="user-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px 20px", fontSize: 12 }}>
-                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Location</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.location || "—"}</div></div>
-                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Hometown</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.hometown || "—"}</div></div>
-                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Profession</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.profession || "—"}</div></div>
-                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Status</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.occupation_status || "—"}</div></div>
-                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Years Abroad</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.years_abroad || "—"}</div></div>
-                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>LinkedIn</span><div style={{ color: "#37352F", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis" }}>{u.linkedin_url ? <a href={u.linkedin_url} target="_blank" style={{ color: "#5B9CFF", textDecoration: "none" }}>{u.linkedin_url.replace("https://", "")}</a> : "—"}</div></div>
-                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>GDPR Consent</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.gdpr_consent ? "✅ Yes" : "❌ No"}</div></div>
-                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Email Verified</span><div style={{ color: "#37352F", marginTop: 2 }}>{u.email_verified ? "✅ Yes" : "❌ No"}</div></div>
-                    <div><span style={{ color: "#9B9A97", fontWeight: 600, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.05em" }}>Joined</span><div style={{ color: "#37352F", marginTop: 2 }}>{new Date(u.created_at).toLocaleDateString()}</div></div>
+                  <div>
+                    <div style={{ color: "#5F5E5B" }}>{u.profession || "—"}</div>
+                    {u.linkedin_url && <a href={u.linkedin_url.startsWith("http") ? u.linkedin_url : `https://${u.linkedin_url}`} target="_blank" rel="noopener noreferrer" style={{ color: "#5B9CFF", fontSize: 10, textDecoration: "none" }}>LinkedIn →</a>}
+                  </div>
+                  <div style={{ color: "#9B9A97" }}>{u.location || "—"}</div>
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: u.linkedin_verified ? "#E3FCEF" : "#FFF3E0", color: u.linkedin_verified ? "#22A06B" : "#E65100", fontWeight: 600, width: "fit-content" }}>{u.linkedin_verified ? "Approved" : "Pending"}</span>
+                  <div>
+                    {!u.linkedin_verified ? <button onClick={() => approveUser(u.id)} style={{ padding: "4px 10px", borderRadius: 4, border: "none", background: "#22A06B", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Approve</button>
+                    : <button onClick={() => blockUser(u.id)} style={{ padding: "4px 10px", borderRadius: 4, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Block</button>}
                   </div>
                 </div>
               ))}
-              {users.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "#9B9A97", background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4" }}>No users yet.</div>}
             </div>
           </div>
+
         ) : tab === "groups" ? (
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Group Requests</h1>
-            <h3 style={{ fontSize: 14, fontWeight: 600, color: "#E65100", marginBottom: 12 }}>Pending Approval ({groups.filter(g => !g.is_approved).length})</h3>
-            {groups.filter(g => !g.is_approved).length === 0 ? (
-              <div style={{ background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", padding: 32, textAlign: "center", color: "#9B9A97", marginBottom: 24 }}>No pending group requests.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 12, marginBottom: 24 }}>
-                {groups.filter(g => !g.is_approved).map(g => (
-                  <div key={g.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 600, color: "#37352F" }}>{g.name}</div>
-                      <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>{g.description} · {g.category}</div>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Communities</h1>
+            {groups.filter(g => !g.is_approved).length > 0 && (
+              <div style={{ marginBottom: 28 }}>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: "#E65100", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Pending ({groups.filter(g => !g.is_approved).length})</h3>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {groups.filter(g => !g.is_approved).map(g => (
+                    <div key={g.id} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{g.name}</div>
+                        <div style={{ fontSize: 11, color: "#9B9A97" }}>{g.description} · {g.category}</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={() => approveGroup(g.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#22A06B", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Approve</button>
+                        <button onClick={() => setGroups(prev => prev.filter(x => x.id !== g.id))} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Reject</button>
+                      </div>
                     </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={() => approveGroup(g.id)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#22A06B", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Approve</button>
-                      <button onClick={() => setGroups(prev => prev.filter(x => x.id !== g.id))} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Reject</button>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
-            <h3 style={{ fontSize: 14, fontWeight: 600, color: "#22A06B", marginBottom: 12 }}>Approved Communities ({groups.filter(g => g.is_approved).length})</h3>
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
+            <h3 style={{ fontSize: 13, fontWeight: 700, color: "#22A06B", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Active ({groups.filter(g => g.is_approved).length})</h3>
+            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", overflow: "hidden" }}>
               {groups.filter(g => g.is_approved).map(g => (
-                <div key={g.id} style={{ padding: "12px 18px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F" }}>{g.name}</span>
-                    <span style={{ fontSize: 11, color: "#9B9A97", marginLeft: 8 }}>{g.members_count} members · {g.category}</span>
-                  </div>
-                  <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: "#E3FCEF", color: "#22A06B", fontWeight: 600 }}>Active</span>
+                <div key={g.id} style={{ padding: "10px 16px", borderBottom: "1px solid #F5F5F3", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+                  <span style={{ fontWeight: 500, color: "#37352F" }}>{g.name}</span>
+                  <span style={{ fontSize: 11, color: "#9B9A97" }}>{g.members_count} members</span>
                 </div>
               ))}
             </div>
           </div>
+
         ) : tab === "reports" ? (
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports ({reports.length})</h1>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports ({reports.length})</h1>
             {reports.length === 0 ? (
-              <div style={{ background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", padding: 40, textAlign: "center", color: "#9B9A97" }}>No reports. Community is behaving well!</div>
-            ) : (
-              <div style={{ display: "grid", gap: 12 }}>
-                {reports.map((r, i) => (
-                  <div key={r.id || i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "18px 22px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                      <div>
-                        <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: r.status === "pending" ? "#FFF3E0" : "#E3FCEF", color: r.status === "pending" ? "#E65100" : "#22A06B", fontWeight: 600, textTransform: "uppercase" }}>{r.status}</span>
-                        <span style={{ fontSize: 11, color: "#9B9A97", marginLeft: 8 }}>{new Date(r.created_at).toLocaleString()}</span>
+              <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No reports.</div>
+            ) : (() => {
+              // Categorize reports by type extracted from reason
+              const getCategory = (r) => {
+                const reason = (r.reason || "").toUpperCase();
+                if (reason.startsWith("[MARKETPLACE]")) return "Marketplace";
+                if (reason.startsWith("[DOC]")) return "Docs";
+                if (reason.startsWith("[EVENT]")) return "Events";
+                if (reason.startsWith("[HELP]")) return "Help Requests";
+                if (reason.startsWith("[USER]")) return "Profiles";
+                if (reason.startsWith("[POST]")) return "Feed Posts";
+                if (r.reported_user_id && !r.reported_post_id) return "Profiles";
+                return "Feed Posts";
+              };
+              const categories = ["Feed Posts", "Marketplace", "Docs", "Events", "Help Requests", "Profiles"];
+              const grouped = {};
+              reports.forEach(r => { const c = getCategory(r); if (!grouped[c]) grouped[c] = []; grouped[c].push(r); });
+              return categories.filter(c => grouped[c]?.length > 0).map(cat => (
+                <div key={cat} style={{ marginBottom: 24 }}>
+                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "#37352F", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 8 }}>
+                    {cat}
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "#FEF2F2", color: "#DC2626", fontWeight: 700 }}>{grouped[cat].length}</span>
+                  </h3>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {grouped[cat].map((r, i) => (
+                      <div key={r.id || i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500, color: "#37352F", marginBottom: 4 }}>{(r.reason || "No reason").replace(/^\[\w+\]\s*/, "")}</div>
+                          <div style={{ fontSize: 11, color: "#9B9A97" }}>
+                            {new Date(r.created_at).toLocaleString()}
+                            {r.reported_user_id ? ` · User: ${r.reported_user_id.substring(0, 8)}...` : ""}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          <button onClick={() => deleteReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "none", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Remove</button>
+                          <button onClick={() => deleteReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "1px solid #EDEDEB", background: "#fff", color: "#5F5E5B", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
+                        </div>
                       </div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button onClick={() => deleteReport(r.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#DC2626", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Delete Content</button>
-                        <button onClick={() => deleteReport(r.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", marginBottom: 4 }}>Reason: {r.reason}</div>
-                    <div style={{ fontSize: 12, color: "#9B9A97" }}>
-                      Reporter: {r.reporter_id?.substring(0, 8)}... · 
-                      {r.reported_user_id ? ` User: ${r.reported_user_id.substring(0, 8)}...` : ""}
-                      {r.reported_post_id ? ` Post: ${r.reported_post_id.substring(0, 8)}...` : ""}
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+                </div>
+              ));
+            })()}
           </div>
         ) : null}
       </div>
@@ -5694,9 +5886,10 @@ const AdminDashboard = ({ onLogout }) => {
         @media (max-width: 768px) {
           .admin-layout { flex-direction: column !important; }
           .admin-sidebar { width: 100% !important; position: relative !important; }
-          .admin-nav { display: flex !important; flex-wrap: wrap !important; gap: 4px !important; padding: 8px 12px !important; }
-          .admin-nav button { flex: 1 !important; min-width: 0 !important; padding: 10px 8px !important; font-size: 11px !important; justify-content: center !important; border-left: none !important; }
+          .admin-nav { display: flex !important; flex-wrap: wrap !important; gap: 4px !important; }
+          .admin-nav button { flex: 1 !important; min-width: 0 !important; padding: 8px 6px !important; font-size: 11px !important; justify-content: center !important; }
           .admin-main { padding: 16px !important; }
+          .admin-stats { grid-template-columns: repeat(2, 1fr) !important; }
         }
       `}</style>
     </div>
