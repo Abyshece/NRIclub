@@ -1571,6 +1571,10 @@ const Dashboard = ({ user, onLogout }) => {
   const [postImage, setPostImage] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [rsvps, setRsvps] = useState(new Set());
+  const [expandedEvent, setExpandedEvent] = useState(null);
+  const [eventLikes, setEventLikes] = useState({}); // {eventId: boolean}
+  const [eventComment, setEventComment] = useState("");
+  const [eventComments, setEventComments] = useState({}); // {eventId: [{user, text, time}]}
   const [eventModal, setEventModal] = useState(false);
   const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
   const [helpRequests, setHelpRequests] = useState([]);
@@ -2093,6 +2097,19 @@ const Dashboard = ({ user, onLogout }) => {
                 </button>
               </div>
             </div>
+
+            {/* Active Filters Status */}
+            {(feedFilters.hometown || feedFilters.occupation !== "All" || feedFilters.community !== "All") && (
+              <div style={{ background: "#E3FCEF", border: "1px solid #B5E4CA", borderRadius: 8, padding: "8px 14px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#22A06B", textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: font }}>{Icons.filter({ size: 12, stroke: "#22A06B" })} Filters:</span>
+                  {feedFilters.hometown && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>City: {feedFilters.hometown}</span>}
+                  {feedFilters.occupation !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Profession: {feedFilters.occupation}</span>}
+                  {feedFilters.community !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Community: {feedFilters.community}</span>}
+                </div>
+                <button onClick={() => setFeedFilters({ hometown: "", occupation: "All", yearsAbroad: "All", community: "All" })} style={{ background: "none", border: "none", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap" }}>Clear All</button>
+              </div>
+            )}
 
             {/* Viral / New Toggle - matching screenshot */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 20 }}>
@@ -2863,7 +2880,7 @@ const Dashboard = ({ user, onLogout }) => {
                     <div>
                       {/* Title + attendees */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                        <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", fontFamily: font, lineHeight: 1.25, flex: 1 }}>{e.title}</h3>
+                        <h3 onClick={() => setExpandedEvent(e)} style={{ fontSize: 20, fontWeight: 700, color: "#37352F", fontFamily: font, lineHeight: 1.25, flex: 1, cursor: "pointer" }}>{e.title}</h3>
                         <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 12 }}>
                           <div style={{ fontSize: 16, fontWeight: 700, color: "#22A06B" }}>{e.attendees}</div>
                           <div style={{ fontSize: 11, color: "#22A06B", fontWeight: 500 }}>going</div>
@@ -2917,9 +2934,14 @@ const Dashboard = ({ user, onLogout }) => {
                     </div>
                     {/* Like / Comment / Share */}
                     <div style={{ display: "flex", alignItems: "center", gap: 16, paddingTop: 12, borderTop: "1px solid #F0EFED", marginTop: 12 }}>
-                      <button onClick={(ev) => { const btn = ev.currentTarget; if (btn.dataset.liked) { btn.dataset.liked = ""; btn.style.color = "#9B9A97"; } else { btn.dataset.liked = "1"; btn.style.color = "#DC2626"; } }} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.heart({ size: 15 })} Like</button>
-                      <button style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.message({ size: 15 })} Comment</button>
-                      <button onClick={() => { if (navigator.share) navigator.share({ title: e.title, text: e.description }); else { navigator.clipboard.writeText(window.location.href); alert("Link copied!"); } }} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font, marginLeft: "auto" }}>{Icons.share({ size: 15 })} Share</button>
+                      <button onClick={() => setEventLikes(prev => ({ ...prev, [e.id]: !prev[e.id] }))} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: eventLikes[e.id] ? "#DC2626" : "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.heart({ size: 15, fill: eventLikes[e.id] ? "#DC2626" : "none", stroke: eventLikes[e.id] ? "#DC2626" : "currentColor" })} {eventLikes[e.id] ? "Liked" : "Like"}</button>
+                      <button onClick={() => setExpandedEvent(e)} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.message({ size: 15 })} Comment {eventComments[e.id]?.length ? `(${eventComments[e.id].length})` : ""}</button>
+                      <button onClick={() => {
+                        const shareUrl = `${window.location.origin}${window.location.pathname}#event=${e.id}`;
+                        const shareText = `${e.title}\n${e.date} at ${e.time}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
+                        if (navigator.share) navigator.share({ title: e.title, text: shareText, url: e.link || shareUrl }).catch(() => {});
+                        else { navigator.clipboard.writeText(shareText); alert("Event details copied to clipboard!"); }
+                      }} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font, marginLeft: "auto" }}>{Icons.share({ size: 15 })} Share</button>
                     </div>
                   </div>
                 </div>
@@ -4060,6 +4082,67 @@ const Dashboard = ({ user, onLogout }) => {
         </div>
         );
       })()}
+
+      {/* Expanded Event Modal */}
+      {expandedEvent && (
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setExpandedEvent(null); setEventComment(""); }}>
+          <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 560, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={(ev) => ev.stopPropagation()}>
+            {/* Hero */}
+            <div style={{ height: 180, background: "linear-gradient(135deg, #7BA88A, #5A8070)", position: "relative", borderRadius: "18px 18px 0 0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <button onClick={() => { setExpandedEvent(null); setEventComment(""); }} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {Icons.x({ size: 16 })}
+              </button>
+              <div style={{ position: "absolute", bottom: 16, left: 16, background: "rgba(255,255,255,0.95)", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font }}>{expandedEvent.date}</div>
+              <div style={{ position: "absolute", top: 16, left: 16, background: "rgba(0,0,0,0.5)", padding: "4px 10px", borderRadius: 12, fontSize: 11, color: "#fff", fontWeight: 600 }}>{expandedEvent.attendees} going</div>
+            </div>
+            <div style={{ padding: "24px 28px" }}>
+              <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 12, fontFamily: font, lineHeight: 1.3 }}>{expandedEvent.title}</h2>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
+                <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.clock({ size: 14 })} {expandedEvent.time}</span>
+                <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.mapPin({ size: 14 })} {expandedEvent.location}</span>
+              </div>
+              <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, marginBottom: 20, fontFamily: font, whiteSpace: "pre-wrap" }}>{expandedEvent.description}</p>
+              {expandedEvent.link && (
+                <a href={expandedEvent.link.startsWith("http") ? expandedEvent.link : `https://${expandedEvent.link}`} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#5B9CFF", marginBottom: 20, wordBreak: "break-all" }}>{Icons.link({ size: 14 })} {expandedEvent.link}</a>
+              )}
+              <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED", marginBottom: 14 }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>
+              <button onClick={() => { toggleRsvp(expandedEvent.id); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px", background: rsvps.has(expandedEvent.id) ? "#E3FCEF" : "#37352F", color: rsvps.has(expandedEvent.id) ? "#22A06B" : "#fff", border: rsvps.has(expandedEvent.id) ? "1px solid #B5E4CA" : "none" }}>
+                {rsvps.has(expandedEvent.id) ? "✓ Going" : "RSVP to Event"}
+              </button>
+              
+              {/* Comments section */}
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #F0EFED" }}>
+                <h4 style={{ fontSize: 14, fontWeight: 700, color: "#37352F", marginBottom: 14, fontFamily: font }}>Comments ({(eventComments[expandedEvent.id] || []).length})</h4>
+                {(eventComments[expandedEvent.id] || []).map((c, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, marginBottom: 12, padding: "10px 12px", background: "#FAFAF8", borderRadius: 8 }}>
+                    <Avatar name={c.user} size={28} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{c.user}</span>
+                        <span style={{ fontSize: 10, color: "#9B9A97" }}>{c.time}</span>
+                      </div>
+                      <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 3, fontFamily: font, lineHeight: 1.5 }}>{c.text}</p>
+                    </div>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                  <Avatar name={user.name} size={28} />
+                  <div style={{ flex: 1 }}>
+                    <textarea value={eventComment} onChange={(ev) => setEventComment(ev.target.value)} placeholder="Write a comment..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 50, resize: "none", boxSizing: "border-box" }} />
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+                      <button disabled={!eventComment.trim()} onClick={() => {
+                        const newC = { user: user.name, text: eventComment, time: "Just now" };
+                        setEventComments(prev => ({ ...prev, [expandedEvent.id]: [...(prev[expandedEvent.id] || []), newC] }));
+                        setEventComment("");
+                      }} style={{ ...btnPrimary, padding: "6px 14px", fontSize: 12, opacity: eventComment.trim() ? 1 : 0.4 }}>Post</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Contact Seller Modal */}
       {selectedMarketItem && (
