@@ -92,6 +92,7 @@ const Icons = {
   share: (p) => <Icon {...p} d={["M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8", "M16 6l-4-4-4 4", "M12 2v13"]} />,
   briefcase: (p) => <Icon {...p} d={["M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z", "M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"]} />,
   shield: (p) => <Icon {...p} d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
+  info: (p) => <Icon {...p} d={["M12 22a10 10 0 100-20 10 10 0 000 20z", "M12 16v-4", "M12 8h.01"]} />,
   star: (p) => <Icon {...p} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />,
   user: (p) => <Icon {...p} d={["M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2", "M12 3a4 4 0 100 8 4 4 0 000-8z"]} />,
   shop: (p) => <Icon {...p} d={["M6 2L3 8v12a2 2 0 002 2h14a2 2 0 002-2V8l-3-6z", "M3 8h18", "M16 12a4 4 0 01-8 0"]} />,
@@ -1576,9 +1577,9 @@ const Dashboard = ({ user, onLogout }) => {
   const [linkedinBannerDismissed, setLinkedinBannerDismissed] = useState(false);
 
   // Check if profile is incomplete (no LinkedIn) and older than 72 hours
-  const profileAge = user.createdAt ? (Date.now() - user.createdAt) : (user.created_at ? (Date.now() - new Date(user.created_at).getTime()) : 0);
+  const profileAge = user?.createdAt ? (Date.now() - user.createdAt) : (user?.created_at ? (Date.now() - new Date(user.created_at).getTime()) : 0);
   const hoursOld = profileAge / (1000 * 60 * 60);
-  const hasLinkedin = user.linkedinUrl && user.linkedinUrl.trim().length > 5;
+  const hasLinkedin = user?.linkedinUrl && user.linkedinUrl.trim().length > 5;
   const isBlocked = !hasLinkedin && hoursOld > 72;
   const [helpModal, setHelpModal] = useState(false);
   const [selectedHelp, setSelectedHelp] = useState(null);
