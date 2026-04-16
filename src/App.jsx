@@ -623,17 +623,25 @@ const SignUpPage = ({ onComplete, onLogin }) => {
       
       // Step 1: Create user in Supabase
       try {
-        await api.signUp(form.email, form.password, {
+        const signUpResult = await api.signUp(form.email, form.password, {
           full_name: fullName, location: form.location,
           hometown: form.hometown, profession: form.profession,
         });
-      } catch (signUpErr) {
-        const msg = signUpErr.message || "";
-        if (msg.toLowerCase().includes("already")) {
+        // Double check: if signup returned but user already exists
+        if (signUpResult?.user?.identities?.length === 0) {
           setError("An account with this email already exists. Please log in instead.");
           setOtpSending(false);
           return;
         }
+      } catch (signUpErr) {
+        const msg = (signUpErr.message || "").toLowerCase();
+        if (msg.includes("already") || msg.includes("exists") || msg.includes("duplicate")) {
+          setError("An account with this email already exists. Please log in instead.");
+          setOtpSending(false);
+          return;
+        }
+        // For other errors, throw to outer catch
+        throw signUpErr;
       }
 
       // Step 2: Send OTP via Supabase
@@ -1450,7 +1458,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
       await api.toggleLike(post.id);
       if (!liked && post.userId && post.userId !== user?.id) {
         const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
-        try { await api.createNotification(post.userId, "like", `${user?.name || "Someone"} liked your post "${post.content.substring(0, 30)}..."`, actorId); } catch(ne) {}
+        try { await api.createNotification(post.userId, "like", `${user?.name || "Someone"} liked your post "${post.content.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
       }
     } catch (e) {}
   };
@@ -1465,7 +1473,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
       await api.addComment(post.id, commentText);
       if (post.userId && post.userId !== user?.id) {
         const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
-        try { await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, actorId); } catch(ne) {}
+        try { await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
       }
     } catch (e) {}
   };
@@ -1478,7 +1486,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
   };
 
   return (
-    <div style={cardStyle}>
+    <div data-post-id={post.id} style={cardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 12 }}>
           <Avatar name={author.name || "User"} size={40} />
@@ -3769,6 +3777,17 @@ const Dashboard = ({ user, onLogout }) => {
                             // Mark as read
                             try { api.markNotificationHandled(n.id); } catch(e) {}
                             setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+                            // Scroll to the post after a short delay for render
+                            if (n.reference_id) {
+                              setTimeout(() => {
+                                const el = document.querySelector(`[data-post-id="${n.reference_id}"]`);
+                                if (el) {
+                                  el.scrollIntoView({ behavior: "smooth", block: "center" });
+                                  el.style.boxShadow = "0 0 0 3px #5B9CFF";
+                                  setTimeout(() => { el.style.boxShadow = ""; }, 2000);
+                                }
+                              }, 300);
+                            }
                           } else if (n.type === "request") {
                             // Don't navigate for requests - they have Accept/Ignore buttons
                           } else if (n.type === "event") {
@@ -4528,12 +4547,42 @@ const Dashboard = ({ user, onLogout }) => {
                 </div>
               </div>
               <div style={{ borderTop: "1px solid #F0EFED", paddingTop: 20 }}>
+                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>
+                  {Icons.shield({ size: 13 })} Data & Privacy (GDPR)
+                </h4>
+                <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 14, lineHeight: 1.5, fontFamily: font }}>Under EU GDPR, you have the right to access, export, and delete your personal data.</p>
+                <button onClick={() => {
+                  const data = {
+                    profile: { name: user.name, email: user.email, location: user.location, hometown: user.hometown, profession: user.profession, linkedinUrl: user.linkedinUrl, yearsAbroad: user.yearsAbroad, createdAt: user.createdAt || user.created_at },
+                    exportDate: new Date().toISOString(),
+                    note: "This file contains all personal data stored by NRIClub. Posts, comments, and messages are stored separately in the database."
+                  };
+                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a"); a.href = url; a.download = "nriclub-my-data.json"; a.click();
+                  URL.revokeObjectURL(url);
+                }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
+                  {Icons.share({ size: 14 })} Download My Data
+                </button>
+              </div>
+              <div style={{ borderTop: "1px solid #F0EFED", paddingTop: 20, marginTop: 10 }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                   Danger Zone
                 </h4>
-                <button onClick={() => { if (confirm("Are you sure? This cannot be undone.")) { setSettingsModal(null); onLogout(); } }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                  {Icons.trash({ size: 14 })} Delete Account
+                <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 10, lineHeight: 1.5, fontFamily: font }}>Permanently delete your account and all associated data. This action cannot be undone.</p>
+                <button onClick={async () => { 
+                  if (confirm("Are you absolutely sure you want to delete your account? All your data, posts, and connections will be permanently removed. This cannot be undone.")) {
+                    try {
+                      await api.updateProfile({ name: "[Deleted User]", location: "", hometown: "", profession: "", linkedin_url: "", avatar_url: "", years_abroad: "", occupation_status: "" });
+                    } catch(e) {}
+                    localStorage.clear();
+                    setSettingsModal(null);
+                    onLogout();
+                    alert("Your account data has been cleared. For complete deletion from our database, please email privacy@nriclub.com.");
+                  }
+                }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  {Icons.trash({ size: 14 })} Delete My Account
                 </button>
               </div>
             </div>
