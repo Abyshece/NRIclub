@@ -3376,7 +3376,8 @@ const Dashboard = ({ user, onLogout }) => {
                         </div>
                       </div>
                   </div>
-                ))}
+                ));
+                })()}
               </div>
             </div>
             {/* Chat Area */}
