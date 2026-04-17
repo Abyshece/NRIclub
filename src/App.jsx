@@ -1726,6 +1726,7 @@ const Dashboard = ({ user, onLogout }) => {
   const lastSeenMsgRef = useRef(null); // Track last seen conversation state
   const [chatSettings, setChatSettings] = useState(false);
   const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [blockedIds, setBlockedIds] = useState(new Set());
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
   // Notification & Settings state
@@ -1802,6 +1803,7 @@ const Dashboard = ({ user, onLogout }) => {
 
   const filteredNetworkUsers = networkUsers.filter((u) => {
     if (u.id === user.id) return false;
+    if (blockedIds.has(u.id)) return false;
     const matchesSearch = networkSearch === "" ||
       u.name.toLowerCase().includes(networkSearch.toLowerCase()) ||
       u.profession.toLowerCase().includes(networkSearch.toLowerCase());
@@ -1927,6 +1929,14 @@ const Dashboard = ({ user, onLogout }) => {
             setDocs(dbDocs.map(d => ({ id: d.id, title: d.title, excerpt: d.excerpt, content: d.content || d.excerpt, category: d.category, readTime: d.read_time, author: d.profiles?.name || "User", profession: d.profiles?.profession || "", authorLocation: d.profiles?.location || "", city: d.city, likes: d.likes_count || 0, timestamp: new Date(d.created_at).toLocaleDateString(), comments: [] })));
           }
         } catch (e) {}
+
+        // Load blocked users
+        try {
+          const blocked = await api.getBlockedUsers();
+          if (blocked && blocked.length) {
+            setBlockedIds(new Set(blocked.map(b => b.blocked_id)));
+          }
+        } catch(e) {}
 
         // Load user settings from DB
         try {
@@ -2290,6 +2300,8 @@ const Dashboard = ({ user, onLogout }) => {
 
             {/* Feed List */}
             {[...posts].filter(p => {
+              // Hide blocked users' posts
+              if (blockedIds.has(p.userId)) return false;
               const a = p.author || {};
               if (feedFilters.hometown && !(a.hometown || "").toLowerCase().includes(feedFilters.hometown.toLowerCase()) && !(a.location || "").toLowerCase().includes(feedFilters.hometown.toLowerCase())) return false;
               if (feedFilters.occupation !== "All" && !(a.profession || "").toLowerCase().includes(feedFilters.occupation.toLowerCase())) return false;
@@ -3578,6 +3590,7 @@ const Dashboard = ({ user, onLogout }) => {
               <div style={{ flex: 1, overflow: "auto" }}>
                 {(() => {
                   const filteredConvos = convos.filter(c => {
+                    if (blockedIds.has(c.otherUserId)) return false;
                     const isMarket = (c.lastMsg || "").startsWith("[MARKETPLACE:");
                     return chatTab === "marketplace" ? isMarket : !isMarket;
                   });
@@ -4972,7 +4985,15 @@ const Dashboard = ({ user, onLogout }) => {
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setBlockModalOpen(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button onClick={async () => { try { if (activeConvo) await api.blockUser(activeConvo.id); } catch(e) {} setBlockModalOpen(false); setSelectedConvo(null); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, background: "#DC2626", color: "#fff", cursor: "pointer", fontFamily: font }}>Confirm Block</button>
+                <button onClick={async () => {
+                  const userIdToBlock = activeConvo?.otherUserId;
+                  if (!userIdToBlock) { setBlockModalOpen(false); return; }
+                  try { await api.blockUser(userIdToBlock); } catch(e) {}
+                  setBlockedIds(prev => { const s = new Set(prev); s.add(userIdToBlock); return s; });
+                  setBlockModalOpen(false);
+                  setSelectedConvo(null);
+                  alert("User blocked. You can unblock them in Settings → Blocked Users.");
+                }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, background: "#DC2626", color: "#fff", cursor: "pointer", fontFamily: font }}>Confirm Block</button>
               </div>
             </div>
           </div>
