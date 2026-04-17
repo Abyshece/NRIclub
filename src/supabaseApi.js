@@ -551,6 +551,11 @@ export async function unblockUser(userId) {
   return restCall("DELETE", `/rest/v1/blocks?blocker_id=eq.${currentUser.id}&blocked_id=eq.${userId}`);
 }
 
+export async function getBlockedUsers() {
+  if (!currentUser) return [];
+  return restCall("GET", `/rest/v1/blocks?blocker_id=eq.${currentUser.id}&select=*,blocked:blocked_id(id,name,avatar_url,profession)`);
+}
+
 
 // ============================================================================
 // FILE UPLOAD

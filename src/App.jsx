@@ -1621,6 +1621,50 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
 // ============================================================================
 // DASHBOARD
 // ============================================================================
+// Blocked Users Modal Component
+const BlockedUsersModal = ({ onClose, font }) => {
+  const [blockedList, setBlockedList] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await api.getBlockedUsers();
+        setBlockedList(list || []);
+      } catch(e) {}
+      setLoading(false);
+    })();
+  }, []);
+
+  return (
+    <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, maxHeight: "80vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+          <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Blocked Users</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+        </div>
+        <div style={{ padding: 24 }}>
+          {loading ? <div style={{ textAlign: "center", padding: 20, color: "#9B9A97", fontSize: 13 }}>Loading...</div>
+          : blockedList.length === 0 ? <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 13, fontFamily: font }}>You haven't blocked anyone.</div>
+          : blockedList.map(b => (
+            <div key={b.blocked_id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid #F0EFED" }}>
+              <Avatar name={b.blocked?.name || "User"} size={36} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{b.blocked?.name || "Unknown"}</div>
+                <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{b.blocked?.profession || ""}</div>
+              </div>
+              <button onClick={async () => {
+                try { await api.unblockUser(b.blocked_id); } catch(e) {}
+                setBlockedList(prev => prev.filter(x => x.blocked_id !== b.blocked_id));
+              }} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Unblock</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Dashboard = ({ user, onLogout }) => {
   const [view, setView] = useState("home");
   const [posts, setPosts] = useState([]);
@@ -1813,7 +1857,8 @@ const Dashboard = ({ user, onLogout }) => {
               id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
               tags: p.tags || [], likes: p.likes_count || 0, commentsCount: p.comments_count || 0, comments: [],
               timestamp: new Date(p.created_at).getTime(),
-              groupName: p.group_id ? null : null,
+              groupName: p.group_id ? (groups.find(g => g.id === p.group_id)?.name || null) : null,
+              groupId: p.group_id || null,
               author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown } : { name: "User" },
               externalUrl: urlMatch ? urlMatch[0] : null,
             };
@@ -2031,17 +2076,18 @@ const Dashboard = ({ user, onLogout }) => {
     const externalUrl = urlMatch ? urlMatch[0] : null;
     if (externalUrl) tags.push("__external__");
     const groupName = selectedGroup ? selectedGroup.name : null;
+    const groupId = selectedGroup ? selectedGroup.id : null;
     const imageUrl = postImage?.url || null;
     const post = {
       id: "p_" + Date.now(), userId: user.id, content: newPost,
       author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
-      likes: 0, comments: [], tags, timestamp: Date.now(), groupName,
+      likes: 0, comments: [], tags, timestamp: Date.now(), groupName, groupId,
       image: imageUrl, externalUrl,
     };
     setPosts([post, ...posts]);
     setNewPost("");
     setPostImage(null);
-    try { const r = await api.createPost(newPost, tags, imageUrl); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch (e) {}
+    try { const r = await api.createPost(newPost, tags, imageUrl, groupId); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch (e) {}
   };
 
   const deletePost = async (id) => {
@@ -2573,10 +2619,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       case "groups":
         if (selectedGroup) {
-          const groupPosts = posts.filter((p) => {
-            const name = selectedGroup.name.toLowerCase();
-            return p.content.toLowerCase().includes(name) || p.tags.some((t) => name.includes(t.toLowerCase()));
-          });
+          const groupPosts = posts.filter((p) => p.groupId === selectedGroup.id);
           const thumbColors = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
           const sgColor = thumbColors[groups.findIndex((g) => g.id === selectedGroup.id) % thumbColors.length];
 
@@ -3781,7 +3824,7 @@ const Dashboard = ({ user, onLogout }) => {
                           // Navigate based on notification type
                           if (n.type === "like" || n.type === "comment") {
                             setView("home");
-                            setShowNotifications(false);
+                            setNotifOpen(false);
                             // Mark as read
                             try { api.markNotificationHandled(n.id); } catch(e) {}
                             setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
@@ -3800,13 +3843,13 @@ const Dashboard = ({ user, onLogout }) => {
                             // Don't navigate for requests - they have Accept/Ignore buttons
                           } else if (n.type === "event") {
                             setView("events");
-                            setShowNotifications(false);
+                            setNotifOpen(false);
                           } else if (n.type === "group") {
                             setView("groups");
-                            setShowNotifications(false);
+                            setNotifOpen(false);
                           } else if (n.type === "message") {
                             setView("messages");
-                            setShowNotifications(false);
+                            setNotifOpen(false);
                           }
                         }} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", gap: 12, background: n.read ? "#fff" : "#F5F8FF", cursor: n.type !== "request" ? "pointer" : "default" }}>
                           <div style={{ flexShrink: 0, marginTop: 2 }}>
@@ -3878,6 +3921,7 @@ const Dashboard = ({ user, onLogout }) => {
                     {[
                       { key: "account", icon: Icons.user, label: "Account Settings" },
                       { key: "privacy", icon: Icons.shield, label: "Privacy & Safety" },
+                      { key: "blocked", icon: Icons.x, label: "Blocked Users" },
                       { key: "notifications", icon: Icons.bell, label: "Notifications" },
                       { key: "activity", icon: Icons.trending, label: "Activity Log" },
                     ].map(item => (
@@ -4904,6 +4948,11 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Blocked Users Modal */}
+      {settingsModal === "blocked" && (
+        <BlockedUsersModal onClose={() => setSettingsModal(null)} font={font} />
       )}
 
       {/* Block User Modal */}
