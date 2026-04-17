@@ -1853,6 +1853,13 @@ const Dashboard = ({ user, onLogout }) => {
     (async () => {
       try {
         const dbPosts = await api.getPosts();
+        const dbGroups = await api.getGroups();
+        let loadedGroups = [];
+        if (dbGroups && dbGroups.length) {
+          const myGids = await api.getMyGroupIds();
+          loadedGroups = dbGroups.map(g => ({ id: g.id, name: g.name, description: g.description, members: g.members_count, category: g.category, joined: myGids.includes(g.id) }));
+          setGroups(loadedGroups);
+        } else { setGroups([]); }
         if (dbPosts && dbPosts.length) {
           setPosts(dbPosts.map(p => {
             const urlMatch = (p.content || "").match(/https?:\/\/[^\s]+/i);
@@ -1860,18 +1867,13 @@ const Dashboard = ({ user, onLogout }) => {
               id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
               tags: p.tags || [], likes: p.likes_count || 0, commentsCount: p.comments_count || 0, comments: [],
               timestamp: new Date(p.created_at).getTime(),
-              groupName: p.group_id ? (groups.find(g => g.id === p.group_id)?.name || null) : null,
+              groupName: p.group_id ? (loadedGroups.find(g => g.id === p.group_id)?.name || null) : null,
               groupId: p.group_id || null,
               author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown } : { name: "User" },
               externalUrl: urlMatch ? urlMatch[0] : null,
             };
           }));
         } else { setPosts([]); }
-        const dbGroups = await api.getGroups();
-        if (dbGroups && dbGroups.length) {
-          const myGids = await api.getMyGroupIds();
-          setGroups(dbGroups.map(g => ({ id: g.id, name: g.name, description: g.description, members: g.members_count, category: g.category, joined: myGids.includes(g.id) })));
-        } else { setGroups([]); }
         const dbEvents = await api.getEvents();
         if (dbEvents && dbEvents.length) {
           setEvents(dbEvents.map(e => ({ id: e.id, title: e.title, date: e.date, time: e.time, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
