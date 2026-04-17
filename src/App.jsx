@@ -202,14 +202,6 @@ function generateAvatar(name) {
 
 const Avatar = ({ name, size = 40, url, className = "" }) => {
   const { initials, color } = generateAvatar(name || "U");
-  if (url) {
-    return (
-      <img src={url} alt={name || ""} className={className} style={{
-        width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0,
-        border: "1px solid rgba(55,53,47,0.08)",
-      }} onError={(e) => { e.target.style.display = "none"; e.target.nextSibling && (e.target.nextSibling.style.display = "flex"); }} />
-    );
-  }
   return (
     <div
       className={className}
@@ -217,10 +209,10 @@ const Avatar = ({ name, size = 40, url, className = "" }) => {
         width: size, height: size, borderRadius: "50%", background: color,
         display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: size * 0.35, fontWeight: 700, color: "#37352F", flexShrink: 0,
-        border: "1px solid rgba(55,53,47,0.08)",
+        border: "1px solid rgba(55,53,47,0.08)", overflow: "hidden", position: "relative",
       }}
     >
-      {initials}
+      {url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0 }} onError={(e) => { e.target.style.display = "none"; }} /> : initials}
     </div>
   );
 };
@@ -4072,11 +4064,10 @@ const Dashboard = ({ user, onLogout }) => {
                     try {
                       const url = await api.uploadAvatar(file);
                       await api.updateProfile({ avatar_url: url });
-                      // Update local user state immediately
                       const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
                       localStorage.setItem("indin_profile_cache", JSON.stringify(updatedUser));
-                      alert("Profile photo updated! Refresh the page to see the change.");
-                    } catch (err) { alert("Upload failed: " + (err.message || "Unknown error") + ". Make sure the 'avatars' storage bucket exists in Supabase."); }
+                      window.location.reload();
+                    } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
                   }}
                 />
                 <label htmlFor="avatar-upload" style={{
