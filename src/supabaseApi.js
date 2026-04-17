@@ -163,12 +163,43 @@ export async function getProfile(userId) {
 
 export async function getMyProfile() {
   if (!currentUser) return null;
+  // Update last_active timestamp
+  try { restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { last_active: new Date().toISOString() }); } catch(e) {}
   return getProfile(currentUser.id);
 }
 
 export async function updateProfile(updates) {
   if (!currentUser) throw new Error("Not logged in");
   return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, updates, { Prefer: "return=representation" });
+}
+
+export async function deleteAccount() {
+  if (!currentUser) throw new Error("Not logged in");
+  const uid = currentUser.id;
+  // Delete all user content in order (foreign keys)
+  try { await restCall("DELETE", `/rest/v1/comments?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/likes?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/messages?sender_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/notifications?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/notifications?actor_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/event_rsvps?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/group_members?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/connections?recipient_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/blocks?blocker_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/blocks?blocked_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/help_responses?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/doc_comments?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/reports?reporter_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/user_settings?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/marketplace?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/help_requests?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/docs?user_id=eq.${uid}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/posts?user_id=eq.${uid}`); } catch(e) {}
+  // Finally delete the profile itself
+  try { await restCall("DELETE", `/rest/v1/profiles?id=eq.${uid}`); } catch(e) {}
+  // Sign out
+  await signOut();
 }
 
 export async function searchProfiles(query = "", filters = {}) {
@@ -583,8 +614,10 @@ export async function uploadFile(bucket, filePath, file) {
 export async function uploadAvatar(file) {
   if (!currentUser) throw new Error("Not logged in");
   const ext = file.name.split(".").pop();
-  const path = `${currentUser.id}/avatar.${ext}`;
-  return uploadFile("avatars", path, file);
+  const path = `${currentUser.id}/avatar_${Date.now()}.${ext}`;
+  const url = await uploadFile("avatars", path, file);
+  // Add cache-busting param
+  return url + "?t=" + Date.now();
 }
 
 export async function uploadPostImage(file) {

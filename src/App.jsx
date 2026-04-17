@@ -4639,14 +4639,15 @@ const Dashboard = ({ user, onLogout }) => {
                 </h4>
                 <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 10, lineHeight: 1.5, fontFamily: font }}>Permanently delete your account and all associated data. This action cannot be undone.</p>
                 <button onClick={async () => { 
-                  if (confirm("Are you absolutely sure you want to delete your account? All your data, posts, and connections will be permanently removed. This cannot be undone.")) {
-                    try {
-                      await api.updateProfile({ name: "[Deleted User]", location: "", hometown: "", profession: "", linkedin_url: "", avatar_url: "", years_abroad: "", occupation_status: "" });
-                    } catch(e) {}
-                    localStorage.clear();
-                    setSettingsModal(null);
-                    onLogout();
-                    alert("Your account data has been cleared. For complete deletion from our database, please email privacy@nriclub.com.");
+                  if (confirm("Are you absolutely sure you want to delete your account? ALL your data — posts, likes, comments, messages, connections, photos — will be permanently removed. This cannot be undone.")) {
+                    if (confirm("This is your final warning. Type OK in the next prompt to confirm.") && prompt("Type DELETE to confirm account deletion:") === "DELETE") {
+                      try {
+                        await api.deleteAccount();
+                      } catch(e) {}
+                      localStorage.clear();
+                      setSettingsModal(null);
+                      onLogout();
+                    }
                   }
                 }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                   {Icons.trash({ size: 14 })} Delete My Account
@@ -5769,13 +5770,13 @@ const AdminDashboard = ({ onLogout }) => {
   }, []);
 
   const approveUser = async (id) => {
-    try { await fetch(`${URL}/rest/v1/profiles?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ linkedin_verified: true }) }); } catch(e) {}
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: true } : u));
+    try { await fetch(`${URL}/rest/v1/profiles?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ linkedin_verified: true, status: "active" }) }); } catch(e) {}
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: true, status: "active" } : u));
   };
 
   const blockUser = async (id) => {
-    try { await fetch(`${URL}/rest/v1/profiles?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ linkedin_verified: false, linkedin_url: "" }) }); } catch(e) {}
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: false, linkedin_url: "" } : u));
+    try { await fetch(`${URL}/rest/v1/profiles?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ linkedin_verified: false, status: "blocked" }) }); } catch(e) {}
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: false, status: "blocked" } : u));
   };
 
   const approveGroup = async (id) => {
@@ -5783,19 +5784,34 @@ const AdminDashboard = ({ onLogout }) => {
     setGroups(prev => prev.map(g => g.id === id ? { ...g, is_approved: true } : g));
   };
 
-  const deleteReport = async (id) => { setReports(prev => prev.filter(r => r.id !== id)); };
+  const rejectGroup = async (id) => {
+    try { await fetch(`${URL}/rest/v1/groups?id=eq.${id}`, { method: "DELETE", headers: hdrs }); } catch(e) {}
+    setGroups(prev => prev.filter(g => g.id !== id));
+  };
+
+  const dismissReport = async (id) => {
+    try { await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ status: "dismissed" }) }); } catch(e) {}
+    setReports(prev => prev.map(r => r.id === id ? { ...r, status: "dismissed" } : r));
+  };
+
+  const deleteReportContent = async (id) => {
+    try { await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ status: "resolved" }) }); } catch(e) {}
+    setReports(prev => prev.map(r => r.id === id ? { ...r, status: "resolved" } : r));
+  };
 
   const navItems = [
     { key: "overview", label: "Overview" },
     { key: "approvals", label: "Pending Approvals" },
     { key: "users", label: "All Users" },
+    { key: "blocked", label: "Blocked Users" },
     { key: "groups", label: "Communities" },
     { key: "reports", label: "Reports" },
   ];
 
-  const pendingUsers = users.filter(u => !u.linkedin_verified);
-  const approvedUsers = users.filter(u => u.linkedin_verified);
-  const filteredUsers = users.filter(u => !userSearch || (u.name || "").toLowerCase().includes(userSearch.toLowerCase()) || (u.email || "").toLowerCase().includes(userSearch.toLowerCase()));
+  const pendingUsers = users.filter(u => !u.linkedin_verified && u.status !== "blocked");
+  const blockedUsers = users.filter(u => u.status === "blocked");
+  const approvedUsers = users.filter(u => u.linkedin_verified && u.status !== "blocked");
+  const filteredUsers = users.filter(u => u.status !== "blocked" && (!userSearch || (u.name || "").toLowerCase().includes(userSearch.toLowerCase()) || (u.email || "").toLowerCase().includes(userSearch.toLowerCase())));
 
   const fieldStyle = { fontSize: 12, color: "#37352F", padding: "6px 10px", background: "#FAFAF8", borderRadius: 4, border: "1px solid #F0EFED" };
   const labelStyle = { fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 };
@@ -5813,6 +5829,9 @@ const AdminDashboard = ({ onLogout }) => {
             <button key={n.key} onClick={() => setTab(n.key)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 12px", border: "none", borderRadius: 6, background: tab === n.key ? "#F5F5F3" : "transparent", color: tab === n.key ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 13, fontWeight: tab === n.key ? 600 : 400, fontFamily: font, textAlign: "left", marginBottom: 2, transition: "all 0.1s" }}>
               {n.label}
               {n.key === "approvals" && pendingUsers.length > 0 && <span style={{ marginLeft: "auto", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{pendingUsers.length}</span>}
+              {n.key === "blocked" && blockedUsers.length > 0 && <span style={{ marginLeft: "auto", background: "#9B9A97", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{blockedUsers.length}</span>}
+              {n.key === "reports" && reports.filter(r => r.status === "pending").length > 0 && <span style={{ marginLeft: "auto", background: "#E65100", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{reports.filter(r => r.status === "pending").length}</span>}
+              {n.key === "groups" && groups.filter(g => !g.is_approved).length > 0 && <span style={{ marginLeft: "auto", background: "#E65100", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{groups.filter(g => !g.is_approved).length}</span>}
             </button>
           ))}
         </div>
@@ -5825,15 +5844,36 @@ const AdminDashboard = ({ onLogout }) => {
       <div className="admin-main" style={{ flex: 1, padding: "28px 36px", overflow: "auto", maxWidth: 900 }}>
         {loading ? <div style={{ padding: 60, textAlign: "center", color: "#9B9A97" }}>Loading...</div>
 
-        : tab === "overview" ? (
+        : tab === "overview" ? (() => {
+          const now = Date.now();
+          const mins = (ms) => (now - new Date(ms).getTime()) / 60000;
+          const onlineUsers = users.filter(u => u.last_active && mins(u.last_active) < 5);
+          const activeToday = users.filter(u => u.last_active && mins(u.last_active) < 1440);
+          const activeWeek = users.filter(u => u.last_active && mins(u.last_active) < 10080);
+          const activeMonth = users.filter(u => u.last_active && mins(u.last_active) < 43200);
+          const activeQuarter = users.filter(u => u.last_active && mins(u.last_active) < 129600);
+          const activeYear = users.filter(u => u.last_active && mins(u.last_active) < 525600);
+          // Signups per month for chart
+          const monthCounts = {};
+          users.forEach(u => {
+            if (!u.created_at) return;
+            const d = new Date(u.created_at);
+            const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+            monthCounts[key] = (monthCounts[key] || 0) + 1;
+          });
+          const sortedMonths = Object.keys(monthCounts).sort();
+          const maxCount = Math.max(...Object.values(monthCounts), 1);
+          return (
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Overview</h1>
-            <div className="admin-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 32 }}>
+            
+            {/* Top Stats */}
+            <div className="admin-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
               {[
                 { label: "Total Users", value: stats.users, color: "#37352F" },
                 { label: "Approved", value: approvedUsers.length, color: "#22A06B" },
                 { label: "Pending Review", value: pendingUsers.length, color: "#E65100" },
-                { label: "Reports", value: reports.length, color: "#DC2626" },
+                { label: "Blocked", value: blockedUsers.length, color: "#DC2626" },
               ].map((s, i) => (
                 <div key={i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 18px" }}>
                   <div style={{ fontSize: 10, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 6 }}>{s.label}</div>
@@ -5841,6 +5881,65 @@ const AdminDashboard = ({ onLogout }) => {
                 </div>
               ))}
             </div>
+
+            {/* Online / Active Users */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+              <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "18px 20px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#22C55E", animation: "pulse 2s infinite" }}>{""}</div>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#37352F", textTransform: "uppercase", letterSpacing: "0.08em" }}>Online Now</span>
+                </div>
+                <div style={{ fontSize: 36, fontWeight: 700, color: "#22C55E", marginBottom: 8 }}>{onlineUsers.length}</div>
+                <div style={{ fontSize: 11, color: "#9B9A97" }}>Users active in last 5 minutes</div>
+                {onlineUsers.length > 0 && (
+                  <div style={{ display: "flex", gap: -8, marginTop: 10 }}>
+                    {onlineUsers.slice(0, 5).map((u, i) => (
+                      <div key={u.id} style={{ width: 28, height: 28, borderRadius: "50%", background: "#A3C9B8", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 10, fontWeight: 700, border: "2px solid #fff", marginLeft: i > 0 ? -6 : 0 }} title={u.name}>{(u.name || "U").substring(0, 2).toUpperCase()}</div>
+                    ))}
+                    {onlineUsers.length > 5 && <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#F0EFED", display: "flex", alignItems: "center", justifyContent: "center", color: "#9B9A97", fontSize: 9, fontWeight: 700, border: "2px solid #fff", marginLeft: -6 }}>+{onlineUsers.length - 5}</div>}
+                  </div>
+                )}
+              </div>
+              <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "18px 20px" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#37352F", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Active Users</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {[
+                    { label: "Today", value: activeToday.length, color: "#22A06B" },
+                    { label: "This Week", value: activeWeek.length, color: "#5B9CFF" },
+                    { label: "This Month", value: activeMonth.length, color: "#E65100" },
+                    { label: "This Quarter", value: activeQuarter.length, color: "#7C3AED" },
+                  ].map((a, i) => (
+                    <div key={i} style={{ padding: "8px 10px", background: "#FAFAF8", borderRadius: 6 }}>
+                      <div style={{ fontSize: 10, color: "#9B9A97", fontWeight: 600, marginBottom: 4 }}>{a.label}</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: a.color }}>{a.value}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 10, padding: "8px 10px", background: "#FAFAF8", borderRadius: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 10, color: "#9B9A97", fontWeight: 600 }}>This Year</span>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: "#37352F" }}>{activeYear.length}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Signups Chart */}
+            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "18px 20px", marginBottom: 24 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#37352F", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>Signups Over Time</div>
+              {sortedMonths.length === 0 ? (
+                <div style={{ textAlign: "center", padding: 20, color: "#9B9A97", fontSize: 12 }}>No signup data yet.</div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 120 }}>
+                  {sortedMonths.map(m => (
+                    <div key={m} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#37352F" }}>{monthCounts[m]}</span>
+                      <div style={{ width: "100%", maxWidth: 40, height: Math.max(8, (monthCounts[m] / maxCount) * 100), background: "linear-gradient(180deg, #5B9CFF, #3B7BD8)", borderRadius: "4px 4px 0 0", transition: "height 0.3s" }}>{""}</div>
+                      <span style={{ fontSize: 9, color: "#9B9A97", whiteSpace: "nowrap" }}>{m.substring(5)}/{m.substring(2,4)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <h3 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", marginBottom: 10 }}>Recent Signups</h3>
             <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", overflow: "hidden" }}>
               <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr", padding: "8px 16px", background: "#FAFAF8", borderBottom: "1px solid #EDEDEB", fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em" }}>
@@ -5856,8 +5955,10 @@ const AdminDashboard = ({ onLogout }) => {
               ))}
             </div>
           </div>
+          );
+        })()
 
-        ) : tab === "approvals" ? (
+        : tab === "approvals" ? (
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 6 }}>Pending Approvals</h1>
             <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 24 }}>Review and approve new user profiles. Users see a "pending review" banner until approved.</p>
@@ -5926,6 +6027,28 @@ const AdminDashboard = ({ onLogout }) => {
                 </div>
               ))}
             </div>
+          </div>
+
+        ) : tab === "blocked" ? (
+          <div>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Blocked Users ({blockedUsers.length})</h1>
+            {blockedUsers.length === 0 ? (
+              <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No blocked users.</div>
+            ) : (
+              <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", overflow: "hidden" }}>
+                {blockedUsers.map((u, i) => (
+                  <div key={u.id || i} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 100px", padding: "12px 16px", borderBottom: "1px solid #F5F5F3", alignItems: "center", fontSize: 12 }}>
+                    <div>
+                      <div style={{ fontWeight: 600, color: "#37352F", fontSize: 13 }}>{u.name || "—"}</div>
+                      <div style={{ color: "#9B9A97", fontSize: 11 }}>{u.email}</div>
+                    </div>
+                    <div style={{ color: "#9B9A97" }}>{u.profession || "—"}</div>
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "#FEF2F2", color: "#DC2626", fontWeight: 600, width: "fit-content" }}>Blocked</span>
+                    <button onClick={() => approveUser(u.id)} style={{ padding: "4px 10px", borderRadius: 4, border: "none", background: "#22A06B", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Unblock</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
         ) : tab === "groups" ? (
@@ -5998,9 +6121,15 @@ const AdminDashboard = ({ onLogout }) => {
                             {r.reported_user_id ? ` · User: ${r.reported_user_id.substring(0, 8)}...` : ""}
                           </div>
                         </div>
-                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                          <button onClick={() => deleteReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "none", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Remove</button>
-                          <button onClick={() => deleteReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "1px solid #EDEDEB", background: "#fff", color: "#5F5E5B", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+                          {r.status === "pending" ? (
+                            <>
+                              <button onClick={() => deleteReportContent(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "none", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Remove Content</button>
+                              <button onClick={() => dismissReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "1px solid #EDEDEB", background: "#fff", color: "#5F5E5B", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
+                            </>
+                          ) : (
+                            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: r.status === "resolved" ? "#FEF2F2" : "#E3FCEF", color: r.status === "resolved" ? "#DC2626" : "#22A06B", fontWeight: 600 }}>{r.status === "resolved" ? "Removed" : "Dismissed"}</span>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -6012,6 +6141,7 @@ const AdminDashboard = ({ onLogout }) => {
         ) : null}
       </div>
       <style>{`
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         @media (max-width: 768px) {
           .admin-layout { flex-direction: column !important; }
           .admin-sidebar { width: 100% !important; position: relative !important; }
