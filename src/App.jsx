@@ -1726,6 +1726,7 @@ const Dashboard = ({ user, onLogout }) => {
   const lastSeenMsgRef = useRef(null); // Track last seen conversation state
   const [chatSettings, setChatSettings] = useState(false);
   const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [blockTargetId, setBlockTargetId] = useState(null);
   const [blockedIds, setBlockedIds] = useState(new Set());
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
@@ -3637,7 +3638,7 @@ const Dashboard = ({ user, onLogout }) => {
                         <>
                           <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={() => setChatSettings(false)} />
                           <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, width: 150, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 10, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", zIndex: 20, overflow: "hidden" }}>
-                            <button onClick={() => { setBlockModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
+                            <button onClick={() => { const _bid = convos.find(c => c.id === selectedConvo)?.otherUserId; setBlockTargetId(_bid); setBlockModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg> Block User
                             </button>
                             <button onClick={() => { setReportModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
@@ -4986,7 +4987,7 @@ const Dashboard = ({ user, onLogout }) => {
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setBlockModalOpen(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
                 <button onClick={async () => {
-                  const userIdToBlock = activeConvo?.otherUserId;
+                  const userIdToBlock = blockTargetId;
                   if (!userIdToBlock) { setBlockModalOpen(false); return; }
                   try { await api.blockUser(userIdToBlock); } catch(e) {}
                   setBlockedIds(prev => { const s = new Set(prev); s.add(userIdToBlock); return s; });
