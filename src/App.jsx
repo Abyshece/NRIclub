@@ -200,8 +200,16 @@ function generateAvatar(name) {
   return { initials, color };
 }
 
-const Avatar = ({ name, size = 40, className = "" }) => {
+const Avatar = ({ name, size = 40, url, className = "" }) => {
   const { initials, color } = generateAvatar(name || "U");
+  if (url) {
+    return (
+      <img src={url} alt={name || ""} className={className} style={{
+        width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0,
+        border: "1px solid rgba(55,53,47,0.08)",
+      }} onError={(e) => { e.target.style.display = "none"; e.target.nextSibling && (e.target.nextSibling.style.display = "flex"); }} />
+    );
+  }
   return (
     <div
       className={className}
@@ -1342,7 +1350,7 @@ const LoginPage = ({ onComplete, onSignUp }) => {
           profession: dbProfile.profession, occupationStatus: dbProfile.occupation_status,
           yearsAbroad: dbProfile.years_abroad, linkedinUrl: dbProfile.linkedin_url,
           emailVerified: dbProfile.email_verified,
-          linkedin_verified: dbProfile.linkedin_verified || false,
+          linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "",
           isNRI: dbProfile.years_abroad && dbProfile.years_abroad !== "Not lived abroad",
         };
         localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
@@ -2213,7 +2221,7 @@ const Dashboard = ({ user, onLogout }) => {
             {/* Create Post Box - matching screenshot layout */}
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "18px 20px", marginBottom: 16 }}>
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <Avatar name={user.name} size={40} />
+                <Avatar name={user.name} size={40} url={user.avatar_url || user.avatarUrl} />
                 <input
                   value={newPost} onChange={(e) => setNewPost(e.target.value)}
                   placeholder={`What's on your mind, ${user.name.split(" ")[0]}?`}
@@ -3320,7 +3328,7 @@ const Dashboard = ({ user, onLogout }) => {
                 {/* Comments */}
                 <h3 style={{ fontSize: 18, fontWeight: 700, color: "#37352F", marginBottom: 20, fontFamily: font }}>Comments ({(selectedDoc.comments || []).length})</h3>
                 <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
-                  <Avatar name={user.name} size={32} />
+                  <Avatar name={user.name} size={32} url={user.avatar_url || user.avatarUrl} />
                   <div style={{ flex: 1 }}>
                     <textarea value={docComment} onChange={(e) => setDocComment(e.target.value)} placeholder="Add a comment..." style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 70, resize: "none", boxSizing: "border-box" }} />
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
@@ -3690,7 +3698,7 @@ const Dashboard = ({ user, onLogout }) => {
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
             <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: 32, textAlign: "center" }}>
-              <Avatar name={user.name} size={80} />
+              <Avatar name={user.name} size={80} url={user.avatar_url || user.avatarUrl} />
               <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginTop: 16, fontFamily: font }}>{user.name}</h2>
               {true && (
                 <span style={{ display: "inline-block", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 4, letterSpacing: "0.05em", marginTop: 6,
@@ -3964,7 +3972,7 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
             {/* Avatar */}
             <button onClick={() => setView("profile")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-              <Avatar name={user.name} size={32} />
+              <Avatar name={user.name} size={32} url={user.avatar_url || user.avatarUrl} />
             </button>
             <button onClick={() => setMobileMenu(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#37352F", display: "none" }} className="mobile-menu-btn">
               {Icons.menu({ size: 22 })}
@@ -4055,7 +4063,7 @@ const Dashboard = ({ user, onLogout }) => {
 
               {/* Profile photo with camera icon */}
               <div style={{ position: "relative", display: "inline-block", marginBottom: 12 }}>
-                <Avatar name={user.name} size={80} />
+                <Avatar name={user.name} size={80} url={user.avatar_url || user.avatarUrl} />
                 <input type="file" accept="image/*" id="avatar-upload" style={{ display: "none" }}
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
@@ -5656,7 +5664,7 @@ export default function App() {
               linkedinUrl: dbProfile.linkedin_url || cached?.linkedinUrl || "",
               isNRI: !!(dbProfile.years_abroad || cached?.yearsAbroad) && (dbProfile.years_abroad || cached?.yearsAbroad) !== "Not lived abroad",
               emailVerified: dbProfile.email_verified,
-              linkedin_verified: dbProfile.linkedin_verified || false,
+              linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "",
             };
             // If DB has empty fields but cache has them, push cache values to DB
             if (!dbProfile.location && cached?.location) {
