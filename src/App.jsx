@@ -1499,7 +1499,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
     <div data-post-id={post.id} style={cardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 12 }}>
-          <Avatar name={author.name || "User"} size={40} />
+          <Avatar name={author.name || "User"} size={40} url={author.avatar_url} />
           <div>
             <div style={{ fontWeight: 600, fontSize: 14, color: "#37352F" }}>{author.name}</div>
             <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>
@@ -1879,7 +1879,7 @@ const Dashboard = ({ user, onLogout }) => {
               timestamp: new Date(p.created_at).getTime(),
               groupName: p.group_id ? (loadedGroups.find(g => g.id === p.group_id)?.name || null) : null,
               groupId: p.group_id || null,
-              author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown } : { name: "User" },
+              author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown, avatar_url: p.profiles.avatar_url || "" } : { name: "User" },
               externalUrl: urlMatch ? urlMatch[0] : null,
             };
           }));
