@@ -1352,7 +1352,7 @@ const LoginPage = ({ onComplete, onSignUp }) => {
           profession: dbProfile.profession, occupationStatus: dbProfile.occupation_status,
           yearsAbroad: dbProfile.years_abroad, linkedinUrl: dbProfile.linkedin_url,
           emailVerified: dbProfile.email_verified,
-          linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "",
+          linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "", status: dbProfile.status || "active",
           isNRI: dbProfile.years_abroad && dbProfile.years_abroad !== "Not lived abroad",
         };
         localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
@@ -4057,6 +4057,25 @@ const Dashboard = ({ user, onLogout }) => {
         </div>
       )}
 
+      {/* Blocked user overlay */}
+      {user?.status === "blocked" && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
+            </div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Profile Blocked</h2>
+            <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 20, fontFamily: font }}>
+              Your profile has been blocked by our admin team. You have <strong>72 hours</strong> to update your LinkedIn profile and ensure your signup details are accurate.
+            </p>
+            <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 24, fontFamily: font }}>
+              Once you've updated your details, our team will review and reactivate your profile. If you believe this is an error, please contact support.
+            </p>
+            <button onClick={onLogout} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Sign Out</button>
+          </div>
+        </div>
+      )}
+
       {/* MAIN */}
       <main style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 100px", display: "grid", gridTemplateColumns: (view === "profile" || view === "trending") ? "1fr" : "240px 1fr 210px", gap: 28 }} className="main-grid">
         {view !== "profile" && view !== "trending" && (
@@ -5686,7 +5705,7 @@ export default function App() {
               linkedinUrl: dbProfile.linkedin_url || cached?.linkedinUrl || "",
               isNRI: !!(dbProfile.years_abroad || cached?.yearsAbroad) && (dbProfile.years_abroad || cached?.yearsAbroad) !== "Not lived abroad",
               emailVerified: dbProfile.email_verified,
-              linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "",
+              linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "", status: dbProfile.status || "active",
             };
             // If DB has empty fields but cache has them, push cache values to DB
             if (!dbProfile.location && cached?.location) {
@@ -5782,7 +5801,7 @@ const AdminDashboard = ({ onLogout }) => {
   const font = "'DM Sans', sans-serif";
   const KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ";
   const URL = "https://uzzkdmybsbwknpsucuvv.supabase.co";
-  const hdrs = { apikey: KEY, "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("indin_token")}` };
+  const hdrs = { apikey: KEY, "Content-Type": "application/json", Authorization: `Bearer ${KEY}`, Prefer: "return=representation" };
 
   useEffect(() => {
     (async () => {
@@ -5799,22 +5818,26 @@ const AdminDashboard = ({ onLogout }) => {
     })();
   }, []);
 
+  const rpc = async (fn, params) => {
+    const res = await fetch(`${URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify(params) });
+    return res.ok;
+  };
+
   const approveUser = async (id) => {
-    try { await fetch(`${URL}/rest/v1/profiles?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ linkedin_verified: true, status: "active" }) }); } catch(e) {}
+    await rpc("admin_update_user", { target_id: id, verified: true, user_status: "active" });
     setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: true, status: "active" } : u));
   };
 
   const blockUser = async (id) => {
-    try { await fetch(`${URL}/rest/v1/profiles?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ linkedin_verified: false, status: "blocked" }) }); } catch(e) {}
+    await rpc("admin_update_user", { target_id: id, verified: false, user_status: "blocked" });
     setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: false, status: "blocked" } : u));
   };
 
   const approveGroup = async (id) => {
-    try { await fetch(`${URL}/rest/v1/groups?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ is_approved: true }) }); } catch(e) {}
-    // Send notification to the group creator
+    await rpc("admin_approve_group", { target_id: id, approved: true });
     const group = groups.find(g => g.id === id);
     if (group?.created_by) {
-      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: hdrs, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community "${group.name}" has been approved!`, read: false }) }); } catch(e) {}
+      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community "${group.name}" has been approved!`, read: false }) }); } catch(e) {}
     }
     setGroups(prev => prev.map(g => g.id === id ? { ...g, is_approved: true } : g));
   };
@@ -5822,19 +5845,19 @@ const AdminDashboard = ({ onLogout }) => {
   const rejectGroup = async (id) => {
     const group = groups.find(g => g.id === id);
     if (group?.created_by) {
-      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: hdrs, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community request "${group.name}" was not approved.`, read: false }) }); } catch(e) {}
+      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community request "${group.name}" was not approved.`, read: false }) }); } catch(e) {}
     }
-    try { await fetch(`${URL}/rest/v1/groups?id=eq.${id}`, { method: "DELETE", headers: hdrs }); } catch(e) {}
+    try { await fetch(`${URL}/rest/v1/groups?id=eq.${id}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } }); } catch(e) {}
     setGroups(prev => prev.filter(g => g.id !== id));
   };
 
   const dismissReport = async (id) => {
-    try { await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ status: "dismissed" }) }); } catch(e) {}
+    await rpc("admin_update_report", { target_id: id, new_status: "dismissed" });
     setReports(prev => prev.map(r => r.id === id ? { ...r, status: "dismissed" } : r));
   };
 
   const deleteReportContent = async (id) => {
-    try { await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ status: "resolved" }) }); } catch(e) {}
+    await rpc("admin_update_report", { target_id: id, new_status: "resolved" });
     setReports(prev => prev.map(r => r.id === id ? { ...r, status: "resolved" } : r));
   };
 
