@@ -5307,9 +5307,14 @@ const Dashboard = ({ user, onLogout }) => {
                   Cancel
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (!newGroupCity.trim()) return;
-                    alert(`Your request to create "Indians in ${newGroupCity}" has been sent to the admin for approval.`);
+                    try {
+                      await api.requestNewGroup(newGroupCity.trim());
+                      alert(`Your request to create "Indians in ${newGroupCity}" has been sent to the admin for approval.`);
+                    } catch(e) {
+                      alert("Failed to submit request: " + (e.message || "Please try again."));
+                    }
                     setNewGroupCity("");
                     setGroupRequestModal(false);
                   }}
@@ -5682,7 +5687,13 @@ export default function App() {
   useEffect(() => {
     // Check for admin route
     if (window.location.hash === "#admin") {
-      setAuthState("admin-login");
+      // Check if already logged in as admin
+      if (localStorage.getItem("indin_admin") === "true") {
+        setIsAdmin(true);
+        setAuthState("admin");
+      } else {
+        setAuthState("admin-login");
+      }
       return;
     }
     (async () => {
@@ -5764,14 +5775,14 @@ export default function App() {
             </div>
             {adminErr && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminErr}</div>}
             <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
-            <input type="password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); } else setAdminErr("Invalid credentials"); } }} />
-            <button onClick={() => { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); } else setAdminErr("Invalid credentials"); }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign In</button>
+            <input type="password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); localStorage.setItem("indin_admin", "true"); } else setAdminErr("Invalid credentials"); } }} />
+            <button onClick={() => { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); localStorage.setItem("indin_admin", "true"); } else setAdminErr("Invalid credentials"); }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign In</button>
             <p style={{ fontSize: 11, color: "#9B9A97", textAlign: "center", marginTop: 16 }}><a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ""; setAuthState("landing"); }} style={{ color: "#5B9CFF" }}>← Back to NRIClub</a></p>
           </div>
         </div>
       );
     }
-    if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={() => { setIsAdmin(false); setAuthState("landing"); window.location.hash = ""; }} />;
+    if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={() => { setIsAdmin(false); setAuthState("landing"); localStorage.removeItem("indin_admin"); window.location.hash = ""; }} />;
     if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
     if (authState === "signup") return <SignUpPage onComplete={handleAuthComplete} onLogin={() => setAuthState("login")} />;
     if (authState === "login") return <LoginPage onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
@@ -5809,9 +5820,17 @@ const AdminDashboard = ({ onLogout }) => {
         const [u, g, r] = await Promise.all([
           fetch(`${URL}/rest/v1/profiles?select=*&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
           fetch(`${URL}/rest/v1/groups?select=*&order=members_count.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/reports?select=*,reporter:reporter_id(id,name,email,avatar_url),reported_user:reported_user_id(id,name,email,avatar_url)&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
+          fetch(`${URL}/rest/v1/reports?select=*&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
         ]);
-        setUsers(u || []); setGroups(g || []); setReports(r || []);
+        const allUsers = u || [];
+        setUsers(allUsers); setGroups(g || []);
+        // Enrich reports with reporter and reported user names
+        const enrichedReports = (r || []).map(rep => {
+          const reporter = allUsers.find(x => x.id === rep.reporter_id);
+          const reported = allUsers.find(x => x.id === rep.reported_user_id);
+          return { ...rep, reporter: reporter ? { name: reporter.name, email: reporter.email } : null, reported_user: reported ? { name: reported.name, email: reported.email } : null };
+        });
+        setReports(enrichedReports);
         setStats({ users: (u || []).length, posts: 0, groups: (g || []).filter(x => x.is_approved).length, events: 0, pending: (u || []).filter(x => !x.linkedin_verified).length });
       } catch (e) {}
       setLoading(false);
