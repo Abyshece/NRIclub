@@ -3238,7 +3238,10 @@ const Dashboard = ({ user, onLogout }) => {
                   <button onClick={async () => { setReportConfirm({ type: "help", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
                 </div>
                 <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>{h.title}</h3>
-                <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 14, fontFamily: font }}>{h.description}</p>
+                <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical" }}>{h.description}</p>
+                {h.description && h.description.length > 100 && selectedHelp !== h.id && (
+                  <button onClick={() => setSelectedHelp(h.id)} style={{ background: "none", border: "none", color: "#5B9CFF", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 10, fontFamily: font }}>Read more</button>
+                )}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Avatar name={h.user} size={24} />
