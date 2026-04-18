@@ -237,6 +237,26 @@ export async function deletePost(postId) {
   return restCall("DELETE", `/rest/v1/posts?id=eq.${postId}&user_id=eq.${currentUser.id}`);
 }
 
+export async function deleteMarketItem(id) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("DELETE", `/rest/v1/marketplace?id=eq.${id}&user_id=eq.${currentUser.id}`);
+}
+
+export async function deleteHelpRequest(id) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("DELETE", `/rest/v1/help_requests?id=eq.${id}&user_id=eq.${currentUser.id}`);
+}
+
+export async function deleteDoc(id) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("DELETE", `/rest/v1/docs?id=eq.${id}&user_id=eq.${currentUser.id}`);
+}
+
+export async function deleteEvent(id) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("DELETE", `/rest/v1/events?id=eq.${id}&organizer_id=eq.${currentUser.id}`);
+}
+
 // ============================================================================
 // COMMENTS
 // ============================================================================

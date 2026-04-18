@@ -1886,7 +1886,7 @@ const Dashboard = ({ user, onLogout }) => {
         } else { setPosts([]); }
         const dbEvents = await api.getEvents();
         if (dbEvents && dbEvents.length) {
-          setEvents(dbEvents.map(e => ({ id: e.id, title: e.title, date: e.date, time: e.time, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
+          setEvents(dbEvents.map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
           const myR = await api.getMyRsvps();
           setRsvps(new Set(myR));
         } else { setEvents([]); }
@@ -1895,7 +1895,7 @@ const Dashboard = ({ user, onLogout }) => {
         try {
           const dbHelp = await api.getHelpRequests();
           if (dbHelp && dbHelp.length) {
-            setHelpRequests(dbHelp.map(h => ({ id: h.id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status, user: h.profiles?.name || "User", timestamp: new Date(h.created_at).getTime(), responses: h.responses_count || 0 })));
+            setHelpRequests(dbHelp.map(h => ({ id: h.id, userId: h.user_id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status, user: h.profiles?.name || "User", timestamp: new Date(h.created_at).getTime(), responses: h.responses_count || 0 })));
             // Fix response counts by fetching actual counts
             try {
               const allResponses = await api.getHelpResponses(null);
@@ -1939,7 +1939,7 @@ const Dashboard = ({ user, onLogout }) => {
         try {
           const dbDocs = await api.getDocs();
           if (dbDocs && dbDocs.length) {
-            setDocs(dbDocs.map(d => ({ id: d.id, title: d.title, excerpt: d.excerpt, content: d.content || d.excerpt, category: d.category, readTime: d.read_time, author: d.profiles?.name || "User", profession: d.profiles?.profession || "", authorLocation: d.profiles?.location || "", city: d.city, likes: d.likes_count || 0, timestamp: new Date(d.created_at).toLocaleDateString(), comments: [] })));
+            setDocs(dbDocs.map(d => ({ id: d.id, userId: d.user_id, title: d.title, excerpt: d.excerpt, content: d.content || d.excerpt, category: d.category, readTime: d.read_time, author: d.profiles?.name || "User", profession: d.profiles?.profession || "", authorLocation: d.profiles?.location || "", city: d.city, likes: d.likes_count || 0, timestamp: new Date(d.created_at).toLocaleDateString(), comments: [] })));
           }
         } catch (e) {}
 
@@ -3136,6 +3136,7 @@ const Dashboard = ({ user, onLogout }) => {
                         >
                           Going
                         </button>
+                        {e.organizerId === user.id && <button onClick={async () => { if (confirm("Delete this event?")) { try { await api.deleteEvent(e.id); } catch(e2) {} setEvents(prev => prev.filter(x => x.id !== e.id)); } }} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", cursor: "pointer", color: "#DC2626" }}>{Icons.trash({ size: 14 })}</button>}
                         <button onClick={() => setReportConfirm({ type: "event", id: e.id, name: e.title })} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 14 })}</button>
                       </div>
                     </div>
@@ -3235,7 +3236,10 @@ const Dashboard = ({ user, onLogout }) => {
                     </span>
                     <span style={{ fontSize: 11, color: "#9B9A97" }}>· {h.category}</span>
                   </div>
-                  <button onClick={async () => { setReportConfirm({ type: "help", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {h.userId === user.id && <button onClick={async () => { if (confirm("Delete this help request?")) { try { await api.deleteHelpRequest(h.id); } catch(e) {} setHelpRequests(prev => prev.filter(x => x.id !== h.id)); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 14 })}</button>}
+                    <button onClick={async () => { setReportConfirm({ type: "help", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
+                  </div>
                 </div>
                 <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>{h.title}</h3>
                 <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical" }}>{h.description}</p>
@@ -3436,6 +3440,7 @@ const Dashboard = ({ user, onLogout }) => {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 12, color: "#9B9A97", display: "flex", alignItems: "center", gap: 4 }}>{Icons.heart({ size: 13 })} {d.likes}</span>
+                      {d.userId === user.id && <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this doc?")) { try { await api.deleteDoc(d.id); } catch(e2) {} setDocs(prev => prev.filter(x => x.id !== d.id)); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 12 })}</button>}
                       <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "doc", id: d.id, name: d.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 12 })}</button>
                     </div>
                   </div>
@@ -3511,6 +3516,7 @@ const Dashboard = ({ user, onLogout }) => {
                         <span style={{ fontSize: 12, fontWeight: 500, color: "#37352F", fontFamily: font }}>{item.seller}</span>
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
+                        {item.user_id === user.id && <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); } }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font }}>{Icons.trash({ size: 11 })}</button>}
                         <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
                         <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "marketplace", id: item.id, name: item.title }); }} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 12 })}</button>
                       </div>
