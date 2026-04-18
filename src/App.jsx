@@ -740,8 +740,13 @@ const SignUpPage = ({ onComplete, onLogin }) => {
 
       // Real Supabase verification
       try {
-        const verifyData = await api.verifyOtp(form.email, entered);
+        let verifyData = await api.verifyOtp(form.email, entered);
+        // If verify didn't return a token, try signing in with password
+        if (!verifyData?.access_token) {
+          try { verifyData = await api.signIn(form.email, form.password); } catch(si) {}
+        }
         const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
+        // Save ALL signup details to profile
         try {
           await api.updateProfile({
             name: fullName, location: form.location, hometown: form.hometown,
@@ -750,14 +755,19 @@ const SignUpPage = ({ onComplete, onLogin }) => {
             email_verified: true, gdpr_consent: true, gdpr_consent_date: new Date().toISOString(),
             marketing_consent: marketingConsent,
           });
-        } catch (ue) {}
+        } catch (ue) {
+          // If updateProfile fails, try again after a short delay
+          setTimeout(async () => {
+            try { await api.updateProfile({ name: fullName, location: form.location, hometown: form.hometown, profession: form.profession, occupation_status: form.occupationStatus, years_abroad: form.yearsAbroad, linkedin_url: form.linkedinUrl }); } catch(e) {}
+          }, 1000);
+        }
         const profile = {
           id: verifyData?.user?.id || ("user_" + Date.now()),
           name: fullName, email: form.email, location: form.location,
           hometown: form.hometown, profession: form.profession,
           occupationStatus: form.occupationStatus, yearsAbroad: form.yearsAbroad,
           linkedinUrl: form.linkedinUrl, emailVerified: true,
-          isNRI: form.isNRI,
+          isNRI: form.isNRI, avatar_url: "",
         };
         localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
         setLoading(false);
@@ -2100,7 +2110,7 @@ const Dashboard = ({ user, onLogout }) => {
     setPosts([post, ...posts]);
     setNewPost("");
     setPostImage(null);
-    try { const r = await api.createPost(newPost, tags, imageUrl, groupId); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch (e) {}
+    try { const r = await api.createPost(cleanContent || newPost, tags, imageUrl, groupId); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch (e) { console.error("Post creation failed:", e.message); }
   };
 
   const deletePost = async (id) => {
