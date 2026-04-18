@@ -3422,7 +3422,7 @@ const Dashboard = ({ user, onLogout }) => {
                     <span style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>{d.readTime}</span>
                   </div>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", marginBottom: 6, lineHeight: 1.3, fontFamily: font }}>{d.title}</h3>
-                  <p style={{ fontSize: 13, color: "#9B9A97", lineHeight: 1.5, marginBottom: 16, flex: 1, fontFamily: font }}>{d.excerpt}</p>
+                  <p style={{ fontSize: 13, color: "#9B9A97", lineHeight: 1.5, marginBottom: 16, flex: 1, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{d.excerpt}</p>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 14, borderTop: "1px solid #F0EFED" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <Avatar name={d.author} size={24} />
