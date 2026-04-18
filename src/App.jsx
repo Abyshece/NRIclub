@@ -1436,7 +1436,7 @@ const LoginPage = ({ onComplete, onSignUp }) => {
 // ============================================================================
 // POST CARD
 // ============================================================================
-const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
+const PostCard = ({ post, user, onDelete, onLike, onReport, isReported }) => {
   const [liked, setLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(post.likes || 0);
   const [showComments, setShowComments] = useState(false);
@@ -1496,7 +1496,8 @@ const PostCard = ({ post, user, onDelete, onLike, onReport }) => {
   };
 
   return (
-    <div data-post-id={post.id} style={cardStyle}>
+    <div data-post-id={post.id} style={{ ...cardStyle, position: "relative", opacity: isReported ? 0.4 : 1 }}>
+      {isReported && <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.6)", borderRadius: 14, zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}><span style={{ background: "#FEF2F2", color: "#DC2626", padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>Reported — Under Review</span></div>}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 12 }}>
           <Avatar name={author.name || "User"} size={40} url={author.avatar_url} />
@@ -1767,6 +1768,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [docComment, setDocComment] = useState("");
   const [docLiked, setDocLiked] = useState(false);
   const [reportConfirm, setReportConfirm] = useState(null); // { type, id, name }
+  const [reportedIds, setReportedIds] = useState(new Set());
   const [selectedMarketItem, setSelectedMarketItem] = useState(null);
   const [expandedMarketItem, setExpandedMarketItem] = useState(null);
   const [marketPhotoIdx, setMarketPhotoIdx] = useState(0);
@@ -2329,7 +2331,7 @@ const Dashboard = ({ user, onLogout }) => {
               if (feedPostType === "posts" && p.externalUrl) return false;
               return true;
             }).sort((a, b) => feedSort === "viral" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0)).map((p) => (
-              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />
+              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} />
             ))}
           </div>
         );
@@ -2756,7 +2758,7 @@ const Dashboard = ({ user, onLogout }) => {
                   </div>
 
                   {groupPosts.length > 0 ? (
-                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />)
+                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} />)
                   ) : (
                     <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                       No posts in this community yet. Be the first to say hello!
@@ -3765,7 +3767,7 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
             {profileTab === "posts" ? (
               posts.filter((p) => p.userId === user.id).length > 0 ? (
-                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} />)
+                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} />)
               ) : (
                 <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                   You haven't posted anything yet.
@@ -4985,8 +4987,9 @@ const Dashboard = ({ user, onLogout }) => {
                   if (reportConfirm.type === "user") await api.reportUser(reportConfirm.id, reason);
                   else await api.reportPost(reportConfirm.id, reason);
                 } catch(e) {}
+                setReportedIds(prev => { const s = new Set(prev); s.add(reportConfirm.id); return s; });
                 setReportConfirm(null);
-                alert("Reported successfully. Thank you for keeping the community safe.");
+                alert("Reported successfully. Our team will review this content.");
               }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Report</button>
             </div>
           </div>
@@ -5787,7 +5790,7 @@ const AdminDashboard = ({ onLogout }) => {
         const [u, g, r] = await Promise.all([
           fetch(`${URL}/rest/v1/profiles?select=*&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
           fetch(`${URL}/rest/v1/groups?select=*&order=members_count.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/reports?select=*&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
+          fetch(`${URL}/rest/v1/reports?select=*,reporter:reporter_id(id,name,email,avatar_url),reported_user:reported_user_id(id,name,email,avatar_url)&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
         ]);
         setUsers(u || []); setGroups(g || []); setReports(r || []);
         setStats({ users: (u || []).length, posts: 0, groups: (g || []).filter(x => x.is_approved).length, events: 0, pending: (u || []).filter(x => !x.linkedin_verified).length });
@@ -5808,10 +5811,19 @@ const AdminDashboard = ({ onLogout }) => {
 
   const approveGroup = async (id) => {
     try { await fetch(`${URL}/rest/v1/groups?id=eq.${id}`, { method: "PATCH", headers: hdrs, body: JSON.stringify({ is_approved: true }) }); } catch(e) {}
+    // Send notification to the group creator
+    const group = groups.find(g => g.id === id);
+    if (group?.created_by) {
+      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: hdrs, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community "${group.name}" has been approved!`, read: false }) }); } catch(e) {}
+    }
     setGroups(prev => prev.map(g => g.id === id ? { ...g, is_approved: true } : g));
   };
 
   const rejectGroup = async (id) => {
+    const group = groups.find(g => g.id === id);
+    if (group?.created_by) {
+      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: hdrs, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community request "${group.name}" was not approved.`, read: false }) }); } catch(e) {}
+    }
     try { await fetch(`${URL}/rest/v1/groups?id=eq.${id}`, { method: "DELETE", headers: hdrs }); } catch(e) {}
     setGroups(prev => prev.filter(g => g.id !== id));
   };
@@ -6086,14 +6098,17 @@ const AdminDashboard = ({ onLogout }) => {
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: "#E65100", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Pending ({groups.filter(g => !g.is_approved).length})</h3>
                 <div style={{ display: "grid", gap: 8 }}>
                   {groups.filter(g => !g.is_approved).map(g => (
-                    <div key={g.id} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{g.name}</div>
-                        <div style={{ fontSize: 11, color: "#9B9A97" }}>{g.description} · {g.category}</div>
-                      </div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => approveGroup(g.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#22A06B", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Approve</button>
-                        <button onClick={() => setGroups(prev => prev.filter(x => x.id !== g.id))} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Reject</button>
+                    <div key={g.id} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "14px 18px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{g.name}</div>
+                          <div style={{ fontSize: 11, color: "#9B9A97" }}>{g.description} · {g.category}</div>
+                          {g.created_by && <div style={{ fontSize: 10, color: "#9B9A97", marginTop: 4 }}>Created by: {g.created_by.substring(0, 8)}...</div>}
+                        </div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button onClick={() => approveGroup(g.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#22A06B", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Approve</button>
+                          <button onClick={() => rejectGroup(g.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Reject</button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -6140,23 +6155,46 @@ const AdminDashboard = ({ onLogout }) => {
                   </h3>
                   <div style={{ display: "grid", gap: 8 }}>
                     {grouped[cat].map((r, i) => (
-                      <div key={r.id || i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 500, color: "#37352F", marginBottom: 4 }}>{(r.reason || "No reason").replace(/^\[\w+\]\s*/, "")}</div>
-                          <div style={{ fontSize: 11, color: "#9B9A97" }}>
-                            {new Date(r.created_at).toLocaleString()}
-                            {r.reported_user_id ? ` · User: ${r.reported_user_id.substring(0, 8)}...` : ""}
+                      <div key={r.id || i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 18px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", marginBottom: 6 }}>{(r.reason || "No reason").replace(/^\[\w+\]\s*/, "")}</div>
+                            <div style={{ display: "flex", gap: 16, fontSize: 11, color: "#9B9A97", flexWrap: "wrap" }}>
+                              <span>Reported: {new Date(r.created_at).toLocaleString()}</span>
+                            </div>
+                            <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+                              {r.reporter && (
+                                <div style={{ padding: "8px 12px", background: "#FAFAF8", borderRadius: 6, border: "1px solid #F0EFED", fontSize: 11 }}>
+                                  <span style={{ color: "#9B9A97", fontWeight: 700 }}>REPORTED BY</span>
+                                  <div style={{ color: "#37352F", fontWeight: 600, marginTop: 2 }}>{r.reporter.name}</div>
+                                  <div style={{ color: "#9B9A97" }}>{r.reporter.email}</div>
+                                </div>
+                              )}
+                              {r.reported_user && (
+                                <div style={{ padding: "8px 12px", background: "#FEF2F2", borderRadius: 6, border: "1px solid #FECACA", fontSize: 11 }}>
+                                  <span style={{ color: "#DC2626", fontWeight: 700 }}>REPORTED USER</span>
+                                  <div style={{ color: "#37352F", fontWeight: 600, marginTop: 2 }}>{r.reported_user.name}</div>
+                                  <div style={{ color: "#9B9A97" }}>{r.reported_user.email}</div>
+                                </div>
+                              )}
+                              {r.reported_post_id && (
+                                <div style={{ padding: "8px 12px", background: "#FAFAF8", borderRadius: 6, border: "1px solid #F0EFED", fontSize: 11 }}>
+                                  <span style={{ color: "#9B9A97", fontWeight: 700 }}>CONTENT ID</span>
+                                  <div style={{ color: "#37352F", fontWeight: 500, marginTop: 2, fontFamily: "monospace", fontSize: 10 }}>{r.reported_post_id}</div>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
-                          {r.status === "pending" ? (
-                            <>
-                              <button onClick={() => deleteReportContent(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "none", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Remove Content</button>
-                              <button onClick={() => dismissReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "1px solid #EDEDEB", background: "#fff", color: "#5F5E5B", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
-                            </>
-                          ) : (
-                            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: r.status === "resolved" ? "#FEF2F2" : "#E3FCEF", color: r.status === "resolved" ? "#DC2626" : "#22A06B", fontWeight: 600 }}>{r.status === "resolved" ? "Removed" : "Dismissed"}</span>
-                          )}
+                          <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center", marginLeft: 12 }}>
+                            {r.status === "pending" ? (
+                              <>
+                                <button onClick={() => deleteReportContent(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "none", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Remove Content</button>
+                                <button onClick={() => dismissReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "1px solid #EDEDEB", background: "#fff", color: "#5F5E5B", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
+                              </>
+                            ) : (
+                              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: r.status === "resolved" ? "#FEF2F2" : "#E3FCEF", color: r.status === "resolved" ? "#DC2626" : "#22A06B", fontWeight: 600 }}>{r.status === "resolved" ? "Removed" : "Dismissed"}</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}

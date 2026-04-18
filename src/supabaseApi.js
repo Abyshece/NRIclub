@@ -577,6 +577,7 @@ export async function reportUser(userId, reason) {
     reporter_id: currentUser.id,
     reported_user_id: userId,
     reason,
+    status: "pending",
   });
 }
 
@@ -586,11 +587,16 @@ export async function reportPost(postId, reason) {
     reporter_id: currentUser.id,
     reported_post_id: postId,
     reason,
+    status: "pending",
   });
 }
 
 export async function blockUser(userId) {
   if (!currentUser) throw new Error("Not logged in");
+  // Remove all connections between the two users
+  try { await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${currentUser.id}&recipient_id=eq.${userId}`); } catch(e) {}
+  try { await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${userId}&recipient_id=eq.${currentUser.id}`); } catch(e) {}
+  // Block the user
   return restCall("POST", "/rest/v1/blocks", {
     blocker_id: currentUser.id,
     blocked_id: userId,
