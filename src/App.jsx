@@ -2358,6 +2358,7 @@ const Dashboard = ({ user, onLogout }) => {
                 setNetworkUsers(dbUsers.map(u => ({
                   id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
                   hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
+                  avatar_url: u.avatar_url || "",
                   followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
                 })));
               }
@@ -2475,7 +2476,7 @@ const Dashboard = ({ user, onLogout }) => {
                     onMouseOut={(e) => (e.currentTarget.style.boxShadow = "none")}
                     >
                       {/* Avatar */}
-                      <Avatar name={u.name} size={76} />
+                      <Avatar name={u.name} size={76} url={u.avatar_url} />
 
                       {/* Name + verified badge + NRI badge */}
                       <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 14, marginBottom: 2, flexWrap: "wrap", justifyContent: "center" }}>
@@ -2733,7 +2734,7 @@ const Dashboard = ({ user, onLogout }) => {
                   {/* Community post box */}
                   <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "16px 20px", marginBottom: 20 }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <Avatar name={user.name} size={36} />
+                      <Avatar name={user.name} size={36} url={user.avatar_url} />
                       <input
                         value={newPost} onChange={(e) => setNewPost(e.target.value)}
                         placeholder={`Share something with ${selectedGroup.name}...`}
@@ -2775,6 +2776,7 @@ const Dashboard = ({ user, onLogout }) => {
                           setGroupMembers(members.map(m => ({
                             id: m.profiles?.id || m.user_id, name: m.profiles?.name || "User",
                             profession: m.profiles?.profession || "", location: m.profiles?.location || "",
+                            avatar_url: m.profiles?.avatar_url || "",
                             yearsAbroad: "", linkedinUrl: "",
                           })));
                         }
@@ -2795,7 +2797,7 @@ const Dashboard = ({ user, onLogout }) => {
                   const outsideCityNames = Object.keys(outsideByCities).sort();
                   const MemberCard = ({ u, isLocal }) => (
                     <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-                      <Avatar name={u.name} size={44} />
+                      <Avatar name={u.name} size={44} url={u.avatar_url} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name}</h4>
@@ -3279,7 +3281,7 @@ const Dashboard = ({ user, onLogout }) => {
                     ))}
                     {/* Write new response */}
                     <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-                      <Avatar name={user.name} size={28} />
+                      <Avatar name={user.name} size={28} url={user.avatar_url} />
                       <div style={{ flex: 1 }}>
                         <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder="Write a response to help..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 60, resize: "none", boxSizing: "border-box" }} />
                         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
@@ -3540,6 +3542,7 @@ const Dashboard = ({ user, onLogout }) => {
                   id: c.id,
                   name: c.otherUser?.name || "User",
                   otherUserId: c.otherUser?.id,
+                  avatar_url: c.otherUser?.avatar_url || "",
                   lastMsg: c.last_message_text || "",
                   time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
                   unread: false,
@@ -3613,7 +3616,7 @@ const Dashboard = ({ user, onLogout }) => {
                 {(() => {
                   const filteredConvos = convos.filter(c => {
                     if (blockedIds.has(c.otherUserId)) return false;
-                    const isMarket = (c.lastMsg || "").startsWith("[MARKETPLACE:");
+                    const isMarket = (c.lastMsg || "").includes("[MARKETPLACE:") || (c.isMarketplace === true);
                     return chatTab === "marketplace" ? isMarket : !isMarket;
                   });
                   return filteredConvos.length === 0 ? (
@@ -3622,7 +3625,7 @@ const Dashboard = ({ user, onLogout }) => {
                     <div key={c.id} onClick={() => { loadConvoMessages(c.id); setConvos(prev => prev.map(x => x.id === c.id ? { ...x, unread: false } : x)); }} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", cursor: "pointer", background: selectedConvo === c.id ? "#fff" : c.unread ? "#F5F8FF" : "transparent", borderLeft: selectedConvo === c.id ? "3px solid #37352F" : "3px solid transparent" }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                         <div style={{ position: "relative" }}>
-                          <Avatar name={c.name} size={36} />
+                          <Avatar name={c.name} size={36} url={c.avatar_url} />
                           {c.unread ? <span style={{ position: "absolute", top: 0, right: 0, width: 8, height: 8, background: "#DC2626", borderRadius: "50%", border: "2px solid #fff" }}>{""}</span> : null}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -3645,7 +3648,7 @@ const Dashboard = ({ user, onLogout }) => {
                   <div style={{ padding: "12px 18px", borderBottom: "1px solid #E8E7E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ position: "relative" }}>
-                        <Avatar name={activeConvo.name} size={32} />
+                        <Avatar name={activeConvo.name} size={32} url={activeConvo.avatar_url} />
                         <span style={{ position: "absolute", bottom: 0, right: 0, width: 8, height: 8, background: "#22C55E", borderRadius: "50%", border: "2px solid #fff" }} />
                       </div>
                       <div>
@@ -4260,7 +4263,7 @@ const Dashboard = ({ user, onLogout }) => {
                 {networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).length > 0 ? (
                   networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).slice(0, 4).map(u => (
                     <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
-                      <Avatar name={u.name} size={32} />
+                      <Avatar name={u.name} size={32} url={u.avatar_url} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</div>
                         <div style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{u.profession}</div>
@@ -4468,7 +4471,7 @@ const Dashboard = ({ user, onLogout }) => {
                   </div>
                 ))}
                 <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                  <Avatar name={user.name} size={28} />
+                  <Avatar name={user.name} size={28} url={user.avatar_url} />
                   <div style={{ flex: 1 }}>
                     <textarea value={eventComment} onChange={(ev) => setEventComment(ev.target.value)} placeholder="Write a comment..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 50, resize: "none", boxSizing: "border-box" }} />
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
@@ -4567,12 +4570,17 @@ const Dashboard = ({ user, onLogout }) => {
                       try {
                         const dbConvos = await api.getConversations();
                         if (dbConvos) {
-                          setConvos(dbConvos.map(c => ({
-                            id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
-                            lastMsg: c.last_message_text || "", 
-                            time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
-                            unread: false,
-                          })));
+                          setConvos(prev => {
+                            const oldMarketIds = new Set(prev.filter(c => c.isMarketplace).map(c => c.id));
+                            return dbConvos.map(c => ({
+                              id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
+                              avatar_url: c.otherUser?.avatar_url || "",
+                              lastMsg: c.last_message_text || "", 
+                              time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
+                              unread: false,
+                              isMarketplace: oldMarketIds.has(c.id) || (c.last_message_text || "").includes("[MARKETPLACE:"),
+                            }));
+                          });
                         }
                       } catch(re) {}
                       setChatTab("marketplace");
@@ -4879,7 +4887,7 @@ const Dashboard = ({ user, onLogout }) => {
               ) : (
                 (followModal === "followers" ? myFollowers : myFollowing).map((u, i) => (
                   <div key={u.id || i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED" }}>
-                    <Avatar name={u.name || "User"} size={40} />
+                    <Avatar name={u.name || "User"} size={40} url={u.avatar_url} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name || "User"}</div>
                       <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{u.profession || ""}</div>
