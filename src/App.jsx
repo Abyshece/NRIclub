@@ -5065,12 +5065,19 @@ const Dashboard = ({ user, onLogout }) => {
               <button onClick={async () => {
                 const reason = `[${reportConfirm.type.toUpperCase()}] ${reportConfirm.name ? reportConfirm.name + " — " : ""}Reported as inappropriate`;
                 try {
-                  if (reportConfirm.type === "user") await api.reportUser(reportConfirm.id, reason);
-                  else await api.reportPost(reportConfirm.id, reason);
-                } catch(e) {}
-                setReportedIds(prev => { const s = new Set(prev); s.add(reportConfirm.id); return s; });
-                setReportConfirm(null);
-                alert("Reported successfully. Our team will review this content.");
+                  if (reportConfirm.type === "user") {
+                    await api.reportUser(reportConfirm.id, reason);
+                  } else {
+                    await api.reportPost(reportConfirm.id, reason);
+                  }
+                  setReportedIds(prev => { const s = new Set(prev); s.add(reportConfirm.id); return s; });
+                  setReportConfirm(null);
+                  alert("Reported successfully. Our team will review this content.");
+                } catch(e) {
+                  console.error("Report failed:", e);
+                  alert("Report failed: " + (e.message || "Please try again."));
+                  setReportConfirm(null);
+                }
               }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Report</button>
             </div>
           </div>
@@ -5890,10 +5897,12 @@ const AdminDashboard = ({ onLogout }) => {
           fetch(`${URL}/rest/v1/groups?select=*&order=members_count.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
           fetch(`${URL}/rest/v1/reports?select=*&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
         ]);
-        const allUsers = u || [];
-        setUsers(allUsers); setGroups(g || []);
+        console.log("Admin data loaded:", { users: Array.isArray(u) ? u.length : u, groups: Array.isArray(g) ? g.length : g, reports: Array.isArray(r) ? r.length : r });
+        const allUsers = Array.isArray(u) ? u : [];
+        setUsers(allUsers); setGroups(Array.isArray(g) ? g : []);
         // Enrich reports with reporter and reported user names
-        const enrichedReports = (r || []).map(rep => {
+        const reportsArr = Array.isArray(r) ? r : [];
+        const enrichedReports = reportsArr.map(rep => {
           const reporter = allUsers.find(x => x.id === rep.reporter_id);
           const reported = allUsers.find(x => x.id === rep.reported_user_id);
           return { ...rep, reporter: reporter ? { name: reporter.name, email: reporter.email } : null, reported_user: reported ? { name: reported.name, email: reported.email } : null };
