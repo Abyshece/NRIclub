@@ -3706,7 +3706,34 @@ const Dashboard = ({ user, onLogout }) => {
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
             <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: 32, textAlign: "center" }}>
-              <Avatar name={user.name} size={80} url={user.avatar_url || user.avatarUrl} />
+              <div style={{ position: "relative", display: "inline-block", marginBottom: 0 }}>
+                <Avatar name={user.name} size={80} url={user.avatar_url || user.avatarUrl} />
+                <input type="file" accept="image/*" id="profile-avatar-upload" style={{ display: "none" }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 5 * 1024 * 1024) { alert("Photo must be under 5MB"); return; }
+                    try {
+                      const url = await api.uploadAvatar(file);
+                      await api.updateProfile({ avatar_url: url });
+                      const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
+                      localStorage.setItem("indin_profile_cache", JSON.stringify(updatedUser));
+                      window.location.reload();
+                    } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
+                  }}
+                />
+                <label htmlFor="profile-avatar-upload" style={{
+                  position: "absolute", bottom: -2, right: -2,
+                  width: 28, height: 28, borderRadius: "50%", background: "#fff",
+                  border: "1px solid #E0E0DE", display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                    <circle cx="12" cy="13" r="4"/>
+                  </svg>
+                </label>
+              </div>
               <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginTop: 16, fontFamily: font }}>{user.name}</h2>
               {true && (
                 <span style={{ display: "inline-block", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 4, letterSpacing: "0.05em", marginTop: 6,
