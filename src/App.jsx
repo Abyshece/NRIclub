@@ -1436,8 +1436,8 @@ const LoginPage = ({ onComplete, onSignUp }) => {
 // ============================================================================
 // POST CARD
 // ============================================================================
-const PostCard = ({ post, user, onDelete, onLike, onReport, isReported }) => {
-  const [liked, setLiked] = useState(false);
+const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked }) => {
+  const [liked, setLiked] = useState(initialLiked || false);
   const [likeCount, setLikeCount] = useState(post.likes || 0);
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState(post.comments || []);
@@ -1679,6 +1679,7 @@ const BlockedUsersModal = ({ onClose, font }) => {
 const Dashboard = ({ user, onLogout }) => {
   const [view, setView] = useState("home");
   const [posts, setPosts] = useState([]);
+  const [likedPostIds, setLikedPostIds] = useState(new Set());
   const [events, setEvents] = useState([]);
   const [groups, setGroups] = useState([]);
   const [connections, setConnections] = useState([]);
@@ -1688,6 +1689,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [profilePreview, setProfilePreview] = useState(null);
   const [acceptedConnections, setAcceptedConnections] = useState(new Set());
   const [newPost, setNewPost] = useState("");
+  const [createPostDropdown, setCreatePostDropdown] = useState(false);
+  const [createPostModal, setCreatePostModal] = useState(null); // "text" | "photo" | "link"
   const [postImage, setPostImage] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [rsvps, setRsvps] = useState(new Set());
@@ -1886,6 +1889,11 @@ const Dashboard = ({ user, onLogout }) => {
             };
           }));
         } else { setPosts([]); }
+        // Load which posts this user has liked
+        try {
+          const myLikes = await api.getUserLikes();
+          if (myLikes && myLikes.length) setLikedPostIds(new Set(myLikes.map(l => l.post_id)));
+        } catch(e) {}
         const dbEvents = await api.getEvents();
         if (dbEvents && dbEvents.length) {
           setEvents(dbEvents.map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
@@ -2207,67 +2215,46 @@ const Dashboard = ({ user, onLogout }) => {
       case "home":
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
-            {/* Header with Filters button */}
+            {/* Header with Filters + Add Post button */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
               <div>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 2, fontFamily: font }}>Home Feed</h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Updates from the global community</p>
               </div>
-              <button onClick={() => setFilterModalOpen(true)} style={{
-                display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
-                borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff",
-                fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
-              }}>
-                {Icons.filter({ size: 14 })} Filters
-              </button>
-            </div>
-
-            {/* Create Post Box - matching screenshot layout */}
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "18px 20px", marginBottom: 16 }}>
-              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <Avatar name={user.name} size={40} url={user.avatar_url || user.avatarUrl} />
-                <input
-                  value={newPost} onChange={(e) => setNewPost(e.target.value)}
-                  placeholder={`What's on your mind, ${user.name.split(" ")[0]}?`}
-                  style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, outline: "none", fontFamily: font, color: "#37352F" }}
-                  onKeyDown={(e) => e.key === "Enter" && createPost()}
-                />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, paddingTop: 14, borderTop: "1px solid #F0EFED", flexWrap: "wrap", gap: 8 }}>
-                <input type="file" accept="image/*" id="post-photo-upload" style={{ display: "none" }}
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    try {
-                      const preview = URL.createObjectURL(file);
-                      const url = await api.uploadPostImage(file);
-                      setPostImage({ url, preview });
-                    } catch (err) { alert("Upload failed: " + err.message); }
-                  }}
-                />
-                <label htmlFor="post-photo-upload" style={{
-                  display: "flex", alignItems: "center", gap: 6, background: "none", border: "none",
-                  cursor: "pointer", color: postImage ? "#22A06B" : "#9B9A97", fontSize: 13, fontWeight: 500, fontFamily: font,
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ position: "relative" }}>
+                  <button onClick={() => setCreatePostDropdown(!createPostDropdown)} style={{
+                    display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
+                    borderRadius: 6, border: "none", background: "#37352F",
+                    fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font,
+                  }}>
+                    {Icons.plus({ size: 14 })} Add Post
+                  </button>
+                  {createPostDropdown && (
+                    <>
+                      <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setCreatePostDropdown(false)} />
+                      <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 6, width: 180, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "4px 0" }}>
+                        {[
+                          { key: "text", icon: Icons.file, label: "Write a Post" },
+                          { key: "photo", icon: Icons.image, label: "Share a Photo" },
+                          { key: "link", icon: Icons.link, label: "Share a Link" },
+                        ].map(item => (
+                          <button key={item.key} onClick={() => { setCreatePostModal(item.key); setCreatePostDropdown(false); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
+                            onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
+                            onMouseOut={(e) => e.currentTarget.style.background = "none"}>
+                            {item.icon({ size: 15, stroke: "#9B9A97" })} {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+                <button onClick={() => setFilterModalOpen(true)} style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
+                  borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff",
+                  fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
                 }}>
-                  {Icons.image({ size: 16 })} {postImage ? "Photo added" : "Add Photo"}
-                </label>
-                <button onClick={() => setLinkModal(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500, fontFamily: font }}>
-                  {Icons.link({ size: 16 })} Share Link
-                </button>
-                {postImage && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <img src={postImage.preview} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: "cover" }} />
-                    <button onClick={() => setPostImage(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", fontSize: 11 }}>Remove</button>
-                  </div>
-                )}
-                <button onClick={createPost} disabled={!newPost.trim() && !postImage} style={{
-                  padding: "8px 24px", borderRadius: 8, border: "1px solid #E0E0DE",
-                  fontSize: 14, fontWeight: 500, fontFamily: font, cursor: (newPost.trim() || postImage) ? "pointer" : "default",
-                  background: (newPost.trim() || postImage) ? "#37352F" : "#fff",
-                  color: (newPost.trim() || postImage) ? "#fff" : "#9B9A97",
-                  transition: "all 0.15s",
-                }}>
-                  Post
+                  {Icons.filter({ size: 14 })} Filters
                 </button>
               </div>
             </div>
@@ -2331,7 +2318,7 @@ const Dashboard = ({ user, onLogout }) => {
               if (feedPostType === "posts" && p.externalUrl) return false;
               return true;
             }).sort((a, b) => feedSort === "viral" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0)).map((p) => (
-              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} />
+              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />
             ))}
           </div>
         );
@@ -2758,7 +2745,7 @@ const Dashboard = ({ user, onLogout }) => {
                   </div>
 
                   {groupPosts.length > 0 ? (
-                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} />)
+                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />)
                   ) : (
                     <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                       No posts in this community yet. Be the first to say hello!
@@ -3307,7 +3294,7 @@ const Dashboard = ({ user, onLogout }) => {
       case "docs":
         if (selectedDoc) {
           return (
-            <div style={{ maxWidth: 700, margin: "0 auto", background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden" }}>
+            <div className="doc-article" style={{ maxWidth: 700, margin: "0 auto", background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden" }}>
               {/* Header bar */}
               <div style={{ padding: "14px 20px", borderBottom: "1px solid #F0EFED", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 56, background: "#fff", zIndex: 5 }}>
                 <button onClick={() => setSelectedDoc(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.chevronLeft({ size: 18 })}</button>
@@ -3318,12 +3305,12 @@ const Dashboard = ({ user, onLogout }) => {
                 <button style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.dots({ size: 18 })}</button>
               </div>
               {/* Article content */}
-              <div style={{ padding: "32px 28px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+              <div className="doc-body" style={{ padding: "32px 28px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 4, background: "#F0EFED", color: "#5F5E5B", fontFamily: font }}>{selectedDoc.category}</span>
                   <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>· {selectedDoc.readTime} · {selectedDoc.timestamp}</span>
                 </div>
-                <h1 style={{ fontSize: 28, fontWeight: 700, color: "#37352F", lineHeight: 1.25, marginBottom: 24, fontFamily: font }}>{selectedDoc.title}</h1>
+                <h1 className="doc-title" style={{ fontSize: 28, fontWeight: 700, color: "#37352F", lineHeight: 1.25, marginBottom: 24, fontFamily: font }}>{selectedDoc.title}</h1>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 32, paddingBottom: 32, borderBottom: "1px solid #F0EFED" }}>
                   <Avatar name={selectedDoc.author} size={44} />
                   <div>
@@ -3767,7 +3754,7 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
             {profileTab === "posts" ? (
               posts.filter((p) => p.userId === user.id).length > 0 ? (
-                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} />)
+                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />)
               ) : (
                 <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                   You haven't posted anything yet.
@@ -4054,6 +4041,81 @@ const Dashboard = ({ user, onLogout }) => {
           <p style={{ fontSize: 12, color: "#1E40AF", margin: 0, fontFamily: font, lineHeight: 1.5 }}>
             Your profile is pending review by our team. Once approved, this banner will disappear. Please ensure your LinkedIn profile is up-to-date and your signup details are accurate.
           </p>
+        </div>
+      )}
+
+      {/* Create Post Modal */}
+      {createPostModal && (
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); }}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 500, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>
+                {createPostModal === "text" ? "Write a Post" : createPostModal === "photo" ? "Share a Photo" : "Share a Link"}
+              </h3>
+              <button onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              {/* User info */}
+              <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16 }}>
+                <Avatar name={user.name} size={40} url={user.avatar_url} />
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{user.name}</div>
+                  <div style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>{user.location}</div>
+                </div>
+              </div>
+
+              {/* Text area - always shown */}
+              <textarea
+                value={newPost} onChange={(e) => setNewPost(e.target.value)}
+                placeholder={createPostModal === "link" ? "Paste a link and add your thoughts..." : createPostModal === "photo" ? "Add a caption for your photo..." : `What's on your mind, ${user.name.split(" ")[0]}?`}
+                style={{ width: "100%", padding: "14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F", fontFamily: font, boxSizing: "border-box", minHeight: createPostModal === "text" ? 140 : 80, resize: "vertical" }}
+                autoFocus
+              />
+
+              {/* Photo upload - for photo mode */}
+              {createPostModal === "photo" && (
+                <div style={{ marginTop: 14 }}>
+                  <input type="file" accept="image/*" id="modal-photo-upload" style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const preview = URL.createObjectURL(file);
+                        const url = await api.uploadPostImage(file);
+                        setPostImage({ url, preview });
+                      } catch (err) { alert("Upload failed: " + err.message); }
+                    }}
+                  />
+                  {postImage ? (
+                    <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
+                      <img src={postImage.preview} alt="" style={{ width: "100%", maxHeight: 300, objectFit: "cover", borderRadius: 10 }} />
+                      <button onClick={() => setPostImage(null)} style={{ position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 14 })}</button>
+                    </div>
+                  ) : (
+                    <label htmlFor="modal-photo-upload" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "32px 20px", borderRadius: 10, border: "2px dashed #E0E0DE", background: "#FAFAF8", cursor: "pointer" }}>
+                      {Icons.image({ size: 28, stroke: "#9B9A97" })}
+                      <span style={{ fontSize: 13, color: "#9B9A97", fontWeight: 500, fontFamily: font }}>Click to upload a photo</span>
+                      <span style={{ fontSize: 11, color: "#D4D4D2", fontFamily: font }}>JPG, PNG up to 5MB</span>
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {/* Link hint for link mode */}
+              {createPostModal === "link" && (
+                <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 6, fontFamily: font }}>Paste any URL — YouTube, Instagram, TikTok, articles, etc. A preview will be shown automatically.</p>
+              )}
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 12, background: "#FAFAF8", borderRadius: "0 0 16px 16px" }}>
+              <button onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button onClick={() => { createPost(); setCreatePostModal(null); }} disabled={!newPost.trim() && !postImage} style={{
+                padding: "10px 24px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600,
+                background: (newPost.trim() || postImage) ? "#37352F" : "#E8E7E4",
+                color: (newPost.trim() || postImage) ? "#fff" : "#9B9A97",
+                cursor: (newPost.trim() || postImage) ? "pointer" : "default", fontFamily: font,
+              }}>Publish</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -5549,6 +5611,12 @@ const Dashboard = ({ user, onLogout }) => {
           /* Admin dashboard */
           .admin-stats { grid-template-columns: 1fr 1fr !important; }
           .admin-user-card .user-fields { grid-template-columns: 1fr 1fr !important; }
+
+          /* Doc article mobile */
+          .doc-article { border-radius: 0 !important; border-left: none !important; border-right: none !important; }
+          .doc-body { padding: 20px 16px !important; }
+          .doc-title { font-size: 20px !important; line-height: 1.35 !important; }
+          .doc-body textarea { min-height: 50px !important; }
         }
 
         @media (max-width: 400px) {
