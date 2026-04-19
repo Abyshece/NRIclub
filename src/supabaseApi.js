@@ -591,6 +591,11 @@ export async function reportPost(postId, reason) {
   });
 }
 
+export async function getMyReports() {
+  if (!currentUser) return [];
+  return restCall("GET", `/rest/v1/reports?reporter_id=eq.${currentUser.id}&select=reported_post_id`);
+}
+
 export async function blockUser(userId) {
   if (!currentUser) throw new Error("Not logged in");
   // Remove all connections between the two users

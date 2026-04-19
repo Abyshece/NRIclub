@@ -1894,6 +1894,11 @@ const Dashboard = ({ user, onLogout }) => {
           const myLikes = await api.getUserLikes();
           if (myLikes && myLikes.length) setLikedPostIds(new Set(myLikes.map(l => l.post_id)));
         } catch(e) {}
+        // Load IDs the user has reported
+        try {
+          const myReports = await api.getMyReports();
+          if (myReports && myReports.length) setReportedIds(new Set(myReports.filter(r => r.reported_post_id).map(r => r.reported_post_id)));
+        } catch(e) {}
         const dbEvents = await api.getEvents();
         if (dbEvents && dbEvents.length) {
           setEvents(dbEvents.map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
@@ -5987,31 +5992,25 @@ const AdminDashboard = ({ onLogout }) => {
   };
 
   const dismissReport = async (id) => {
-    const ok = await updateReportStatus(id, "dismissed");
-    if (ok) {
-      setReports(prev => prev.map(r => r.id === id ? { ...r, status: "dismissed" } : r));
-    } else {
-      alert("Failed to dismiss report. Check console for details.");
-    }
+    // Delete the report from DB (dismiss = remove from queue)
+    try {
+      await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
+    } catch(e) {}
+    setReports(prev => prev.filter(r => r.id !== id));
   };
 
   const deleteReportContent = async (id) => {
     const report = reports.find(r => r.id === id);
+    // Delete the actual content
     if (report?.reported_post_id) {
       const contentId = report.reported_post_id;
       const reason = (report.reason || "").toUpperCase();
-      try {
-        const table = reason.startsWith("[MARKETPLACE]") ? "marketplace" : reason.startsWith("[DOC]") ? "docs" : reason.startsWith("[EVENT]") ? "events" : reason.startsWith("[HELP]") ? "help_requests" : "posts";
-        const res = await fetch(`${URL}/rest/v1/${table}?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
-        console.log(`Delete ${table} content:`, res.status);
-      } catch(e) { console.error("Failed to delete content:", e); }
+      const table = reason.startsWith("[MARKETPLACE]") ? "marketplace" : reason.startsWith("[DOC]") ? "docs" : reason.startsWith("[EVENT]") ? "events" : reason.startsWith("[HELP]") ? "help_requests" : "posts";
+      try { await fetch(`${URL}/rest/v1/${table}?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } }); } catch(e) {}
     }
-    const ok = await updateReportStatus(id, "resolved");
-    if (ok) {
-      setReports(prev => prev.map(r => r.id === id ? { ...r, status: "resolved" } : r));
-    } else {
-      alert("Failed to update report status. Check console for details.");
-    }
+    // Delete the report from DB
+    try { await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } }); } catch(e) {}
+    setReports(prev => prev.filter(r => r.id !== id));
   };
 
   const navItems = [
@@ -6398,17 +6397,10 @@ const AdminDashboard = ({ onLogout }) => {
               };
               return (
                 <>
-                  <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports — Pending ({pendingReports.length})</h1>
-                  {pendingReports.length === 0 ? (
-                    <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13, marginBottom: 32 }}>No pending reports. All clear!</div>
-                  ) : renderReportCards(pendingReports)}
-                  {handledReports.length > 0 && (
-                    <>
-                      <div style={{ borderTop: "1px solid #EDEDEB", margin: "24px 0 20px" }}>{""}</div>
-                      <h2 style={{ fontSize: 16, fontWeight: 600, color: "#9B9A97", marginBottom: 16 }}>Handled ({handledReports.length})</h2>
-                      {renderReportCards(handledReports)}
-                    </>
-                  )}
+                  <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports ({reports.length})</h1>
+                  {reports.length === 0 ? (
+                    <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No pending reports. All clear!</div>
+                  ) : renderReportCards(reports)}
                 </>
               );
             })()}
