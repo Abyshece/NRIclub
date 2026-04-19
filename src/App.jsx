@@ -5937,7 +5937,27 @@ const AdminDashboard = ({ onLogout }) => {
 
   const rpc = async (fn, params) => {
     const res = await fetch(`${URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify(params) });
+    console.log(`RPC ${fn}:`, res.status, res.ok);
     return res.ok;
+  };
+
+  const updateReportStatus = async (id, newStatus) => {
+    // Try RPC first
+    let ok = await rpc("admin_update_report", { target_id: id, new_status: newStatus });
+    if (!ok) {
+      // Fallback: direct PATCH
+      console.log("RPC failed, trying direct PATCH for report", id);
+      try {
+        const res = await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, {
+          method: "PATCH",
+          headers: { apikey: KEY, "Content-Type": "application/json", Prefer: "return=representation" },
+          body: JSON.stringify({ status: newStatus }),
+        });
+        console.log("Direct PATCH result:", res.status);
+        ok = res.ok;
+      } catch(e) { console.error("Direct PATCH failed:", e); }
+    }
+    return ok;
   };
 
   const approveUser = async (id) => {
@@ -5969,32 +5989,31 @@ const AdminDashboard = ({ onLogout }) => {
   };
 
   const dismissReport = async (id) => {
-    await rpc("admin_update_report", { target_id: id, new_status: "dismissed" });
-    setReports(prev => prev.map(r => r.id === id ? { ...r, status: "dismissed" } : r));
+    const ok = await updateReportStatus(id, "dismissed");
+    if (ok) {
+      setReports(prev => prev.map(r => r.id === id ? { ...r, status: "dismissed" } : r));
+    } else {
+      alert("Failed to dismiss report. Check console for details.");
+    }
   };
 
   const deleteReportContent = async (id) => {
     const report = reports.find(r => r.id === id);
-    // Actually delete the reported content from DB
     if (report?.reported_post_id) {
       const contentId = report.reported_post_id;
       const reason = (report.reason || "").toUpperCase();
       try {
-        if (reason.startsWith("[MARKETPLACE]")) {
-          await fetch(`${URL}/rest/v1/marketplace?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
-        } else if (reason.startsWith("[DOC]")) {
-          await fetch(`${URL}/rest/v1/docs?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
-        } else if (reason.startsWith("[EVENT]")) {
-          await fetch(`${URL}/rest/v1/events?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
-        } else if (reason.startsWith("[HELP]")) {
-          await fetch(`${URL}/rest/v1/help_requests?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
-        } else {
-          await fetch(`${URL}/rest/v1/posts?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
-        }
+        const table = reason.startsWith("[MARKETPLACE]") ? "marketplace" : reason.startsWith("[DOC]") ? "docs" : reason.startsWith("[EVENT]") ? "events" : reason.startsWith("[HELP]") ? "help_requests" : "posts";
+        const res = await fetch(`${URL}/rest/v1/${table}?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
+        console.log(`Delete ${table} content:`, res.status);
       } catch(e) { console.error("Failed to delete content:", e); }
     }
-    await rpc("admin_update_report", { target_id: id, new_status: "resolved" });
-    setReports(prev => prev.map(r => r.id === id ? { ...r, status: "resolved" } : r));
+    const ok = await updateReportStatus(id, "resolved");
+    if (ok) {
+      setReports(prev => prev.map(r => r.id === id ? { ...r, status: "resolved" } : r));
+    } else {
+      alert("Failed to update report status. Check console for details.");
+    }
   };
 
   const navItems = [
