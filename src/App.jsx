@@ -5942,22 +5942,20 @@ const AdminDashboard = ({ onLogout }) => {
   };
 
   const updateReportStatus = async (id, newStatus) => {
-    // Try RPC first
-    let ok = await rpc("admin_update_report", { target_id: id, new_status: newStatus });
-    if (!ok) {
-      // Fallback: direct PATCH
-      console.log("RPC failed, trying direct PATCH for report", id);
-      try {
-        const res = await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, {
-          method: "PATCH",
-          headers: { apikey: KEY, "Content-Type": "application/json", Prefer: "return=representation" },
-          body: JSON.stringify({ status: newStatus }),
-        });
-        console.log("Direct PATCH result:", res.status);
-        ok = res.ok;
-      } catch(e) { console.error("Direct PATCH failed:", e); }
-    }
-    return ok;
+    // Direct REST update
+    try {
+      const res = await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, {
+        method: "PATCH",
+        headers: { apikey: KEY, "Content-Type": "application/json", Authorization: `Bearer ${KEY}`, Prefer: "return=minimal" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        // Try RPC as fallback
+        const res2 = await fetch(`${URL}/rest/v1/rpc/admin_update_report`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ target_id: id, new_status: newStatus }) });
+        return res2.ok;
+      }
+      return true;
+    } catch(e) { return false; }
   };
 
   const approveUser = async (id) => {
