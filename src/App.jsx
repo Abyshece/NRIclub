@@ -5992,24 +5992,19 @@ const AdminDashboard = ({ onLogout }) => {
   };
 
   const dismissReport = async (id) => {
-    // Delete the report from DB (dismiss = remove from queue)
-    try {
-      await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
-    } catch(e) {}
+    await rpc("admin_delete_report", { target_id: id });
     setReports(prev => prev.filter(r => r.id !== id));
   };
 
   const deleteReportContent = async (id) => {
     const report = reports.find(r => r.id === id);
-    // Delete the actual content
     if (report?.reported_post_id) {
       const contentId = report.reported_post_id;
       const reason = (report.reason || "").toUpperCase();
       const table = reason.startsWith("[MARKETPLACE]") ? "marketplace" : reason.startsWith("[DOC]") ? "docs" : reason.startsWith("[EVENT]") ? "events" : reason.startsWith("[HELP]") ? "help_requests" : "posts";
-      try { await fetch(`${URL}/rest/v1/${table}?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } }); } catch(e) {}
+      await rpc("admin_delete_content", { table_name: table, content_id: contentId });
     }
-    // Delete the report from DB
-    try { await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } }); } catch(e) {}
+    await rpc("admin_delete_report", { target_id: id });
     setReports(prev => prev.filter(r => r.id !== id));
   };
 
