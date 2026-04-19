@@ -5974,6 +5974,25 @@ const AdminDashboard = ({ onLogout }) => {
   };
 
   const deleteReportContent = async (id) => {
+    const report = reports.find(r => r.id === id);
+    // Actually delete the reported content from DB
+    if (report?.reported_post_id) {
+      const contentId = report.reported_post_id;
+      const reason = (report.reason || "").toUpperCase();
+      try {
+        if (reason.startsWith("[MARKETPLACE]")) {
+          await fetch(`${URL}/rest/v1/marketplace?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
+        } else if (reason.startsWith("[DOC]")) {
+          await fetch(`${URL}/rest/v1/docs?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
+        } else if (reason.startsWith("[EVENT]")) {
+          await fetch(`${URL}/rest/v1/events?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
+        } else if (reason.startsWith("[HELP]")) {
+          await fetch(`${URL}/rest/v1/help_requests?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
+        } else {
+          await fetch(`${URL}/rest/v1/posts?id=eq.${contentId}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } });
+        }
+      } catch(e) { console.error("Failed to delete content:", e); }
+    }
     await rpc("admin_update_report", { target_id: id, new_status: "resolved" });
     setReports(prev => prev.map(r => r.id === id ? { ...r, status: "resolved" } : r));
   };
@@ -6268,11 +6287,9 @@ const AdminDashboard = ({ onLogout }) => {
 
         ) : tab === "reports" ? (
           <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports ({reports.length})</h1>
-            {reports.length === 0 ? (
-              <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No reports.</div>
-            ) : (() => {
-              // Categorize reports by type extracted from reason
+            {(() => {
+              const pendingReports = reports.filter(r => r.status === "pending" || !r.status);
+              const handledReports = reports.filter(r => r.status === "resolved" || r.status === "dismissed");
               const getCategory = (r) => {
                 const reason = (r.reason || "").toUpperCase();
                 if (reason.startsWith("[MARKETPLACE]")) return "Marketplace";
@@ -6285,9 +6302,10 @@ const AdminDashboard = ({ onLogout }) => {
                 return "Feed Posts";
               };
               const categories = ["Feed Posts", "Marketplace", "Docs", "Events", "Help Requests", "Profiles"];
-              const grouped = {};
-              reports.forEach(r => { const c = getCategory(r); if (!grouped[c]) grouped[c] = []; grouped[c].push(r); });
-              return categories.filter(c => grouped[c]?.length > 0).map(cat => (
+              const renderReportCards = (list) => {
+                const grouped = {};
+                list.forEach(r => { const c = getCategory(r); if (!grouped[c]) grouped[c] = []; grouped[c].push(r); });
+                return categories.filter(c => grouped[c]?.length > 0).map(cat => (
                 <div key={cat} style={{ marginBottom: 24 }}>
                   <h3 style={{ fontSize: 13, fontWeight: 700, color: "#37352F", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 8 }}>
                     {cat}
@@ -6360,6 +6378,22 @@ const AdminDashboard = ({ onLogout }) => {
                   </div>
                 </div>
               ));
+              };
+              return (
+                <>
+                  <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports — Pending ({pendingReports.length})</h1>
+                  {pendingReports.length === 0 ? (
+                    <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13, marginBottom: 32 }}>No pending reports. All clear!</div>
+                  ) : renderReportCards(pendingReports)}
+                  {handledReports.length > 0 && (
+                    <>
+                      <div style={{ borderTop: "1px solid #EDEDEB", margin: "24px 0 20px" }}>{""}</div>
+                      <h2 style={{ fontSize: 16, fontWeight: 600, color: "#9B9A97", marginBottom: 16 }}>Handled ({handledReports.length})</h2>
+                      {renderReportCards(handledReports)}
+                    </>
+                  )}
+                </>
+              );
             })()}
           </div>
         ) : null}
