@@ -5892,23 +5892,44 @@ const AdminDashboard = ({ onLogout }) => {
   useEffect(() => {
     (async () => {
       try {
-        const [u, g, r] = await Promise.all([
-          fetch(`${URL}/rest/v1/profiles?select=*&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/groups?select=*&order=members_count.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/reports?select=*&order=created_at.desc`, { headers: { apikey: KEY } }).then(r => r.json()),
+        const h = { apikey: KEY };
+        const [u, g, r, posts, docs, events, helpReqs, marketItems] = await Promise.all([
+          fetch(`${URL}/rest/v1/profiles?select=*&order=created_at.desc`, { headers: h }).then(r => r.json()),
+          fetch(`${URL}/rest/v1/groups?select=*&order=members_count.desc`, { headers: h }).then(r => r.json()),
+          fetch(`${URL}/rest/v1/reports?select=*&order=created_at.desc`, { headers: h }).then(r => r.json()),
+          fetch(`${URL}/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200`, { headers: h }).then(r => r.json()).catch(() => []),
+          fetch(`${URL}/rest/v1/docs?select=id,title,excerpt,user_id&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
+          fetch(`${URL}/rest/v1/events?select=id,title,description,date,organizer_id&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
+          fetch(`${URL}/rest/v1/help_requests?select=id,title,description,user_id&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
+          fetch(`${URL}/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
         ]);
         console.log("Admin data loaded:", { users: Array.isArray(u) ? u.length : u, groups: Array.isArray(g) ? g.length : g, reports: Array.isArray(r) ? r.length : r });
         const allUsers = Array.isArray(u) ? u : [];
+        const allPosts = Array.isArray(posts) ? posts : [];
+        const allDocs = Array.isArray(docs) ? docs : [];
+        const allEvents = Array.isArray(events) ? events : [];
+        const allHelp = Array.isArray(helpReqs) ? helpReqs : [];
+        const allMarket = Array.isArray(marketItems) ? marketItems : [];
         setUsers(allUsers); setGroups(Array.isArray(g) ? g : []);
-        // Enrich reports with reporter and reported user names
+        // Build content lookup
+        const contentMap = {};
+        allPosts.forEach(p => { contentMap[p.id] = { type: "post", content: p.content, image: p.image_url, authorId: p.user_id }; });
+        allDocs.forEach(d => { contentMap[d.id] = { type: "doc", content: d.title, excerpt: d.excerpt, authorId: d.user_id }; });
+        allEvents.forEach(e => { contentMap[e.id] = { type: "event", content: e.title, excerpt: e.description, date: e.date, authorId: e.organizer_id }; });
+        allHelp.forEach(h2 => { contentMap[h2.id] = { type: "help", content: h2.title, excerpt: h2.description, authorId: h2.user_id }; });
+        allMarket.forEach(m => { contentMap[m.id] = { type: "marketplace", content: m.title, excerpt: m.description, price: m.price, image: m.image_url, authorId: m.user_id }; });
+        // Enrich reports
         const reportsArr = Array.isArray(r) ? r : [];
         const enrichedReports = reportsArr.map(rep => {
           const reporter = allUsers.find(x => x.id === rep.reporter_id);
           const reported = allUsers.find(x => x.id === rep.reported_user_id);
-          return { ...rep, reporter: reporter ? { name: reporter.name, email: reporter.email } : null, reported_user: reported ? { name: reported.name, email: reported.email } : null };
+          const contentId = rep.reported_post_id || rep.reported_user_id;
+          const reportedContent = contentMap[contentId] || null;
+          const contentAuthor = reportedContent ? allUsers.find(x => x.id === reportedContent.authorId) : null;
+          return { ...rep, reporter: reporter ? { name: reporter.name, email: reporter.email } : null, reported_user: reported ? { name: reported.name, email: reported.email } : null, reportedContent, contentAuthor: contentAuthor ? { name: contentAuthor.name, email: contentAuthor.email } : null };
         });
         setReports(enrichedReports);
-        setStats({ users: (u || []).length, posts: 0, groups: (g || []).filter(x => x.is_approved).length, events: 0, pending: (u || []).filter(x => !x.linkedin_verified).length });
+        setStats({ users: allUsers.length, posts: 0, groups: (Array.isArray(g) ? g : []).filter(x => x.is_approved).length, events: 0, pending: allUsers.filter(x => !x.linkedin_verified).length });
       } catch (e) {}
       setLoading(false);
     })();
@@ -6275,36 +6296,13 @@ const AdminDashboard = ({ onLogout }) => {
                   <div style={{ display: "grid", gap: 8 }}>
                     {grouped[cat].map((r, i) => (
                       <div key={r.id || i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 18px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", marginBottom: 6 }}>{(r.reason || "No reason").replace(/^\[\w+\]\s*/, "")}</div>
-                            <div style={{ display: "flex", gap: 16, fontSize: 11, color: "#9B9A97", flexWrap: "wrap" }}>
-                              <span>Reported: {new Date(r.created_at).toLocaleString()}</span>
-                            </div>
-                            <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
-                              {r.reporter && (
-                                <div style={{ padding: "8px 12px", background: "#FAFAF8", borderRadius: 6, border: "1px solid #F0EFED", fontSize: 11 }}>
-                                  <span style={{ color: "#9B9A97", fontWeight: 700 }}>REPORTED BY</span>
-                                  <div style={{ color: "#37352F", fontWeight: 600, marginTop: 2 }}>{r.reporter.name}</div>
-                                  <div style={{ color: "#9B9A97" }}>{r.reporter.email}</div>
-                                </div>
-                              )}
-                              {r.reported_user && (
-                                <div style={{ padding: "8px 12px", background: "#FEF2F2", borderRadius: 6, border: "1px solid #FECACA", fontSize: 11 }}>
-                                  <span style={{ color: "#DC2626", fontWeight: 700 }}>REPORTED USER</span>
-                                  <div style={{ color: "#37352F", fontWeight: 600, marginTop: 2 }}>{r.reported_user.name}</div>
-                                  <div style={{ color: "#9B9A97" }}>{r.reported_user.email}</div>
-                                </div>
-                              )}
-                              {r.reported_post_id && (
-                                <div style={{ padding: "8px 12px", background: "#FAFAF8", borderRadius: 6, border: "1px solid #F0EFED", fontSize: 11 }}>
-                                  <span style={{ color: "#9B9A97", fontWeight: 700 }}>CONTENT ID</span>
-                                  <div style={{ color: "#37352F", fontWeight: 500, marginTop: 2, fontFamily: "monospace", fontSize: 10 }}>{r.reported_post_id}</div>
-                                </div>
-                              )}
-                            </div>
+                        {/* Header: reason + actions */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", marginBottom: 4 }}>{(r.reason || "No reason").replace(/^\[\w+\]\s*/, "")}</div>
+                            <div style={{ fontSize: 11, color: "#9B9A97" }}>Reported: {new Date(r.created_at).toLocaleString()}</div>
                           </div>
-                          <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center", marginLeft: 12 }}>
+                          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                             {r.status === "pending" ? (
                               <>
                                 <button onClick={() => deleteReportContent(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "none", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Remove Content</button>
@@ -6315,6 +6313,48 @@ const AdminDashboard = ({ onLogout }) => {
                             )}
                           </div>
                         </div>
+
+                        {/* Reported content preview */}
+                        {r.reportedContent && (
+                          <div style={{ background: "#FAFAF8", border: "1px solid #F0EFED", borderRadius: 8, padding: "14px 16px", marginBottom: 12 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Reported Content</div>
+                            {r.reportedContent.image && (
+                              <img src={r.reportedContent.image} alt="" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 6, marginBottom: 8 }} />
+                            )}
+                            <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", marginBottom: 4 }}>
+                              {r.reportedContent.type === "post" ? (r.reportedContent.content || "").substring(0, 200) : r.reportedContent.content}
+                              {r.reportedContent.type === "post" && (r.reportedContent.content || "").length > 200 && "..."}
+                            </div>
+                            {r.reportedContent.excerpt && (
+                              <div style={{ fontSize: 12, color: "#5F5E5B", lineHeight: 1.5, marginTop: 4 }}>{(r.reportedContent.excerpt || "").substring(0, 150)}{(r.reportedContent.excerpt || "").length > 150 ? "..." : ""}</div>
+                            )}
+                            {r.reportedContent.price && (
+                              <div style={{ fontSize: 13, fontWeight: 700, color: "#22A06B", marginTop: 6 }}>{r.reportedContent.price}</div>
+                            )}
+                            {r.reportedContent.date && (
+                              <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 4 }}>Date: {r.reportedContent.date}</div>
+                            )}
+                            {r.contentAuthor && (
+                              <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 6, paddingTop: 6, borderTop: "1px solid #F0EFED" }}>Author: <strong>{r.contentAuthor.name}</strong> ({r.contentAuthor.email})</div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Reported user profile preview (for profile reports) */}
+                        {!r.reportedContent && r.reported_user && (
+                          <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "14px 16px", marginBottom: 12 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Reported Profile</div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{r.reported_user.name}</div>
+                            <div style={{ fontSize: 12, color: "#9B9A97" }}>{r.reported_user.email}</div>
+                          </div>
+                        )}
+
+                        {/* Reporter info */}
+                        {r.reporter && (
+                          <div style={{ fontSize: 11, color: "#9B9A97" }}>
+                            Reported by: <strong>{r.reporter.name}</strong> ({r.reporter.email})
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
