@@ -1938,15 +1938,22 @@ const Dashboard = ({ user, onLogout }) => {
             setSentNamaste(new Set(sentData.map(s => s.recipient_id)));
           }
           // Load accepted connections to show "Following" instead of "Sent"
+          // "Following" = I sent the request AND they accepted
           const acceptedData = await api.getMyConnections();
           if (acceptedData && acceptedData.length) {
-            const acceptedIds = new Set();
+            const iFollowThem = new Set();
+            const theyFollowMe = new Set();
             acceptedData.forEach(c => {
-              if (c.requester?.id) acceptedIds.add(c.requester.id);
-              if (c.recipient?.id) acceptedIds.add(c.recipient.id);
+              if (c.requester_id === user.id) {
+                // I sent the request → I follow them
+                if (c.recipient?.id) iFollowThem.add(c.recipient.id);
+              } else {
+                // They sent the request → they follow me
+                if (c.requester?.id) theyFollowMe.add(c.requester.id);
+              }
             });
-            acceptedIds.delete(user.id);
-            setAcceptedConnections(acceptedIds);
+            setAcceptedConnections(iFollowThem);
+            setMyFollowing(Array.from(iFollowThem));
           }
         } catch (e) {}
 

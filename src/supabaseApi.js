@@ -329,7 +329,7 @@ export async function getAllConnections() {
 
 export async function getSentNamastes() {
   if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&select=recipient_id`);
+  return restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&status=eq.pending&select=recipient_id`);
 }
 
 // ============================================================================
