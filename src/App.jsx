@@ -1853,14 +1853,20 @@ const Dashboard = ({ user, onLogout }) => {
       const result = await api.sendNamaste(userId);
       connId = result?.[0]?.id || null;
     } catch (e) {
-      // Connection might already exist - that's ok
       console.log("Connection may already exist:", e.message);
     }
-    // Always try to create notification regardless of connection result
     try {
       const actorId = user.id && !user.id.startsWith("user_") ? user.id : null;
       await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, actorId, connId);
     } catch(ne) { console.log("Notification failed:", ne.message); }
+  };
+
+  const handleUnfollow = async (userId) => {
+    try {
+      await api.unfollowUser(userId);
+      setAcceptedConnections(prev => { const s = new Set(prev); s.delete(userId); return s; });
+      setMyFollowing(prev => prev.filter(id => id !== userId));
+    } catch(e) { console.error("Unfollow failed:", e); }
   };
 
   // Load data on mount
@@ -2535,12 +2541,15 @@ const Dashboard = ({ user, onLogout }) => {
                       {/* Action buttons - Namaste + Message */}
                       <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
                         <button
-                          onClick={() => { if (!acceptedConnections.has(u.id)) handleSendNamaste(u.id); }}
-                          disabled={sentNamaste.has(u.id) || acceptedConnections.has(u.id)}
+                          onClick={() => { 
+                            if (acceptedConnections.has(u.id)) { if (confirm(`Unfollow ${u.name}?`)) handleUnfollow(u.id); }
+                            else if (!sentNamaste.has(u.id)) handleSendNamaste(u.id);
+                          }}
+                          disabled={sentNamaste.has(u.id)}
                           style={{
                             flex: 1, padding: "10px 0", borderRadius: 8,
                             border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "none",
-                            fontSize: 13, fontWeight: 600, fontFamily: font, cursor: (sentNamaste.has(u.id) || acceptedConnections.has(u.id)) ? "default" : "pointer",
+                            fontSize: 13, fontWeight: 600, fontFamily: font, cursor: sentNamaste.has(u.id) ? "default" : "pointer",
                             background: acceptedConnections.has(u.id) ? "#E3FCEF" : sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
                             color: acceptedConnections.has(u.id) ? "#22A06B" : sentNamaste.has(u.id) ? "#9B9A97" : "#fff",
                             display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
@@ -4390,8 +4399,11 @@ const Dashboard = ({ user, onLogout }) => {
                         <div style={{ fontSize: 12, fontWeight: 600, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</div>
                         <div style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{u.profession}</div>
                       </div>
-                      <button onClick={() => { if (!acceptedConnections.has(u.id)) handleSendNamaste(u.id); }} disabled={sentNamaste.has(u.id) || acceptedConnections.has(u.id)}
-                        style={{ padding: "4px 10px", borderRadius: 6, border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "none", fontSize: 10, fontWeight: 600, cursor: (sentNamaste.has(u.id) || acceptedConnections.has(u.id)) ? "default" : "pointer",
+                      <button onClick={() => { 
+                          if (acceptedConnections.has(u.id)) { if (confirm(`Unfollow ${u.name}?`)) handleUnfollow(u.id); }
+                          else if (!sentNamaste.has(u.id)) handleSendNamaste(u.id);
+                        }} disabled={sentNamaste.has(u.id)}
+                        style={{ padding: "4px 10px", borderRadius: 6, border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "none", fontSize: 10, fontWeight: 600, cursor: sentNamaste.has(u.id) ? "default" : "pointer",
                           background: acceptedConnections.has(u.id) ? "#E3FCEF" : sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
                           color: acceptedConnections.has(u.id) ? "#22A06B" : sentNamaste.has(u.id) ? "#9B9A97" : "#fff", fontFamily: font }}>
                         {acceptedConnections.has(u.id) ? "Following" : sentNamaste.has(u.id) ? "Sent" : "Namaste"}

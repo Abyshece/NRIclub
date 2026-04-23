@@ -318,6 +318,11 @@ export async function respondToNamaste(connectionId, accept) {
   });
 }
 
+export async function unfollowUser(userId) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("DELETE", `/rest/v1/connections?requester_id=eq.${currentUser.id}&recipient_id=eq.${userId}&status=eq.accepted`);
+}
+
 export async function getMyConnections() {
   if (!currentUser) return [];
   return restCall("GET", `/rest/v1/connections?or=(requester_id.eq.${currentUser.id},recipient_id.eq.${currentUser.id})&status=eq.accepted&select=*,requester:requester_id(id,name,avatar_url,profession),recipient:recipient_id(id,name,avatar_url,profession)`);
