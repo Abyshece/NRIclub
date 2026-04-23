@@ -3855,7 +3855,7 @@ const Dashboard = ({ user, onLogout }) => {
       {/* NAV */}
       <nav style={{ background: "#fff", borderBottom: "1px solid #E8E7E4", position: "sticky", top: 0, zIndex: 30 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 16px", height: 56, display: "grid", gridTemplateColumns: "240px 1fr 210px", gap: 28, alignItems: "center" }} className="nav-grid">
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div onClick={() => setView("home")} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
             <div style={{ background: "#37352F", color: "#fff", padding: 4, borderRadius: 6 }}>
               {Icons.globe({ size: 16 })}
             </div>
@@ -4009,6 +4009,7 @@ const Dashboard = ({ user, onLogout }) => {
                     <div style={{ height: 1, background: "#F0EFED", margin: "4px 0" }} />
                     {[
                       { key: "helpCenter", icon: Icons.help, label: "Help Center" },
+                      { key: "reportBug", icon: Icons.flag, label: "Report a Bug" },
                       { key: "terms", icon: Icons.file, label: "Terms & Policy" },
                     ].map(item => (
                       <button key={item.key} onClick={() => { setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
@@ -4940,6 +4941,46 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8" }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Report Bug Modal */}
+      {settingsModal === "reportBug" && (
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Report a Bug</h3>
+              <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+            </div>
+            <div style={{ padding: 24 }}>
+              <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 16, fontFamily: font }}>Found something broken? Let us know and we'll fix it.</p>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Bug Title</label>
+                <input id="bug-title" placeholder="Brief description of the issue" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }} />
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Page / Feature</label>
+                <select id="bug-page" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }}>
+                  <option value="Feed">Feed</option><option value="Find">Find / Search</option><option value="Groups">Groups</option><option value="Events">Events</option><option value="Messages">Messages</option><option value="Marketplace">Marketplace</option><option value="Docs">Docs</option><option value="Help">Help</option><option value="Profile">Profile</option><option value="Settings">Settings</option><option value="Other">Other</option>
+                </select>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Steps to Reproduce</label>
+                <textarea id="bug-desc" placeholder="Describe what happened and what you expected..." style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", minHeight: 100, resize: "vertical" }} />
+              </div>
+              <button onClick={async () => {
+                const title = document.getElementById("bug-title")?.value;
+                const page = document.getElementById("bug-page")?.value;
+                const desc = document.getElementById("bug-desc")?.value;
+                if (!title?.trim()) { alert("Please enter a bug title."); return; }
+                try {
+                  await api.reportPost(user.id, `[BUG] ${page}: ${title} — ${desc || "No details"}`);
+                  alert("Bug reported! Thank you for helping us improve NRIClub.");
+                  setSettingsModal(null);
+                } catch(e) { alert("Failed to submit: " + (e.message || "Please try again.")); }
+              }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Submit Bug Report</button>
             </div>
           </div>
         </div>
@@ -6061,6 +6102,7 @@ const AdminDashboard = ({ onLogout }) => {
     { key: "blocked", label: "Blocked Users" },
     { key: "groups", label: "Communities" },
     { key: "reports", label: "Reports" },
+    { key: "bugs", label: "Bug Reports" },
   ];
 
   const pendingUsers = users.filter(u => !u.linkedin_verified && u.status !== "blocked");
@@ -6087,6 +6129,7 @@ const AdminDashboard = ({ onLogout }) => {
               {n.key === "blocked" && blockedUsers.length > 0 && <span style={{ marginLeft: "auto", background: "#9B9A97", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{blockedUsers.length}</span>}
               {n.key === "reports" && reports.filter(r => r.status === "pending").length > 0 && <span style={{ marginLeft: "auto", background: "#E65100", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{reports.filter(r => r.status === "pending").length}</span>}
               {n.key === "groups" && groups.filter(g => !g.is_approved).length > 0 && <span style={{ marginLeft: "auto", background: "#E65100", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{groups.filter(g => !g.is_approved).length}</span>}
+              {n.key === "bugs" && reports.filter(r => (r.reason || "").startsWith("[BUG]")).length > 0 && <span style={{ marginLeft: "auto", background: "#5B9CFF", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{reports.filter(r => (r.reason || "").startsWith("[BUG]")).length}</span>}
             </button>
           ))}
         </div>
@@ -6438,11 +6481,52 @@ const AdminDashboard = ({ onLogout }) => {
               };
               return (
                 <>
-                  <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports ({reports.length})</h1>
+                  <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports ({reports.filter(r => !(r.reason || "").startsWith("[BUG]")).length})</h1>
                   {reports.length === 0 ? (
                     <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No pending reports. All clear!</div>
-                  ) : renderReportCards(reports)}
+                  ) : renderReportCards(reports.filter(r => !(r.reason || "").startsWith("[BUG]")))}
                 </>
+              );
+            })()}
+          </div>
+        ) : tab === "bugs" ? (
+          <div>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Bug Reports</h1>
+            {(() => {
+              const bugReports = reports.filter(r => (r.reason || "").startsWith("[BUG]"));
+              if (bugReports.length === 0) return <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No bug reports.</div>;
+              return (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {bugReports.map((r, i) => {
+                    const bugText = (r.reason || "").replace("[BUG] ", "");
+                    const parts = bugText.split(": ");
+                    const page = parts[0] || "Unknown";
+                    const rest = parts.slice(1).join(": ");
+                    const titleEnd = rest.indexOf(" — ");
+                    const title = titleEnd > -1 ? rest.substring(0, titleEnd) : rest;
+                    const desc = titleEnd > -1 ? rest.substring(titleEnd + 3) : "";
+                    return (
+                      <div key={r.id || i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 18px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "#EDF4FF", color: "#5B9CFF", fontWeight: 700 }}>{page}</span>
+                              <span style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{title}</span>
+                            </div>
+                            {desc && desc !== "No details" && <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, marginBottom: 8 }}>{desc}</p>}
+                            <div style={{ fontSize: 11, color: "#9B9A97" }}>
+                              {r.reporter ? `By: ${r.reporter.name} (${r.reporter.email})` : ""} · {new Date(r.created_at).toLocaleString()}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: 12 }}>
+                            <button onClick={() => dismissReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "none", background: "#22A06B", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Resolved</button>
+                            <button onClick={() => dismissReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "1px solid #EDEDEB", background: "#fff", color: "#5F5E5B", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               );
             })()}
           </div>
