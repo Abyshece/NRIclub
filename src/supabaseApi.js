@@ -79,6 +79,19 @@ export async function signOut() {
   localStorage.removeItem("indin_refresh");
 }
 
+export async function resetPassword(email) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.message || err.msg || "Failed to send reset email");
+  }
+  return true;
+}
+
 export async function sendOtp(email) {
   const res = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
     method: "POST",

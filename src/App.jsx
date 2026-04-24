@@ -1366,8 +1366,12 @@ const SignUpPage = ({ onComplete, onLogin }) => {
 const LoginPage = ({ onComplete, onSignUp }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [resetMode, setResetMode] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const font = "'DM Sans', sans-serif";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1431,11 +1435,62 @@ const LoginPage = ({ onComplete, onSignUp }) => {
     }
   };
 
+  const handleResetPassword = async () => {
+    if (!email || !email.includes("@")) { setError("Please enter your email first."); return; }
+    setLoading(true);
+    setError("");
+    try {
+      await api.resetPassword(email);
+      setResetSent(true);
+    } catch(e) {
+      setError(e.message || "Failed to send reset email.");
+    }
+    setLoading(false);
+  };
+
   const inputStyle = {
     width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE",
     fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F",
-    fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box",
+    fontFamily: font, boxSizing: "border-box",
   };
+
+  // Eye icon SVGs
+  const EyeIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
+  const EyeOffIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+
+  if (resetMode) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", background: "#FAFAF8" }}>
+        <div style={{ maxWidth: 360, width: "100%" }}>
+          <div style={{ textAlign: "center", marginBottom: 40 }}>
+            <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
+              {Icons.shield({ size: 24, stroke: "#37352F" })}
+            </div>
+            <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Reset Password</h2>
+            <p style={{ color: "#9B9A97", fontSize: 14, marginTop: 8, fontFamily: font }}>Enter your email and we'll send you a reset link</p>
+          </div>
+          {error && <div style={{ padding: "12px 16px", background: "#FEE", borderRadius: 8, marginBottom: 16, fontSize: 13, color: "#C00" }}>{error}</div>}
+          {resetSent ? (
+            <div style={{ padding: "20px", background: "#E3FCEF", borderRadius: 10, textAlign: "center", marginBottom: 20 }}>
+              <p style={{ fontSize: 14, color: "#22A06B", fontWeight: 600, fontFamily: font, marginBottom: 8 }}>Reset email sent!</p>
+              <p style={{ fontSize: 13, color: "#5F5E5B", fontFamily: font }}>Check your inbox for a password reset link. It may take a few minutes.</p>
+            </div>
+          ) : (
+            <>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font }}>Email</label>
+                <input style={inputStyle} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus />
+              </div>
+              <button onClick={handleResetPassword} disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600, background: "#37352F", color: "#fff", cursor: "pointer", fontFamily: font }}>{loading ? "Sending..." : "Send Reset Link"}</button>
+            </>
+          )}
+          <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#9B9A97", fontFamily: font }}>
+            <button onClick={() => { setResetMode(false); setResetSent(false); setError(""); }} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Back to login</button>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", background: "#FAFAF8" }}>
@@ -1444,34 +1499,42 @@ const LoginPage = ({ onComplete, onSignUp }) => {
           <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
             {Icons.globe({ size: 24, stroke: "#37352F" })}
           </div>
-          <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: "'DM Sans', sans-serif" }}>Welcome back</h2>
-          <p style={{ color: "#9B9A97", fontSize: 14, marginTop: 8, fontFamily: "'DM Sans', sans-serif" }}>Log in to NRIClub</p>
+          <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Welcome back</h2>
+          <p style={{ color: "#9B9A97", fontSize: 14, marginTop: 8, fontFamily: font }}>Log in to NRIClub</p>
         </div>
 
         {error && <div style={{ padding: "12px 16px", background: "#FEE", borderRadius: 8, marginBottom: 16, fontSize: 13, color: "#C00" }}>{error}</div>}
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>Email</label>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font }}>Email</label>
             <input style={inputStyle} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" required autoFocus />
           </div>
-          <div style={{ marginBottom: 24 }}>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>Password</label>
-            <input style={inputStyle} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font }}>Password</label>
+            <div style={{ position: "relative" }}>
+              <input style={{ ...inputStyle, paddingRight: 44 }} type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex" }}>
+                {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </div>
+          </div>
+          <div style={{ textAlign: "right", marginBottom: 20 }}>
+            <button type="button" onClick={() => { setResetMode(true); setError(""); }} style={{ background: "none", border: "none", color: "#5B9CFF", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Forgot password?</button>
           </div>
           <button
             type="submit" disabled={!email || !password || loading}
             style={{
               width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600,
               background: email && password ? "#37352F" : "#E8E7E4", color: email && password ? "#fff" : "#9B9A97",
-              cursor: email && password ? "pointer" : "not-allowed", fontFamily: "'DM Sans', sans-serif",
+              cursor: email && password ? "pointer" : "not-allowed", fontFamily: font,
             }}
           >
             {loading ? "Logging in..." : "Continue"}
           </button>
         </form>
 
-        <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#9B9A97", fontFamily: "'DM Sans', sans-serif" }}>
+        <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#9B9A97", fontFamily: font }}>
           Don't have an account?{" "}
           <button onClick={onSignUp} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>
             Sign up
