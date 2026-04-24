@@ -31,10 +31,42 @@ const INDIAN_CITIES = [
 // Helper to check if a user is NRI based on their current city
 // Returns true if user lives OUTSIDE India, false if they live in an Indian city
 // Sanitize user inputs to prevent XSS
+// Security: Input sanitization
 const sanitize = (str) => {
   if (typeof str !== "string") return str;
-  return str.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/javascript:/gi, "").replace(/on\w+=/gi, "");
+  return str
+    .replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/javascript:/gi, "").replace(/on\w+=/gi, "")
+    .replace(/data:/gi, "").replace(/vbscript:/gi, "")
+    .replace(/eval\(/gi, "").replace(/expression\(/gi, "");
 };
+
+// Security: Validate and reject oversized/malformed input
+const validateInput = (str, maxLen = 5000) => {
+  if (typeof str !== "string") return "";
+  if (str.length > maxLen) return str.substring(0, maxLen);
+  return sanitize(str.trim());
+};
+
+// Security: Rate limiter
+const rateLimiter = (() => {
+  const attempts = {};
+  return {
+    check: (key, maxAttempts = 5, windowMs = 900000) => {
+      const now = Date.now();
+      if (!attempts[key]) attempts[key] = [];
+      // Clean old attempts
+      attempts[key] = attempts[key].filter(t => now - t < windowMs);
+      if (attempts[key].length >= maxAttempts) {
+        const waitSecs = Math.ceil((windowMs - (now - attempts[key][0])) / 1000);
+        return { allowed: false, waitSecs };
+      }
+      attempts[key].push(now);
+      return { allowed: true };
+    },
+    reset: (key) => { delete attempts[key]; }
+  };
+})();
 
 const isUserNRI = (userOrLocation) => {
   const loc = typeof userOrLocation === "string" ? userOrLocation : (userOrLocation?.location || userOrLocation?.currentCity || "");
@@ -1342,8 +1374,25 @@ const LoginPage = ({ onComplete, onSignUp }) => {
     setLoading(true);
     setError("");
 
+    // Rate limiting: max 5 attempts per 15 minutes
+    const rl = rateLimiter.check("login_" + email, 5, 900000);
+    if (!rl.allowed) {
+      setError(`Too many login attempts. Please wait ${Math.ceil(rl.waitSecs / 60)} minutes.`);
+      setLoading(false);
+      return;
+    }
+
+    // Validate inputs
+    const cleanEmail = validateInput(email, 254).toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      setError("Please enter a valid email."); setLoading(false); return;
+    }
+    if (!password || password.length < 6) {
+      setError("Password must be at least 6 characters."); setLoading(false); return;
+    }
+
     try {
-      const data = await api.signIn(email, password);
+      const data = await api.signIn(cleanEmail, password);
       const dbProfile = await api.getMyProfile();
       if (dbProfile) {
         const profile = {
@@ -1873,8 +1922,8 @@ const Dashboard = ({ user, onLogout }) => {
   useEffect(() => {
     (async () => {
       try {
-        const dbPosts = await api.getPosts();
-        const dbGroups = await api.getGroups();
+        const dbPosts = await api.getPosts().catch(e => { console.error("Failed to load posts:", e.message); return []; });
+        const dbGroups = await api.getGroups().catch(e => { console.error("Failed to load groups:", e.message); return []; });
         let loadedGroups = [];
         if (dbGroups && dbGroups.length) {
           const myGids = await api.getMyGroupIds();
@@ -2118,7 +2167,7 @@ const Dashboard = ({ user, onLogout }) => {
 
   const createPost = async () => {
     if (!newPost.trim() && !postImage) return;
-    const cleanContent = sanitize(newPost);
+    const cleanContent = validateInput(newPost, 5000);
     const tags = [];
     const hashtags = cleanContent.match(/#(\w+)/g);
     if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
@@ -5840,8 +5889,8 @@ const CookieConsent = () => {
 };
 
 // Admin credentials
-const ADMIN_USER = "admin@nriclub.com";
-const ADMIN_PASS = "NRIClub@2026!";
+const ADMIN_USER = import.meta.env.VITE_ADMIN_EMAIL;
+const ADMIN_PASS = import.meta.env.VITE_ADMIN_PASS;
 
 export default function App() {
   const [authState, setAuthState] = useState("loading");
@@ -5943,7 +5992,7 @@ export default function App() {
             {adminErr && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminErr}</div>}
             <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
             <input type="password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); localStorage.setItem("indin_admin", "true"); } else setAdminErr("Invalid credentials"); } }} />
-            <button onClick={() => { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); localStorage.setItem("indin_admin", "true"); } else setAdminErr("Invalid credentials"); }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign In</button>
+            <button onClick={() => { const rl = rateLimiter.check("admin_login", 5, 900000); if (!rl.allowed) { setAdminErr(`Too many attempts. Wait ${Math.ceil(rl.waitSecs/60)} min.`); return; } if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); localStorage.setItem("indin_admin", "true"); rateLimiter.reset("admin_login"); } else setAdminErr("Invalid credentials"); }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign In</button>
             <p style={{ fontSize: 11, color: "#9B9A97", textAlign: "center", marginTop: 16 }}><a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ""; setAuthState("landing"); }} style={{ color: "#5B9CFF" }}>← Back to NRIClub</a></p>
           </div>
         </div>
@@ -5977,8 +6026,8 @@ const AdminDashboard = ({ onLogout }) => {
   const [loading, setLoading] = useState(true);
   const [userSearch, setUserSearch] = useState("");
   const font = "'DM Sans', sans-serif";
-  const KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6emtkbXlic2J3a25wc3VjdXZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MjE1NDUsImV4cCI6MjA5MDk5NzU0NX0.tolTpKSToyH_DtUfKYbKdWVyJiWC25RDBQlHVu140hQ";
-  const URL = "https://uzzkdmybsbwknpsucuvv.supabase.co";
+  const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  const URL = import.meta.env.VITE_SUPABASE_URL;
   const hdrs = { apikey: KEY, "Content-Type": "application/json", Authorization: `Bearer ${KEY}`, Prefer: "return=representation" };
 
   useEffect(() => {
