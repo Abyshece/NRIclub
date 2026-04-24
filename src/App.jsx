@@ -5721,7 +5721,7 @@ const Dashboard = ({ user, onLogout }) => {
         @media (max-width: 600px) {
           /* Messages */
           .msg-layout { flex-direction: column !important; height: auto !important; min-height: 500px !important; }
-          .msg-sidebar { width: 100% !important; max-height: 180px !important; border-right: none !important; border-bottom: 1px solid #E8E7E4 !important; overflow-y: auto !important; }
+          .msg-sidebar { width: 100% !important; max-height: 45vh !important; border-right: none !important; border-bottom: 1px solid #E8E7E4 !important; overflow-y: auto !important; }
           .msg-chat { min-height: 320px !important; }
 
           /* Event cards */
