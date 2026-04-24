@@ -5902,7 +5902,8 @@ export default function App() {
 
   useEffect(() => {
     // Check for admin route
-    if (window.location.hash === "#admin") {
+    const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
+    if (isAdminDomain || window.location.hash === "#admin") {
       // Check if already logged in as admin
       if (localStorage.getItem("indin_admin") === "true") {
         setIsAdmin(true);
@@ -5998,7 +5999,7 @@ export default function App() {
         </div>
       );
     }
-    if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={() => { setIsAdmin(false); setAuthState("landing"); localStorage.removeItem("indin_admin"); window.location.hash = ""; }} />;
+    if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={() => { setIsAdmin(false); setAuthState("admin-login"); localStorage.removeItem("indin_admin"); }} />;
     if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
     if (authState === "signup") return <SignUpPage onComplete={handleAuthComplete} onLogin={() => setAuthState("login")} />;
     if (authState === "login") return <LoginPage onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
