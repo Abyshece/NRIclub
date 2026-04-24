@@ -2207,7 +2207,7 @@ const Dashboard = ({ user, onLogout }) => {
     setEvents([e, ...events]);
     setNewEvent({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" }); setEventPhoto(null);
     setEventModal(false);
-    try { await api.createEvent({ title: newEvent.title, date: newEvent.date, time: newEvent.time || "TBD", location: newEvent.location, description: newEvent.description, organizer_name: user.name, link: newEvent.link || "", image_url: eventPhoto?.url || "" }); } catch (er) {}
+    try { await api.createEvent({ title: newEvent.title, date: newEvent.date, time: newEvent.time || "TBD", location: newEvent.location, description: newEvent.description, organizer_name: user.name, link: newEvent.link || "", image_url: eventPhoto?.url || "" }); } catch (er) { console.error("Event creation failed:", er.message); alert("Event could not be saved: " + er.message); }
   };
 
   const toggleRsvp = async (id) => {
