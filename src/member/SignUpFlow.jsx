@@ -98,7 +98,12 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       if (residency === "india") metadata.country_code = "IN";
       const result = await api.signUp(v.email, v.password, metadata);
       if (isExistingAccountResponse(result)) throw new Error("already exists");
-      setAccount({ email: v.email });
+      // An unfinished signup from an earlier visit comes back with its old
+      // creation time (Supabase only re-sends the code).
+      const u = result?.user ?? result;
+      const lastSent = Math.max(Date.parse(u?.confirmation_sent_at) || 0, Date.parse(u?.updated_at) || 0);
+      const resumed = !!u?.created_at && lastSent - Date.parse(u.created_at) > 30000;
+      setAccount({ email: v.email, password: v.password, resumed });
       setResendAt(Date.now() + RESEND_MS);
       setStep("code");
     } catch (err) {
@@ -128,9 +133,11 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       if (!db) throw withUserMessage("Your email is confirmed, but we couldn't load your profile. Please log in.");
 
       // An unfinished signup from an earlier visit keeps that visit's
-      // password; set the one typed now so logging in later works. (Fails
-      // harmlessly when it's already the same.)
-      await api.updatePassword(form.password).catch(() => {});
+      // password (as does going back and changing it here); set the one
+      // typed now so logging in later works.
+      if (account.resumed || account.password !== form.password) {
+        await api.updatePassword(form.password).catch(() => {});
+      }
 
       // Bring the profile in line with this visit's answers (they differ if
       // the member went back and edited them, or signed up before).

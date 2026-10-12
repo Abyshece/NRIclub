@@ -76,6 +76,15 @@ const rateLimiter = (() => {
   };
 })();
 
+// Older events keep the time in the date ("Mar 25, 2026 • 10:00 AM"); new
+// ones have a date picker value ("2026-11-14") and a separate time.
+const eventDate = (e) => {
+  const d = (e.date || "").split("•")[0].trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  return new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
+const eventTime = (e) => (e.date || "").split("•")[1]?.trim() || e.time || "TBD";
+
 const isUserNRI = (userOrLocation) => {
   // The country chosen when getting verified decides when it's known.
   const countryCode = typeof userOrLocation === "object" && userOrLocation ? (userOrLocation.countryCode || userOrLocation.country_code) : "";
@@ -1487,7 +1496,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       // Take the post back out and give the text back to the composer.
       setPosts(prev => prev.filter(p => p.id !== post.id));
       setNewPost(prev => prev || post.content);
-      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your post couldn't be published. Please try again.");
+      alert(isNetworkError(e) ? NETWORK_MESSAGE
+        : /42501/.test(e.message || "") ? "Your account can't post right now. If you think this is a mistake, contact support@nriclub.app."
+        : "Your post couldn't be published. Please try again.");
     }
   };
 
@@ -2478,13 +2489,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {/* Event Cards */}
             {filteredEvents.length > 0 ? filteredEvents.map((e, idx) => {
-              // Older events keep the time in the date ("Mar 25, 2026 • 10:00 AM");
-              // new ones have a date picker value and a separate time.
-              let datePart = (e.date || "").split("•")[0].trim();
-              if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
-                datePart = new Date(datePart + "T00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-              }
-              const timePart = (e.date || "").split("•")[1]?.trim() || e.time || "TBD";
+              const datePart = eventDate(e);
+              const timePart = eventTime(e);
               const timeMain = timePart.split(" ")[0] || timePart;
               const timeAmPm = timePart.split(" ")[1] || "";
               const locMain = (e.location || "").split(",")[0].trim();
@@ -2561,8 +2567,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <div style={{ display: "flex", gap: 8 }}>
                         <button
                           onClick={() => toggleRsvp(e.id)}
+                          disabled={String(e.id).startsWith("e_")}
                           style={{
-                            padding: "9px 24px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer",
+                            padding: "9px 24px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font,
+                            cursor: String(e.id).startsWith("e_") ? "default" : "pointer", opacity: String(e.id).startsWith("e_") ? 0.5 : 1,
                             border: "1px solid #B5E4CA",
                             background: rsvps.has(e.id) ? "#E3FCEF" : "#fff",
                             color: "#22A06B", transition: "all 0.15s",
@@ -2580,7 +2588,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <button onClick={() => setExpandedEvent(e)} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.message({ size: 15 })} Comment {eventComments[e.id]?.length ? `(${eventComments[e.id].length})` : ""}</button>
                       <button onClick={() => {
                         const shareUrl = `${window.location.origin}${window.location.pathname}#event=${e.id}`;
-                        const shareText = `${e.title}\n${e.date} at ${e.time}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
+                        const shareText = `${e.title}\n${eventDate(e)} at ${eventTime(e)}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
                         if (navigator.share) navigator.share({ title: e.title, text: shareText, url: e.link || shareUrl }).catch(() => {});
                         else { navigator.clipboard.writeText(shareText); alert("Event details copied to clipboard!"); }
                       }} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font, marginLeft: "auto" }}>{Icons.share({ size: 15 })} Share</button>
@@ -3793,7 +3801,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   onMouseOver={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "underline"}
                   onMouseOut={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "none"}
                 >
-                  <div style={{ fontSize: 11, color: "#9B9A97", fontFamily: font, marginBottom: 2 }}>{e.date.split("•")[0].trim()}</div>
+                  <div style={{ fontSize: 11, color: "#9B9A97", fontFamily: font, marginBottom: 2 }}>{eventDate(e)}</div>
                   <div className="ev-title" style={{ fontSize: 14, color: "#37352F", fontWeight: 600, fontFamily: font, lineHeight: 1.3 }}>{e.title}</div>
                 </div>
               ))}
@@ -3981,13 +3989,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button onClick={() => { setExpandedEvent(null); setEventComment(""); }} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {Icons.x({ size: 16 })}
               </button>
-              <div style={{ position: "absolute", bottom: 16, left: 16, background: "rgba(255,255,255,0.95)", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font }}>{expandedEvent.date}</div>
+              <div style={{ position: "absolute", bottom: 16, left: 16, background: "rgba(255,255,255,0.95)", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font }}>{eventDate(expandedEvent)}</div>
               <div style={{ position: "absolute", top: 16, left: 16, background: "rgba(0,0,0,0.5)", padding: "4px 10px", borderRadius: 12, fontSize: 11, color: "#fff", fontWeight: 600 }}>{expandedEvent.attendees} going</div>
             </div>
             <div style={{ padding: "24px 28px" }}>
               <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 12, fontFamily: font, lineHeight: 1.3 }}>{expandedEvent.title}</h2>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
-                <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.clock({ size: 14 })} {expandedEvent.time}</span>
+                <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.clock({ size: 14 })} {eventTime(expandedEvent)}</span>
                 <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.mapPin({ size: 14 })} {expandedEvent.location}</span>
               </div>
               <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, marginBottom: 20, fontFamily: font, whiteSpace: "pre-wrap" }}>{expandedEvent.description}</p>
