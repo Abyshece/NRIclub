@@ -61,6 +61,11 @@ def setup():
         ('{CAROL}', 'carol@example.com', '{{"full_name": "Carol C"}}', NULL),
         ('{ADMIN}', 'admin@example.com', '{{"full_name": "Admin"}}', now());
       INSERT INTO public.admins (user_id) VALUES ('{ADMIN}');
+      -- Alice, Bob and Carol have submitted their verification details
+      -- (pending members can use everything); the admin is approved.
+      UPDATE public.profile_private SET verification_status = 'pending', submitted_at = now()
+        WHERE id IN ('{ALICE}', '{BOB}', '{CAROL}');
+      UPDATE public.profile_private SET verification_status = 'approved' WHERE id = '{ADMIN}';
     """)
     if not ok:
         sys.exit("setup failed: " + err)
@@ -94,9 +99,12 @@ def main():
     check("member can edit own profile fields",
           "UPDATE profiles SET name = 'Alice Updated', bio = 'hi' WHERE id = auth.uid() RETURNING name",
           as_user=ALICE, expect="Alice Updated")
-    check("member cannot self-verify / unblock / fake email_verified",
-          "UPDATE profiles SET linkedin_verified = true, status = 'active', email_verified = true WHERE id = auth.uid() "
-          "RETURNING linkedin_verified::text || status", as_user=CAROL, expect="falseactive")
+    check("member cannot self-verify / fake email_verified",
+          "UPDATE profiles SET linkedin_verified = true, email_verified = true WHERE id = auth.uid() "
+          "RETURNING linkedin_verified::text || email_verified", as_user=CAROL, expect="falsefalse")
+    check("member cannot approve or unblock themselves",
+          "UPDATE profile_private SET verification_status = 'approved', status = 'active' WHERE id = auth.uid() "
+          "RETURNING verification_status || status", as_user=CAROL, expect="pendingactive")
     check("carol's email_verified unchanged after attempt",
           f"SELECT email_verified::text FROM profiles WHERE id = '{CAROL}'", expect="false")
     check("member cannot edit someone else's profile",
@@ -107,8 +115,9 @@ def main():
           "UPDATE profile_private SET email = 'x@evil.com' WHERE id = auth.uid() RETURNING email",
           as_user=ALICE, expect="alice@example.com")
     check("admin can read all private data", "SELECT count(*) FROM profile_private", as_user=ADMIN, expect="4")
-    check("admin can approve a member",
-          f"UPDATE profiles SET verification_status = 'approved' WHERE id = '{BOB}' RETURNING linkedin_verified::text",
+    check("admin can approve a member -> Verified badge",
+          f"UPDATE profile_private SET verification_status = 'approved' WHERE id = '{BOB}'; "
+          f"SELECT linkedin_verified::text FROM profiles WHERE id = '{BOB}'",
           as_user=ADMIN, expect="true")
     check("profiles cannot be deleted via the API",
           "DELETE FROM profiles WHERE id = auth.uid() RETURNING id", as_user=ALICE, expect="")
@@ -249,6 +258,9 @@ def main():
     check("Namaste notification needs a matching pending request",
           f"INSERT INTO notifications (user_id, type, actor_id, text) VALUES ('{BOB}', 'request', '{ALICE}', 'Alice sent you a Namaste')",
           as_user=ALICE, expect="error")
+    check("members cannot send verification or system notifications",
+          f"INSERT INTO notifications (user_id, type, actor_id, text) VALUES ('{BOB}', 'verification', '{ALICE}', 'You are verified')",
+          as_user=ALICE, expect="error")
     check("admin can send system notifications",
           f"INSERT INTO notifications (user_id, type, text) VALUES ('{ALICE}', 'group', 'Your community was approved') RETURNING 1",
           as_user=ADMIN, expect="1")
@@ -300,7 +312,13 @@ def main():
           as_user=ALICE, expect="0")
 
     # --- blocked members ----------------------------------------------------
-    check("admin blocks carol", f"UPDATE profiles SET status = 'blocked' WHERE id = '{CAROL}' RETURNING status", as_user=ADMIN, expect="blocked")
+    check("carol posts before being blocked",
+          f"INSERT INTO posts (id, user_id, content) VALUES ('10000000-0000-0000-0000-000000000003', '{CAROL}', 'hello') RETURNING 1",
+          as_user=CAROL, expect="1")
+    check("admin blocks carol",
+          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{CAROL}' RETURNING status", as_user=ADMIN, expect="blocked")
+    check("other members can't see who is blocked",
+          f"SELECT count(*) FROM profile_private WHERE id = '{CAROL}'", as_user=ALICE, expect="0")
     check("blocked member cannot post",
           f"INSERT INTO posts (user_id, content) VALUES ('{CAROL}', 'spam')", as_user=CAROL, expect="error")
     check("blocked member cannot list items",
@@ -316,9 +334,15 @@ def main():
     check("blocked member cannot join groups",
           f"INSERT INTO group_members (group_id, user_id) VALUES ('70000000-0000-0000-0000-000000000001', '{CAROL}')",
           as_user=CAROL, expect="error")
+    check("blocked member cannot edit their posts",
+          "UPDATE posts SET content = 'edited' WHERE id = '10000000-0000-0000-0000-000000000003' RETURNING 1",
+          as_user=CAROL, expect="")
+    check("blocked member cannot send notifications",
+          f"INSERT INTO notifications (user_id, type, actor_id, text) VALUES ('{ALICE}', 'like', '{CAROL}', 'Carol liked your post')",
+          as_user=CAROL, expect="error")
     check("blocked member can still edit profile",
-          "UPDATE profiles SET linkedin_url = 'https://linkedin.com/in/carol' WHERE id = auth.uid() RETURNING status",
-          as_user=CAROL, expect="blocked")
+          "UPDATE profiles SET linkedin_url = 'https://linkedin.com/in/carol' WHERE id = auth.uid() RETURNING linkedin_url",
+          as_user=CAROL, expect="https://www.linkedin.com/in/carol")
     check("blocked member can still report bugs",
           f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES ('{CAROL}', '{CAROL}', '[BUG] Feed: broken') RETURNING 1",
           as_user=CAROL, expect="1")
@@ -342,13 +366,19 @@ def main():
           f"""INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at) VALUES ('{diana}', 'diana@example.com',
           '{{"full_name": "  Diana D  ", "country_code": "de", "age_confirmed": true, "terms_version": "2026-10",
             "linkedin_url": "de.linkedin.com/in/Diana-D/"}}', now());
-          SELECT p.name || '|' || p.country_code || '|' || p.verification_status || '|' || p.linkedin_url || '|'
+          SELECT p.name || '|' || p.country_code || '|' || pp.verification_status || '|' || p.linkedin_url || '|'
             || (pp.age_confirmed_at IS NOT NULL) || '|' || pp.terms_version
           FROM profiles p JOIN profile_private pp USING (id) WHERE id = '{diana}'""",
           expect="Diana D|DE|incomplete|https://www.linkedin.com/in/diana-d|true|2026-10")
     check("member cannot set their own verification status",
-          "UPDATE profiles SET verification_status = 'approved' WHERE id = auth.uid() RETURNING verification_status",
+          "UPDATE profile_private SET verification_status = 'approved' WHERE id = auth.uid() RETURNING verification_status",
           as_user=diana, expect="incomplete")
+    check("member who hasn't submitted their details cannot post",
+          f"INSERT INTO posts (user_id, content) VALUES ('{diana}', 'hi')", as_user=diana, expect="error")
+    check("... or message",
+          f"INSERT INTO conversations (participant_1, participant_2) VALUES ('{diana}', '{ALICE}')", as_user=diana, expect="error")
+    check("... but can edit their profile",
+          "UPDATE profiles SET bio = 'Hi' WHERE id = auth.uid() RETURNING bio", as_user=diana, expect="Hi")
     check("member cannot write review fields",
           "UPDATE profile_private SET verification_message = 'ok', submitted_at = now(), terms_version = 'x' "
           "WHERE id = auth.uid() RETURNING (submitted_at IS NULL)::text || verification_message || terms_version",
@@ -362,6 +392,13 @@ def main():
     check("submit needs a city and country",
           "SELECT public.submit_verification('', 'XX1', '', 'linkedin.com/in/diana-d', '', '', NULL)",
           as_user=diana, expect="error")
+    check("submit needs 18+ and the Terms (older accounts)",
+          "SELECT public.submit_verification('Berlin', 'DE', 'Berlin, Germany', 'linkedin.com/in/alice', '', '', NULL)",
+          as_user=ALICE, expect="error")
+    check("submit can record 18+ and the Terms",
+          "SELECT public.submit_verification('Berlin', 'DE', 'Berlin, Germany', 'linkedin.com/in/alice', '', '', NULL, true); "
+          "SELECT (age_confirmed_at IS NOT NULL)::text || '|' || terms_version FROM profile_private",
+          as_user=ALICE, expect="pending\ntrue|2026-10")
     check("valid submission moves to pending",
           "SELECT public.submit_verification('Munich', 'de', 'Munich, Germany', 'linkedin.com/in/Diana-D', '', '', 'Engineer at SAP')",
           as_user=diana, expect="pending")
@@ -389,24 +426,40 @@ def main():
     check("admin approves -> Verified badge",
           f"SELECT public.review_member('{diana}', 'approved', '', ''); "
           f"SELECT linkedin_verified::text FROM profiles WHERE id = '{diana}'", as_user=ADMIN, expect="approved\ntrue")
+    check("an invalid LinkedIn link is rejected on profile edit",
+          "UPDATE profiles SET linkedin_url = 'https://twitter.com/diana' WHERE id = auth.uid()", as_user=diana, expect="error")
     check("changing LinkedIn after approval sends the member back to review",
-          "UPDATE profiles SET linkedin_url = 'linkedin.com/in/Someone-Else' WHERE id = auth.uid() "
-          "RETURNING verification_status || '|' || linkedin_verified || '|' || linkedin_url",
+          "UPDATE profiles SET linkedin_url = 'linkedin.com/in/Someone-Else' WHERE id = auth.uid(); "
+          "SELECT (SELECT verification_status FROM profile_private) || '|' || linkedin_verified || '|' || linkedin_url "
+          "FROM profiles WHERE id = auth.uid()",
           as_user=diana, expect="pending|false|https://www.linkedin.com/in/someone-else")
     check("editing other fields keeps approval",
           f"SELECT public.review_member('{diana}', 'approved', '', ''); "
-          f"UPDATE profiles SET bio = 'Hello' WHERE id = '{diana}'; SELECT verification_status FROM profiles WHERE id = '{diana}'",
+          f"UPDATE profiles SET bio = 'Hello' WHERE id = '{diana}'; "
+          f"SELECT verification_status FROM profile_private WHERE id = '{diana}'",
           as_user=ADMIN, expect="approved\napproved")
+    check("changing name after approval sends the member back to review",
+          "UPDATE profiles SET name = 'Diana Other' WHERE id = auth.uid(); "
+          "SELECT verification_status FROM profile_private", as_user=diana, expect="pending")
+    check("admin approves again", f"SELECT public.review_member('{diana}', 'approved', '', '')", as_user=ADMIN, expect="approved")
+    check("only the latest decision waits in the member's notifications",
+          "SELECT count(*) FROM notifications WHERE type = 'verification' AND NOT read", as_user=diana, expect="1")
+    check("approved member posts",
+          f"INSERT INTO posts (id, user_id, content) VALUES ('10000000-0000-0000-0000-000000000004', '{diana}', 'hello') RETURNING 1",
+          as_user=diana, expect="1")
     check("admin rejects",
           f"SELECT public.review_member('{diana}', 'rejected', 'We could not verify your identity.', '')",
           as_user=ADMIN, expect="rejected")
     check("rejected member cannot post",
           f"INSERT INTO posts (user_id, content) VALUES ('{diana}', 'hi')", as_user=diana, expect="error")
+    check("rejected member cannot edit their posts",
+          "UPDATE posts SET content = 'edited' WHERE id = '10000000-0000-0000-0000-000000000004' RETURNING 1",
+          as_user=diana, expect="")
     check("rejected member cannot resubmit",
           "SELECT public.submit_verification('Munich', 'DE', 'Munich', 'linkedin.com/in/diana-d', '', '', NULL)",
           as_user=diana, expect="error")
     check("admin sees the full history",
-          f"SELECT count(*) FROM verification_log WHERE member_id = '{diana}'", as_user=ADMIN, expect="7")
+          f"SELECT count(*) FROM verification_log WHERE member_id = '{diana}'", as_user=ADMIN, expect="9")
 
     # --- account deletion ---------------------------------------------------
     check("delete_my_account removes auth user and data",

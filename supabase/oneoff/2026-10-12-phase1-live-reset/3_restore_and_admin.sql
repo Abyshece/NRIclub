@@ -4,29 +4,30 @@
 -- same transaction.
 -- ============================================================================
 
--- Profiles (public part). The email-verified flag now mirrors Supabase Auth.
--- Members an admin already approved stay verified; members who gave a
--- LinkedIn link wait for review; anyone else is asked for their details.
+-- Profiles (public part). The email-verified flag now mirrors Supabase Auth;
+-- the Verified badge is set from the private part below.
 INSERT INTO public.profiles (id, name, avatar_url, location, city, hometown, profession, occupation_status,
-  years_abroad, linkedin_url, bio, email_verified, verification_status, status, last_active, created_at, updated_at)
+  years_abroad, linkedin_url, bio, email_verified, last_active, created_at, updated_at)
 SELECT b.id, LEFT(COALESCE(b.name, ''), 200), COALESCE(b.avatar_url, ''), COALESCE(b.location, ''),
   LEFT(BTRIM(SPLIT_PART(COALESCE(b.location, ''), ',', 1)), 200),
   COALESCE(b.hometown, ''), COALESCE(b.profession, ''), COALESCE(b.occupation_status, ''),
   COALESCE(b.years_abroad, ''), COALESCE(private.normalize_linkedin(b.linkedin_url), COALESCE(b.linkedin_url, '')),
   LEFT(COALESCE(b.bio, ''), 2000), u.email_confirmed_at IS NOT NULL,
-  CASE WHEN COALESCE(b.linkedin_verified, FALSE) THEN 'approved'
-       WHEN COALESCE(b.linkedin_url, '') <> '' THEN 'pending'
-       ELSE 'incomplete' END,
-  CASE WHEN b.status = 'blocked' THEN 'blocked' ELSE 'active' END,
   b.last_active, COALESCE(b.created_at, NOW()), COALESCE(b.updated_at, NOW())
 FROM phase1_backup.profiles b
 JOIN auth.users u ON u.id = b.id;
 
--- Profiles (private part), keeping the original consent dates.
+-- Profiles (private part), keeping the original consent dates. Members an
+-- admin already approved stay verified; members who gave a LinkedIn link
+-- wait for review; anyone else is asked for their details.
 ALTER TABLE public.profile_private DISABLE TRIGGER stamp_gdpr_consent;
 INSERT INTO public.profile_private (id, email, gdpr_consent, gdpr_consent_date, marketing_consent,
-  submitted_at, reviewed_at, created_at)
+  verification_status, status, submitted_at, reviewed_at, created_at)
 SELECT b.id, u.email, COALESCE(b.gdpr_consent, FALSE), b.gdpr_consent_date, COALESCE(b.marketing_consent, FALSE),
+  CASE WHEN COALESCE(b.linkedin_verified, FALSE) THEN 'approved'
+       WHEN COALESCE(b.linkedin_url, '') <> '' THEN 'pending'
+       ELSE 'incomplete' END,
+  CASE WHEN b.status = 'blocked' THEN 'blocked' ELSE 'active' END,
   CASE WHEN COALESCE(b.linkedin_url, '') <> '' THEN COALESCE(b.created_at, NOW()) END,
   CASE WHEN COALESCE(b.linkedin_verified, FALSE) THEN NOW() END,
   COALESCE(b.created_at, NOW())
