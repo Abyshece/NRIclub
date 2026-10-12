@@ -53,8 +53,6 @@ Issues found while auditing the code for Phase 1 that are outside its scope
 
 - Deleting an account doesn't delete the user's uploaded images in Storage.
 - Signup reveals whether an email already has an account.
-- Every signup sends one password update that fails harmlessly (it's only
-  needed when an unfinished signup is resumed); skip it for new accounts.
 - Rejected and blocked members can still file reports (on purpose, so they
   can report bugs); add a per-member rate limit.
 - The client-side rate limiter resets on reload; rely on Supabase Auth limits.
