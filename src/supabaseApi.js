@@ -1,12 +1,53 @@
 // ============================================================================
-// supabaseApi.js - Complete Supabase API layer for IndIn
+// supabaseApi.js - Complete Supabase API layer for NRIclub
 // ============================================================================
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+const TOKEN_KEY = "nriclub_token";
+const REFRESH_KEY = "nriclub_refresh";
+
 let accessToken = null;
 let currentUser = null;
+
+// Builds from before the NRIclub rename kept the session under indin_* keys,
+// and an old signup fallback cached the plain password in indin_profile_cache.
+// Move the cookie choice over, sign the old session out and drop the rest.
+// Runs at import so it happens before anything reads storage.
+(function clearLegacyStorage() {
+  try {
+    const legacyToken = localStorage.getItem("indin_token");
+    const consent = localStorage.getItem("indin_cookie_consent");
+    if (consent && !localStorage.getItem("nriclub_cookie_consent")) {
+      localStorage.setItem("nriclub_cookie_consent", consent);
+    }
+    ["indin_token", "indin_refresh", "indin_profile_cache", "indin_admin", "indin_cookie_consent"]
+      .forEach((key) => localStorage.removeItem(key));
+    if (legacyToken) {
+      fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${legacyToken}` },
+      }).catch(() => {});
+    }
+  } catch {}
+})();
+
+// The app registers this to leave the signed-in screens when the session ends
+// on its own (revoked or expired, or another tab signed in as someone else).
+let sessionEndedHandler = null;
+export function onSessionEnded(handler) { sessionEndedHandler = handler; }
+
+function endSession({ clearStorage }) {
+  const hadUser = !!currentUser;
+  accessToken = null;
+  currentUser = null;
+  if (clearStorage) {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_KEY);
+  }
+  if (hadUser && sessionEndedHandler) sessionEndedHandler();
+}
 
 function headers(extra = {}) {
   const h = {
@@ -19,9 +60,16 @@ function headers(extra = {}) {
 }
 
 async function restCall(method, path, body = null, extraHeaders = {}) {
-  const opts = { method, headers: headers(extraHeaders) };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${SUPABASE_URL}${path}`, opts);
+  const send = () => fetch(`${SUPABASE_URL}${path}`, {
+    method,
+    headers: headers(extraHeaders),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let res = await send();
+  // Access tokens expire after an hour; refresh once and retry.
+  if (res.status === 401 && accessToken && await refreshSession()) {
+    res = await send();
+  }
   if (!res.ok) {
     const err = await res.text();
     throw new Error(err);
@@ -42,8 +90,10 @@ export async function signUp(email, password, metadata = {}) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error_description || data.msg || "Signup failed");
-  // Supabase returns identities=[] for existing emails (doesn't error)
-  if (data.user && data.user.identities && data.user.identities.length === 0) {
+  // Supabase answers an existing email with empty identities instead of an
+  // error; the user object is top-level when email confirmation is on.
+  const signedUpUser = data.user || data;
+  if (Array.isArray(signedUpUser?.identities) && signedUpUser.identities.length === 0) {
     throw new Error("An account with this email already exists. Please log in instead.");
   }
   return data;
@@ -59,15 +109,16 @@ export async function signIn(email, password) {
   if (!res.ok) throw new Error(data.error_description || data.msg || "Login failed");
   accessToken = data.access_token;
   currentUser = data.user;
-  localStorage.setItem("indin_token", data.access_token);
-  localStorage.setItem("indin_refresh", data.refresh_token);
+  localStorage.setItem(TOKEN_KEY, data.access_token);
+  localStorage.setItem(REFRESH_KEY, data.refresh_token);
   return data;
 }
 
+// Signs out this browser only; other devices stay signed in.
 export async function signOut() {
   try {
     if (accessToken) {
-      await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+      await fetch(`${SUPABASE_URL}/auth/v1/logout?scope=local`, {
         method: "POST",
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
       });
@@ -75,12 +126,13 @@ export async function signOut() {
   } catch (e) {}
   accessToken = null;
   currentUser = null;
-  localStorage.removeItem("indin_token");
-  localStorage.removeItem("indin_refresh");
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
 }
 
 export async function resetPassword(email) {
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+  const redirectTo = encodeURIComponent(window.location.origin + window.location.pathname);
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/recover?redirect_to=${redirectTo}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
     body: JSON.stringify({ email }),
@@ -92,15 +144,42 @@ export async function resetPassword(email) {
   return true;
 }
 
+// The password-reset email links back to the site with the session in the URL
+// hash (#access_token=...&type=recovery). Take it, clean the URL, and return
+// true so the app can ask for a new password.
+export function takeRecoverySession() {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  if (params.get("type") !== "recovery" || !params.get("access_token")) return false;
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  accessToken = params.get("access_token");
+  localStorage.setItem(TOKEN_KEY, accessToken);
+  if (params.get("refresh_token")) localStorage.setItem(REFRESH_KEY, params.get("refresh_token"));
+  return true;
+}
+
+export async function updatePassword(password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Couldn't update your password.");
+  currentUser = data;
+  return data;
+}
+
+// Emails a 6-digit code to an existing account (used to confirm an email
+// address); never creates an account.
 export async function sendOtp(email) {
   const res = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, create_user: false }),
   });
   if (!res.ok) {
     const data = await res.json();
-    throw new Error(data.error_description || "Failed to send OTP");
+    throw new Error(data.msg || data.error_description || data.message || "Failed to send OTP");
   }
 }
 
@@ -111,55 +190,78 @@ export async function verifyOtp(email, token) {
     body: JSON.stringify({ email, token, type: "email" }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error_description || "Invalid OTP");
+  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Invalid OTP");
   if (data.access_token) {
     accessToken = data.access_token;
     currentUser = data.user;
-    localStorage.setItem("indin_token", data.access_token);
-    if (data.refresh_token) localStorage.setItem("indin_refresh", data.refresh_token);
+    localStorage.setItem(TOKEN_KEY, data.access_token);
+    if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
   }
   return data;
 }
 
-export async function refreshSession() {
-  const refresh = localStorage.getItem("indin_refresh");
+// Concurrent callers share one refresh request; refresh tokens are single-use.
+let refreshInFlight = null;
+
+export function refreshSession() {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefreshSession().finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
+async function doRefreshSession() {
+  const refresh = localStorage.getItem(REFRESH_KEY);
   if (!refresh) return null;
+  let res;
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
       body: JSON.stringify({ refresh_token: refresh }),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    accessToken = data.access_token;
-    currentUser = data.user;
-    localStorage.setItem("indin_token", data.access_token);
-    if (data.refresh_token) localStorage.setItem("indin_refresh", data.refresh_token);
-    return data;
   } catch {
+    return null; // offline: keep the session and try again later
+  }
+  if (!res.ok) {
+    // Revoked, expired or already-used refresh token: the session is over.
+    if (res.status >= 400 && res.status < 500) endSession({ clearStorage: true });
     return null;
   }
+  const data = await res.json();
+  // Tokens are shared by every tab. Save the rotated ones, but if another tab
+  // signed in as someone else, don't switch this tab to that account.
+  localStorage.setItem(TOKEN_KEY, data.access_token);
+  if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
+  if (currentUser && data.user?.id !== currentUser.id) {
+    endSession({ clearStorage: false });
+    return null;
+  }
+  accessToken = data.access_token;
+  currentUser = data.user;
+  return data;
 }
 
 export async function getSession() {
-  const token = localStorage.getItem("indin_token");
+  const token = localStorage.getItem(TOKEN_KEY);
   if (!token) return null;
   accessToken = token;
   try {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) {
-      // Try refresh
-      return await refreshSession();
+    if (res.ok) {
+      const user = await res.json();
+      currentUser = user;
+      return { user, access_token: token };
     }
-    const user = await res.json();
-    currentUser = user;
-    return { user, access_token: token };
-  } catch {
-    return await refreshSession();
+  } catch {}
+  const refreshed = await refreshSession();
+  if (!refreshed) {
+    accessToken = null;
+    currentUser = null;
   }
+  return refreshed;
 }
 
 export function getCurrentUser() { return currentUser; }
@@ -174,44 +276,61 @@ export async function getProfile(userId) {
   return data?.[0] || null;
 }
 
+// Email, consent and verification status live in profile_private, which
+// only the owner and admins can read; the app still sees them as fields of
+// the user's own profile.
+const PRIVATE_PROFILE_FIELDS = ["email", "gdpr_consent", "gdpr_consent_date", "marketing_consent"];
+
 export async function getMyProfile() {
   if (!currentUser) return null;
-  // Update last_active timestamp
-  try { restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { last_active: new Date().toISOString() }); } catch(e) {}
-  return getProfile(currentUser.id);
+  restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { last_active: new Date().toISOString() }).catch(() => {});
+  const [profile, privateRows] = await Promise.all([
+    getProfile(currentUser.id),
+    restCall("GET", `/rest/v1/profile_private?id=eq.${currentUser.id}&select=*`).catch(() => []),
+  ]);
+  if (!profile) return null;
+  const { id, created_at, updated_at, ...privateFields } = privateRows?.[0] || {};
+  return { ...profile, email: currentUser.email, ...privateFields };
 }
 
 export async function updateProfile(updates) {
   if (!currentUser) throw new Error("Not logged in");
-  return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, updates, { Prefer: "return=representation" });
+  const publicUpdates = {};
+  const privateUpdates = {};
+  for (const [key, value] of Object.entries(updates)) {
+    (PRIVATE_PROFILE_FIELDS.includes(key) ? privateUpdates : publicUpdates)[key] = value;
+  }
+  // email is managed by Supabase Auth and email_verified mirrors it; neither is client-writable.
+  delete privateUpdates.email;
+  delete privateUpdates.gdpr_consent_date;
+  delete publicUpdates.email_verified;
+  if (Object.keys(privateUpdates).length) {
+    await restCall("PATCH", `/rest/v1/profile_private?id=eq.${currentUser.id}`, privateUpdates);
+  }
+  if (!Object.keys(publicUpdates).length) return [];
+  return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, publicUpdates, { Prefer: "return=representation" });
 }
 
+// ============================================================================
+// MEMBER VERIFICATION
+// ============================================================================
+
+// Submit (or correct) verification details. Either linkedinUrl or a note of
+// at least 20 characters is required; the server validates and normalises.
+// acceptTerms records "18 or older" and the Terms for accounts that never
+// confirmed them at signup.
+export async function submitVerification({ city, countryCode, location, linkedinUrl = "", note = "", voucher = "", profession = null, acceptTerms = false }) {
+  return restCall("POST", "/rest/v1/rpc/submit_verification", {
+    p_city: city, p_country_code: countryCode, p_location: location,
+    p_linkedin_url: linkedinUrl, p_note: note, p_voucher: voucher, p_profession: profession,
+    p_accept_terms: acceptTerms,
+  });
+}
+
+// Deletes the auth user server-side; every row the user owns cascades with it.
 export async function deleteAccount() {
   if (!currentUser) throw new Error("Not logged in");
-  const uid = currentUser.id;
-  // Delete all user content in order (foreign keys)
-  try { await restCall("DELETE", `/rest/v1/comments?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/likes?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/messages?sender_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/notifications?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/notifications?actor_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/event_rsvps?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/group_members?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/connections?recipient_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/blocks?blocker_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/blocks?blocked_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/help_responses?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/doc_comments?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/reports?reporter_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/user_settings?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/marketplace?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/help_requests?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/docs?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/posts?user_id=eq.${uid}`); } catch(e) {}
-  // Finally delete the profile itself
-  try { await restCall("DELETE", `/rest/v1/profiles?id=eq.${uid}`); } catch(e) {}
-  // Sign out
+  await restCall("POST", "/rest/v1/rpc/delete_my_account", {});
   await signOut();
 }
 
@@ -710,7 +829,7 @@ export async function saveUserSettings(settings) {
 
 export async function getOtherUserSettings(userId) {
   // Fetch another user's public settings (for checking if they accept messages/requests)
-  const data = await restCall("GET", `/rest/v1/user_settings?user_id=eq.${userId}&select=namaste_requests,receive_messages,profile_visibility`);
+  const data = await restCall("POST", "/rest/v1/rpc/get_member_preferences", { member: userId });
   return data && data.length > 0 ? data[0] : null;
 }
 
@@ -735,7 +854,8 @@ export function subscribeToMessages(conversationId, callback) {
       const joinMsg = JSON.stringify({
         topic: `realtime:public:messages:conversation_id=eq.${conversationId}`,
         event: "phx_join",
-        payload: { config: { broadcast: { self: false }, presence: { key: "" }, postgres_changes: [{ event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` }] } },
+        // access_token lets Realtime apply the messages RLS policy for this user.
+        payload: { config: { broadcast: { self: false }, presence: { key: "" }, postgres_changes: [{ event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` }] }, access_token: accessToken },
         ref: "1",
       });
       realtimeSocket.send(joinMsg);
@@ -769,4 +889,97 @@ export function unsubscribeFromMessages() {
   if (realtimeHeartbeat) { clearInterval(realtimeHeartbeat); realtimeHeartbeat = null; }
   if (realtimeSocket) { try { realtimeSocket.close(); } catch(e) {} realtimeSocket = null; }
   messageCallbacks = [];
+}
+
+// ============================================================================
+// ADMIN - every call runs as the signed-in user; the database only allows it
+// for accounts listed in public.admins.
+// ============================================================================
+
+export async function isAdmin() {
+  if (!currentUser) return false;
+  const rows = await restCall("GET", `/rest/v1/admins?user_id=eq.${currentUser.id}&select=user_id`);
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+export async function adminGetDashboardData() {
+  const get = (path) => restCall("GET", path);
+  const [profiles, privateRows, groups, reports, posts, docs, events, helpRequests, marketItems] = await Promise.all([
+    get("/rest/v1/profiles?select=*&order=created_at.desc"),
+    get("/rest/v1/profile_private?select=id,email,verification_status,status"),
+    get("/rest/v1/groups?select=*&order=members_count.desc"),
+    get("/rest/v1/reports?select=*&order=created_at.desc"),
+    get("/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200"),
+    get("/rest/v1/docs?select=id,title,excerpt,user_id&order=created_at.desc&limit=100"),
+    get("/rest/v1/events?select=id,title,description,date,organizer_id&order=created_at.desc&limit=100"),
+    get("/rest/v1/help_requests?select=id,title,description,user_id&order=created_at.desc&limit=100"),
+    get("/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100"),
+  ]);
+  const privateById = Object.fromEntries((privateRows || []).map((p) => [p.id, p]));
+  return {
+    users: (profiles || []).map((p) => {
+      const pp = privateById[p.id] || {};
+      return { ...p, email: pp.email || "", verification_status: pp.verification_status || "incomplete", status: pp.status || "active" };
+    }),
+    groups: groups || [],
+    reports: reports || [],
+    posts: posts || [],
+    docs: docs || [],
+    events: events || [],
+    helpRequests: helpRequests || [],
+    marketItems: marketItems || [],
+  };
+}
+
+// RLS turns a forbidden write into a silent no-op, so ask for the changed
+// rows back and treat "none" as a failure.
+async function adminWrite(method, path, body = null) {
+  const rows = await restCall(method, path, body, { Prefer: "return=representation" });
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("Nothing was changed. It may already have been handled, or this account is no longer an admin.");
+  }
+  return rows;
+}
+
+// Moderation only (block / unblock). Verification decisions go through
+// adminReviewMember.
+export async function adminSetMemberStatus(userId, status) {
+  return adminWrite("PATCH", `/rest/v1/profile_private?id=eq.${userId}`, { status });
+}
+
+// Members waiting for a decision (or any other verification statuses), with
+// everything needed to decide: email, LinkedIn or note, voucher, duplicates.
+export async function adminVerificationQueue(statuses = ["pending"]) {
+  return restCall("POST", "/rest/v1/rpc/admin_verification_queue", { p_statuses: statuses });
+}
+
+// decision: "approved" | "needs_info" | "rejected" | "pending" (reopen/undo).
+// needs_info and rejected require a message, which the member sees.
+export async function adminReviewMember(memberId, decision, message = "", adminNote = "") {
+  return restCall("POST", "/rest/v1/rpc/review_member", {
+    p_member: memberId, p_decision: decision, p_message: message, p_admin_note: adminNote,
+  });
+}
+
+export async function adminApproveGroup(groupId) {
+  return adminWrite("PATCH", `/rest/v1/groups?id=eq.${groupId}`, { is_approved: true });
+}
+
+export async function adminDeleteGroup(groupId) {
+  return adminWrite("DELETE", `/rest/v1/groups?id=eq.${groupId}`);
+}
+
+export async function adminDeleteReport(reportId) {
+  return adminWrite("DELETE", `/rest/v1/reports?id=eq.${reportId}`);
+}
+
+const MODERATED_TABLES = ["posts", "docs", "events", "help_requests", "marketplace"];
+
+export async function adminDeleteContent(table, id) {
+  if (!MODERATED_TABLES.includes(table)) throw new Error(`Cannot moderate ${table}`);
+  return adminWrite("DELETE", `/rest/v1/${table}?id=eq.${id}`);
+}
+
+export async function adminNotify(userId, type, text) {
+  return restCall("POST", "/rest/v1/notifications", { user_id: userId, type, text });
 }

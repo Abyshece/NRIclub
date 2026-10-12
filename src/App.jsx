@@ -1,5 +1,13 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import * as api from "./supabaseApi";
+import "./member/base.css";
+import SignUpFlow from "./member/SignUpFlow";
+import GetVerified from "./member/GetVerified";
+import CodeEntry from "./member/CodeEntry";
+import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner";
+import ProfileChecklist, { missingProfileItems, useProfileCardDismissed } from "./member/ProfileChecklist";
+import { TermsContent } from "./member/LegalModals";
+import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
 
 // ============================================================================
@@ -68,8 +76,21 @@ const rateLimiter = (() => {
   };
 })();
 
+// Older events keep the time in the date ("Mar 25, 2026 • 10:00 AM"); new
+// ones have a date picker value ("2026-11-14") and a separate time.
+const eventDate = (e) => {
+  const d = (e.date || "").split("•")[0].trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  return new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
+const eventTime = (e) => (e.date || "").split("•")[1]?.trim() || e.time || "TBD";
+
 const isUserNRI = (userOrLocation) => {
+  // The country chosen when getting verified decides when it's known.
+  const countryCode = typeof userOrLocation === "object" && userOrLocation ? (userOrLocation.countryCode || userOrLocation.country_code) : "";
+  if (countryCode) return countryCode !== "IN";
   const loc = typeof userOrLocation === "string" ? userOrLocation : (userOrLocation?.location || userOrLocation?.currentCity || "");
+  if (/,\s*india\s*$/i.test(loc)) return false;
   if (!loc) {
     // No location - fall back to isNRI flag or yearsAbroad
     if (typeof userOrLocation === "object" && userOrLocation) {
@@ -167,46 +188,6 @@ const Icons = {
   flag: (p) => <Icon {...p} d={["M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z", "M4 22v-7"]} />,
 };
 
-
-function getDefaultEvents() {
-  return [
-    { id: "e1", title: "Holi Festival 2026", date: "Mar 25, 2026 • 10:00 AM", location: "Central Park, New York", attendees: 450, organizer: "NYC Desi Club", description: "Celebrate the festival of colors with fellow Indians in NYC!" },
-    { id: "e2", title: "Networking Night: Tech", date: "Apr 10, 2026 • 6:00 PM", location: "WeWork, Berlin", attendees: 120, organizer: "Indian Professionals DE", description: "Connect with Indian tech professionals working in Germany." },
-    { id: "e3", title: "Bollywood Movie Night", date: "Apr 15, 2026 • 7:00 PM", location: "Hoyts Cinema, Melbourne", attendees: 85, organizer: "Melbourne Desi Club", description: "Watch the latest Bollywood blockbuster together!" },
-  ];
-}
-
-function getDefaultGroups() {
-  return [
-    { id: "g1", name: "Indians in Berlin", description: "The largest community of Indians living in Berlin.", members: 12500, category: "City", joined: false },
-    { id: "g2", name: "Techies Abroad", description: "Indian IT professionals working globally. Share referrals and tech news.", members: 45000, category: "Professional", joined: false },
-    { id: "g3", name: "Desi Students USA", description: "Support group for MS/PhD students in the United States.", members: 8900, category: "Support", joined: false },
-    { id: "g4", name: "Global Indian Foodies", description: "Sharing recipes and restaurant finds from around the world.", members: 32000, category: "Interest", joined: false },
-    { id: "g5", name: "Indians in London", description: "Community hub for Indians living in London and surrounding areas.", members: 28000, category: "City", joined: false },
-    { id: "g6", name: "Indians in Toronto", description: "Connect with the vibrant Indian community in Toronto.", members: 19000, category: "City", joined: false },
-  ];
-}
-
-function getDefaultPosts() {
-  return [
-    {
-      id: "p1", userId: "demo", content: "Finally found a place in London that serves authentic Gujarati Thali! If anyone is missing home food, check out 'Rasoi' near Wembley. 🍛 #DesiFood #LondonEats",
-      author: { name: "Priya Patel", profession: "Architect", location: "London, UK", hometown: "Ahmedabad, GJ" },
-      likes: 243, comments: [], tags: ["Food", "Recommendation"], timestamp: Date.now() - 7200000,
-      image: "https://picsum.photos/600/400?random=10",
-    },
-    {
-      id: "p2", userId: "demo", content: "Help needed regarding PR process in Canada. Has anyone recently applied under the STEM category? I have questions about the documentation.",
-      author: { name: "Rahul Verma", profession: "Student", location: "Toronto, Canada", hometown: "Delhi, DL" },
-      likes: 56, comments: [], tags: ["Visa", "Canada"], timestamp: Date.now() - 18000000,
-    },
-    {
-      id: "p3", userId: "demo", content: "Hosting a small Diwali get-together this weekend! Bring your own sparklers. DM for details!",
-      author: { name: "Sneha Gupta", profession: "Product Manager", location: "San Francisco, USA", hometown: "Bangalore, KA" },
-      likes: 189, comments: [], tags: ["Events", "Community"], timestamp: Date.now() - 86400000,
-    },
-  ];
-}
 
 function timeAgo(ts) {
   const diff = Date.now() - ts;
@@ -534,916 +515,118 @@ const LandingPage = ({ onJoin, onLogin }) => (
 );
 
 // ============================================================================
-// SIGN UP PAGE
-// ============================================================================
-
-// Small inline SVG icons for signup labels (matching screenshot exactly)
-const SignUpIcons = {
-  home: () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
-      <polyline points="9 22 9 12 15 12 15 22"/>
-    </svg>
-  ),
-  mapPin: () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="10" r="3"/>
-      <path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 10-16 0c0 3 2.7 7 8 11.7z"/>
-    </svg>
-  ),
-  briefcase: () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
-      <path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>
-    </svg>
-  ),
-  linkedin: () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6z"/>
-      <rect x="2" y="9" width="4" height="12"/>
-      <circle cx="4" cy="4" r="2"/>
-    </svg>
-  ),
-  info: () => (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B7FD6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10"/>
-      <line x1="12" y1="16" x2="12" y2="12"/>
-      <line x1="12" y1="8" x2="12.01" y2="8"/>
-    </svg>
-  ),
-  globe: () => (
-    <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
-      <rect width="40" height="40" rx="10" fill="#F0EFED"/>
-      <circle cx="20" cy="20" r="8" stroke="#37352F" strokeWidth="1.5" fill="none"/>
-      <ellipse cx="20" cy="20" rx="4" ry="8" stroke="#37352F" strokeWidth="1.2" fill="none"/>
-      <line x1="12" y1="20" x2="28" y2="20" stroke="#37352F" strokeWidth="1.2"/>
-    </svg>
-  ),
-  arrowRight: () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="5" y1="12" x2="19" y2="12"/>
-      <polyline points="12 5 19 12 12 19"/>
-    </svg>
-  ),
-};
-
-const SignUpPage = ({ onComplete, onLogin }) => {
-  const [residencyStep, setResidencyStep] = useState(null); // null = show choice, 'abroad' | 'india'
-  const [form, setForm] = useState({
-    firstName: "", middleName: "", lastName: "", email: "",
-    password: "", confirmPassword: "",
-    location: "", hometown: "", profession: "",
-    occupationStatus: "Working Professional", yearsAbroad: "", linkedinUrl: "",
-    isNRI: true,
-  });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  // OTP state
-  const [otpStep, setOtpStep] = useState("form"); // "form" | "otp" | "complete"
-  const [otpCode, setOtpCode] = useState(["", "", "", "", "", ""]);
-  const [generatedOtp, setGeneratedOtp] = useState("");
-  const [otpError, setOtpError] = useState("");
-  const [otpTimer, setOtpTimer] = useState(0);
-  const [otpSending, setOtpSending] = useState(false);
-  const otpRefs = [useRef(null), useRef(null), useRef(null), useRef(null), useRef(null), useRef(null)];
-
-  // GDPR consent state
-  const [gdprConsent, setGdprConsent] = useState(false);
-  const [marketingConsent, setMarketingConsent] = useState(false);
-  const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
-  const update = (k, v) => setForm((p) => ({ ...p, [k]: v }));
-  const passwordsMatch = form.password && form.confirmPassword && form.password === form.confirmPassword;
-  const passwordLongEnough = form.password.length >= 8;
-  const valid = form.firstName && form.lastName && form.email && passwordLongEnough && passwordsMatch && form.location && form.hometown && form.profession && (residencyStep === "india" || form.yearsAbroad) && gdprConsent;
-
-  // OTP timer countdown
-  useEffect(() => {
-    if (otpTimer > 0) {
-      const t = setTimeout(() => setOtpTimer(otpTimer - 1), 1000);
-      return () => clearTimeout(t);
-    }
-  }, [otpTimer]);
-
-  const generateOtp = () => {
-    return "";
-  };
-
-  const handleSendOtp = async () => {
-    if (!form.email || !form.email.includes("@")) {
-      setError("Please enter a valid email address.");
-      return;
-    }
-    if (form.password.length < 8) {
-      setError("Password must be at least 8 characters long.");
-      return;
-    }
-    if (form.password !== form.confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-    if (!valid) return;
-
-    setOtpSending(true);
-    setError("");
-
-    try {
-      const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-      
-      // Step 1: Create user in Supabase
-      try {
-        const signUpResult = await api.signUp(form.email, form.password, {
-          full_name: fullName, location: form.location,
-          hometown: form.hometown, profession: form.profession,
-        });
-        // Double check: if signup returned but user already exists
-        if (signUpResult?.user?.identities?.length === 0) {
-          setError("An account with this email already exists. Please log in instead.");
-          setOtpSending(false);
-          return;
-        }
-      } catch (signUpErr) {
-        const msg = (signUpErr.message || "").toLowerCase();
-        if (msg.includes("already") || msg.includes("exists") || msg.includes("duplicate")) {
-          setError("An account with this email already exists. Please log in instead.");
-          setOtpSending(false);
-          return;
-        }
-        // For other errors, throw to outer catch
-        throw signUpErr;
-      }
-
-      // Step 2: Send OTP via Supabase
-      try {
-        await api.sendOtp(form.email);
-      } catch (otpErr) {
-        // OTP send failed - allow manual code entry
-      }
-      setGeneratedOtp("");
-
-      setOtpStep("otp");
-      setOtpTimer(60);
-      setOtpCode(["", "", "", "", "", ""]);
-      setOtpSending(false);
-
-    } catch (err) {
-      setError(err.message || "Something went wrong. Please try again.");
-      setOtpSending(false);
-    }
-  };
-
-  const handleOtpChange = (index, value) => {
-    if (value.length > 1) value = value[value.length - 1];
-    if (value && !/^\d$/.test(value)) return;
-
-    const newOtp = [...otpCode];
-    newOtp[index] = value;
-    setOtpCode(newOtp);
-    setOtpError("");
-
-    // Auto-focus next input
-    if (value && index < 5) {
-      otpRefs[index + 1].current?.focus();
-    }
-  };
-
-  const handleOtpKeyDown = (index, e) => {
-    if (e.key === "Backspace" && !otpCode[index] && index > 0) {
-      otpRefs[index - 1].current?.focus();
-    }
-  };
-
-  const handleOtpPaste = (e) => {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
-    if (pasted.length === 6) {
-      const newOtp = pasted.split("");
-      setOtpCode(newOtp);
-      otpRefs[5].current?.focus();
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    const entered = otpCode.join("");
-    if (entered.length !== 6) {
-      setOtpError("Please enter the complete 6-digit code.");
-      return;
-    }
-
-    setLoading(true);
-    setOtpError("");
-
-    try {
-      // If we have a local OTP (sandbox mode), verify locally
-      if (generatedOtp) {
-        if (entered !== generatedOtp) {
-          setOtpError("Invalid code. Please try again.");
-          setLoading(false);
-          return;
-        }
-        // Local verification passed
-        const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-        const profile = {
-          id: "user_" + Date.now(),
-          name: fullName,
-          email: form.email,
-          password: form.password,
-          location: form.location,
-          hometown: form.hometown,
-          profession: form.profession,
-          occupationStatus: form.occupationStatus,
-          yearsAbroad: form.yearsAbroad,
-          linkedinUrl: form.linkedinUrl,
-          emailVerified: true,
-          gdprConsent: true,
-          gdprConsentDate: new Date().toISOString(),
-          marketingConsent: marketingConsent,
-          isNRI: form.isNRI,
-          createdAt: Date.now(),
-        };
-        localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
-        setLoading(false);
-        onComplete(profile);
-        return;
-      }
-
-      // Real Supabase verification
-      try {
-        let verifyData = await api.verifyOtp(form.email, entered);
-        // If verify didn't return a token, try signing in with password
-        if (!verifyData?.access_token) {
-          try { verifyData = await api.signIn(form.email, form.password); } catch(si) {}
-        }
-        const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-        // Save ALL signup details to profile
-        try {
-          await api.updateProfile({
-            name: fullName, location: form.location, hometown: form.hometown,
-            profession: form.profession, occupation_status: form.occupationStatus,
-            years_abroad: form.yearsAbroad, linkedin_url: form.linkedinUrl,
-            email_verified: true, gdpr_consent: true, gdpr_consent_date: new Date().toISOString(),
-            marketing_consent: marketingConsent,
-          });
-        } catch (ue) {
-          // If updateProfile fails, try again after a short delay
-          setTimeout(async () => {
-            try { await api.updateProfile({ name: fullName, location: form.location, hometown: form.hometown, profession: form.profession, occupation_status: form.occupationStatus, years_abroad: form.yearsAbroad, linkedin_url: form.linkedinUrl }); } catch(e) {}
-          }, 1000);
-        }
-        const profile = {
-          id: verifyData?.user?.id || ("user_" + Date.now()),
-          name: fullName, email: form.email, location: form.location,
-          hometown: form.hometown, profession: form.profession,
-          occupationStatus: form.occupationStatus, yearsAbroad: form.yearsAbroad,
-          linkedinUrl: form.linkedinUrl, emailVerified: true,
-          isNRI: form.isNRI, avatar_url: "",
-        };
-        localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
-        setLoading(false);
-        onComplete(profile);
-      } catch (verifyErr) {
-        setOtpError(verifyErr.message || "Invalid or expired code.");
-        setLoading(false);
-      }
-
-    } catch (err) {
-      setOtpError("Something went wrong. Please try again.");
-      setLoading(false);
-    }
-  };
-
-  const handleResendOtp = async () => {
-    if (otpTimer > 0) return;
-    setOtpSending(true);
-    setOtpError("");
-
-    try {
-      await api.sendOtp(form.email);
-      setOtpTimer(60);
-      setOtpCode(["", "", "", "", "", ""]);
-    } catch {
-      setOtpError("Failed to resend. Please try again.");
-    }
-    setOtpSending(false);
-  };
-
-  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-
-  const inputStyle = {
-    width: "100%",
-    padding: "14px 16px",
-    borderRadius: 8,
-    border: "1px solid #E0E0DE",
-    fontSize: 15,
-    background: "#fff",
-    outline: "none",
-    color: "#37352F",
-    fontFamily: font,
-    boxSizing: "border-box",
-    transition: "border-color 0.15s",
-  };
-
-  const labelStyle = {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 11,
-    fontWeight: 700,
-    color: "#5F5E5B",
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    marginBottom: 8,
-    fontFamily: font,
-  };
-
-  // ---- RESIDENCY CHOICE SCREEN ----
-  if (!residencyStep) {
-    return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
-        <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
-          <div style={{ width: 56, height: 56, borderRadius: 16, background: "#37352F", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", color: "#fff" }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-          </div>
-          <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>Where do you live?</h2>
-          <p style={{ fontSize: 14, color: "#9B9A97", marginBottom: 32 }}>This helps us personalize your experience on IndIn.</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 320, margin: "0 auto" }}>
-            <button onClick={() => { setResidencyStep("abroad"); update("isNRI", true); }} style={{ padding: "18px 24px", borderRadius: 12, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
-              onMouseOver={(e) => { e.currentTarget.style.borderColor = "#37352F"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
-              onMouseOut={(e) => { e.currentTarget.style.borderColor = "#E0E0DE"; e.currentTarget.style.boxShadow = "none"; }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ width: 42, height: 42, borderRadius: 10, background: "#E3FCEF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>
-                </div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#37352F" }}>I live outside India</div>
-                  <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>NRI, student abroad, or recently moved</div>
-                </div>
-              </div>
-            </button>
-            <button onClick={() => { setResidencyStep("india"); update("isNRI", false); update("yearsAbroad", "Not lived abroad"); }} style={{ padding: "18px 24px", borderRadius: 12, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
-              onMouseOver={(e) => { e.currentTarget.style.borderColor = "#37352F"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
-              onMouseOut={(e) => { e.currentTarget.style.borderColor = "#E0E0DE"; e.currentTarget.style.boxShadow = "none"; }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ width: 42, height: 42, borderRadius: 10, background: "#FFF3E0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E65100" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/></svg>
-                </div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#37352F" }}>I live in India</div>
-                  <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>Connect with NRIs for advice & support</div>
-                </div>
-              </div>
-            </button>
-          </div>
-          <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 24 }}>Already have an account? <button onClick={onLogin} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontSize: 12 }}>Log in</button></p>
-        </div>
-      </div>
-    );
-  }
-
-  // ---- OTP VERIFICATION SCREEN ----
-  if (otpStep === "otp") {
-    return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
-        <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
-          <div style={{ marginBottom: 24, display: "inline-block" }}>
-            <div style={{ width: 56, height: 56, borderRadius: 16, background: "#EDF4FF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#5B9CFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 6L2 7"/>
-              </svg>
-            </div>
-          </div>
-          <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>Check your email</h2>
-          <p style={{ fontSize: 14, color: "#9B9A97", marginBottom: 8, lineHeight: 1.6 }}>
-            We sent a 6-digit verification code to<br />
-            <strong style={{ color: "#37352F" }}>{form.email}</strong>
-          </p>
-          <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 24 }}>Check your inbox and spam folder for the 6-digit code.</p>
-
-          {otpError && (
-            <div style={{ padding: "10px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#DC2626" }}>{otpError}</div>
-          )}
-
-          {/* OTP Input Boxes */}
-          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 28 }}>
-            {otpCode.map((digit, i) => (
-              <input
-                key={i}
-                ref={otpRefs[i]}
-                type="text"
-                inputMode="numeric"
-                maxLength={1}
-                value={digit}
-                onChange={(e) => handleOtpChange(i, e.target.value)}
-                onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                onPaste={i === 0 ? handleOtpPaste : undefined}
-                style={{
-                  width: 48, height: 56, borderRadius: 10,
-                  border: digit ? "2px solid #37352F" : "1px solid #E0E0DE",
-                  fontSize: 22, fontWeight: 700, textAlign: "center", outline: "none",
-                  color: "#37352F", fontFamily: font, background: "#fff",
-                  transition: "border-color 0.15s",
-                }}
-                autoFocus={i === 0}
-              />
-            ))}
-          </div>
-
-          {/* Verify Button */}
-          <button
-            onClick={handleVerifyOtp}
-            disabled={otpCode.join("").length !== 6 || loading}
-            style={{
-              width: "100%", padding: "14px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600,
-              background: otpCode.join("").length === 6 ? "#37352F" : "#EDEDEB",
-              color: otpCode.join("").length === 6 ? "#fff" : "#9B9A97",
-              cursor: otpCode.join("").length === 6 ? "pointer" : "not-allowed",
-              fontFamily: font, marginBottom: 20,
-            }}
-          >
-            {loading ? "Verifying..." : "Verify & Create Account"}
-          </button>
-
-          {/* Resend */}
-          <div style={{ fontSize: 13, color: "#9B9A97" }}>
-            Didn't receive the code?{" "}
-            {otpTimer > 0 ? (
-              <span>Resend in <strong style={{ color: "#37352F" }}>{otpTimer}s</strong></span>
-            ) : (
-              <button onClick={handleResendOtp} disabled={otpSending} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13 }}>
-                {otpSending ? "Sending..." : "Resend Code"}
-              </button>
-            )}
-          </div>
-
-          {/* Back button */}
-          <button
-            onClick={() => { setOtpStep("form"); setOtpError(""); }}
-            style={{ background: "none", border: "none", color: "#9B9A97", fontSize: 13, cursor: "pointer", marginTop: 20, fontFamily: font, display: "inline-flex", alignItems: "center", gap: 4 }}
-          >
-            ← Back to form
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ---- MAIN FORM ----
-  return (
-    <div style={{
-      minHeight: "100vh",
-      display: "flex",
-      alignItems: "flex-start",
-      justifyContent: "center",
-      padding: "48px 1rem 60px",
-      background: "#F7F7F5",
-      fontFamily: font,
-    }}>
-      <div style={{ maxWidth: 580, width: "100%" }}>
-        {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: 48 }}>
-          <div style={{ marginBottom: 20, display: "inline-block" }}>
-            <SignUpIcons.globe />
-          </div>
-          <h2 style={{
-            fontSize: 28,
-            fontWeight: 700,
-            color: "#37352F",
-            letterSpacing: "-0.03em",
-            marginBottom: 8,
-          }}>Create your profile</h2>
-          <p style={{
-            color: "#9B9A97",
-            fontSize: 15,
-            fontWeight: 400,
-          }}>Join the NRIClub network to start connecting.</p>
-        </div>
-
-        {error && (
-          <div style={{ padding: "12px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#DC2626" }}>{error}</div>
-        )}
-
-        <form onSubmit={(e) => { e.preventDefault(); handleSendOtp(); }}>
-
-          {/* LEGAL NAME section */}
-          <div style={{ marginBottom: 28 }}>
-            <label style={{ ...labelStyle, marginBottom: 12 }}>
-              LEGAL NAME
-            </label>
-
-            {/* Blue info banner */}
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "14px 16px",
-              background: "#EEF2FF",
-              borderRadius: 8,
-              marginBottom: 16,
-              border: "1px solid #E0E7FF",
-            }}>
-              <div style={{ flexShrink: 0 }}>
-                <SignUpIcons.info />
-              </div>
-              <p style={{
-                fontSize: 13,
-                color: "#4B5EAA",
-                lineHeight: 1.45,
-                margin: 0,
-                fontWeight: 400,
-              }}>
-                Please provide your real name as it appears on your Indian or current nationality passport.
-              </p>
-            </div>
-
-            {/* 3-column name fields */}
-            <div className="form-grid-3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-              <input style={inputStyle} value={form.firstName} onChange={(e) => update("firstName", e.target.value)} placeholder="First Name" required />
-              <input style={inputStyle} value={form.middleName} onChange={(e) => update("middleName", e.target.value)} placeholder="Middle (Optional)" />
-              <input style={inputStyle} value={form.lastName} onChange={(e) => update("lastName", e.target.value)} placeholder="Last Name" required />
-            </div>
-          </div>
-
-          {/* EMAIL */}
-          <div style={{ marginBottom: 28 }}>
-            <label style={labelStyle}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 6L2 7"/>
-              </svg>
-              EMAIL ADDRESS
-            </label>
-            <input
-              style={inputStyle}
-              type="email"
-              value={form.email}
-              onChange={(e) => update("email", e.target.value)}
-              placeholder="you@email.com"
-              required
-            />
-            <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 6, fontFamily: font }}>
-              A verification code will be sent to this email.
-            </p>
-          </div>
-
-          {/* PASSWORD */}
-          <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
-            <div>
-              <label style={labelStyle}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
-                </svg>
-                PASSWORD
-              </label>
-              <div style={{ position: "relative" }}>
-                <input
-                  style={inputStyle}
-                  type={showPassword ? "text" : "password"}
-                  value={form.password}
-                  onChange={(e) => update("password", e.target.value)}
-                  placeholder="Min. 8 characters"
-                  required
-                  minLength={8}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}
-                >
-                  {showPassword ? Icons.eye({ size: 16 }) : Icons.eye({ size: 16 })}
-                </button>
-              </div>
-              {form.password && form.password.length < 8 && (
-                <p style={{ fontSize: 11, color: "#DC2626", marginTop: 5, fontFamily: font }}>Must be at least 8 characters</p>
-              )}
-              {form.password && form.password.length >= 8 && (
-                <p style={{ fontSize: 11, color: "#22A06B", marginTop: 5, fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
-                  Strong enough
-                </p>
-              )}
-            </div>
-            <div>
-              <label style={labelStyle}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
-                </svg>
-                CONFIRM PASSWORD
-              </label>
-              <div style={{ position: "relative" }}>
-                <input
-                  style={{
-                    ...inputStyle,
-                    borderColor: form.confirmPassword ? (passwordsMatch ? "#22A06B" : "#DC2626") : "#E0E0DE",
-                  }}
-                  type={showConfirmPassword ? "text" : "password"}
-                  value={form.confirmPassword}
-                  onChange={(e) => update("confirmPassword", e.target.value)}
-                  placeholder="Retype password"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}
-                >
-                  {showConfirmPassword ? Icons.eye({ size: 16 }) : Icons.eye({ size: 16 })}
-                </button>
-              </div>
-              {form.confirmPassword && !passwordsMatch && (
-                <p style={{ fontSize: 11, color: "#DC2626", marginTop: 5, fontFamily: font }}>Passwords do not match</p>
-              )}
-              {form.confirmPassword && passwordsMatch && (
-                <p style={{ fontSize: 11, color: "#22A06B", marginTop: 5, fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
-                  Passwords match
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* CURRENT CITY & HOMETOWN */}
-          <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
-            <div>
-              <label style={labelStyle}><SignUpIcons.home /> CURRENT CITY</label>
-              <input style={inputStyle} value={form.location} onChange={(e) => update("location", e.target.value)} placeholder="Berlin, Germany" required />
-            </div>
-            <div>
-              <label style={labelStyle}><SignUpIcons.mapPin /> HOMETOWN (INDIA)</label>
-              <input style={inputStyle} value={form.hometown} onChange={(e) => update("hometown", e.target.value)} placeholder="Mumbai, MH" required />
-            </div>
-          </div>
-
-          {/* CURRENT STATUS & LIVING ABROAD SINCE */}
-          <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
-            <div>
-              <label style={labelStyle}>CURRENT STATUS</label>
-              <div style={{ position: "relative" }}>
-                <select style={{ ...inputStyle, cursor: "pointer", appearance: "none", paddingRight: 36 }} value={form.occupationStatus} onChange={(e) => update("occupationStatus", e.target.value)}>
-                  {OCCUPATION_TYPES.map((o) => <option key={o}>{o}</option>)}
-                </select>
-                <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
-              </div>
-            </div>
-            <div>
-              <label style={labelStyle}>LIVING ABROAD SINCE?</label>
-              <div style={{ position: "relative" }}>
-                {residencyStep === "india" ? (
-                  <div style={{ ...inputStyle, background: "#F0EFED", color: "#9B9A97", cursor: "not-allowed" }}>Not lived abroad</div>
-                ) : (
-                  <select style={{ ...inputStyle, cursor: "pointer", appearance: "none", paddingRight: 36, color: form.yearsAbroad ? "#37352F" : "#9B9A97" }} value={form.yearsAbroad} onChange={(e) => update("yearsAbroad", e.target.value)} required>
-                    <option value="" disabled>Select duration</option>
-                    {YEARS_OPTIONS.map((y) => <option key={y}>{y}</option>)}
-                  </select>
-                )}
-                {residencyStep !== "india" && <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>}
-              </div>
-            </div>
-          </div>
-
-          {/* JOB TITLE / INDUSTRY */}
-          <div style={{ marginBottom: 28 }}>
-            <label style={labelStyle}>
-              <SignUpIcons.briefcase />
-              {form.occupationStatus === "Student" ? "MAJOR / UNIVERSITY" : "JOB TITLE / INDUSTRY"}
-            </label>
-            <input style={inputStyle} value={form.profession} onChange={(e) => update("profession", e.target.value)} placeholder={form.occupationStatus === "Student" ? "e.g. Computer Science, TU Munich" : "e.g. Software Engineer"} required />
-          </div>
-
-          {/* LINKEDIN PROFILE */}
-          <div style={{ marginBottom: 28 }}>
-            <label style={labelStyle}>
-              <SignUpIcons.linkedin /> LINKEDIN PROFILE (REQUIRED FOR VERIFICATION)
-            </label>
-            <input style={inputStyle} value={form.linkedinUrl} onChange={(e) => update("linkedinUrl", e.target.value)} placeholder="https://linkedin.com/in/..." required />
-          </div>
-
-          {/* GDPR CONSENT SECTION */}
-          <div style={{
-            padding: "20px", borderRadius: 10, border: "1px solid #E0E0DE",
-            background: "#FAFAF8", marginBottom: 28,
-          }}>
-            <h4 style={{ fontSize: 12, fontWeight: 700, color: "#37352F", marginBottom: 14, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-              Data Protection & Privacy
-            </h4>
-
-            {/* Required consent */}
-            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", marginBottom: 14 }}>
-              <input
-                type="checkbox"
-                checked={gdprConsent}
-                onChange={(e) => setGdprConsent(e.target.checked)}
-                style={{ marginTop: 3, accentColor: "#37352F", width: 16, height: 16, flexShrink: 0 }}
-              />
-              <span style={{ fontSize: 13, color: "#37352F", lineHeight: 1.5, fontFamily: font }}>
-                I agree to the{" "}
-                <button type="button" onClick={() => setPrivacyModalOpen(true)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
-                  Privacy Policy
-                </button>
-                {" "}and{" "}
-                <button type="button" onClick={() => setPrivacyModalOpen(true)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
-                  Terms of Service
-                </button>
-                . I consent to the processing of my personal data as described.
-                <span style={{ color: "#DC2626" }}> *</span>
-              </span>
-            </label>
-
-            {/* Optional marketing consent */}
-            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={marketingConsent}
-                onChange={(e) => setMarketingConsent(e.target.checked)}
-                style={{ marginTop: 3, accentColor: "#37352F", width: 16, height: 16, flexShrink: 0 }}
-              />
-              <span style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, fontFamily: font }}>
-                I'd like to receive community updates, event notifications, and tips for life abroad via email. <span style={{ color: "#9B9A97" }}>(Optional)</span>
-              </span>
-            </label>
-          </div>
-
-          {/* GDPR info note */}
-          <div style={{
-            display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px",
-            background: "#F0EFED", borderRadius: 8, marginBottom: 28, fontSize: 11, color: "#5F5E5B", lineHeight: 1.55, fontFamily: font,
-          }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-            </svg>
-            <span>
-              Your data is stored securely and processed in accordance with GDPR. You can request data export or deletion at any time from your account settings. We never sell your personal data to third parties.
-            </span>
-          </div>
-
-          {/* Submit button */}
-          <button
-            type="submit"
-            disabled={!valid || otpSending}
-            style={{
-              width: "100%",
-              padding: "14px",
-              borderRadius: 8,
-              border: "none",
-              fontSize: 15,
-              fontWeight: 600,
-              background: valid ? "#37352F" : "#EDEDEB",
-              color: valid ? "#fff" : "#9B9A97",
-              cursor: valid ? "pointer" : "not-allowed",
-              fontFamily: font,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              transition: "background 0.15s",
-            }}
-          >
-            {otpSending ? "Sending verification code..." : "Continue — Verify Email"}
-            {!otpSending && <SignUpIcons.arrowRight />}
-          </button>
-        </form>
-
-        {/* Bottom link */}
-        <p style={{ textAlign: "center", marginTop: 28, fontSize: 13, color: "#9B9A97", fontWeight: 400 }}>
-          <button onClick={onLogin} style={{ background: "none", border: "none", color: "#6B7280", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3, fontFamily: font, fontSize: 13, fontWeight: 400 }}>
-            Already have an account? Log in
-          </button>
-        </p>
-      </div>
-
-      {/* Privacy Policy Modal */}
-      {privacyModalOpen && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setPrivacyModalOpen(false)}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "80vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED", position: "sticky", top: 0, background: "#fff", zIndex: 1 }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy Policy & Terms</h3>
-              <button onClick={() => setPrivacyModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <div style={{ padding: 24, fontSize: 13, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>1. Data We Collect</h4>
-              <p style={{ marginBottom: 16 }}>We collect the personal information you provide during registration: your name, email, location, hometown, profession, LinkedIn URL, and occupation status. We also collect usage data such as posts, comments, and interactions within the platform.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>2. How We Use Your Data</h4>
-              <p style={{ marginBottom: 16 }}>Your data is used to: provide and personalize the NRIClub service, connect you with relevant community members, send essential service notifications, and (with your consent) send marketing communications.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>3. Legal Basis (GDPR Art. 6)</h4>
-              <p style={{ marginBottom: 16 }}>We process your data based on: your explicit consent (Art. 6(1)(a)), performance of our service contract (Art. 6(1)(b)), and our legitimate interest in operating the platform (Art. 6(1)(f)).</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>4. Your Rights</h4>
-              <p style={{ marginBottom: 16 }}>Under GDPR, you have the right to: access your personal data, rectify inaccurate data, request erasure ("right to be forgotten"), restrict processing, data portability (export your data), object to processing, and withdraw consent at any time. You can exercise these rights from your Account Settings.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>5. Data Retention</h4>
-              <p style={{ marginBottom: 16 }}>We retain your data for as long as your account is active. Upon account deletion, all personal data is permanently erased within 30 days.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>6. Data Sharing</h4>
-              <p style={{ marginBottom: 16 }}>We do not sell your personal data. Data is only shared with essential service providers (email delivery, hosting) under data processing agreements compliant with GDPR.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>7. Contact</h4>
-              <p>For any data protection inquiries, contact our Data Protection Officer at privacy@indin.com.</p>
-
-              <p style={{ marginTop: 20, fontSize: 11, color: "#9B9A97", fontStyle: "italic" }}>Last updated: April 2026</p>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ============================================================================
 // LOGIN PAGE
 // ============================================================================
-const LoginPage = ({ onComplete, onSignUp }) => {
-  const [email, setEmail] = useState("");
+const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resetMode, setResetMode] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  // Signed up but never entered the email code: offer a new one and take it
+  // right here.
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [codeMode, setCodeMode] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [resendAt, setResendAt] = useState(0);
   const font = "'DM Sans', sans-serif";
+  const cleanEmail = email.trim().toLowerCase();
+
+  // Load the profile for the session that was just started; on failure the
+  // caller signs out again so no half-finished login is kept.
+  const finishLogin = async () => {
+    const dbProfile = await api.getMyProfile();
+    if (!dbProfile) throw new Error("No profile");
+    rateLimiter.reset("login_" + cleanEmail);
+    onComplete(mapProfile({ ...dbProfile, email: dbProfile.email || cleanEmail }));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    if (loading) return;
     setError("");
-
+    setUnconfirmed(false);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { setError("Please enter a valid email address."); return; }
+    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
     // Rate limiting: max 5 attempts per 15 minutes
-    const rl = rateLimiter.check("login_" + email, 5, 900000);
+    const rl = rateLimiter.check("login_" + cleanEmail, 5, 900000);
     if (!rl.allowed) {
       setError(`Too many login attempts. Please wait ${Math.ceil(rl.waitSecs / 60)} minutes.`);
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.signIn(cleanEmail, password);
+    } catch (err) {
+      const msg = (err.message || "").toLowerCase();
+      if (msg.includes("not confirmed")) {
+        setUnconfirmed(true);
+        setError("You haven't confirmed your email address yet. We'll send you a new 6-digit code.");
+      } else if (msg.includes("invalid login credentials")) {
+        setError("That email and password don't match. Try again, or reset your password.");
+      } else {
+        setError(authErrorMessage(err) || err.message || "We couldn't log you in. Please try again.");
+      }
       setLoading(false);
       return;
     }
-
-    // Validate inputs
-    const cleanEmail = validateInput(email, 254).toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes("@")) {
-      setError("Please enter a valid email."); setLoading(false); return;
-    }
-    if (!password || password.length < 6) {
-      setError("Password must be at least 6 characters."); setLoading(false); return;
-    }
-
     try {
-      const data = await api.signIn(cleanEmail, password);
-      const dbProfile = await api.getMyProfile();
-      if (dbProfile) {
-        const profile = {
-          id: dbProfile.id, name: dbProfile.name, email: dbProfile.email || email,
-          location: dbProfile.location, hometown: dbProfile.hometown,
-          profession: dbProfile.profession, occupationStatus: dbProfile.occupation_status,
-          yearsAbroad: dbProfile.years_abroad, linkedinUrl: dbProfile.linkedin_url,
-          emailVerified: dbProfile.email_verified,
-          linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "", status: dbProfile.status || "active",
-          isNRI: dbProfile.years_abroad && dbProfile.years_abroad !== "Not lived abroad",
-        };
-        localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
-        setLoading(false);
-        onComplete(profile);
-        return;
-      }
-      const user = data?.user || {};
-      const profile = {
-        id: user.id || "user_" + Date.now(),
-        name: user.user_metadata?.full_name || email.split("@")[0],
-        email, location: "", hometown: "", profession: "",
-        occupationStatus: "Working Professional", emailVerified: !!user.email_confirmed_at,
-      };
-      localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
-      setLoading(false);
-      onComplete(profile);
+      await finishLogin();
     } catch (err) {
-      const cached = JSON.parse(localStorage.getItem("indin_profile_cache") || "null");
-      if (cached && cached.email === email) {
-        setLoading(false);
-        onComplete(cached);
-        return;
-      }
-      setError(err.message || "Invalid email or password.");
+      await api.signOut();
+      setError("We couldn't load your profile. Please try again in a moment.");
       setLoading(false);
     }
   };
 
+  const sendCode = async () => {
+    if (sendingCode) return;
+    setSendingCode(true);
+    try {
+      await api.sendOtp(cleanEmail);
+      setResendAt(Date.now() + 60000);
+      setError("");
+      setCodeMode(true);
+    } catch (err) {
+      // A code was sent moments ago: let them enter that one.
+      const wait = /after (\d+) seconds?/i.exec(err.message || "");
+      if (wait) {
+        setResendAt(Date.now() + Number(wait[1]) * 1000);
+        setError("");
+        setCodeMode(true);
+      } else {
+        setError(authErrorMessage(err) || "We couldn't send a code. Please try again in a minute.");
+      }
+    }
+    setSendingCode(false);
+  };
+
+  const verifyCode = async (code) => {
+    let session = await api.verifyOtp(cleanEmail, code); // wrong codes throw here
+    try {
+      if (!session?.access_token) session = await api.signIn(cleanEmail, password).catch(() => null);
+      if (!session?.access_token) throw Object.assign(new Error("No session"), { userMessage: "Your email is confirmed. Please log in." });
+      await finishLogin();
+    } catch (err) {
+      if (err.userMessage) throw err;
+      await api.signOut();
+      throw Object.assign(new Error("Login failed"), {
+        userMessage: isNetworkError(err) ? NETWORK_MESSAGE : "Your email is confirmed, but we couldn't load your profile. Please log in again.",
+      });
+    }
+  };
+
   const handleResetPassword = async () => {
-    if (!email || !email.includes("@")) { setError("Please enter your email first."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { setError("Please enter your email first."); return; }
     setLoading(true);
     setError("");
     try {
-      await api.resetPassword(email);
+      await api.resetPassword(cleanEmail);
       setResetSent(true);
     } catch(e) {
-      setError(e.message || "Failed to send reset email.");
+      setError(authErrorMessage(e) || e.message || "Failed to send reset email.");
     }
     setLoading(false);
   };
@@ -1453,38 +636,58 @@ const LoginPage = ({ onComplete, onSignUp }) => {
     fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F",
     fontFamily: font, boxSizing: "border-box",
   };
+  const labelStyle = { display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font };
+  const errorStyle = { padding: "12px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 16, fontSize: 13, lineHeight: 1.5, color: "#B91C1C", fontFamily: font };
 
   // Eye icon SVGs
-  const EyeIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
-  const EyeOffIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+  const EyeIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#787774" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
+  const EyeOffIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#787774" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+
+  if (codeMode) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
+        <div style={{ maxWidth: 400, width: "100%" }}>
+          <CodeEntry
+            email={cleanEmail}
+            onVerify={verifyCode}
+            onResend={async () => { await api.sendOtp(cleanEmail); setResendAt(Date.now() + 60000); }}
+            resendAt={resendAt}
+            onChangeEmail={() => { setCodeMode(false); setUnconfirmed(false); setError(""); }}
+            changeLabel="Back to login"
+            submitLabel="Verify and log in"
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (resetMode) {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", background: "#FAFAF8" }}>
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
         <div style={{ maxWidth: 360, width: "100%" }}>
           <div style={{ textAlign: "center", marginBottom: 40 }}>
             <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
               {Icons.shield({ size: 24, stroke: "#37352F" })}
             </div>
             <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Reset Password</h2>
-            <p style={{ color: "#9B9A97", fontSize: 14, marginTop: 8, fontFamily: font }}>Enter your email and we'll send you a reset link</p>
+            <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Enter your email and we'll send you a reset link</p>
           </div>
-          {error && <div style={{ padding: "12px 16px", background: "#FEE", borderRadius: 8, marginBottom: 16, fontSize: 13, color: "#C00" }}>{error}</div>}
+          {error && <div role="alert" style={errorStyle}>{error}</div>}
           {resetSent ? (
             <div style={{ padding: "20px", background: "#E3FCEF", borderRadius: 10, textAlign: "center", marginBottom: 20 }}>
-              <p style={{ fontSize: 14, color: "#22A06B", fontWeight: 600, fontFamily: font, marginBottom: 8 }}>Reset email sent!</p>
+              <p style={{ fontSize: 14, color: "#126B45", fontWeight: 600, fontFamily: font, marginBottom: 8 }}>Reset email sent!</p>
               <p style={{ fontSize: 13, color: "#5F5E5B", fontFamily: font }}>Check your inbox for a password reset link. It may take a few minutes.</p>
             </div>
           ) : (
             <>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font }}>Email</label>
-                <input style={inputStyle} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus />
+                <label htmlFor="reset-email" style={labelStyle}>Email</label>
+                <input id="reset-email" style={inputStyle} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus />
               </div>
               <button onClick={handleResetPassword} disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600, background: "#37352F", color: "#fff", cursor: "pointer", fontFamily: font }}>{loading ? "Sending..." : "Send Reset Link"}</button>
             </>
           )}
-          <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#9B9A97", fontFamily: font }}>
+          <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#6B6A67", fontFamily: font }}>
             <button onClick={() => { setResetMode(false); setResetSent(false); setError(""); }} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Back to login</button>
           </p>
         </div>
@@ -1493,48 +696,58 @@ const LoginPage = ({ onComplete, onSignUp }) => {
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", background: "#FAFAF8" }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
       <div style={{ maxWidth: 360, width: "100%" }}>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
           <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
             {Icons.globe({ size: 24, stroke: "#37352F" })}
           </div>
           <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Welcome back</h2>
-          <p style={{ color: "#9B9A97", fontSize: 14, marginTop: 8, fontFamily: font }}>Log in to NRIClub</p>
+          <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Log in to NRIClub</p>
         </div>
 
-        {error && <div style={{ padding: "12px 16px", background: "#FEE", borderRadius: 8, marginBottom: 16, fontSize: 13, color: "#C00" }}>{error}</div>}
+        {error && (
+          unconfirmed ? (
+            <div role="alert" style={{ ...errorStyle, background: "#FFF8E6", border: "1px solid #FCE7B2", color: "#7A4D00" }}>
+              {error}
+              <button type="button" onClick={sendCode} disabled={sendingCode} style={{ display: "block", marginTop: 10, padding: "8px 14px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, opacity: sendingCode ? 0.7 : 1 }}>
+                {sendingCode ? "Sending..." : "Send me a new code"}
+              </button>
+            </div>
+          ) : (
+            <div role="alert" style={errorStyle}>{error}</div>
+          )
+        )}
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font }}>Email</label>
-            <input style={inputStyle} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" required autoFocus />
+            <label htmlFor="login-email" style={labelStyle}>Email</label>
+            <input id="login-email" style={inputStyle} type="email" autoComplete="email" inputMode="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => { setEmail(e.target.value); if (unconfirmed) { setUnconfirmed(false); setError(""); } }} placeholder="you@email.com" autoFocus={!initialEmail} />
           </div>
           <div style={{ marginBottom: 10 }}>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font }}>Password</label>
+            <label htmlFor="login-password" style={labelStyle}>Password</label>
             <div style={{ position: "relative" }}>
-              <input style={{ ...inputStyle, paddingRight: 44 }} type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex" }}>
+              <input id="login-password" style={{ ...inputStyle, paddingRight: 44 }} type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoFocus={!!initialEmail} />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"} aria-controls="login-password" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex", borderRadius: 6 }}>
                 {showPassword ? <EyeOffIcon /> : <EyeIcon />}
               </button>
             </div>
           </div>
           <div style={{ textAlign: "right", marginBottom: 20 }}>
-            <button type="button" onClick={() => { setResetMode(true); setError(""); }} style={{ background: "none", border: "none", color: "#5B9CFF", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Forgot password?</button>
+            <button type="button" onClick={() => { setResetMode(true); setError(""); }} style={{ background: "none", border: "none", color: "#2F6FD6", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, padding: 4 }}>Forgot password?</button>
           </div>
           <button
-            type="submit" disabled={!email || !password || loading}
+            type="submit" disabled={loading}
             style={{
               width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600,
-              background: email && password ? "#37352F" : "#E8E7E4", color: email && password ? "#fff" : "#9B9A97",
-              cursor: email && password ? "pointer" : "not-allowed", fontFamily: font,
+              background: "#37352F", color: "#fff", cursor: loading ? "default" : "pointer", opacity: loading ? 0.75 : 1, fontFamily: font,
             }}
           >
             {loading ? "Logging in..." : "Continue"}
           </button>
         </form>
 
-        <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#9B9A97", fontFamily: font }}>
+        <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#6B6A67", fontFamily: font }}>
           Don't have an account?{" "}
           <button onClick={onSignUp} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>
             Sign up
@@ -1788,7 +1001,7 @@ const BlockedUsersModal = ({ onClose, font }) => {
   );
 };
 
-const Dashboard = ({ user, onLogout }) => {
+const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [view, setView] = useState("home");
   const [posts, setPosts] = useState([]);
   const [likedPostIds, setLikedPostIds] = useState(new Set());
@@ -1816,14 +1029,9 @@ const Dashboard = ({ user, onLogout }) => {
   const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
   const [eventPhoto, setEventPhoto] = useState(null); // { url, preview }
   const [helpRequests, setHelpRequests] = useState([]);
-  const [linkedinBannerDismissed, setLinkedinBannerDismissed] = useState(false);
-  const [linkedinReviewBannerDismissed, setLinkedinReviewBannerDismissed] = useState(false);
-
-  // Check if profile is incomplete (no LinkedIn) and older than 72 hours
-  const profileAge = user?.createdAt ? (Date.now() - user.createdAt) : (user?.created_at ? (Date.now() - new Date(user.created_at).getTime()) : 0);
-  const hoursOld = profileAge / (1000 * 60 * 60);
-  const hasLinkedin = user?.linkedinUrl && user.linkedinUrl.trim().length > 5;
-  const isBlocked = !hasLinkedin && hoursOld > 72;
+  // "Update details" (an admin asked for more information) opens Get verified.
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [profileCardDismissed, dismissProfileCard] = useProfileCardDismissed(user.id);
   const [helpModal, setHelpModal] = useState(false);
   const [selectedHelp, setSelectedHelp] = useState(null);
   const [helpResponse, setHelpResponse] = useState("");
@@ -1831,6 +1039,9 @@ const Dashboard = ({ user, onLogout }) => {
   const [newHelp, setNewHelp] = useState({ title: "", description: "", category: "General", urgency: "Low" });
   const [profileModal, setProfileModal] = useState(false);
   const [editProfile, setEditProfile] = useState({ ...user });
+  const [profileFocus, setProfileFocus] = useState(null); // field to focus when Edit Profile opens
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileErrors, setProfileErrors] = useState({});
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [feedSort, setFeedSort] = useState("new");
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
@@ -1850,6 +1061,20 @@ const Dashboard = ({ user, onLogout }) => {
   const [convosLoaded, setConvosLoaded] = useState(false);
   const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
   const lastSeenMsgRef = useRef(null); // Track last seen conversation state
+  const lastVerificationNotifRef = useRef(null); // Newest unread verification decision seen
+  const dashboardRef = useRef(null);
+  // Rejected and blocked members only see a full-screen card: make
+  // everything behind it unreachable (Tab, screen readers) and focus the card.
+  const locked = user?.status === "blocked" || user?.verificationStatus === "rejected";
+  useEffect(() => {
+    const root = dashboardRef.current;
+    if (!locked || !root) return;
+    const overlay = root.querySelector("[data-lock-overlay]");
+    const behind = [...root.children].filter(el => el !== overlay);
+    behind.forEach(el => { el.inert = true; });
+    overlay?.querySelector("a[href], button")?.focus();
+    return () => behind.forEach(el => { el.inert = false; });
+  }, [locked, user?.status]);
   const [chatSettings, setChatSettings] = useState(false);
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [blockTargetId, setBlockTargetId] = useState(null);
@@ -1875,7 +1100,6 @@ const Dashboard = ({ user, onLogout }) => {
   // Docs state
   const [docModal, setDocModal] = useState(false);
   const [newDoc, setNewDoc] = useState({ title: "", city: "", category: "General", excerpt: "" });
-  const MOCK_DOCS = [];
   const [docs, setDocs] = useState([]);
   const [docCityFilter, setDocCityFilter] = useState("All");
   const [docSearch, setDocSearch] = useState("");
@@ -1910,10 +1134,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [marketModal, setMarketModal] = useState(false);
   const [newMarket, setNewMarket] = useState({ title: "", price: "", category: "Items", city: "", description: "" });
   const [marketPhotos, setMarketPhotos] = useState([]);
-  const MOCK_MARKET = [];
   const [marketItems, setMarketItems] = useState([]);
   // Help state with pre-populated data
-  const MOCK_HELP = [];
 
   // Initialize help requests on mount
   useEffect(() => {}, []);
@@ -1967,9 +1189,9 @@ const Dashboard = ({ user, onLogout }) => {
     } catch (e) {
       console.log("Connection may already exist:", e.message);
     }
+    if (!connId) return;
     try {
-      const actorId = user.id && !user.id.startsWith("user_") ? user.id : null;
-      await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, actorId, connId);
+      await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, user.id, connId);
     } catch(ne) { console.log("Notification failed:", ne.message); }
   };
 
@@ -2019,7 +1241,7 @@ const Dashboard = ({ user, onLogout }) => {
         } catch(e) {}
         const dbEvents = await api.getEvents();
         if (dbEvents && dbEvents.length) {
-          setEvents(dbEvents.map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
+          setEvents(dbEvents.map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
           const myR = await api.getMyRsvps();
           setRsvps(new Set(myR));
         } else { setEvents([]); }
@@ -2114,6 +1336,7 @@ const Dashboard = ({ user, onLogout }) => {
         try {
           const dbNotifs = await api.getNotifications();
           if (dbNotifs && dbNotifs.length) {
+            lastVerificationNotifRef.current = dbNotifs.find(n => n.type === "verification" && !n.read)?.id || null;
             setNotifications(dbNotifs.map(n => ({
               id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
               text: n.text, time: new Date(n.created_at).toLocaleString(),
@@ -2139,6 +1362,16 @@ const Dashboard = ({ user, onLogout }) => {
       }
     })();
   }, []);
+
+  const refreshMyProfile = async () => {
+    try {
+      const db = await api.getMyProfile();
+      if (!db) return null;
+      const fresh = mapProfile(db);
+      onUserUpdate(fresh);
+      return fresh;
+    } catch (e) { return null; }
+  };
 
   // Live polling for messages and notifications (every 5 seconds)
   useEffect(() => {
@@ -2181,6 +1414,12 @@ const Dashboard = ({ user, onLogout }) => {
             text: n.text, time: new Date(n.created_at).toLocaleString(),
             read: n.read, reference_id: n.reference_id,
           })));
+          // An admin decided on this member's verification: reload their status.
+          const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
+          if (decision && decision.id !== lastVerificationNotifRef.current) {
+            lastVerificationNotifRef.current = decision.id;
+            refreshMyProfile();
+          }
         }
       } catch (e) {}
     }, 5000);
@@ -2250,7 +1489,17 @@ const Dashboard = ({ user, onLogout }) => {
     setPosts([post, ...posts]);
     setNewPost("");
     setPostImage(null);
-    try { const r = await api.createPost(cleanContent || newPost, tags, imageUrl, groupId); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch (e) { console.error("Post creation failed:", e.message); }
+    try {
+      const r = await api.createPost(cleanContent || newPost, tags, imageUrl, groupId);
+      if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p));
+    } catch (e) {
+      // Take the post back out and give the text back to the composer.
+      setPosts(prev => prev.filter(p => p.id !== post.id));
+      setNewPost(prev => prev || post.content);
+      alert(isNetworkError(e) ? NETWORK_MESSAGE
+        : /42501/.test(e.message || "") ? "Your account can't post right now. If you think this is a mistake, contact support@nriclub.app."
+        : "Your post couldn't be published. Please try again.");
+    }
   };
 
   const deletePost = async (id) => {
@@ -2261,35 +1510,47 @@ const Dashboard = ({ user, onLogout }) => {
   const createEvent = async () => {
     if (!newEvent.title || !newEvent.date) return;
     const e = {
-      id: "e_" + Date.now(), title: newEvent.title,
+      id: "e_" + Date.now(), organizerId: user.id, title: newEvent.title,
       date: newEvent.date, time: newEvent.time || "TBD",
-      location: newEvent.location || "TBD", attendees: 1,
+      location: newEvent.location || "TBD", city: newEvent.city || "", attendees: 0,
       organizer: user.name, description: newEvent.description,
       link: newEvent.link || "", image: eventPhoto?.url || "",
     };
     setEvents([e, ...events]);
     setNewEvent({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" }); setEventPhoto(null);
     setEventModal(false);
-    try { await api.createEvent({ title: newEvent.title, date: newEvent.date, time: newEvent.time || "TBD", location: newEvent.location, description: newEvent.description, organizer_name: user.name, link: newEvent.link || "", image_url: eventPhoto?.url || "" }); } catch (er) { console.error("Event creation failed:", er.message); alert("Event could not be saved: " + er.message); }
+    try {
+      const r = await api.createEvent({ title: e.title, date: e.date, time: e.time, location: newEvent.location, city: e.city, description: e.description, organizer_name: user.name, link: e.link, image_url: e.image });
+      // Swap the temporary id for the saved one so RSVP and delete work.
+      if (r?.[0]) setEvents(prev => prev.map(x => x.id === e.id ? { ...x, id: r[0].id, attendees: r[0].attendees_count } : x));
+    } catch (er) {
+      setEvents(prev => prev.filter(x => x.id !== e.id));
+      alert(isNetworkError(er) ? NETWORK_MESSAGE : "Your event couldn't be saved. Please try again.");
+    }
   };
 
   const toggleRsvp = async (id) => {
-    const s = new Set(rsvps);
-    if (s.has(id)) s.delete(id); else s.add(id);
-    setRsvps(s);
-    try { await api.toggleRsvp(id); } catch (e) {}
+    const going = !rsvps.has(id);
+    const bump = (delta) => setEvents(prev => prev.map(x => x.id === id ? { ...x, attendees: Math.max(0, (x.attendees || 0) + delta) } : x));
+    setRsvps(prev => { const s = new Set(prev); if (going) s.add(id); else s.delete(id); return s; });
+    bump(going ? 1 : -1);
+    try { await api.toggleRsvp(id); } catch (e) {
+      setRsvps(prev => { const s = new Set(prev); if (going) s.delete(id); else s.add(id); return s; });
+      bump(going ? -1 : 1);
+    }
   };
 
   const toggleGroup = async (id) => {
     const g = groups.find(x => x.id === id);
     const newJoined = !g?.joined;
-    const updated = groups.map((x) => x.id === id ? { ...x, joined: newJoined } : x);
-    setGroups(updated);
-    // Also update selectedGroup if it's the one being toggled
-    if (selectedGroup && selectedGroup.id === id) {
-      setSelectedGroup({ ...selectedGroup, joined: newJoined });
-    }
-    try { if (g?.joined) await api.leaveGroup(id); else await api.joinGroup(id); } catch (e) {}
+    const apply = (joined) => {
+      const change = (x) => ({ ...x, joined, members: Math.max(0, (x.members || 0) + (joined ? 1 : -1)) });
+      setGroups(prev => prev.map((x) => x.id === id ? change(x) : x));
+      // Also update selectedGroup if it's the one being toggled
+      setSelectedGroup(prev => prev && prev.id === id ? change(prev) : prev);
+    };
+    apply(newJoined);
+    try { if (g?.joined) await api.leaveGroup(id); else await api.joinGroup(id); } catch (e) { apply(!newJoined); }
   };
 
   const createHelp = async () => {
@@ -2301,21 +1562,70 @@ const Dashboard = ({ user, onLogout }) => {
     setHelpRequests([h, ...helpRequests]);
     setNewHelp({ title: "", description: "", category: "General", urgency: "Low", city: "" });
     setHelpModal(false);
-    try { await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgency }); } catch (e) {}
+    try {
+      const r = await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgency });
+      // Swap the temporary id for the saved one so responses and delete work.
+      if (r?.[0]) setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, id: r[0].id, userId: user.id } : x));
+    } catch (e) {
+      setHelpRequests(prev => prev.filter(x => x.id !== h.id));
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your request couldn't be posted. Please try again.");
+    }
+  };
+
+  const openProfileEditor = (focusField = null) => {
+    setEditProfile({ ...user });
+    setProfileErrors({});
+    setProfileFocus(focusField);
+    setProfileModal(true);
   };
 
   const saveProfileChanges = async () => {
-    const updated = { ...user, ...editProfile };
+    if (profileSaving) return;
+    const trim = (v) => (v || "").trim();
+    const updates = {
+      location: trim(editProfile.location), profession: trim(editProfile.profession),
+      occupation_status: editProfile.occupationStatus || "",
+    };
+    // Only check and send the LinkedIn link when it was changed: older
+    // accounts can hold links in other formats. An empty link is fine
+    // (members verified without LinkedIn).
+    const linkedinUrl = trim(editProfile.linkedinUrl);
+    if (linkedinUrl !== (user.linkedinUrl || "")) {
+      const linkedinError = linkedinUrl ? linkedinProblem(linkedinUrl) : null;
+      if (linkedinError) { setProfileErrors({ linkedinUrl: linkedinError }); return; }
+      updates.linkedin_url = linkedinUrl;
+    }
+    if (isUserNRI(user)) {
+      updates.hometown = trim(editProfile.hometown);
+      updates.years_abroad = editProfile.yearsAbroad || "";
+    }
+    setProfileSaving(true);
+    setProfileErrors({});
     try {
-      await api.updateProfile({
-        name: updated.name, location: updated.location, hometown: updated.hometown,
-        profession: updated.profession, linkedin_url: updated.linkedinUrl,
-      });
-    } catch (e) { console.log("Profile update:", e.message); }
-    localStorage.setItem("indin_profile_cache", JSON.stringify(updated));
-    // Update the user state so UI reflects changes immediately
-    Object.assign(user, updated);
+      await api.updateProfile(updates);
+    } catch (e) {
+      const msg = apiErrorMessage(e, "Your changes couldn't be saved. Please try again.");
+      setProfileErrors(updates.linkedin_url !== undefined && /LinkedIn/.test(msg) ? { linkedinUrl: msg } : { form: msg });
+      setProfileSaving(false);
+      return;
+    }
+    let refreshed = null;
+    try { refreshed = mapProfile(await api.getMyProfile()); } catch (e) {}
+    onUserUpdate(refreshed || {
+      ...user, location: updates.location, profession: updates.profession, linkedinUrl: updates.linkedin_url ?? user.linkedinUrl,
+      occupationStatus: updates.occupation_status,
+      ...(updates.hometown !== undefined ? { hometown: updates.hometown, yearsAbroad: updates.years_abroad } : {}),
+    });
+    setProfileSaving(false);
     setProfileModal(false);
+  };
+
+  // "Complete your profile" card
+  const profileItems = profileCardDismissed ? [] : missingProfileItems(user, groups);
+  const handleProfileItem = (item) => {
+    if (item.key === "photo") document.getElementById("avatar-upload")?.click();
+    else if (item.key === "group") toggleGroup(item.groupId);
+    else openProfileEditor(item.key);
   };
 
   // Styles
@@ -2345,6 +1655,10 @@ const Dashboard = ({ user, onLogout }) => {
       case "home":
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
+            {/* Complete your profile (mobile; the left column has it on desktop) */}
+            <div className="nc-mobile-only">
+              <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} style={{ marginBottom: 20 }} />
+            </div>
             {/* Header with Filters + Add Post button */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
               <div>
@@ -2477,6 +1791,7 @@ const Dashboard = ({ user, onLogout }) => {
                 setNetworkUsers(dbUsers.map(u => ({
                   id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
                   hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
+                  linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "",
                   avatar_url: u.avatar_url || "",
                   followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
                 })));
@@ -2600,8 +1915,9 @@ const Dashboard = ({ user, onLogout }) => {
                       {/* Name + verified badge + NRI badge */}
                       <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 14, marginBottom: 2, flexWrap: "wrap", justifyContent: "center" }}>
                         <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>{u.name}</h3>
-                        {u.linkedinUrl && (
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="#22C55E" stroke="none">
+                        {u.linkedin_verified && (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="#22C55E" stroke="none" role="img" aria-label="Verified member">
+                            <title>Verified member</title>
                             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                           </svg>
                         )}
@@ -3173,12 +2489,12 @@ const Dashboard = ({ user, onLogout }) => {
 
             {/* Event Cards */}
             {filteredEvents.length > 0 ? filteredEvents.map((e, idx) => {
-              const datePart = (e.date || "").split("•")[0].trim();
-              const timePart = (e.date || "").split("•")[1]?.trim() || "TBD";
+              const datePart = eventDate(e);
+              const timePart = eventTime(e);
               const timeMain = timePart.split(" ")[0] || timePart;
               const timeAmPm = timePart.split(" ")[1] || "";
               const locMain = (e.location || "").split(",")[0].trim();
-              const locCity = (e.location || "").split(",").slice(1).join(",").trim();
+              const locCity = (e.location || "").split(",").slice(1).join(",").trim() || e.city || "";
               const evtColor = evtColors[idx % evtColors.length];
 
               return (
@@ -3251,8 +2567,10 @@ const Dashboard = ({ user, onLogout }) => {
                       <div style={{ display: "flex", gap: 8 }}>
                         <button
                           onClick={() => toggleRsvp(e.id)}
+                          disabled={String(e.id).startsWith("e_")}
                           style={{
-                            padding: "9px 24px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer",
+                            padding: "9px 24px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font,
+                            cursor: String(e.id).startsWith("e_") ? "default" : "pointer", opacity: String(e.id).startsWith("e_") ? 0.5 : 1,
                             border: "1px solid #B5E4CA",
                             background: rsvps.has(e.id) ? "#E3FCEF" : "#fff",
                             color: "#22A06B", transition: "all 0.15s",
@@ -3270,7 +2588,7 @@ const Dashboard = ({ user, onLogout }) => {
                       <button onClick={() => setExpandedEvent(e)} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.message({ size: 15 })} Comment {eventComments[e.id]?.length ? `(${eventComments[e.id].length})` : ""}</button>
                       <button onClick={() => {
                         const shareUrl = `${window.location.origin}${window.location.pathname}#event=${e.id}`;
-                        const shareText = `${e.title}\n${e.date} at ${e.time}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
+                        const shareText = `${e.title}\n${eventDate(e)} at ${eventTime(e)}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
                         if (navigator.share) navigator.share({ title: e.title, text: shareText, url: e.link || shareUrl }).catch(() => {});
                         else { navigator.clipboard.writeText(shareText); alert("Event details copied to clipboard!"); }
                       }} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font, marginLeft: "auto" }}>{Icons.share({ size: 15 })} Share</button>
@@ -3845,7 +3163,7 @@ const Dashboard = ({ user, onLogout }) => {
                       const url = await api.uploadAvatar(file);
                       await api.updateProfile({ avatar_url: url });
                       const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
-                      localStorage.setItem("indin_profile_cache", JSON.stringify(updatedUser));
+                      localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
                       window.location.reload();
                     } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
                   }}
@@ -3888,14 +3206,15 @@ const Dashboard = ({ user, onLogout }) => {
                   </span>
                 )}
               </div>
-              {user.linkedinUrl && (
+              {user.linkedin_verified && (
                 <div style={{ marginTop: 16 }}>
-                  <span style={{ fontSize: 12, color: "#0077B5", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                    {Icons.linkedin({ size: 14, stroke: "#0077B5" })} LinkedIn Verified
+                  <span style={{ fontSize: 12, color: "#1A7F52", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="#22C55E" stroke="none" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                    Verified member
                   </span>
                 </div>
               )}
-              <button onClick={() => { setEditProfile({ ...user }); setProfileModal(true); }} style={{ ...btnPrimary, marginTop: 24 }}>
+              <button onClick={() => openProfileEditor()} style={{ ...btnPrimary, marginTop: 24 }}>
                 {Icons.edit({ size: 14 })} Edit Profile
               </button>
 
@@ -3947,22 +3266,19 @@ const Dashboard = ({ user, onLogout }) => {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: font }}>
-      {/* LinkedIn block overlay - blocks after 72 hours without LinkedIn */}
-      {isBlocked && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.85)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ background: "#fff", borderRadius: 18, padding: "40px 32px", maxWidth: 420, width: "100%", textAlign: "center", boxShadow: "0 12px 40px rgba(0,0,0,0.1)", border: "1px solid #E8E7E4" }}>
-            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
-              {Icons.shield({ size: 28, stroke: "#DC2626" })}
-            </div>
-            <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Complete Your Profile</h2>
-            <p style={{ fontSize: 14, color: "#9B9A97", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>Your account has been temporarily restricted because your LinkedIn profile is missing. Please add your LinkedIn URL to verify your identity and continue using NRIClub.</p>
-            <button onClick={() => { setView("profile"); setEditProfile({ ...user }); setProfileModal(true); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "14px", fontSize: 15 }}>
-              {Icons.edit({ size: 16 })} Complete Profile Now
-            </button>
-            <button onClick={onLogout} style={{ background: "none", border: "none", color: "#9B9A97", cursor: "pointer", fontSize: 12, marginTop: 16, fontFamily: font }}>Sign Out</button>
-          </div>
-        </div>
+    <div ref={dashboardRef} style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: font }}>
+      {/* Rejected verification: full-screen card (blocked members see the blocked overlay instead) */}
+      {user?.verificationStatus === "rejected" && user?.status !== "blocked" && (
+        <div data-lock-overlay><RejectedScreen user={user} onSignOut={onLogout} /></div>
+      )}
+      {/* Get verified again, when an admin asked for more information */}
+      {verifyOpen && (
+        <GetVerified
+          user={user}
+          mode="update"
+          onCancel={() => setVerifyOpen(false)}
+          onDone={(updated) => { onUserUpdate(updated); setVerifyOpen(false); }}
+        />
       )}
       {/* NAV */}
       <nav style={{ background: "#fff", borderBottom: "1px solid #E8E7E4", position: "sticky", top: 0, zIndex: 30 }}>
@@ -4037,6 +3353,13 @@ const Dashboard = ({ user, onLogout }) => {
                           } else if (n.type === "message") {
                             setView("messages");
                             setNotifOpen(false);
+                          } else if (n.type === "verification") {
+                            setNotifOpen(false);
+                            Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+                            refreshMyProfile().then(fresh => {
+                              if (fresh?.verificationStatus === "needs_info") setVerifyOpen(true);
+                            });
                           }
                         }} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", gap: 12, background: n.read ? "#fff" : "#F5F8FF", cursor: n.type !== "request" ? "pointer" : "default" }}>
                           <div style={{ flexShrink: 0, marginTop: 2 }}>
@@ -4048,7 +3371,7 @@ const Dashboard = ({ user, onLogout }) => {
                               </div>
                             ) : (
                               <div style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: n.type === "event" ? "#FFF3E0" : n.type === "group" ? "#EDF4FF" : "#F0EFED", color: n.type === "event" ? "#E65100" : n.type === "group" ? "#5B9CFF" : "#5F5E5B" }}>
-                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : Icons.trending({ size: 16 })}
+                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : n.type === "verification" ? Icons.shield({ size: 16 }) : Icons.trending({ size: 16 })}
                               </div>
                             )}
                           </div>
@@ -4182,28 +3505,8 @@ const Dashboard = ({ user, onLogout }) => {
         </div>
       )}
 
-      {/* LinkedIn warning banner */}
-      {!hasLinkedin && !linkedinBannerDismissed && !isBlocked && (
-        <div style={{ background: "#FEF2F2", borderBottom: "1px solid #FECACA", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-          <p style={{ fontSize: 12, color: "#991B1B", margin: 0, fontFamily: font }}>
-            {Icons.info({ size: 14, stroke: "#DC2626" })} Your profile is incomplete. Please add your LinkedIn URL within {Math.max(0, Math.ceil(72 - hoursOld))} hours to keep your account active.
-          </p>
-          <button onClick={() => { setView("profile"); setEditProfile({ ...user }); setProfileModal(true); setLinkedinBannerDismissed(true); }} style={{ padding: "4px 12px", borderRadius: 6, border: "none", background: "#DC2626", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", fontFamily: font }}>Add LinkedIn</button>
-          <button onClick={() => setLinkedinBannerDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#991B1B", padding: 2 }}>{Icons.x({ size: 14 })}</button>
-        </div>
-      )}
-
-      {/* Profile under review banner (blue) - shows until admin approves */}
-      {!user?.linkedin_verified && (
-        <div style={{ background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-          <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            {Icons.shield({ size: 14, stroke: "#2563EB" })}
-          </div>
-          <p style={{ fontSize: 12, color: "#1E40AF", margin: 0, fontFamily: font, lineHeight: 1.5 }}>
-            Your profile is pending review by our team. Once approved, this banner will disappear. Please ensure your LinkedIn profile is up-to-date and your signup details are accurate.
-          </p>
-        </div>
-      )}
+      {/* Verification status: pending (blue) or needs_info (amber, with Update details) */}
+      <VerificationBanner user={user} onUpdateDetails={() => setVerifyOpen(true)} />
 
       {/* Create Post Modal */}
       {createPostModal && (
@@ -4282,17 +3585,17 @@ const Dashboard = ({ user, onLogout }) => {
 
       {/* Blocked user overlay */}
       {user?.status === "blocked" && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
+        <div data-lock-overlay style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div role="alertdialog" aria-modal="true" aria-label="Profile blocked" style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
             </div>
             <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Profile Blocked</h2>
             <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 20, fontFamily: font }}>
-              Your profile has been blocked by our admin team. You have <strong>72 hours</strong> to update your LinkedIn profile and ensure your signup details are accurate.
+              Your profile has been blocked by our admin team.
             </p>
-            <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 24, fontFamily: font }}>
-              Once you've updated your details, our team will review and reactivate your profile. If you believe this is an error, please contact support.
+            <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>
+              If you believe this is an error, please contact <a href="mailto:support@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>support@nriclub.app</a>.
             </p>
             <button onClick={onLogout} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Sign Out</button>
           </div>
@@ -4306,7 +3609,7 @@ const Dashboard = ({ user, onLogout }) => {
             <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "24px 20px", textAlign: "center", position: "relative" }}>
               {/* Edit button top-right */}
               <button
-                onClick={() => { setEditProfile({ ...user }); setProfileModal(true); }}
+                onClick={() => openProfileEditor()} aria-label="Edit profile"
                 style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}
               >
                 {Icons.edit({ size: 16 })}
@@ -4331,7 +3634,7 @@ const Dashboard = ({ user, onLogout }) => {
                       const url = await api.uploadAvatar(file);
                       await api.updateProfile({ avatar_url: url });
                       const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
-                      localStorage.setItem("indin_profile_cache", JSON.stringify(updatedUser));
+                      localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
                       window.location.reload();
                     } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
                   }}
@@ -4352,8 +3655,9 @@ const Dashboard = ({ user, onLogout }) => {
               {/* Name with green verified badge */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 2 }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>{user.name}</h3>
-                {user.linkedinUrl && (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E" stroke="none">
+                {user.linkedin_verified && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E" stroke="none" role="img" aria-label="Verified member">
+                    <title>Verified member</title>
                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                   </svg>
                 )}
@@ -4438,6 +3742,9 @@ const Dashboard = ({ user, onLogout }) => {
               </div>
             </div>
 
+            {/* Complete your profile (desktop; on mobile it sits at the top of the feed) */}
+            <ProfileChecklist className="profile-checklist-side" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} style={{ marginTop: 16 }} />
+
             {/* Sign Out link */}
             <div style={{ textAlign: "center", marginTop: 16 }}>
               <button onClick={onLogout} style={{
@@ -4494,7 +3801,7 @@ const Dashboard = ({ user, onLogout }) => {
                   onMouseOver={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "underline"}
                   onMouseOut={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "none"}
                 >
-                  <div style={{ fontSize: 11, color: "#9B9A97", fontFamily: font, marginBottom: 2 }}>{e.date.split("•")[0].trim()}</div>
+                  <div style={{ fontSize: 11, color: "#9B9A97", fontFamily: font, marginBottom: 2 }}>{eventDate(e)}</div>
                   <div className="ev-title" style={{ fontSize: 14, color: "#37352F", fontWeight: 600, fontFamily: font, lineHeight: 1.3 }}>{e.title}</div>
                 </div>
               ))}
@@ -4682,13 +3989,13 @@ const Dashboard = ({ user, onLogout }) => {
               <button onClick={() => { setExpandedEvent(null); setEventComment(""); }} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {Icons.x({ size: 16 })}
               </button>
-              <div style={{ position: "absolute", bottom: 16, left: 16, background: "rgba(255,255,255,0.95)", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font }}>{expandedEvent.date}</div>
+              <div style={{ position: "absolute", bottom: 16, left: 16, background: "rgba(255,255,255,0.95)", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font }}>{eventDate(expandedEvent)}</div>
               <div style={{ position: "absolute", top: 16, left: 16, background: "rgba(0,0,0,0.5)", padding: "4px 10px", borderRadius: 12, fontSize: 11, color: "#fff", fontWeight: 600 }}>{expandedEvent.attendees} going</div>
             </div>
             <div style={{ padding: "24px 28px" }}>
               <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 12, fontFamily: font, lineHeight: 1.3 }}>{expandedEvent.title}</h2>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
-                <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.clock({ size: 14 })} {expandedEvent.time}</span>
+                <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.clock({ size: 14 })} {eventTime(expandedEvent)}</span>
                 <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.mapPin({ size: 14 })} {expandedEvent.location}</span>
               </div>
               <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, marginBottom: 20, fontFamily: font, whiteSpace: "pre-wrap" }}>{expandedEvent.description}</p>
@@ -4866,7 +4173,7 @@ const Dashboard = ({ user, onLogout }) => {
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Email Address</label>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.message({ size: 14 })}</div>
-                  <input style={{ ...inputStyle, paddingLeft: 36, background: "#F0EFED", color: "#9B9A97" }} value={user.email || `${user.name.toLowerCase().replace(/\s+/g, ".")}@indin.com`} readOnly disabled />
+                  <input style={{ ...inputStyle, paddingLeft: 36, background: "#F0EFED", color: "#9B9A97" }} value={user.email || ""} readOnly disabled />
                 </div>
                 <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 4, fontFamily: font }}>Contact support to change email.</p>
               </div>
@@ -4917,7 +4224,10 @@ const Dashboard = ({ user, onLogout }) => {
                     if (confirm("This is your final warning. Type OK in the next prompt to confirm.") && prompt("Type DELETE to confirm account deletion:") === "DELETE") {
                       try {
                         await api.deleteAccount();
-                      } catch(e) {}
+                      } catch(e) {
+                        alert("Your account could not be deleted. Please try again, or contact support if it keeps failing.");
+                        return;
+                      }
                       localStorage.clear();
                       setSettingsModal(null);
                       onLogout();
@@ -5138,12 +4448,8 @@ const Dashboard = ({ user, onLogout }) => {
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Terms & Policies</h3>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
-            <div style={{ padding: 24, overflow: "auto", flex: 1, fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
-              <p><strong style={{ color: "#37352F" }}>1. Acceptance of Terms</strong><br/>By accessing and using this platform, you accept and agree to be bound by the terms and provision of this agreement.</p>
-              <p style={{ marginTop: 16 }}><strong style={{ color: "#37352F" }}>2. Community Guidelines</strong><br/>We are committed to maintaining a safe and respectful community. Hate speech, harassment, and spam are strictly prohibited.</p>
-              <p style={{ marginTop: 16 }}><strong style={{ color: "#37352F" }}>3. Privacy Policy</strong><br/>We respect your privacy and are committed to protecting your personal data. Please review our full Privacy Policy to understand how we collect and use your information.</p>
-              <p style={{ marginTop: 16 }}><strong style={{ color: "#37352F" }}>4. User Content</strong><br/>You retain ownership of the content you post, but grant us a license to use, store, and display that content in connection with the service.</p>
-              <p style={{ marginTop: 16, fontSize: 11, color: "#9B9A97", fontStyle: "italic" }}>Last updated: October 2024</p>
+            <div style={{ padding: 24, overflow: "auto", flex: 1, fontSize: 13, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
+              <TermsContent />
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8", flexShrink: 0 }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
@@ -5502,23 +4808,29 @@ const Dashboard = ({ user, onLogout }) => {
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => { setMarketModal(false); setMarketPhotos([]); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
                 <button disabled={!newMarket.title || !newMarket.price} onClick={async () => {
-                  try {
-                    // Upload photos to Supabase Storage
-                    let imageUrls = [];
-                    for (const photo of marketPhotos) {
-                      try {
-                        // Convert base64 to blob
-                        const res = await fetch(photo);
-                        const blob = await res.blob();
-                        const file = new File([blob], `market_${Date.now()}_${imageUrls.length}.jpg`, { type: 'image/jpeg' });
-                        const url = await api.uploadMarketImage(file);
-                        if (url) imageUrls.push(url);
-                      } catch(ue) { imageUrls.push(photo); } // Fallback: store base64
+                  // Upload photos to Supabase Storage
+                  let imageUrls = [];
+                  for (const photo of marketPhotos) {
+                    try {
+                      // Convert base64 to blob
+                      const res = await fetch(photo);
+                      const blob = await res.blob();
+                      const file = new File([blob], `market_${Date.now()}_${imageUrls.length}.jpg`, { type: 'image/jpeg' });
+                      const url = await api.uploadMarketImage(file);
+                      if (url) imageUrls.push(url);
+                    } catch(ue) {
+                      alert("A photo couldn't be uploaded. Photos must be JPEG, PNG, WebP or GIF and under 5 MB.");
+                      return;
                     }
-                    await api.createMarketItem({ title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
+                  }
+                  try {
+                    const created = await api.createMarketItem({ title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
                     // Add to local state immediately
-                    setMarketItems(prev => [{ id: "m_" + Date.now(), title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
-                  } catch(e) {}
+                    setMarketItems(prev => [{ id: created?.[0]?.id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
+                  } catch(e) {
+                    alert("Your listing couldn't be posted. Please try again.");
+                    return;
+                  }
                   setNewMarket({ title: "", price: "", category: "Items", city: "", description: "" }); setMarketPhotos([]); setMarketModal(false);
                 }} style={{ ...btnPrimary, opacity: newMarket.title && newMarket.price ? 1 : 0.4 }}>Post Item</button>
               </div>
@@ -5664,7 +4976,7 @@ const Dashboard = ({ user, onLogout }) => {
                       if (!file) return;
                       const preview = URL.createObjectURL(file);
                       try { const url = await api.uploadPostImage(file); setEventPhoto({ url, preview }); }
-                      catch(err) { setEventPhoto({ url: preview, preview }); }
+                      catch(err) { alert("The photo couldn't be uploaded. Photos must be JPEG, PNG, WebP or GIF and under 5 MB."); }
                     }} />
                     {Icons.image({ size: 18 })} Click to add a cover photo
                   </label>
@@ -5731,33 +5043,57 @@ const Dashboard = ({ user, onLogout }) => {
       )}
 
       {/* Edit Profile Modal */}
-      {profileModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfileModal(false)}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "16px 20px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
-              <h3 style={{ fontSize: 15, fontWeight: 600 }}>Edit Profile</h3>
-              <button onClick={() => setProfileModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
-            </div>
-            <div style={{ padding: 24 }}>
-              {[
-                { key: "profession", label: "Profession" },
-                { key: "location", label: "Location" },
-                { key: "hometown", label: "Hometown" },
-                { key: "linkedinUrl", label: "LinkedIn URL" },
-              ].map((f) => (
-                <div key={f.key} style={{ marginBottom: 16 }}>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{f.label}</label>
-                  <input style={inputStyle} value={editProfile[f.key] || ""} onChange={(e) => setEditProfile({ ...editProfile, [f.key]: e.target.value })} />
-                </div>
-              ))}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8 }}>
-                <button onClick={() => setProfileModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>
-                <button onClick={saveProfileChanges} style={btnPrimary}>Save Changes</button>
+      {profileModal && (() => {
+        const abroad = isUserNRI(user);
+        const editLabel = { display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font };
+        const setField = (key, value) => { setEditProfile({ ...editProfile, [key]: value }); if (profileErrors[key] || profileErrors.form) setProfileErrors({}); };
+        const textField = (key, label, placeholder, extra = {}) => (
+          <div key={key} style={{ marginBottom: 16 }}>
+            <label htmlFor={`edit-${key}`} style={editLabel}>{label}</label>
+            <input id={`edit-${key}`} style={{ ...inputStyle, borderColor: profileErrors[key] ? "#DC2626" : "#E0E0DE" }} value={editProfile[key] || ""} placeholder={placeholder}
+              onChange={(e) => setField(key, e.target.value)} autoFocus={profileFocus === key}
+              aria-invalid={!!profileErrors[key]} aria-describedby={profileErrors[key] ? `edit-${key}-error` : extra.help ? `edit-${key}-help` : undefined} {...extra.input} />
+            {profileErrors[key] ? <p id={`edit-${key}-error`} style={{ fontSize: 12, color: "#DC2626", marginTop: 6, fontFamily: font }}>{profileErrors[key]}</p>
+              : extra.help ? <p id={`edit-${key}-help`} style={{ fontSize: 12, color: "#6B6A67", marginTop: 6, lineHeight: 1.45, fontFamily: font }}>{extra.help}</p> : null}
+          </div>
+        );
+        const selectField = (key, label, placeholder, options) => (
+          <div key={key} style={{ marginBottom: 16 }}>
+            <label htmlFor={`edit-${key}`} style={editLabel}>{label}</label>
+            <select id={`edit-${key}`} style={{ ...inputStyle, cursor: "pointer", color: editProfile[key] ? "#37352F" : "#6B6A67" }} value={editProfile[key] || ""}
+              onChange={(e) => setField(key, e.target.value)} autoFocus={profileFocus === key}>
+              <option value="">{placeholder}</option>
+              {options.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+        );
+        return (
+          <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfileModal(false)}>
+            <div role="dialog" aria-modal="true" aria-labelledby="edit-profile-title" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
+                <h3 id="edit-profile-title" style={{ fontSize: 15, fontWeight: 600 }}>Edit Profile</h3>
+                <button type="button" onClick={() => setProfileModal(false)} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "#6B6A67" }}>{Icons.x({ size: 18 })}</button>
               </div>
+              <form style={{ padding: 24 }} noValidate onSubmit={(e) => { e.preventDefault(); saveProfileChanges(); }}>
+                {textField("profession", "What do you do?", "e.g. Software Engineer at SAP")}
+                {textField("location", "Location", "City, Country")}
+                {abroad && textField("hometown", "Hometown in India", "e.g. Pune, Maharashtra")}
+                {abroad && selectField("yearsAbroad", "Years abroad", "When did you move abroad?", YEARS_OPTIONS)}
+                {selectField("occupationStatus", "Status", "Choose your status", OCCUPATION_TYPES)}
+                {textField("linkedinUrl", "LinkedIn profile", "linkedin.com/in/your-name", {
+                  input: { inputMode: "url", autoCapitalize: "none", spellCheck: false },
+                  help: user.verificationStatus === "approved" ? "Changing your LinkedIn sends your profile back for a quick review." : null,
+                })}
+                {profileErrors.form && <div role="alert" style={{ padding: "10px 12px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, fontSize: 13, color: "#B91C1C", marginBottom: 12, fontFamily: font }}>{profileErrors.form}</div>}
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8 }}>
+                  <button type="button" onClick={() => setProfileModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>
+                  <button type="submit" disabled={profileSaving} style={{ ...btnPrimary, opacity: profileSaving ? 0.7 : 1 }}>{profileSaving ? "Saving..." : "Save Changes"}</button>
+                </div>
+              </form>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Responsive CSS */}
       <style>{`
@@ -5849,11 +5185,12 @@ const CookieConsent = () => {
   const [visible, setVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
+  const bannerRef = useRef(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const result = localStorage.getItem("indin_cookie_consent");
+        const result = localStorage.getItem("nriclub_cookie_consent");
         if (!result) setVisible(true);
       } catch {
         setVisible(true);
@@ -5861,12 +5198,24 @@ const CookieConsent = () => {
     })();
   }, []);
 
+  // While the banner shows, pad the page by its height so it never covers
+  // the last buttons on a page (Continue, Log in...).
+  useEffect(() => {
+    if (!visible || !bannerRef.current) return;
+    const el = bannerRef.current;
+    const pad = () => { document.body.style.paddingBottom = `${el.offsetHeight}px`; };
+    pad();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(pad) : null;
+    ro?.observe(el);
+    return () => { ro?.disconnect(); document.body.style.paddingBottom = ""; };
+  }, [visible]);
+
   const acceptAll = async () => {
-    try { localStorage.setItem("indin_cookie_consent", JSON.stringify({ essential: true, analytics: true, date: new Date().toISOString() })); } catch (e) {}
+    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: true, date: new Date().toISOString() })); } catch (e) {}
     setVisible(false);
   };
   const acceptEssential = async () => {
-    try { localStorage.setItem("indin_cookie_consent", JSON.stringify({ essential: true, analytics: analyticsConsent, date: new Date().toISOString() })); } catch (e) {}
+    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: analyticsConsent, date: new Date().toISOString() })); } catch (e) {}
     setVisible(false);
   };
 
@@ -5875,15 +5224,15 @@ const CookieConsent = () => {
   const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
   return (
-    <div style={{
+    <div ref={bannerRef} role="region" aria-label="Cookie consent" style={{
       position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
       background: "#fff", borderTop: "1px solid #E0E0DE",
       boxShadow: "0 -4px 24px rgba(0,0,0,0.08)", padding: "0",
       fontFamily: font,
     }}>
-      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 24px" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 280 }}>
+      <div className="nc-cookie-inner" style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 24px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div className="nc-cookie-text" style={{ flex: 1, minWidth: 280 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -5931,7 +5280,7 @@ const CookieConsent = () => {
             )}
           </div>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
+          <div className="nc-cookie-actions" style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
             <button onClick={acceptEssential} style={{
               padding: "10px 18px", borderRadius: 8, border: "1px solid #E0E0DE",
               background: "#fff", fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
@@ -5951,29 +5300,133 @@ const CookieConsent = () => {
   );
 };
 
-// Admin credentials
-const ADMIN_USER = import.meta.env.VITE_ADMIN_EMAIL;
-const ADMIN_PASS = import.meta.env.VITE_ADMIN_PASS;
+// Shown after following a password-reset email link.
+const ResetPasswordPage = ({ onDone }) => {
+  const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  const save = async (e) => {
+    e.preventDefault();
+    if (password.length < 8) { setError("Use at least 8 characters."); return; }
+    setSaving(true);
+    setError("");
+    try {
+      await api.updatePassword(password);
+      onDone();
+    } catch (err) {
+      setError(err.message || "Couldn't update your password. The link may have expired; request a new one.");
+      setSaving(false);
+    }
+  };
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
+      <form onSubmit={save} style={{ maxWidth: 380, width: "100%", background: "#fff", borderRadius: 16, padding: 32, border: "1px solid #EDEDEB" }}>
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 6 }}>Set a new password</h2>
+        <p style={{ fontSize: 13, color: "#787774", marginBottom: 20 }}>Choose a password with at least 8 characters.</p>
+        {error && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{error}</div>}
+        <label htmlFor="new-password" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>New password</label>
+        <div style={{ position: "relative", marginBottom: 20 }}>
+          <input id="new-password" type={show ? "text" : "password"} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", padding: "12px 64px 12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 15, boxSizing: "border-box", outline: "none", fontFamily: font }} />
+          <button type="button" onClick={() => setShow(!show)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#787774", fontSize: 12, cursor: "pointer" }}>{show ? "Hide" : "Show"}</button>
+        </div>
+        <button type="submit" disabled={saving} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1 }}>{saving ? "Saving..." : "Save password"}</button>
+      </form>
+    </div>
+  );
+};
 
 export default function App() {
   const [authState, setAuthState] = useState("loading");
   const [user, setUser] = useState(null);
+  const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead"
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPass, setAdminPass] = useState("");
   const [adminErr, setAdminErr] = useState("");
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminNotice, setAdminNotice] = useState("");
+
+  // Admins sign in with their normal NRIClub account; the database decides
+  // whether that account is an admin (public.admins), so nothing here can be
+  // faked from the browser.
+  const handleAdminLogin = async () => {
+    if (adminLoading) return;
+    const rl = rateLimiter.check("admin_login", 5, 900000);
+    if (!rl.allowed) { setAdminErr(`Too many attempts. Wait ${Math.ceil(rl.waitSecs / 60)} min.`); return; }
+    setAdminLoading(true);
+    setAdminErr("");
+    try {
+      await api.signIn(adminEmail.trim().toLowerCase(), adminPass);
+    } catch (e) {
+      setAdminErr(e.message || "Invalid email or password.");
+      setAdminLoading(false);
+      return;
+    }
+    let admin = false;
+    try {
+      admin = await api.isAdmin();
+    } catch (e) {
+      await api.signOut();
+      setAdminErr("Couldn't check admin access. Please try again.");
+      setAdminLoading(false);
+      return;
+    }
+    if (admin) {
+      rateLimiter.reset("admin_login");
+      setAdminPass("");
+      setIsAdmin(true);
+      setAuthState("admin");
+    } else {
+      await api.signOut();
+      setAdminErr("This account does not have admin access.");
+    }
+    setAdminLoading(false);
+  };
+
+  const handleAdminForgotPassword = async () => {
+    const email = adminEmail.trim().toLowerCase();
+    if (!email.includes("@")) { setAdminErr("Enter your email first, then click Forgot password."); return; }
+    try {
+      await api.resetPassword(email);
+      setAdminErr("");
+      setAdminNotice("If that account exists, we've emailed it a link to set a new password.");
+    } catch (e) {
+      setAdminErr(e.message || "Couldn't send the reset email. Please try again.");
+    }
+  };
+
+  const handleAdminLogout = async () => {
+    try { await api.signOut(); } catch (e) {}
+    setIsAdmin(false);
+    setAuthState("admin-login");
+  };
+
+  // Leave the signed-in screens if the session ends by itself (revoked,
+  // expired, or another tab signed in as someone else).
+  useEffect(() => { api.onSessionEnded(() => window.location.reload()); }, []);
 
   useEffect(() => {
+    // Password-reset links land here with a one-time session in the URL.
+    if (api.takeRecoverySession()) {
+      setAuthState("reset-password");
+      return;
+    }
     // Check for admin route
     const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
     if (isAdminDomain || window.location.hash === "#admin") {
-      // Check if already logged in as admin
-      if (localStorage.getItem("indin_admin") === "true") {
-        setIsAdmin(true);
-        setAuthState("admin");
-      } else {
+      (async () => {
+        try {
+          const session = await api.getSession();
+          if (session?.user && await api.isAdmin()) {
+            setIsAdmin(true);
+            setAuthState("admin");
+            return;
+          }
+        } catch (e) {}
         setAuthState("admin-login");
-      }
+      })();
       return;
     }
     (async () => {
@@ -5981,39 +5434,15 @@ export default function App() {
         const session = await api.getSession();
         if (session && session.user) {
           const dbProfile = await api.getMyProfile();
-          const cached = JSON.parse(localStorage.getItem("indin_profile_cache") || "null");
           if (dbProfile) {
-            // Merge: prefer DB values, but fall back to cache for fields that might be empty in DB
-            const mapped = {
-              id: dbProfile.id,
-              name: dbProfile.name || cached?.name || "",
-              email: dbProfile.email || cached?.email || "",
-              location: dbProfile.location || cached?.location || "",
-              hometown: dbProfile.hometown || cached?.hometown || "",
-              profession: dbProfile.profession || cached?.profession || "",
-              occupationStatus: dbProfile.occupation_status || cached?.occupationStatus || "",
-              yearsAbroad: dbProfile.years_abroad || cached?.yearsAbroad || "",
-              linkedinUrl: dbProfile.linkedin_url || cached?.linkedinUrl || "",
-              isNRI: !!(dbProfile.years_abroad || cached?.yearsAbroad) && (dbProfile.years_abroad || cached?.yearsAbroad) !== "Not lived abroad",
-              emailVerified: dbProfile.email_verified,
-              linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "", status: dbProfile.status || "active",
-            };
-            // If DB has empty fields but cache has them, push cache values to DB
-            if (!dbProfile.location && cached?.location) {
-              try { await api.updateProfile({ location: cached.location, hometown: cached.hometown, profession: cached.profession, occupation_status: cached.occupationStatus, years_abroad: cached.yearsAbroad, linkedin_url: cached.linkedinUrl }); } catch(e) {}
-            }
-            setUser(mapped);
-            localStorage.setItem("indin_profile_cache", JSON.stringify(mapped));
+            setUser(mapProfile(dbProfile));
             setAuthState("authenticated");
             return;
           }
         }
       } catch (e) {}
-      // Fallback: check local cache
-      try {
-        const cached = JSON.parse(localStorage.getItem("indin_profile_cache") || "null");
-        if (cached) { setUser(cached); setAuthState("authenticated"); return; }
-      } catch (e) {}
+      // No valid session: never treat cached profile data as a login.
+      try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
       setAuthState("landing");
     })();
   }, []);
@@ -6025,8 +5454,7 @@ export default function App() {
 
   const handleLogout = async () => {
     try { await api.signOut(); } catch (e) {}
-    try { localStorage.removeItem("indin_profile_cache"); } catch (e) {}
-    try { localStorage.removeItem("indin_token"); localStorage.removeItem("indin_refresh"); localStorage.removeItem("indin_profile_cache"); } catch (e) {}
+    try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
     setUser(null);
     setAuthState("landing");
   };
@@ -6054,19 +5482,24 @@ export default function App() {
               <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 4 }}>Admin Panel Login</p>
             </div>
             {adminErr && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminErr}</div>}
-            <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
-            <input type="password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); localStorage.setItem("indin_admin", "true"); } else setAdminErr("Invalid credentials"); } }} />
-            <button onClick={() => { const rl = rateLimiter.check("admin_login", 5, 900000); if (!rl.allowed) { setAdminErr(`Too many attempts. Wait ${Math.ceil(rl.waitSecs/60)} min.`); return; } if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); localStorage.setItem("indin_admin", "true"); rateLimiter.reset("admin_login"); } else setAdminErr("Invalid credentials"); }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign In</button>
+            {adminNotice && !adminErr && <div style={{ background: "#E3FCEF", border: "1px solid #ABF5D1", color: "#22A06B", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminNotice}</div>}
+            <input type="email" autoComplete="username" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
+            <input type="password" autoComplete="current-password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") handleAdminLogin(); }} />
+            <button onClick={handleAdminLogin} disabled={adminLoading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: adminLoading ? "default" : "pointer", opacity: adminLoading ? 0.7 : 1 }}>{adminLoading ? "Signing in..." : "Sign In"}</button>
+            <p style={{ fontSize: 11, textAlign: "center", marginTop: 12 }}><button type="button" onClick={handleAdminForgotPassword} style={{ background: "none", border: "none", color: "#5B9CFF", fontSize: 11, cursor: "pointer", padding: 0 }}>Forgot password?</button></p>
             <p style={{ fontSize: 11, color: "#9B9A97", textAlign: "center", marginTop: 16 }}><a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ""; setAuthState("landing"); }} style={{ color: "#5B9CFF" }}>← Back to NRIClub</a></p>
           </div>
         </div>
       );
     }
-    if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={() => { setIsAdmin(false); setAuthState("admin-login"); localStorage.removeItem("indin_admin"); }} />;
+    if (authState === "reset-password") return <ResetPasswordPage onDone={() => window.location.reload()} />;
+    if (authState === "admin" && isAdmin) return <AdminPanel onLogout={handleAdminLogout} />;
     if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
-    if (authState === "signup") return <SignUpPage onComplete={handleAuthComplete} onLogin={() => setAuthState("login")} />;
-    if (authState === "login") return <LoginPage onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
-    if (authState === "authenticated" && user) return <Dashboard user={user} onLogout={handleLogout} />;
+    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onLogin={(email) => { setLoginEmail(email || ""); setAuthState("login"); }} />;
+    if (authState === "login") return <LoginPage initialEmail={loginEmail} onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
+    // Members who haven't given their verification details yet do that first.
+    if (authState === "authenticated" && user && user.verificationStatus === "incomplete") return <GetVerified user={user} onDone={setUser} onSignOut={handleLogout} />;
+    if (authState === "authenticated" && user) return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
     return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
   })();
 
@@ -6078,584 +5511,4 @@ export default function App() {
   );
 }
 
-// ============================================================================
-// ADMIN DASHBOARD
-// ============================================================================
-const AdminDashboard = ({ onLogout }) => {
-  const [tab, setTab] = useState("overview");
-  const [users, setUsers] = useState([]);
-  const [groups, setGroups] = useState([]);
-  const [reports, setReports] = useState([]);
-  const [stats, setStats] = useState({ users: 0, posts: 0, groups: 0, events: 0 });
-  const [loading, setLoading] = useState(true);
-  const [userSearch, setUserSearch] = useState("");
-  const font = "'DM Sans', sans-serif";
-  const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  const URL = import.meta.env.VITE_SUPABASE_URL;
-  const hdrs = { apikey: KEY, "Content-Type": "application/json", Authorization: `Bearer ${KEY}`, Prefer: "return=representation" };
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const h = { apikey: KEY };
-        const [u, g, r, posts, docs, events, helpReqs, marketItems] = await Promise.all([
-          fetch(`${URL}/rest/v1/profiles?select=*&order=created_at.desc`, { headers: h }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/groups?select=*&order=members_count.desc`, { headers: h }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/reports?select=*&order=created_at.desc`, { headers: h }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200`, { headers: h }).then(r => r.json()).catch(() => []),
-          fetch(`${URL}/rest/v1/docs?select=id,title,excerpt,user_id&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
-          fetch(`${URL}/rest/v1/events?select=id,title,description,date,organizer_id&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
-          fetch(`${URL}/rest/v1/help_requests?select=id,title,description,user_id&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
-          fetch(`${URL}/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
-        ]);
-        console.log("Admin data loaded:", { users: Array.isArray(u) ? u.length : u, groups: Array.isArray(g) ? g.length : g, reports: Array.isArray(r) ? r.length : r });
-        const allUsers = Array.isArray(u) ? u : [];
-        const allPosts = Array.isArray(posts) ? posts : [];
-        const allDocs = Array.isArray(docs) ? docs : [];
-        const allEvents = Array.isArray(events) ? events : [];
-        const allHelp = Array.isArray(helpReqs) ? helpReqs : [];
-        const allMarket = Array.isArray(marketItems) ? marketItems : [];
-        setUsers(allUsers); setGroups(Array.isArray(g) ? g : []);
-        // Build content lookup
-        const contentMap = {};
-        allPosts.forEach(p => { contentMap[p.id] = { type: "post", content: p.content, image: p.image_url, authorId: p.user_id }; });
-        allDocs.forEach(d => { contentMap[d.id] = { type: "doc", content: d.title, excerpt: d.excerpt, authorId: d.user_id }; });
-        allEvents.forEach(e => { contentMap[e.id] = { type: "event", content: e.title, excerpt: e.description, date: e.date, authorId: e.organizer_id }; });
-        allHelp.forEach(h2 => { contentMap[h2.id] = { type: "help", content: h2.title, excerpt: h2.description, authorId: h2.user_id }; });
-        allMarket.forEach(m => { contentMap[m.id] = { type: "marketplace", content: m.title, excerpt: m.description, price: m.price, image: m.image_url, authorId: m.user_id }; });
-        // Enrich reports
-        const reportsArr = Array.isArray(r) ? r : [];
-        const enrichedReports = reportsArr.map(rep => {
-          const reporter = allUsers.find(x => x.id === rep.reporter_id);
-          const reported = allUsers.find(x => x.id === rep.reported_user_id);
-          const contentId = rep.reported_post_id || rep.reported_user_id;
-          const reportedContent = contentMap[contentId] || null;
-          const contentAuthor = reportedContent ? allUsers.find(x => x.id === reportedContent.authorId) : null;
-          return { ...rep, reporter: reporter ? { name: reporter.name, email: reporter.email } : null, reported_user: reported ? { name: reported.name, email: reported.email } : null, reportedContent, contentAuthor: contentAuthor ? { name: contentAuthor.name, email: contentAuthor.email } : null };
-        });
-        setReports(enrichedReports);
-        setStats({ users: allUsers.length, posts: 0, groups: (Array.isArray(g) ? g : []).filter(x => x.is_approved).length, events: 0, pending: allUsers.filter(x => !x.linkedin_verified).length });
-      } catch (e) {}
-      setLoading(false);
-    })();
-  }, []);
-
-  const rpc = async (fn, params) => {
-    const res = await fetch(`${URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify(params) });
-    console.log(`RPC ${fn}:`, res.status, res.ok);
-    return res.ok;
-  };
-
-  const updateReportStatus = async (id, newStatus) => {
-    // Direct REST update
-    try {
-      const res = await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, {
-        method: "PATCH",
-        headers: { apikey: KEY, "Content-Type": "application/json", Authorization: `Bearer ${KEY}`, Prefer: "return=minimal" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (!res.ok) {
-        // Try RPC as fallback
-        const res2 = await fetch(`${URL}/rest/v1/rpc/admin_update_report`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ target_id: id, new_status: newStatus }) });
-        return res2.ok;
-      }
-      return true;
-    } catch(e) { return false; }
-  };
-
-  const approveUser = async (id) => {
-    await rpc("admin_update_user", { target_id: id, verified: true, user_status: "active" });
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: true, status: "active" } : u));
-  };
-
-  const blockUser = async (id) => {
-    await rpc("admin_update_user", { target_id: id, verified: false, user_status: "blocked" });
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: false, status: "blocked" } : u));
-  };
-
-  const approveGroup = async (id) => {
-    await rpc("admin_approve_group", { target_id: id, approved: true });
-    const group = groups.find(g => g.id === id);
-    if (group?.created_by) {
-      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community "${group.name}" has been approved!`, read: false }) }); } catch(e) {}
-    }
-    setGroups(prev => prev.map(g => g.id === id ? { ...g, is_approved: true } : g));
-  };
-
-  const rejectGroup = async (id) => {
-    const group = groups.find(g => g.id === id);
-    if (group?.created_by) {
-      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community request "${group.name}" was not approved.`, read: false }) }); } catch(e) {}
-    }
-    try { await fetch(`${URL}/rest/v1/groups?id=eq.${id}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } }); } catch(e) {}
-    setGroups(prev => prev.filter(g => g.id !== id));
-  };
-
-  const dismissReport = async (id) => {
-    await rpc("admin_delete_report", { target_id: id });
-    setReports(prev => prev.filter(r => r.id !== id));
-  };
-
-  const deleteReportContent = async (id) => {
-    const report = reports.find(r => r.id === id);
-    if (report?.reported_post_id) {
-      const contentId = report.reported_post_id;
-      const reason = (report.reason || "").toUpperCase();
-      const table = reason.startsWith("[MARKETPLACE]") ? "marketplace" : reason.startsWith("[DOC]") ? "docs" : reason.startsWith("[EVENT]") ? "events" : reason.startsWith("[HELP]") ? "help_requests" : "posts";
-      await rpc("admin_delete_content", { table_name: table, content_id: contentId });
-    }
-    await rpc("admin_delete_report", { target_id: id });
-    setReports(prev => prev.filter(r => r.id !== id));
-  };
-
-  const navItems = [
-    { key: "overview", label: "Overview" },
-    { key: "approvals", label: "Pending Approvals" },
-    { key: "users", label: "All Users" },
-    { key: "blocked", label: "Blocked Users" },
-    { key: "groups", label: "Communities" },
-    { key: "reports", label: "Reports" },
-    { key: "bugs", label: "Bug Reports" },
-  ];
-
-  const pendingUsers = users.filter(u => !u.linkedin_verified && u.status !== "blocked");
-  const blockedUsers = users.filter(u => u.status === "blocked");
-  const approvedUsers = users.filter(u => u.linkedin_verified && u.status !== "blocked");
-  const filteredUsers = users.filter(u => u.status !== "blocked" && (!userSearch || (u.name || "").toLowerCase().includes(userSearch.toLowerCase()) || (u.email || "").toLowerCase().includes(userSearch.toLowerCase())));
-
-  const fieldStyle = { fontSize: 12, color: "#37352F", padding: "6px 10px", background: "#FAFAF8", borderRadius: 4, border: "1px solid #F0EFED" };
-  const labelStyle = { fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 };
-
-  return (
-    <div className="admin-layout" style={{ display: "flex", minHeight: "100vh", fontFamily: font, background: "#FAFAF8" }}>
-      {/* Sidebar */}
-      <div className="admin-sidebar" style={{ width: 220, background: "#fff", borderRight: "1px solid #EDEDEB", padding: "20px 0", flexShrink: 0 }}>
-        <div style={{ padding: "0 16px 20px" }}>
-          <h2 style={{ fontSize: 16, fontWeight: 800, color: "#37352F", margin: 0 }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></h2>
-          <p style={{ fontSize: 10, color: "#9B9A97", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.1em" }}>Admin</p>
-        </div>
-        <div className="admin-nav" style={{ padding: "0 8px" }}>
-          {navItems.map(n => (
-            <button key={n.key} onClick={() => setTab(n.key)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 12px", border: "none", borderRadius: 6, background: tab === n.key ? "#F5F5F3" : "transparent", color: tab === n.key ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 13, fontWeight: tab === n.key ? 600 : 400, fontFamily: font, textAlign: "left", marginBottom: 2, transition: "all 0.1s" }}>
-              {n.label}
-              {n.key === "approvals" && pendingUsers.length > 0 && <span style={{ marginLeft: "auto", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{pendingUsers.length}</span>}
-              {n.key === "blocked" && blockedUsers.length > 0 && <span style={{ marginLeft: "auto", background: "#9B9A97", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{blockedUsers.length}</span>}
-              {n.key === "reports" && reports.filter(r => r.status === "pending").length > 0 && <span style={{ marginLeft: "auto", background: "#E65100", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{reports.filter(r => r.status === "pending").length}</span>}
-              {n.key === "groups" && groups.filter(g => !g.is_approved).length > 0 && <span style={{ marginLeft: "auto", background: "#E65100", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{groups.filter(g => !g.is_approved).length}</span>}
-              {n.key === "bugs" && reports.filter(r => (r.reason || "").startsWith("[BUG]")).length > 0 && <span style={{ marginLeft: "auto", background: "#5B9CFF", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{reports.filter(r => (r.reason || "").startsWith("[BUG]")).length}</span>}
-            </button>
-          ))}
-        </div>
-        <div style={{ position: "absolute", bottom: 20, padding: "0 16px" }}>
-          <button onClick={onLogout} style={{ background: "none", border: "none", color: "#9B9A97", cursor: "pointer", fontSize: 12, fontFamily: font }}>Sign out</button>
-        </div>
-      </div>
-
-      {/* Main */}
-      <div className="admin-main" style={{ flex: 1, padding: "28px 36px", overflow: "auto", maxWidth: 900 }}>
-        {loading ? <div style={{ padding: 60, textAlign: "center", color: "#9B9A97" }}>Loading...</div>
-
-        : tab === "overview" ? (() => {
-          const now = Date.now();
-          const mins = (ms) => (now - new Date(ms).getTime()) / 60000;
-          const onlineUsers = users.filter(u => u.last_active && mins(u.last_active) < 5);
-          const activeToday = users.filter(u => u.last_active && mins(u.last_active) < 1440);
-          const activeWeek = users.filter(u => u.last_active && mins(u.last_active) < 10080);
-          const activeMonth = users.filter(u => u.last_active && mins(u.last_active) < 43200);
-          const activeQuarter = users.filter(u => u.last_active && mins(u.last_active) < 129600);
-          const activeYear = users.filter(u => u.last_active && mins(u.last_active) < 525600);
-          // Signups per month for chart
-          const monthCounts = {};
-          users.forEach(u => {
-            if (!u.created_at) return;
-            const d = new Date(u.created_at);
-            const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-            monthCounts[key] = (monthCounts[key] || 0) + 1;
-          });
-          const sortedMonths = Object.keys(monthCounts).sort();
-          const maxCount = Math.max(...Object.values(monthCounts), 1);
-          return (
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Overview</h1>
-            
-            {/* Top Stats */}
-            <div className="admin-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
-              {[
-                { label: "Total Users", value: stats.users, color: "#37352F" },
-                { label: "Approved", value: approvedUsers.length, color: "#22A06B" },
-                { label: "Pending Review", value: pendingUsers.length, color: "#E65100" },
-                { label: "Blocked", value: blockedUsers.length, color: "#DC2626" },
-              ].map((s, i) => (
-                <div key={i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 18px" }}>
-                  <div style={{ fontSize: 10, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 6 }}>{s.label}</div>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: s.color }}>{s.value}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Online / Active Users */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
-              <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "18px 20px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#22C55E", animation: "pulse 2s infinite" }}>{""}</div>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#37352F", textTransform: "uppercase", letterSpacing: "0.08em" }}>Online Now</span>
-                </div>
-                <div style={{ fontSize: 36, fontWeight: 700, color: "#22C55E", marginBottom: 8 }}>{onlineUsers.length}</div>
-                <div style={{ fontSize: 11, color: "#9B9A97" }}>Users active in last 5 minutes</div>
-                {onlineUsers.length > 0 && (
-                  <div style={{ display: "flex", gap: -8, marginTop: 10 }}>
-                    {onlineUsers.slice(0, 5).map((u, i) => (
-                      <div key={u.id} style={{ width: 28, height: 28, borderRadius: "50%", background: "#A3C9B8", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 10, fontWeight: 700, border: "2px solid #fff", marginLeft: i > 0 ? -6 : 0 }} title={u.name}>{(u.name || "U").substring(0, 2).toUpperCase()}</div>
-                    ))}
-                    {onlineUsers.length > 5 && <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#F0EFED", display: "flex", alignItems: "center", justifyContent: "center", color: "#9B9A97", fontSize: 9, fontWeight: 700, border: "2px solid #fff", marginLeft: -6 }}>+{onlineUsers.length - 5}</div>}
-                  </div>
-                )}
-              </div>
-              <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "18px 20px" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#37352F", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Active Users</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  {[
-                    { label: "Today", value: activeToday.length, color: "#22A06B" },
-                    { label: "This Week", value: activeWeek.length, color: "#5B9CFF" },
-                    { label: "This Month", value: activeMonth.length, color: "#E65100" },
-                    { label: "This Quarter", value: activeQuarter.length, color: "#7C3AED" },
-                  ].map((a, i) => (
-                    <div key={i} style={{ padding: "8px 10px", background: "#FAFAF8", borderRadius: 6 }}>
-                      <div style={{ fontSize: 10, color: "#9B9A97", fontWeight: 600, marginBottom: 4 }}>{a.label}</div>
-                      <div style={{ fontSize: 20, fontWeight: 700, color: a.color }}>{a.value}</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ marginTop: 10, padding: "8px 10px", background: "#FAFAF8", borderRadius: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 10, color: "#9B9A97", fontWeight: 600 }}>This Year</span>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: "#37352F" }}>{activeYear.length}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Signups Chart */}
-            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "18px 20px", marginBottom: 24 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#37352F", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>Signups Over Time</div>
-              {sortedMonths.length === 0 ? (
-                <div style={{ textAlign: "center", padding: 20, color: "#9B9A97", fontSize: 12 }}>No signup data yet.</div>
-              ) : (
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 120 }}>
-                  {sortedMonths.map(m => (
-                    <div key={m} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: "#37352F" }}>{monthCounts[m]}</span>
-                      <div style={{ width: "100%", maxWidth: 40, height: Math.max(8, (monthCounts[m] / maxCount) * 100), background: "linear-gradient(180deg, #5B9CFF, #3B7BD8)", borderRadius: "4px 4px 0 0", transition: "height 0.3s" }}>{""}</div>
-                      <span style={{ fontSize: 9, color: "#9B9A97", whiteSpace: "nowrap" }}>{m.substring(5)}/{m.substring(2,4)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <h3 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", marginBottom: 10 }}>Recent Signups</h3>
-            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr", padding: "8px 16px", background: "#FAFAF8", borderBottom: "1px solid #EDEDEB", fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                <span>Name</span><span>Email</span><span>Location</span><span>Status</span>
-              </div>
-              {users.slice(0, 8).map((u, i) => (
-                <div key={u.id || i} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr", padding: "10px 16px", borderBottom: "1px solid #F5F5F3", alignItems: "center", fontSize: 13 }}>
-                  <span style={{ fontWeight: 500, color: "#37352F" }}>{u.name || "—"}</span>
-                  <span style={{ color: "#9B9A97" }}>{u.email || "—"}</span>
-                  <span style={{ color: "#9B9A97" }}>{u.location || "—"}</span>
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: u.linkedin_verified ? "#E3FCEF" : "#FFF3E0", color: u.linkedin_verified ? "#22A06B" : "#E65100", fontWeight: 600, width: "fit-content" }}>{u.linkedin_verified ? "Approved" : "Pending"}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          );
-        })()
-
-        : tab === "approvals" ? (
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 6 }}>Pending Approvals</h1>
-            <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 24 }}>Review and approve new user profiles. Users see a "pending review" banner until approved.</p>
-            {pendingUsers.length === 0 ? (
-              <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No pending approvals. All users are verified.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                {pendingUsers.map((u) => (
-                  <div key={u.id} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 20px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                        <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#A3C9B8", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 14 }}>{(u.name || "U").substring(0, 2).toUpperCase()}</div>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{u.name || "—"}</div>
-                          <div style={{ fontSize: 11, color: "#9B9A97" }}>{u.email} · Joined {new Date(u.created_at).toLocaleDateString()}</div>
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => approveUser(u.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#22A06B", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Approve</button>
-                        <button onClick={() => blockUser(u.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Block</button>
-                      </div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                      <div><div style={labelStyle}>Location</div><div style={fieldStyle}>{u.location || "—"}</div></div>
-                      <div><div style={labelStyle}>Hometown</div><div style={fieldStyle}>{u.hometown || "—"}</div></div>
-                      <div><div style={labelStyle}>Profession</div><div style={fieldStyle}>{u.profession || "—"}</div></div>
-                      <div><div style={labelStyle}>LinkedIn</div><div style={fieldStyle}>{u.linkedin_url ? <a href={u.linkedin_url.startsWith("http") ? u.linkedin_url : `https://${u.linkedin_url}`} target="_blank" rel="noopener noreferrer" style={{ color: "#5B9CFF", textDecoration: "none", fontSize: 11 }}>View Profile →</a> : "Not provided"}</div></div>
-                      <div><div style={labelStyle}>Years Abroad</div><div style={fieldStyle}>{u.years_abroad || "—"}</div></div>
-                      <div><div style={labelStyle}>Type</div><div style={fieldStyle}><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3, background: isUserNRI(u) ? "#E3FCEF" : "#FFF3E0", color: isUserNRI(u) ? "#22A06B" : "#E65100", fontWeight: 600 }}>{isUserNRI(u) ? "NRI" : "IN"}</span></div></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-        ) : tab === "users" ? (
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", margin: 0 }}>All Users ({users.length})</h1>
-              <div style={{ position: "relative" }}>
-                <input value={userSearch} onChange={(e) => setUserSearch(e.target.value)} placeholder="Search users..." style={{ padding: "8px 14px 8px 32px", borderRadius: 6, border: "1px solid #EDEDEB", fontSize: 12, background: "#fff", outline: "none", width: 200, fontFamily: font }} />
-                <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9B9A97", fontSize: 12 }}>🔍</span>
-              </div>
-            </div>
-            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 80px", padding: "8px 16px", background: "#FAFAF8", borderBottom: "1px solid #EDEDEB", fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                <span>User</span><span>Details</span><span>Location</span><span>Status</span><span>Actions</span>
-              </div>
-              {filteredUsers.map((u, i) => (
-                <div key={u.id || i} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 80px", padding: "12px 16px", borderBottom: "1px solid #F5F5F3", alignItems: "center", fontSize: 12 }}>
-                  <div>
-                    <div style={{ fontWeight: 600, color: "#37352F", fontSize: 13 }}>{u.name || "—"}</div>
-                    <div style={{ color: "#9B9A97", fontSize: 11 }}>{u.email}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#5F5E5B" }}>{u.profession || "—"}</div>
-                    {u.linkedin_url && <a href={u.linkedin_url.startsWith("http") ? u.linkedin_url : `https://${u.linkedin_url}`} target="_blank" rel="noopener noreferrer" style={{ color: "#5B9CFF", fontSize: 10, textDecoration: "none" }}>LinkedIn →</a>}
-                  </div>
-                  <div style={{ color: "#9B9A97" }}>{u.location || "—"}</div>
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: u.linkedin_verified ? "#E3FCEF" : "#FFF3E0", color: u.linkedin_verified ? "#22A06B" : "#E65100", fontWeight: 600, width: "fit-content" }}>{u.linkedin_verified ? "Approved" : "Pending"}</span>
-                  <div>
-                    {!u.linkedin_verified ? <button onClick={() => approveUser(u.id)} style={{ padding: "4px 10px", borderRadius: 4, border: "none", background: "#22A06B", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Approve</button>
-                    : <button onClick={() => blockUser(u.id)} style={{ padding: "4px 10px", borderRadius: 4, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Block</button>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-        ) : tab === "blocked" ? (
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Blocked Users ({blockedUsers.length})</h1>
-            {blockedUsers.length === 0 ? (
-              <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No blocked users.</div>
-            ) : (
-              <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", overflow: "hidden" }}>
-                {blockedUsers.map((u, i) => (
-                  <div key={u.id || i} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 100px", padding: "12px 16px", borderBottom: "1px solid #F5F5F3", alignItems: "center", fontSize: 12 }}>
-                    <div>
-                      <div style={{ fontWeight: 600, color: "#37352F", fontSize: 13 }}>{u.name || "—"}</div>
-                      <div style={{ color: "#9B9A97", fontSize: 11 }}>{u.email}</div>
-                    </div>
-                    <div style={{ color: "#9B9A97" }}>{u.profession || "—"}</div>
-                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "#FEF2F2", color: "#DC2626", fontWeight: 600, width: "fit-content" }}>Blocked</span>
-                    <button onClick={() => approveUser(u.id)} style={{ padding: "4px 10px", borderRadius: 4, border: "none", background: "#22A06B", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Unblock</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-        ) : tab === "groups" ? (
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Communities</h1>
-            {groups.filter(g => !g.is_approved).length > 0 && (
-              <div style={{ marginBottom: 28 }}>
-                <h3 style={{ fontSize: 13, fontWeight: 700, color: "#E65100", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Pending ({groups.filter(g => !g.is_approved).length})</h3>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {groups.filter(g => !g.is_approved).map(g => (
-                    <div key={g.id} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "14px 18px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{g.name}</div>
-                          <div style={{ fontSize: 11, color: "#9B9A97" }}>{g.description} · {g.category}</div>
-                          {g.created_by && <div style={{ fontSize: 10, color: "#9B9A97", marginTop: 4 }}>Created by: {g.created_by.substring(0, 8)}...</div>}
-                        </div>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button onClick={() => approveGroup(g.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#22A06B", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Approve</button>
-                          <button onClick={() => rejectGroup(g.id)} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Reject</button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <h3 style={{ fontSize: 13, fontWeight: 700, color: "#22A06B", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Active ({groups.filter(g => g.is_approved).length})</h3>
-            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", overflow: "hidden" }}>
-              {groups.filter(g => g.is_approved).map(g => (
-                <div key={g.id} style={{ padding: "10px 16px", borderBottom: "1px solid #F5F5F3", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-                  <span style={{ fontWeight: 500, color: "#37352F" }}>{g.name}</span>
-                  <span style={{ fontSize: 11, color: "#9B9A97" }}>{g.members_count} members</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-        ) : tab === "reports" ? (
-          <div>
-            {(() => {
-              const pendingReports = reports.filter(r => r.status === "pending" || !r.status);
-              const handledReports = reports.filter(r => r.status === "resolved" || r.status === "dismissed");
-              const getCategory = (r) => {
-                const reason = (r.reason || "").toUpperCase();
-                if (reason.startsWith("[MARKETPLACE]")) return "Marketplace";
-                if (reason.startsWith("[DOC]")) return "Docs";
-                if (reason.startsWith("[EVENT]")) return "Events";
-                if (reason.startsWith("[HELP]")) return "Help Requests";
-                if (reason.startsWith("[USER]")) return "Profiles";
-                if (reason.startsWith("[POST]")) return "Feed Posts";
-                if (r.reported_user_id && !r.reported_post_id) return "Profiles";
-                return "Feed Posts";
-              };
-              const categories = ["Feed Posts", "Marketplace", "Docs", "Events", "Help Requests", "Profiles"];
-              const renderReportCards = (list) => {
-                const grouped = {};
-                list.forEach(r => { const c = getCategory(r); if (!grouped[c]) grouped[c] = []; grouped[c].push(r); });
-                return categories.filter(c => grouped[c]?.length > 0).map(cat => (
-                <div key={cat} style={{ marginBottom: 24 }}>
-                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "#37352F", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 8 }}>
-                    {cat}
-                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "#FEF2F2", color: "#DC2626", fontWeight: 700 }}>{grouped[cat].length}</span>
-                  </h3>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {grouped[cat].map((r, i) => (
-                      <div key={r.id || i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 18px" }}>
-                        {/* Header: reason + actions */}
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", marginBottom: 4 }}>{(r.reason || "No reason").replace(/^\[\w+\]\s*/, "")}</div>
-                            <div style={{ fontSize: 11, color: "#9B9A97" }}>Reported: {new Date(r.created_at).toLocaleString()}</div>
-                          </div>
-                          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                            {r.status === "pending" ? (
-                              <>
-                                <button onClick={() => deleteReportContent(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "none", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Remove Content</button>
-                                <button onClick={() => dismissReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "1px solid #EDEDEB", background: "#fff", color: "#5F5E5B", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
-                              </>
-                            ) : (
-                              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: r.status === "resolved" ? "#FEF2F2" : "#E3FCEF", color: r.status === "resolved" ? "#DC2626" : "#22A06B", fontWeight: 600 }}>{r.status === "resolved" ? "Removed" : "Dismissed"}</span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Reported content preview */}
-                        {r.reportedContent && (
-                          <div style={{ background: "#FAFAF8", border: "1px solid #F0EFED", borderRadius: 8, padding: "14px 16px", marginBottom: 12 }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Reported Content</div>
-                            {r.reportedContent.image && (
-                              <img src={r.reportedContent.image} alt="" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 6, marginBottom: 8 }} />
-                            )}
-                            <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", marginBottom: 4 }}>
-                              {r.reportedContent.type === "post" ? (r.reportedContent.content || "").substring(0, 200) : r.reportedContent.content}
-                              {r.reportedContent.type === "post" && (r.reportedContent.content || "").length > 200 && "..."}
-                            </div>
-                            {r.reportedContent.excerpt && (
-                              <div style={{ fontSize: 12, color: "#5F5E5B", lineHeight: 1.5, marginTop: 4 }}>{(r.reportedContent.excerpt || "").substring(0, 150)}{(r.reportedContent.excerpt || "").length > 150 ? "..." : ""}</div>
-                            )}
-                            {r.reportedContent.price && (
-                              <div style={{ fontSize: 13, fontWeight: 700, color: "#22A06B", marginTop: 6 }}>{r.reportedContent.price}</div>
-                            )}
-                            {r.reportedContent.date && (
-                              <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 4 }}>Date: {r.reportedContent.date}</div>
-                            )}
-                            {r.contentAuthor && (
-                              <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 6, paddingTop: 6, borderTop: "1px solid #F0EFED" }}>Author: <strong>{r.contentAuthor.name}</strong> ({r.contentAuthor.email})</div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Reported user profile preview (for profile reports) */}
-                        {!r.reportedContent && r.reported_user && (
-                          <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "14px 16px", marginBottom: 12 }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Reported Profile</div>
-                            <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{r.reported_user.name}</div>
-                            <div style={{ fontSize: 12, color: "#9B9A97" }}>{r.reported_user.email}</div>
-                          </div>
-                        )}
-
-                        {/* Reporter info */}
-                        {r.reporter && (
-                          <div style={{ fontSize: 11, color: "#9B9A97" }}>
-                            Reported by: <strong>{r.reporter.name}</strong> ({r.reporter.email})
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ));
-              };
-              return (
-                <>
-                  <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Reports ({reports.filter(r => !(r.reason || "").startsWith("[BUG]")).length})</h1>
-                  {reports.length === 0 ? (
-                    <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No pending reports. All clear!</div>
-                  ) : renderReportCards(reports.filter(r => !(r.reason || "").startsWith("[BUG]")))}
-                </>
-              );
-            })()}
-          </div>
-        ) : tab === "bugs" ? (
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 24 }}>Bug Reports</h1>
-            {(() => {
-              const bugReports = reports.filter(r => (r.reason || "").startsWith("[BUG]"));
-              if (bugReports.length === 0) return <div style={{ background: "#fff", borderRadius: 8, border: "1px dashed #EDEDEB", padding: 40, textAlign: "center", color: "#9B9A97", fontSize: 13 }}>No bug reports.</div>;
-              return (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {bugReports.map((r, i) => {
-                    const bugText = (r.reason || "").replace("[BUG] ", "");
-                    const parts = bugText.split(": ");
-                    const page = parts[0] || "Unknown";
-                    const rest = parts.slice(1).join(": ");
-                    const titleEnd = rest.indexOf(" — ");
-                    const title = titleEnd > -1 ? rest.substring(0, titleEnd) : rest;
-                    const desc = titleEnd > -1 ? rest.substring(titleEnd + 3) : "";
-                    return (
-                      <div key={r.id || i} style={{ background: "#fff", borderRadius: 8, border: "1px solid #EDEDEB", padding: "16px 18px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "#EDF4FF", color: "#5B9CFF", fontWeight: 700 }}>{page}</span>
-                              <span style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{title}</span>
-                            </div>
-                            {desc && desc !== "No details" && <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, marginBottom: 8 }}>{desc}</p>}
-                            <div style={{ fontSize: 11, color: "#9B9A97" }}>
-                              {r.reporter ? `By: ${r.reporter.name} (${r.reporter.email})` : ""} · {new Date(r.created_at).toLocaleString()}
-                            </div>
-                          </div>
-                          <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: 12 }}>
-                            <button onClick={() => dismissReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "none", background: "#22A06B", color: "#fff", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Resolved</button>
-                            <button onClick={() => dismissReport(r.id)} style={{ padding: "5px 12px", borderRadius: 4, border: "1px solid #EDEDEB", background: "#fff", color: "#5F5E5B", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Dismiss</button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-          </div>
-        ) : null}
-      </div>
-      <style>{`
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-        @media (max-width: 768px) {
-          .admin-layout { flex-direction: column !important; }
-          .admin-sidebar { width: 100% !important; position: relative !important; }
-          .admin-nav { display: flex !important; flex-wrap: wrap !important; gap: 4px !important; }
-          .admin-nav button { flex: 1 !important; min-width: 0 !important; padding: 8px 6px !important; font-size: 11px !important; justify-content: center !important; }
-          .admin-main { padding: 16px !important; }
-          .admin-stats { grid-template-columns: repeat(2, 1fr) !important; }
-        }
-      `}</style>
-    </div>
-  );
-};
+import AdminPanel from "./admin/AdminPanel";
