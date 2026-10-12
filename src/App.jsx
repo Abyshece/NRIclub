@@ -168,46 +168,6 @@ const Icons = {
 };
 
 
-function getDefaultEvents() {
-  return [
-    { id: "e1", title: "Holi Festival 2026", date: "Mar 25, 2026 • 10:00 AM", location: "Central Park, New York", attendees: 450, organizer: "NYC Desi Club", description: "Celebrate the festival of colors with fellow Indians in NYC!" },
-    { id: "e2", title: "Networking Night: Tech", date: "Apr 10, 2026 • 6:00 PM", location: "WeWork, Berlin", attendees: 120, organizer: "Indian Professionals DE", description: "Connect with Indian tech professionals working in Germany." },
-    { id: "e3", title: "Bollywood Movie Night", date: "Apr 15, 2026 • 7:00 PM", location: "Hoyts Cinema, Melbourne", attendees: 85, organizer: "Melbourne Desi Club", description: "Watch the latest Bollywood blockbuster together!" },
-  ];
-}
-
-function getDefaultGroups() {
-  return [
-    { id: "g1", name: "Indians in Berlin", description: "The largest community of Indians living in Berlin.", members: 12500, category: "City", joined: false },
-    { id: "g2", name: "Techies Abroad", description: "Indian IT professionals working globally. Share referrals and tech news.", members: 45000, category: "Professional", joined: false },
-    { id: "g3", name: "Desi Students USA", description: "Support group for MS/PhD students in the United States.", members: 8900, category: "Support", joined: false },
-    { id: "g4", name: "Global Indian Foodies", description: "Sharing recipes and restaurant finds from around the world.", members: 32000, category: "Interest", joined: false },
-    { id: "g5", name: "Indians in London", description: "Community hub for Indians living in London and surrounding areas.", members: 28000, category: "City", joined: false },
-    { id: "g6", name: "Indians in Toronto", description: "Connect with the vibrant Indian community in Toronto.", members: 19000, category: "City", joined: false },
-  ];
-}
-
-function getDefaultPosts() {
-  return [
-    {
-      id: "p1", userId: "demo", content: "Finally found a place in London that serves authentic Gujarati Thali! If anyone is missing home food, check out 'Rasoi' near Wembley. 🍛 #DesiFood #LondonEats",
-      author: { name: "Priya Patel", profession: "Architect", location: "London, UK", hometown: "Ahmedabad, GJ" },
-      likes: 243, comments: [], tags: ["Food", "Recommendation"], timestamp: Date.now() - 7200000,
-      image: "https://picsum.photos/600/400?random=10",
-    },
-    {
-      id: "p2", userId: "demo", content: "Help needed regarding PR process in Canada. Has anyone recently applied under the STEM category? I have questions about the documentation.",
-      author: { name: "Rahul Verma", profession: "Student", location: "Toronto, Canada", hometown: "Delhi, DL" },
-      likes: 56, comments: [], tags: ["Visa", "Canada"], timestamp: Date.now() - 18000000,
-    },
-    {
-      id: "p3", userId: "demo", content: "Hosting a small Diwali get-together this weekend! Bring your own sparklers. DM for details!",
-      author: { name: "Sneha Gupta", profession: "Product Manager", location: "San Francisco, USA", hometown: "Bangalore, KA" },
-      likes: 189, comments: [], tags: ["Events", "Community"], timestamp: Date.now() - 86400000,
-    },
-  ];
-}
-
 function timeAgo(ts) {
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
@@ -600,9 +560,8 @@ const SignUpPage = ({ onComplete, onLogin }) => {
   const [error, setError] = useState("");
 
   // OTP state
-  const [otpStep, setOtpStep] = useState("form"); // "form" | "otp" | "complete"
+  const [otpStep, setOtpStep] = useState("form"); // "form" | "otp"
   const [otpCode, setOtpCode] = useState(["", "", "", "", "", ""]);
-  const [generatedOtp, setGeneratedOtp] = useState("");
   const [otpError, setOtpError] = useState("");
   const [otpTimer, setOtpTimer] = useState(0);
   const [otpSending, setOtpSending] = useState(false);
@@ -627,10 +586,6 @@ const SignUpPage = ({ onComplete, onLogin }) => {
       return () => clearTimeout(t);
     }
   }, [otpTimer]);
-
-  const generateOtp = () => {
-    return "";
-  };
 
   const handleSendOtp = async () => {
     if (!form.email || !form.email.includes("@")) {
@@ -658,6 +613,9 @@ const SignUpPage = ({ onComplete, onLogin }) => {
         const signUpResult = await api.signUp(form.email, form.password, {
           full_name: fullName, location: form.location,
           hometown: form.hometown, profession: form.profession,
+          occupation_status: form.occupationStatus, years_abroad: form.yearsAbroad,
+          linkedin_url: form.linkedinUrl, gdpr_consent: gdprConsent,
+          marketing_consent: marketingConsent,
         });
         // Double check: if signup returned but user already exists
         if (signUpResult?.user?.identities?.length === 0) {
@@ -676,13 +634,11 @@ const SignUpPage = ({ onComplete, onLogin }) => {
         throw signUpErr;
       }
 
-      // Step 2: Send OTP via Supabase
+      // Step 2: Send OTP via Supabase. If this fails the code from the signup
+      // confirmation email still works, and the user can press "Resend".
       try {
         await api.sendOtp(form.email);
-      } catch (otpErr) {
-        // OTP send failed - allow manual code entry
-      }
-      setGeneratedOtp("");
+      } catch (otpErr) {}
 
       setOtpStep("otp");
       setOtpTimer(60);
@@ -737,39 +693,6 @@ const SignUpPage = ({ onComplete, onLogin }) => {
     setOtpError("");
 
     try {
-      // If we have a local OTP (sandbox mode), verify locally
-      if (generatedOtp) {
-        if (entered !== generatedOtp) {
-          setOtpError("Invalid code. Please try again.");
-          setLoading(false);
-          return;
-        }
-        // Local verification passed
-        const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-        const profile = {
-          id: "user_" + Date.now(),
-          name: fullName,
-          email: form.email,
-          password: form.password,
-          location: form.location,
-          hometown: form.hometown,
-          profession: form.profession,
-          occupationStatus: form.occupationStatus,
-          yearsAbroad: form.yearsAbroad,
-          linkedinUrl: form.linkedinUrl,
-          emailVerified: true,
-          gdprConsent: true,
-          gdprConsentDate: new Date().toISOString(),
-          marketingConsent: marketingConsent,
-          isNRI: form.isNRI,
-          createdAt: Date.now(),
-        };
-        localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
-        setLoading(false);
-        onComplete(profile);
-        return;
-      }
-
       // Real Supabase verification
       try {
         let verifyData = await api.verifyOtp(form.email, entered);
@@ -777,31 +700,29 @@ const SignUpPage = ({ onComplete, onLogin }) => {
         if (!verifyData?.access_token) {
           try { verifyData = await api.signIn(form.email, form.password); } catch(si) {}
         }
+        if (!verifyData?.access_token || !verifyData?.user?.id) {
+          throw new Error("Your email is verified, but we couldn't sign you in. Please log in.");
+        }
         const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-        // Save ALL signup details to profile
+        // The signup trigger already stored these from the metadata; this
+        // covers accounts created before that trigger existed.
         try {
           await api.updateProfile({
             name: fullName, location: form.location, hometown: form.hometown,
             profession: form.profession, occupation_status: form.occupationStatus,
             years_abroad: form.yearsAbroad, linkedin_url: form.linkedinUrl,
-            email_verified: true, gdpr_consent: true, gdpr_consent_date: new Date().toISOString(),
-            marketing_consent: marketingConsent,
+            gdpr_consent: true, marketing_consent: marketingConsent,
           });
-        } catch (ue) {
-          // If updateProfile fails, try again after a short delay
-          setTimeout(async () => {
-            try { await api.updateProfile({ name: fullName, location: form.location, hometown: form.hometown, profession: form.profession, occupation_status: form.occupationStatus, years_abroad: form.yearsAbroad, linkedin_url: form.linkedinUrl }); } catch(e) {}
-          }, 1000);
-        }
+        } catch (ue) {}
         const profile = {
-          id: verifyData?.user?.id || ("user_" + Date.now()),
+          id: verifyData.user.id,
           name: fullName, email: form.email, location: form.location,
           hometown: form.hometown, profession: form.profession,
           occupationStatus: form.occupationStatus, yearsAbroad: form.yearsAbroad,
           linkedinUrl: form.linkedinUrl, emailVerified: true,
           isNRI: form.isNRI, avatar_url: "",
         };
-        localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
+        localStorage.setItem("nriclub_profile_cache", JSON.stringify(profile));
         setLoading(false);
         onComplete(profile);
       } catch (verifyErr) {
@@ -868,7 +789,7 @@ const SignUpPage = ({ onComplete, onLogin }) => {
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
           </div>
           <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>Where do you live?</h2>
-          <p style={{ fontSize: 14, color: "#9B9A97", marginBottom: 32 }}>This helps us personalize your experience on IndIn.</p>
+          <p style={{ fontSize: 14, color: "#9B9A97", marginBottom: 32 }}>This helps us personalize your experience on NRIClub.</p>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 320, margin: "0 auto" }}>
             <button onClick={() => { setResidencyStep("abroad"); update("isNRI", true); }} style={{ padding: "18px 24px", borderRadius: 12, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
               onMouseOver={(e) => { e.currentTarget.style.borderColor = "#37352F"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
@@ -1349,7 +1270,7 @@ const SignUpPage = ({ onComplete, onLogin }) => {
               <p style={{ marginBottom: 16 }}>We do not sell your personal data. Data is only shared with essential service providers (email delivery, hosting) under data processing agreements compliant with GDPR.</p>
 
               <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>7. Contact</h4>
-              <p>For any data protection inquiries, contact our Data Protection Officer at privacy@indin.com.</p>
+              <p>For any data protection inquiries, contact our Data Protection Officer at privacy@nriclub.app.</p>
 
               <p style={{ marginTop: 20, fontSize: 11, color: "#9B9A97", fontStyle: "italic" }}>Last updated: April 2026</p>
             </div>
@@ -1408,28 +1329,15 @@ const LoginPage = ({ onComplete, onSignUp }) => {
           linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "", status: dbProfile.status || "active",
           isNRI: dbProfile.years_abroad && dbProfile.years_abroad !== "Not lived abroad",
         };
-        localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
+        localStorage.setItem("nriclub_profile_cache", JSON.stringify(profile));
         setLoading(false);
         onComplete(profile);
         return;
       }
-      const user = data?.user || {};
-      const profile = {
-        id: user.id || "user_" + Date.now(),
-        name: user.user_metadata?.full_name || email.split("@")[0],
-        email, location: "", hometown: "", profession: "",
-        occupationStatus: "Working Professional", emailVerified: !!user.email_confirmed_at,
-      };
-      localStorage.setItem("indin_profile_cache", JSON.stringify(profile));
+      await api.signOut();
+      setError("We couldn't load your profile. Please try again or contact support.");
       setLoading(false);
-      onComplete(profile);
     } catch (err) {
-      const cached = JSON.parse(localStorage.getItem("indin_profile_cache") || "null");
-      if (cached && cached.email === email) {
-        setLoading(false);
-        onComplete(cached);
-        return;
-      }
       setError(err.message || "Invalid email or password.");
       setLoading(false);
     }
@@ -1875,7 +1783,6 @@ const Dashboard = ({ user, onLogout }) => {
   // Docs state
   const [docModal, setDocModal] = useState(false);
   const [newDoc, setNewDoc] = useState({ title: "", city: "", category: "General", excerpt: "" });
-  const MOCK_DOCS = [];
   const [docs, setDocs] = useState([]);
   const [docCityFilter, setDocCityFilter] = useState("All");
   const [docSearch, setDocSearch] = useState("");
@@ -1910,10 +1817,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [marketModal, setMarketModal] = useState(false);
   const [newMarket, setNewMarket] = useState({ title: "", price: "", category: "Items", city: "", description: "" });
   const [marketPhotos, setMarketPhotos] = useState([]);
-  const MOCK_MARKET = [];
   const [marketItems, setMarketItems] = useState([]);
   // Help state with pre-populated data
-  const MOCK_HELP = [];
 
   // Initialize help requests on mount
   useEffect(() => {}, []);
@@ -2312,7 +2217,7 @@ const Dashboard = ({ user, onLogout }) => {
         profession: updated.profession, linkedin_url: updated.linkedinUrl,
       });
     } catch (e) { console.log("Profile update:", e.message); }
-    localStorage.setItem("indin_profile_cache", JSON.stringify(updated));
+    localStorage.setItem("nriclub_profile_cache", JSON.stringify(updated));
     // Update the user state so UI reflects changes immediately
     Object.assign(user, updated);
     setProfileModal(false);
@@ -3845,7 +3750,7 @@ const Dashboard = ({ user, onLogout }) => {
                       const url = await api.uploadAvatar(file);
                       await api.updateProfile({ avatar_url: url });
                       const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
-                      localStorage.setItem("indin_profile_cache", JSON.stringify(updatedUser));
+                      localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
                       window.location.reload();
                     } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
                   }}
@@ -4331,7 +4236,7 @@ const Dashboard = ({ user, onLogout }) => {
                       const url = await api.uploadAvatar(file);
                       await api.updateProfile({ avatar_url: url });
                       const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
-                      localStorage.setItem("indin_profile_cache", JSON.stringify(updatedUser));
+                      localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
                       window.location.reload();
                     } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
                   }}
@@ -4866,7 +4771,7 @@ const Dashboard = ({ user, onLogout }) => {
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Email Address</label>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.message({ size: 14 })}</div>
-                  <input style={{ ...inputStyle, paddingLeft: 36, background: "#F0EFED", color: "#9B9A97" }} value={user.email || `${user.name.toLowerCase().replace(/\s+/g, ".")}@indin.com`} readOnly disabled />
+                  <input style={{ ...inputStyle, paddingLeft: 36, background: "#F0EFED", color: "#9B9A97" }} value={user.email || ""} readOnly disabled />
                 </div>
                 <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 4, fontFamily: font }}>Contact support to change email.</p>
               </div>
@@ -5853,7 +5758,7 @@ const CookieConsent = () => {
   useEffect(() => {
     (async () => {
       try {
-        const result = localStorage.getItem("indin_cookie_consent");
+        const result = localStorage.getItem("nriclub_cookie_consent");
         if (!result) setVisible(true);
       } catch {
         setVisible(true);
@@ -5862,11 +5767,11 @@ const CookieConsent = () => {
   }, []);
 
   const acceptAll = async () => {
-    try { localStorage.setItem("indin_cookie_consent", JSON.stringify({ essential: true, analytics: true, date: new Date().toISOString() })); } catch (e) {}
+    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: true, date: new Date().toISOString() })); } catch (e) {}
     setVisible(false);
   };
   const acceptEssential = async () => {
-    try { localStorage.setItem("indin_cookie_consent", JSON.stringify({ essential: true, analytics: analyticsConsent, date: new Date().toISOString() })); } catch (e) {}
+    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: analyticsConsent, date: new Date().toISOString() })); } catch (e) {}
     setVisible(false);
   };
 
@@ -5951,10 +5856,6 @@ const CookieConsent = () => {
   );
 };
 
-// Admin credentials
-const ADMIN_USER = import.meta.env.VITE_ADMIN_EMAIL;
-const ADMIN_PASS = import.meta.env.VITE_ADMIN_PASS;
-
 export default function App() {
   const [authState, setAuthState] = useState("loading");
   const [user, setUser] = useState(null);
@@ -5962,18 +5863,55 @@ export default function App() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPass, setAdminPass] = useState("");
   const [adminErr, setAdminErr] = useState("");
+  const [adminLoading, setAdminLoading] = useState(false);
+
+  // Admins sign in with their normal NRIClub account; the database decides
+  // whether that account is an admin (public.admins), so nothing here can be
+  // faked from the browser.
+  const handleAdminLogin = async () => {
+    if (adminLoading) return;
+    const rl = rateLimiter.check("admin_login", 5, 900000);
+    if (!rl.allowed) { setAdminErr(`Too many attempts. Wait ${Math.ceil(rl.waitSecs / 60)} min.`); return; }
+    setAdminLoading(true);
+    setAdminErr("");
+    try {
+      await api.signIn(adminEmail.trim().toLowerCase(), adminPass);
+      if (await api.isAdmin()) {
+        rateLimiter.reset("admin_login");
+        setAdminPass("");
+        setIsAdmin(true);
+        setAuthState("admin");
+      } else {
+        await api.signOut();
+        setAdminErr("This account does not have admin access.");
+      }
+    } catch (e) {
+      setAdminErr("Invalid email or password.");
+    }
+    setAdminLoading(false);
+  };
+
+  const handleAdminLogout = async () => {
+    try { await api.signOut(); } catch (e) {}
+    setIsAdmin(false);
+    setAuthState("admin-login");
+  };
 
   useEffect(() => {
     // Check for admin route
     const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
     if (isAdminDomain || window.location.hash === "#admin") {
-      // Check if already logged in as admin
-      if (localStorage.getItem("indin_admin") === "true") {
-        setIsAdmin(true);
-        setAuthState("admin");
-      } else {
+      (async () => {
+        try {
+          const session = await api.getSession();
+          if (session?.user && await api.isAdmin()) {
+            setIsAdmin(true);
+            setAuthState("admin");
+            return;
+          }
+        } catch (e) {}
         setAuthState("admin-login");
-      }
+      })();
       return;
     }
     (async () => {
@@ -5981,7 +5919,8 @@ export default function App() {
         const session = await api.getSession();
         if (session && session.user) {
           const dbProfile = await api.getMyProfile();
-          const cached = JSON.parse(localStorage.getItem("indin_profile_cache") || "null");
+          const cachedProfile = JSON.parse(localStorage.getItem("nriclub_profile_cache") || "null");
+          const cached = cachedProfile?.id === session.user.id ? cachedProfile : null;
           if (dbProfile) {
             // Merge: prefer DB values, but fall back to cache for fields that might be empty in DB
             const mapped = {
@@ -6003,17 +5942,14 @@ export default function App() {
               try { await api.updateProfile({ location: cached.location, hometown: cached.hometown, profession: cached.profession, occupation_status: cached.occupationStatus, years_abroad: cached.yearsAbroad, linkedin_url: cached.linkedinUrl }); } catch(e) {}
             }
             setUser(mapped);
-            localStorage.setItem("indin_profile_cache", JSON.stringify(mapped));
+            localStorage.setItem("nriclub_profile_cache", JSON.stringify(mapped));
             setAuthState("authenticated");
             return;
           }
         }
       } catch (e) {}
-      // Fallback: check local cache
-      try {
-        const cached = JSON.parse(localStorage.getItem("indin_profile_cache") || "null");
-        if (cached) { setUser(cached); setAuthState("authenticated"); return; }
-      } catch (e) {}
+      // No valid session: never treat cached profile data as a login.
+      try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
       setAuthState("landing");
     })();
   }, []);
@@ -6025,8 +5961,7 @@ export default function App() {
 
   const handleLogout = async () => {
     try { await api.signOut(); } catch (e) {}
-    try { localStorage.removeItem("indin_profile_cache"); } catch (e) {}
-    try { localStorage.removeItem("indin_token"); localStorage.removeItem("indin_refresh"); localStorage.removeItem("indin_profile_cache"); } catch (e) {}
+    try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
     setUser(null);
     setAuthState("landing");
   };
@@ -6054,15 +5989,15 @@ export default function App() {
               <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 4 }}>Admin Panel Login</p>
             </div>
             {adminErr && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminErr}</div>}
-            <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
-            <input type="password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") { if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); localStorage.setItem("indin_admin", "true"); } else setAdminErr("Invalid credentials"); } }} />
-            <button onClick={() => { const rl = rateLimiter.check("admin_login", 5, 900000); if (!rl.allowed) { setAdminErr(`Too many attempts. Wait ${Math.ceil(rl.waitSecs/60)} min.`); return; } if (adminEmail === ADMIN_USER && adminPass === ADMIN_PASS) { setIsAdmin(true); setAuthState("admin"); localStorage.setItem("indin_admin", "true"); rateLimiter.reset("admin_login"); } else setAdminErr("Invalid credentials"); }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign In</button>
+            <input type="email" autoComplete="username" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
+            <input type="password" autoComplete="current-password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") handleAdminLogin(); }} />
+            <button onClick={handleAdminLogin} disabled={adminLoading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: adminLoading ? "default" : "pointer", opacity: adminLoading ? 0.7 : 1 }}>{adminLoading ? "Signing in..." : "Sign In"}</button>
             <p style={{ fontSize: 11, color: "#9B9A97", textAlign: "center", marginTop: 16 }}><a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ""; setAuthState("landing"); }} style={{ color: "#5B9CFF" }}>← Back to NRIClub</a></p>
           </div>
         </div>
       );
     }
-    if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={() => { setIsAdmin(false); setAuthState("admin-login"); localStorage.removeItem("indin_admin"); }} />;
+    if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={handleAdminLogout} />;
     if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
     if (authState === "signup") return <SignUpPage onComplete={handleAuthComplete} onLogin={() => setAuthState("login")} />;
     if (authState === "login") return <LoginPage onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
@@ -6090,42 +6025,23 @@ const AdminDashboard = ({ onLogout }) => {
   const [loading, setLoading] = useState(true);
   const [userSearch, setUserSearch] = useState("");
   const font = "'DM Sans', sans-serif";
-  const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  const URL = import.meta.env.VITE_SUPABASE_URL;
-  const hdrs = { apikey: KEY, "Content-Type": "application/json", Authorization: `Bearer ${KEY}`, Prefer: "return=representation" };
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     (async () => {
       try {
-        const h = { apikey: KEY };
-        const [u, g, r, posts, docs, events, helpReqs, marketItems] = await Promise.all([
-          fetch(`${URL}/rest/v1/profiles?select=*&order=created_at.desc`, { headers: h }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/groups?select=*&order=members_count.desc`, { headers: h }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/reports?select=*&order=created_at.desc`, { headers: h }).then(r => r.json()),
-          fetch(`${URL}/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200`, { headers: h }).then(r => r.json()).catch(() => []),
-          fetch(`${URL}/rest/v1/docs?select=id,title,excerpt,user_id&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
-          fetch(`${URL}/rest/v1/events?select=id,title,description,date,organizer_id&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
-          fetch(`${URL}/rest/v1/help_requests?select=id,title,description,user_id&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
-          fetch(`${URL}/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100`, { headers: h }).then(r => r.json()).catch(() => []),
-        ]);
-        console.log("Admin data loaded:", { users: Array.isArray(u) ? u.length : u, groups: Array.isArray(g) ? g.length : g, reports: Array.isArray(r) ? r.length : r });
-        const allUsers = Array.isArray(u) ? u : [];
-        const allPosts = Array.isArray(posts) ? posts : [];
-        const allDocs = Array.isArray(docs) ? docs : [];
-        const allEvents = Array.isArray(events) ? events : [];
-        const allHelp = Array.isArray(helpReqs) ? helpReqs : [];
-        const allMarket = Array.isArray(marketItems) ? marketItems : [];
-        setUsers(allUsers); setGroups(Array.isArray(g) ? g : []);
+        const data = await api.adminGetDashboardData();
+        const allUsers = data.users;
+        setUsers(allUsers); setGroups(data.groups);
         // Build content lookup
         const contentMap = {};
-        allPosts.forEach(p => { contentMap[p.id] = { type: "post", content: p.content, image: p.image_url, authorId: p.user_id }; });
-        allDocs.forEach(d => { contentMap[d.id] = { type: "doc", content: d.title, excerpt: d.excerpt, authorId: d.user_id }; });
-        allEvents.forEach(e => { contentMap[e.id] = { type: "event", content: e.title, excerpt: e.description, date: e.date, authorId: e.organizer_id }; });
-        allHelp.forEach(h2 => { contentMap[h2.id] = { type: "help", content: h2.title, excerpt: h2.description, authorId: h2.user_id }; });
-        allMarket.forEach(m => { contentMap[m.id] = { type: "marketplace", content: m.title, excerpt: m.description, price: m.price, image: m.image_url, authorId: m.user_id }; });
+        data.posts.forEach(p => { contentMap[p.id] = { type: "post", content: p.content, image: p.image_url, authorId: p.user_id }; });
+        data.docs.forEach(d => { contentMap[d.id] = { type: "doc", content: d.title, excerpt: d.excerpt, authorId: d.user_id }; });
+        data.events.forEach(e => { contentMap[e.id] = { type: "event", content: e.title, excerpt: e.description, date: e.date, authorId: e.organizer_id }; });
+        data.helpRequests.forEach(h2 => { contentMap[h2.id] = { type: "help", content: h2.title, excerpt: h2.description, authorId: h2.user_id }; });
+        data.marketItems.forEach(m => { contentMap[m.id] = { type: "marketplace", content: m.title, excerpt: m.description, price: m.price, image: m.image_url, authorId: m.user_id }; });
         // Enrich reports
-        const reportsArr = Array.isArray(r) ? r : [];
-        const enrichedReports = reportsArr.map(rep => {
+        const enrichedReports = data.reports.map(rep => {
           const reporter = allUsers.find(x => x.id === rep.reporter_id);
           const reported = allUsers.find(x => x.id === rep.reported_user_id);
           const contentId = rep.reported_post_id || rep.reported_user_id;
@@ -6134,65 +6050,55 @@ const AdminDashboard = ({ onLogout }) => {
           return { ...rep, reporter: reporter ? { name: reporter.name, email: reporter.email } : null, reported_user: reported ? { name: reported.name, email: reported.email } : null, reportedContent, contentAuthor: contentAuthor ? { name: contentAuthor.name, email: contentAuthor.email } : null };
         });
         setReports(enrichedReports);
-        setStats({ users: allUsers.length, posts: 0, groups: (Array.isArray(g) ? g : []).filter(x => x.is_approved).length, events: 0, pending: allUsers.filter(x => !x.linkedin_verified).length });
-      } catch (e) {}
+        setStats({ users: allUsers.length, posts: 0, groups: data.groups.filter(x => x.is_approved).length, events: 0, pending: allUsers.filter(x => !x.linkedin_verified).length });
+      } catch (e) {
+        setLoadError("Couldn't load admin data. Your session may have expired; sign out and sign in again.");
+      }
       setLoading(false);
     })();
   }, []);
 
-  const rpc = async (fn, params) => {
-    const res = await fetch(`${URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify(params) });
-    console.log(`RPC ${fn}:`, res.status, res.ok);
-    return res.ok;
-  };
-
-  const updateReportStatus = async (id, newStatus) => {
-    // Direct REST update
+  // Runs an admin action; the UI is only updated if the database accepted it.
+  const runAdminAction = async (action) => {
     try {
-      const res = await fetch(`${URL}/rest/v1/reports?id=eq.${id}`, {
-        method: "PATCH",
-        headers: { apikey: KEY, "Content-Type": "application/json", Authorization: `Bearer ${KEY}`, Prefer: "return=minimal" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (!res.ok) {
-        // Try RPC as fallback
-        const res2 = await fetch(`${URL}/rest/v1/rpc/admin_update_report`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ target_id: id, new_status: newStatus }) });
-        return res2.ok;
-      }
+      await action();
       return true;
-    } catch(e) { return false; }
+    } catch (e) {
+      alert("That action failed: " + (e.message || "unknown error"));
+      return false;
+    }
   };
 
   const approveUser = async (id) => {
-    await rpc("admin_update_user", { target_id: id, verified: true, user_status: "active" });
+    if (!await runAdminAction(() => api.adminUpdateUser(id, { linkedinVerified: true, status: "active" }))) return;
     setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: true, status: "active" } : u));
   };
 
   const blockUser = async (id) => {
-    await rpc("admin_update_user", { target_id: id, verified: false, user_status: "blocked" });
+    if (!await runAdminAction(() => api.adminUpdateUser(id, { linkedinVerified: false, status: "blocked" }))) return;
     setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: false, status: "blocked" } : u));
   };
 
   const approveGroup = async (id) => {
-    await rpc("admin_approve_group", { target_id: id, approved: true });
+    if (!await runAdminAction(() => api.adminApproveGroup(id))) return;
     const group = groups.find(g => g.id === id);
     if (group?.created_by) {
-      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community "${group.name}" has been approved!`, read: false }) }); } catch(e) {}
+      try { await api.adminNotify(group.created_by, "group", `Your community "${group.name}" has been approved!`); } catch(e) {}
     }
     setGroups(prev => prev.map(g => g.id === id ? { ...g, is_approved: true } : g));
   };
 
   const rejectGroup = async (id) => {
     const group = groups.find(g => g.id === id);
+    if (!await runAdminAction(() => api.adminDeleteGroup(id))) return;
     if (group?.created_by) {
-      try { await fetch(`${URL}/rest/v1/notifications`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: group.created_by, type: "group", message: `Your community request "${group.name}" was not approved.`, read: false }) }); } catch(e) {}
+      try { await api.adminNotify(group.created_by, "group", `Your community request "${group.name}" was not approved.`); } catch(e) {}
     }
-    try { await fetch(`${URL}/rest/v1/groups?id=eq.${id}`, { method: "DELETE", headers: { apikey: KEY, "Content-Type": "application/json" } }); } catch(e) {}
     setGroups(prev => prev.filter(g => g.id !== id));
   };
 
   const dismissReport = async (id) => {
-    await rpc("admin_delete_report", { target_id: id });
+    if (!await runAdminAction(() => api.adminDeleteReport(id))) return;
     setReports(prev => prev.filter(r => r.id !== id));
   };
 
@@ -6202,9 +6108,9 @@ const AdminDashboard = ({ onLogout }) => {
       const contentId = report.reported_post_id;
       const reason = (report.reason || "").toUpperCase();
       const table = reason.startsWith("[MARKETPLACE]") ? "marketplace" : reason.startsWith("[DOC]") ? "docs" : reason.startsWith("[EVENT]") ? "events" : reason.startsWith("[HELP]") ? "help_requests" : "posts";
-      await rpc("admin_delete_content", { table_name: table, content_id: contentId });
+      if (!await runAdminAction(() => api.adminDeleteContent(table, contentId))) return;
     }
-    await rpc("admin_delete_report", { target_id: id });
+    if (!await runAdminAction(() => api.adminDeleteReport(id))) return;
     setReports(prev => prev.filter(r => r.id !== id));
   };
 
@@ -6253,7 +6159,8 @@ const AdminDashboard = ({ onLogout }) => {
 
       {/* Main */}
       <div className="admin-main" style={{ flex: 1, padding: "28px 36px", overflow: "auto", maxWidth: 900 }}>
-        {loading ? <div style={{ padding: 60, textAlign: "center", color: "#9B9A97" }}>Loading...</div>
+        {loadError && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 20 }}>{loadError}</div>}
+        {loading ?<div style={{ padding: 60, textAlign: "center", color: "#9B9A97" }}>Loading...</div>
 
         : tab === "overview" ? (() => {
           const now = Date.now();

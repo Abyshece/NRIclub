@@ -1,9 +1,12 @@
 // ============================================================================
-// supabaseApi.js - Complete Supabase API layer for IndIn
+// supabaseApi.js - Complete Supabase API layer for NRIclub
 // ============================================================================
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+const TOKEN_KEY = "nriclub_token";
+const REFRESH_KEY = "nriclub_refresh";
 
 let accessToken = null;
 let currentUser = null;
@@ -19,9 +22,16 @@ function headers(extra = {}) {
 }
 
 async function restCall(method, path, body = null, extraHeaders = {}) {
-  const opts = { method, headers: headers(extraHeaders) };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${SUPABASE_URL}${path}`, opts);
+  const send = () => fetch(`${SUPABASE_URL}${path}`, {
+    method,
+    headers: headers(extraHeaders),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let res = await send();
+  // Access tokens expire after an hour; refresh once and retry.
+  if (res.status === 401 && accessToken && await refreshSession()) {
+    res = await send();
+  }
   if (!res.ok) {
     const err = await res.text();
     throw new Error(err);
@@ -59,8 +69,8 @@ export async function signIn(email, password) {
   if (!res.ok) throw new Error(data.error_description || data.msg || "Login failed");
   accessToken = data.access_token;
   currentUser = data.user;
-  localStorage.setItem("indin_token", data.access_token);
-  localStorage.setItem("indin_refresh", data.refresh_token);
+  localStorage.setItem(TOKEN_KEY, data.access_token);
+  localStorage.setItem(REFRESH_KEY, data.refresh_token);
   return data;
 }
 
@@ -75,8 +85,8 @@ export async function signOut() {
   } catch (e) {}
   accessToken = null;
   currentUser = null;
-  localStorage.removeItem("indin_token");
-  localStorage.removeItem("indin_refresh");
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
 }
 
 export async function resetPassword(email) {
@@ -115,14 +125,24 @@ export async function verifyOtp(email, token) {
   if (data.access_token) {
     accessToken = data.access_token;
     currentUser = data.user;
-    localStorage.setItem("indin_token", data.access_token);
-    if (data.refresh_token) localStorage.setItem("indin_refresh", data.refresh_token);
+    localStorage.setItem(TOKEN_KEY, data.access_token);
+    if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
   }
   return data;
 }
 
-export async function refreshSession() {
-  const refresh = localStorage.getItem("indin_refresh");
+// Concurrent callers share one refresh request; refresh tokens are single-use.
+let refreshInFlight = null;
+
+export function refreshSession() {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefreshSession().finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
+async function doRefreshSession() {
+  const refresh = localStorage.getItem(REFRESH_KEY);
   if (!refresh) return null;
   try {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
@@ -134,8 +154,8 @@ export async function refreshSession() {
     const data = await res.json();
     accessToken = data.access_token;
     currentUser = data.user;
-    localStorage.setItem("indin_token", data.access_token);
-    if (data.refresh_token) localStorage.setItem("indin_refresh", data.refresh_token);
+    localStorage.setItem(TOKEN_KEY, data.access_token);
+    if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
     return data;
   } catch {
     return null;
@@ -143,23 +163,25 @@ export async function refreshSession() {
 }
 
 export async function getSession() {
-  const token = localStorage.getItem("indin_token");
+  const token = localStorage.getItem(TOKEN_KEY);
   if (!token) return null;
   accessToken = token;
   try {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) {
-      // Try refresh
-      return await refreshSession();
+    if (res.ok) {
+      const user = await res.json();
+      currentUser = user;
+      return { user, access_token: token };
     }
-    const user = await res.json();
-    currentUser = user;
-    return { user, access_token: token };
-  } catch {
-    return await refreshSession();
+  } catch {}
+  const refreshed = await refreshSession();
+  if (!refreshed) {
+    accessToken = null;
+    currentUser = null;
   }
+  return refreshed;
 }
 
 export function getCurrentUser() { return currentUser; }
@@ -174,44 +196,44 @@ export async function getProfile(userId) {
   return data?.[0] || null;
 }
 
+// Email and consent live in profile_private, which only the owner and admins
+// can read; the app still sees them as fields of the user's own profile.
+const PRIVATE_PROFILE_FIELDS = ["email", "gdpr_consent", "gdpr_consent_date", "marketing_consent"];
+
 export async function getMyProfile() {
   if (!currentUser) return null;
-  // Update last_active timestamp
-  try { restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { last_active: new Date().toISOString() }); } catch(e) {}
-  return getProfile(currentUser.id);
+  restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { last_active: new Date().toISOString() }).catch(() => {});
+  const [profile, privateRows] = await Promise.all([
+    getProfile(currentUser.id),
+    restCall("GET", `/rest/v1/profile_private?id=eq.${currentUser.id}&select=*`),
+  ]);
+  if (!profile) return null;
+  const { id, created_at, updated_at, ...privateFields } = privateRows?.[0] || {};
+  return { ...profile, email: currentUser.email, ...privateFields };
 }
 
 export async function updateProfile(updates) {
   if (!currentUser) throw new Error("Not logged in");
-  return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, updates, { Prefer: "return=representation" });
+  const publicUpdates = {};
+  const privateUpdates = {};
+  for (const [key, value] of Object.entries(updates)) {
+    (PRIVATE_PROFILE_FIELDS.includes(key) ? privateUpdates : publicUpdates)[key] = value;
+  }
+  // email is managed by Supabase Auth and email_verified mirrors it; neither is client-writable.
+  delete privateUpdates.email;
+  delete privateUpdates.gdpr_consent_date;
+  delete publicUpdates.email_verified;
+  if (Object.keys(privateUpdates).length) {
+    await restCall("PATCH", `/rest/v1/profile_private?id=eq.${currentUser.id}`, privateUpdates);
+  }
+  if (!Object.keys(publicUpdates).length) return [];
+  return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, publicUpdates, { Prefer: "return=representation" });
 }
 
+// Deletes the auth user server-side; every row the user owns cascades with it.
 export async function deleteAccount() {
   if (!currentUser) throw new Error("Not logged in");
-  const uid = currentUser.id;
-  // Delete all user content in order (foreign keys)
-  try { await restCall("DELETE", `/rest/v1/comments?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/likes?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/messages?sender_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/notifications?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/notifications?actor_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/event_rsvps?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/group_members?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/connections?recipient_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/blocks?blocker_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/blocks?blocked_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/help_responses?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/doc_comments?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/reports?reporter_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/user_settings?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/marketplace?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/help_requests?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/docs?user_id=eq.${uid}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/posts?user_id=eq.${uid}`); } catch(e) {}
-  // Finally delete the profile itself
-  try { await restCall("DELETE", `/rest/v1/profiles?id=eq.${uid}`); } catch(e) {}
-  // Sign out
+  await restCall("POST", "/rest/v1/rpc/delete_my_account", {});
   await signOut();
 }
 
@@ -735,7 +757,8 @@ export function subscribeToMessages(conversationId, callback) {
       const joinMsg = JSON.stringify({
         topic: `realtime:public:messages:conversation_id=eq.${conversationId}`,
         event: "phx_join",
-        payload: { config: { broadcast: { self: false }, presence: { key: "" }, postgres_changes: [{ event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` }] } },
+        // access_token lets Realtime apply the messages RLS policy for this user.
+        payload: { config: { broadcast: { self: false }, presence: { key: "" }, postgres_changes: [{ event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` }] }, access_token: accessToken },
         ref: "1",
       });
       realtimeSocket.send(joinMsg);
@@ -769,4 +792,68 @@ export function unsubscribeFromMessages() {
   if (realtimeHeartbeat) { clearInterval(realtimeHeartbeat); realtimeHeartbeat = null; }
   if (realtimeSocket) { try { realtimeSocket.close(); } catch(e) {} realtimeSocket = null; }
   messageCallbacks = [];
+}
+
+// ============================================================================
+// ADMIN - every call runs as the signed-in user; the database only allows it
+// for accounts listed in public.admins.
+// ============================================================================
+
+export async function isAdmin() {
+  if (!currentUser) return false;
+  const rows = await restCall("GET", `/rest/v1/admins?user_id=eq.${currentUser.id}&select=user_id`);
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+export async function adminGetDashboardData() {
+  const get = (path) => restCall("GET", path);
+  const [profiles, privateRows, groups, reports, posts, docs, events, helpRequests, marketItems] = await Promise.all([
+    get("/rest/v1/profiles?select=*&order=created_at.desc"),
+    get("/rest/v1/profile_private?select=id,email"),
+    get("/rest/v1/groups?select=*&order=members_count.desc"),
+    get("/rest/v1/reports?select=*&order=created_at.desc"),
+    get("/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200"),
+    get("/rest/v1/docs?select=id,title,excerpt,user_id&order=created_at.desc&limit=100"),
+    get("/rest/v1/events?select=id,title,description,date,organizer_id&order=created_at.desc&limit=100"),
+    get("/rest/v1/help_requests?select=id,title,description,user_id&order=created_at.desc&limit=100"),
+    get("/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100"),
+  ]);
+  const emails = Object.fromEntries((privateRows || []).map((p) => [p.id, p.email]));
+  return {
+    users: (profiles || []).map((p) => ({ ...p, email: emails[p.id] || "" })),
+    groups: groups || [],
+    reports: reports || [],
+    posts: posts || [],
+    docs: docs || [],
+    events: events || [],
+    helpRequests: helpRequests || [],
+    marketItems: marketItems || [],
+  };
+}
+
+export async function adminUpdateUser(userId, { linkedinVerified, status }) {
+  return restCall("PATCH", `/rest/v1/profiles?id=eq.${userId}`, { linkedin_verified: linkedinVerified, status });
+}
+
+export async function adminApproveGroup(groupId) {
+  return restCall("PATCH", `/rest/v1/groups?id=eq.${groupId}`, { is_approved: true });
+}
+
+export async function adminDeleteGroup(groupId) {
+  return restCall("DELETE", `/rest/v1/groups?id=eq.${groupId}`);
+}
+
+export async function adminDeleteReport(reportId) {
+  return restCall("DELETE", `/rest/v1/reports?id=eq.${reportId}`);
+}
+
+const MODERATED_TABLES = ["posts", "docs", "events", "help_requests", "marketplace"];
+
+export async function adminDeleteContent(table, id) {
+  if (!MODERATED_TABLES.includes(table)) throw new Error(`Cannot moderate ${table}`);
+  return restCall("DELETE", `/rest/v1/${table}?id=eq.${id}`);
+}
+
+export async function adminNotify(userId, type, text) {
+  return restCall("POST", "/rest/v1/notifications", { user_id: userId, type, text });
 }
