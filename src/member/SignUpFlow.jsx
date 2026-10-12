@@ -139,9 +139,6 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       if (!!db.marketing_consent !== form.marketing) patch.marketing_consent = form.marketing;
       if (residency === "india" && db.country_code !== "IN") patch.country_code = "IN";
       if (residency === "abroad" && db.country_code === "IN") patch.country_code = "";
-      // The database assumes "Working Professional"; leave the status empty
-      // so the profile card asks the member instead of assuming.
-      if (db.verification_status === "incomplete" && db.occupation_status === "Working Professional") patch.occupation_status = "";
       if (Object.keys(patch).length) {
         try { await api.updateProfile(patch); } catch { Object.keys(patch).forEach((k) => delete patch[k]); }
       }

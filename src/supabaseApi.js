@@ -90,8 +90,10 @@ export async function signUp(email, password, metadata = {}) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error_description || data.msg || "Signup failed");
-  // Supabase returns identities=[] for existing emails (doesn't error)
-  if (data.user && data.user.identities && data.user.identities.length === 0) {
+  // Supabase answers an existing email with empty identities instead of an
+  // error; the user object is top-level when email confirmation is on.
+  const signedUpUser = data.user || data;
+  if (Array.isArray(signedUpUser?.identities) && signedUpUser.identities.length === 0) {
     throw new Error("An account with this email already exists. Please log in instead.");
   }
   return data;
@@ -174,7 +176,7 @@ export async function sendOtp(email) {
   });
   if (!res.ok) {
     const data = await res.json();
-    throw new Error(data.error_description || "Failed to send OTP");
+    throw new Error(data.msg || data.error_description || data.message || "Failed to send OTP");
   }
 }
 
@@ -185,7 +187,7 @@ export async function verifyOtp(email, token) {
     body: JSON.stringify({ email, token, type: "email" }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error_description || "Invalid OTP");
+  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Invalid OTP");
   if (data.access_token) {
     accessToken = data.access_token;
     currentUser = data.user;

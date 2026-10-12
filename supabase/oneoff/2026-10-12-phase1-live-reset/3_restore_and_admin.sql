@@ -11,7 +11,7 @@ INSERT INTO public.profiles (id, name, avatar_url, location, city, hometown, pro
   years_abroad, linkedin_url, bio, email_verified, verification_status, status, last_active, created_at, updated_at)
 SELECT b.id, LEFT(COALESCE(b.name, ''), 200), COALESCE(b.avatar_url, ''), COALESCE(b.location, ''),
   LEFT(BTRIM(SPLIT_PART(COALESCE(b.location, ''), ',', 1)), 200),
-  COALESCE(b.hometown, ''), COALESCE(b.profession, ''), COALESCE(NULLIF(b.occupation_status, ''), 'Working Professional'),
+  COALESCE(b.hometown, ''), COALESCE(b.profession, ''), COALESCE(b.occupation_status, ''),
   COALESCE(b.years_abroad, ''), COALESCE(private.normalize_linkedin(b.linkedin_url), COALESCE(b.linkedin_url, '')),
   LEFT(COALESCE(b.bio, ''), 2000), u.email_confirmed_at IS NOT NULL,
   CASE WHEN COALESCE(b.linkedin_verified, FALSE) THEN 'approved'
