@@ -6159,12 +6159,12 @@ const AdminDashboard = ({ onLogout }) => {
   };
 
   const approveUser = async (id) => {
-    if (!await runAdminAction(() => api.adminUpdateUser(id, { linkedinVerified: true, status: "active" }))) return;
+    if (!await runAdminAction(() => api.adminReviewMember(id, "approved"))) return;
     setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: true, status: "active" } : u));
   };
 
   const blockUser = async (id) => {
-    if (!await runAdminAction(() => api.adminUpdateUser(id, { linkedinVerified: false, status: "blocked" }))) return;
+    if (!await runAdminAction(() => api.adminSetMemberStatus(id, "blocked"))) return;
     setUsers(prev => prev.map(u => u.id === id ? { ...u, linkedin_verified: false, status: "blocked" } : u));
   };
 

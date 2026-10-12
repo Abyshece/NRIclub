@@ -72,7 +72,7 @@ def main():
     # --- signup trigger -----------------------------------------------------
     check("signup trigger fills profile from metadata",
           f"SELECT name || '|' || location || '|' || occupation_status || '|' || linkedin_url || '|' || email_verified FROM profiles WHERE id = '{ALICE}'",
-          expect="Alice A|Berlin, Germany|Student|https://linkedin.com/in/alice|true")
+          expect="Alice A|Berlin, Germany|Student|https://www.linkedin.com/in/alice|true")
     check("signup trigger stores email + consent privately",
           f"SELECT email || '|' || gdpr_consent || '|' || (gdpr_consent_date IS NOT NULL) FROM profile_private WHERE id = '{ALICE}'",
           expect="alice@example.com|true|true")
@@ -108,7 +108,7 @@ def main():
           as_user=ALICE, expect="alice@example.com")
     check("admin can read all private data", "SELECT count(*) FROM profile_private", as_user=ADMIN, expect="4")
     check("admin can approve a member",
-          f"UPDATE profiles SET linkedin_verified = true WHERE id = '{BOB}' RETURNING linkedin_verified::text",
+          f"UPDATE profiles SET verification_status = 'approved' WHERE id = '{BOB}' RETURNING linkedin_verified::text",
           as_user=ADMIN, expect="true")
     check("profiles cannot be deleted via the API",
           "DELETE FROM profiles WHERE id = auth.uid() RETURNING id", as_user=ALICE, expect="")
@@ -335,6 +335,78 @@ def main():
           f"DELETE FROM storage.objects WHERE name = '{ALICE}/avatar_1.png' RETURNING 1", as_user=BOB, expect="")
     check("cannot upload to other buckets",
           f"INSERT INTO storage.objects (bucket_id, name) VALUES ('private-stuff', '{ALICE}/x.png')", as_user=ALICE, expect="error")
+
+    # --- member verification ------------------------------------------------
+    diana = "00000000-0000-0000-0000-0000000000d1"
+    check("signup records country, age and terms; starts incomplete",
+          f"""INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at) VALUES ('{diana}', 'diana@example.com',
+          '{{"full_name": "  Diana D  ", "country_code": "de", "age_confirmed": true, "terms_version": "2026-10",
+            "linkedin_url": "de.linkedin.com/in/Diana-D/"}}', now());
+          SELECT p.name || '|' || p.country_code || '|' || p.verification_status || '|' || p.linkedin_url || '|'
+            || (pp.age_confirmed_at IS NOT NULL) || '|' || pp.terms_version
+          FROM profiles p JOIN profile_private pp USING (id) WHERE id = '{diana}'""",
+          expect="Diana D|DE|incomplete|https://www.linkedin.com/in/diana-d|true|2026-10")
+    check("member cannot set their own verification status",
+          "UPDATE profiles SET verification_status = 'approved' WHERE id = auth.uid() RETURNING verification_status",
+          as_user=diana, expect="incomplete")
+    check("member cannot write review fields",
+          "UPDATE profile_private SET verification_message = 'ok', submitted_at = now(), terms_version = 'x' "
+          "WHERE id = auth.uid() RETURNING (submitted_at IS NULL)::text || verification_message || terms_version",
+          as_user=diana, expect="true2026-10")
+    check("submit rejects a non-LinkedIn link",
+          "SELECT public.submit_verification('Munich', 'DE', 'Munich, Germany', 'https://twitter.com/diana', '', '', NULL)",
+          as_user=diana, expect="error")
+    check("submit without LinkedIn needs a real explanation",
+          "SELECT public.submit_verification('Munich', 'DE', 'Munich, Germany', '', 'student', '', NULL)",
+          as_user=diana, expect="error")
+    check("submit needs a city and country",
+          "SELECT public.submit_verification('', 'XX1', '', 'linkedin.com/in/diana-d', '', '', NULL)",
+          as_user=diana, expect="error")
+    check("valid submission moves to pending",
+          "SELECT public.submit_verification('Munich', 'de', 'Munich, Germany', 'linkedin.com/in/Diana-D', '', '', 'Engineer at SAP')",
+          as_user=diana, expect="pending")
+    check("submission stored",
+          f"SELECT city || '|' || country_code || '|' || location || '|' || profession FROM profiles WHERE id = '{diana}'",
+          expect="Munich|DE|Munich, Germany|Engineer at SAP")
+    check("members cannot review", f"SELECT public.review_member('{diana}', 'approved', '', '')", as_user=ALICE, expect="error")
+    check("members cannot read the queue", "SELECT count(*) FROM public.admin_verification_queue()", as_user=ALICE, expect="error")
+    check("members cannot read the verification history", "SELECT count(*) FROM verification_log", as_user=diana, expect="0")
+    check("admin queue shows the applicant with email and duplicate check",
+          f"SELECT name || '|' || email || '|' || same_linkedin_count FROM public.admin_verification_queue() WHERE id = '{diana}'",
+          as_user=ADMIN, expect="Diana D|diana@example.com|0")
+    check("asking for more info needs a message",
+          f"SELECT public.review_member('{diana}', 'needs_info', '  ', '')", as_user=ADMIN, expect="error")
+    check("admin asks for more info",
+          f"SELECT public.review_member('{diana}', 'needs_info', 'Your LinkedIn link does not open.', 'checked twice')",
+          as_user=ADMIN, expect="needs_info")
+    check("member sees the admin's message and a notification",
+          "SELECT (SELECT verification_message FROM profile_private) || '|' || "
+          "(SELECT count(*) FROM notifications WHERE type = 'verification')",
+          as_user=diana, expect="Your LinkedIn link does not open.|1")
+    check("member resubmits",
+          "SELECT public.submit_verification('Munich', 'DE', 'Munich, Germany', 'https://www.linkedin.com/in/diana-d/', '', '', NULL)",
+          as_user=diana, expect="pending")
+    check("admin approves -> Verified badge",
+          f"SELECT public.review_member('{diana}', 'approved', '', ''); "
+          f"SELECT linkedin_verified::text FROM profiles WHERE id = '{diana}'", as_user=ADMIN, expect="approved\ntrue")
+    check("changing LinkedIn after approval sends the member back to review",
+          "UPDATE profiles SET linkedin_url = 'linkedin.com/in/Someone-Else' WHERE id = auth.uid() "
+          "RETURNING verification_status || '|' || linkedin_verified || '|' || linkedin_url",
+          as_user=diana, expect="pending|false|https://www.linkedin.com/in/someone-else")
+    check("editing other fields keeps approval",
+          f"SELECT public.review_member('{diana}', 'approved', '', ''); "
+          f"UPDATE profiles SET bio = 'Hello' WHERE id = '{diana}'; SELECT verification_status FROM profiles WHERE id = '{diana}'",
+          as_user=ADMIN, expect="approved\napproved")
+    check("admin rejects",
+          f"SELECT public.review_member('{diana}', 'rejected', 'We could not verify your identity.', '')",
+          as_user=ADMIN, expect="rejected")
+    check("rejected member cannot post",
+          f"INSERT INTO posts (user_id, content) VALUES ('{diana}', 'hi')", as_user=diana, expect="error")
+    check("rejected member cannot resubmit",
+          "SELECT public.submit_verification('Munich', 'DE', 'Munich', 'linkedin.com/in/diana-d', '', '', NULL)",
+          as_user=diana, expect="error")
+    check("admin sees the full history",
+          f"SELECT count(*) FROM verification_log WHERE member_id = '{diana}'", as_user=ADMIN, expect="7")
 
     # --- account deletion ---------------------------------------------------
     check("delete_my_account removes auth user and data",

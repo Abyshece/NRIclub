@@ -305,6 +305,19 @@ export async function updateProfile(updates) {
   return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, publicUpdates, { Prefer: "return=representation" });
 }
 
+// ============================================================================
+// MEMBER VERIFICATION
+// ============================================================================
+
+// Submit (or correct) verification details. Either linkedinUrl or a note of
+// at least 20 characters is required; the server validates and normalises.
+export async function submitVerification({ city, countryCode, location, linkedinUrl = "", note = "", voucher = "", profession = null }) {
+  return restCall("POST", "/rest/v1/rpc/submit_verification", {
+    p_city: city, p_country_code: countryCode, p_location: location,
+    p_linkedin_url: linkedinUrl, p_note: note, p_voucher: voucher, p_profession: profession,
+  });
+}
+
 // Deletes the auth user server-side; every row the user owns cascades with it.
 export async function deleteAccount() {
   if (!currentUser) throw new Error("Not logged in");
@@ -916,8 +929,24 @@ async function adminWrite(method, path, body = null) {
   return rows;
 }
 
-export async function adminUpdateUser(userId, { linkedinVerified, status }) {
-  return adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}`, { linkedin_verified: linkedinVerified, status });
+// Moderation only (block / unblock). Verification decisions go through
+// adminReviewMember.
+export async function adminSetMemberStatus(userId, status) {
+  return adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}`, { status });
+}
+
+// Members waiting for a decision (or any other verification statuses), with
+// everything needed to decide: email, LinkedIn or note, voucher, duplicates.
+export async function adminVerificationQueue(statuses = ["pending"]) {
+  return restCall("POST", "/rest/v1/rpc/admin_verification_queue", { p_statuses: statuses });
+}
+
+// decision: "approved" | "needs_info" | "rejected" | "pending" (reopen/undo).
+// needs_info and rejected require a message, which the member sees.
+export async function adminReviewMember(memberId, decision, message = "", adminNote = "") {
+  return restCall("POST", "/rest/v1/rpc/review_member", {
+    p_member: memberId, p_decision: decision, p_message: message, p_admin_note: adminNote,
+  });
 }
 
 export async function adminApproveGroup(groupId) {

@@ -15,6 +15,9 @@
 --     through the API.
 --   * Helper functions live in the `private` schema, which is not exposed by
 --     the API, so they can't be called as RPCs.
+--   * New members verify their identity: signup leaves them 'incomplete';
+--     public.submit_verification() moves them to 'pending'; an admin decides
+--     with public.review_member() (approved / needs_info / rejected).
 -- ============================================================================
 
 CREATE SCHEMA IF NOT EXISTS private;
@@ -42,10 +45,16 @@ CREATE TABLE public.profiles (
   occupation_status TEXT NOT NULL DEFAULT 'Working Professional' CHECK (char_length(occupation_status) <= 100),
   years_abroad TEXT NOT NULL DEFAULT '' CHECK (char_length(years_abroad) <= 100),
   linkedin_url TEXT NOT NULL DEFAULT '' CHECK (char_length(linkedin_url) <= 500),
+  city TEXT NOT NULL DEFAULT '' CHECK (char_length(city) <= 200),
+  country_code TEXT NOT NULL DEFAULT '' CHECK (country_code ~ '^([A-Z]{2})?$'), -- ISO 3166-1 alpha-2
   bio TEXT NOT NULL DEFAULT '',
   email_verified BOOLEAN NOT NULL DEFAULT FALSE,   -- mirrors auth.users.email_confirmed_at
-  linkedin_verified BOOLEAN NOT NULL DEFAULT FALSE, -- set by admins on approval
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'blocked')),
+  -- incomplete: signed up, hasn't submitted verification details yet
+  -- pending: waiting for an admin; needs_info: admin asked for more
+  verification_status TEXT NOT NULL DEFAULT 'incomplete'
+    CHECK (verification_status IN ('incomplete', 'pending', 'needs_info', 'approved', 'rejected')),
+  linkedin_verified BOOLEAN NOT NULL DEFAULT FALSE, -- mirrors verification_status = 'approved'
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'blocked')), -- moderation
   last_active TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -60,9 +69,31 @@ CREATE TABLE public.profile_private (
   gdpr_consent BOOLEAN NOT NULL DEFAULT FALSE,
   gdpr_consent_date TIMESTAMPTZ,                    -- stamped server-side
   marketing_consent BOOLEAN NOT NULL DEFAULT FALSE,
+  age_confirmed_at TIMESTAMPTZ,                     -- "I'm 18 or older", at signup
+  terms_accepted_at TIMESTAMPTZ,
+  terms_version TEXT CHECK (char_length(terms_version) <= 20),
+  -- Verification details only the member and admins see.
+  verification_note TEXT NOT NULL DEFAULT '' CHECK (char_length(verification_note) <= 1000), -- no-LinkedIn explanation
+  voucher TEXT NOT NULL DEFAULT '' CHECK (char_length(voucher) <= 200),                      -- member who can vouch
+  submitted_at TIMESTAMPTZ,
+  reviewed_at TIMESTAMPTZ,
+  verification_message TEXT NOT NULL DEFAULT '' CHECK (char_length(verification_message) <= 1000), -- from the admin
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- History of verification decisions (admins only).
+CREATE TABLE public.verification_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  member_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  decision TEXT NOT NULL CHECK (decision IN ('submitted', 'approved', 'needs_info', 'rejected', 'pending')),
+  member_message TEXT NOT NULL DEFAULT '' CHECK (char_length(member_message) <= 1000),
+  admin_note TEXT NOT NULL DEFAULT '' CHECK (char_length(admin_note) <= 2000),
+  actor_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_verification_log_member ON public.verification_log(member_id, created_at DESC);
+CREATE INDEX idx_verification_log_actor ON public.verification_log(actor_id);
 
 -- Privacy and notification preferences. Only the owner (and admins) can read
 -- a row; other members see the public part via public.get_member_preferences().
@@ -268,7 +299,7 @@ CREATE INDEX idx_help_responses_user ON public.help_responses(user_id);
 CREATE TABLE public.notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('like', 'comment', 'request', 'event', 'group', 'trending', 'message')),
+  type TEXT NOT NULL CHECK (type IN ('like', 'comment', 'request', 'event', 'group', 'trending', 'message', 'verification')),
   actor_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
   text TEXT NOT NULL CHECK (char_length(text) <= 1000),
   read BOOLEAN NOT NULL DEFAULT FALSE,
@@ -312,11 +343,27 @@ RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   SELECT EXISTS (SELECT 1 FROM public.admins WHERE user_id = (SELECT auth.uid()));
 $$;
 
--- False for members an admin has blocked; they can still sign in and edit
--- their profile, but can't create content or contact anyone.
+-- False for members an admin has blocked or whose verification was rejected;
+-- they can still sign in and edit their profile, but can't create content or
+-- contact anyone. Members waiting for verification have full access.
 CREATE FUNCTION private.is_active_member()
 RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
-  SELECT EXISTS (SELECT 1 FROM public.profiles WHERE id = (SELECT auth.uid()) AND status = 'active');
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = (SELECT auth.uid()) AND status = 'active' AND verification_status <> 'rejected'
+  );
+$$;
+
+-- 'https://www.linkedin.com/in/<slug>' for anything that is a LinkedIn
+-- profile link (with or without https://, www., a country subdomain, a
+-- trailing slash or a query string); NULL for anything else.
+CREATE FUNCTION private.normalize_linkedin(url TEXT)
+RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+  SELECT 'https://www.linkedin.com/in/' || lower(m[1])
+  FROM regexp_match(
+    btrim(COALESCE(url, '')),
+    '^(?:https?://)?(?:[a-z]{2,3}\.)?(?:www\.)?linkedin\.com/in/([a-z0-9%_.-]{3,100})/?(?:[?#].*)?$',
+    'i') AS m;
 $$;
 
 CREATE FUNCTION private.is_blocked_between(a UUID, b UUID)
@@ -404,10 +451,13 @@ $$;
 
 CREATE TRIGGER protect_columns BEFORE INSERT OR UPDATE ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION private.protect_columns(
-    '{"linkedin_verified": false, "status": "active", "email_verified": false}',
-    'id', 'linkedin_verified', 'status', 'email_verified', 'created_at');
+    '{"linkedin_verified": false, "status": "active", "email_verified": false, "verification_status": "incomplete"}',
+    'id', 'linkedin_verified', 'status', 'email_verified', 'verification_status', 'created_at');
 CREATE TRIGGER protect_columns BEFORE INSERT OR UPDATE ON public.profile_private
-  FOR EACH ROW EXECUTE FUNCTION private.protect_columns('{}', 'id', 'email', 'created_at');
+  FOR EACH ROW EXECUTE FUNCTION private.protect_columns(
+    '{"age_confirmed_at": null, "terms_accepted_at": null, "terms_version": null, "submitted_at": null, "reviewed_at": null, "verification_message": "", "verification_note": "", "voucher": ""}',
+    'id', 'email', 'age_confirmed_at', 'terms_accepted_at', 'terms_version', 'verification_note',
+    'voucher', 'submitted_at', 'reviewed_at', 'verification_message', 'created_at');
 CREATE TRIGGER protect_columns BEFORE INSERT OR UPDATE ON public.user_settings
   FOR EACH ROW EXECUTE FUNCTION private.protect_columns('{}', 'user_id');
 CREATE TRIGGER protect_columns BEFORE INSERT OR UPDATE ON public.groups
@@ -471,6 +521,43 @@ $$;
 CREATE TRIGGER stamp_gdpr_consent BEFORE INSERT OR UPDATE ON public.profile_private
   FOR EACH ROW EXECUTE FUNCTION private.stamp_gdpr_consent();
 
+-- When a member edits their own profile: store LinkedIn links in one format,
+-- and send an approved member back to review if they change their name or
+-- LinkedIn (their identity is what the admin approved). Runs after
+-- protect_columns (triggers fire in name order).
+CREATE FUNCTION private.reverify_on_identity_change()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF (SELECT auth.uid()) IS DISTINCT FROM NEW.id OR private.is_admin() THEN
+    RETURN NEW;
+  END IF;
+  NEW.linkedin_url := COALESCE(private.normalize_linkedin(NEW.linkedin_url), NEW.linkedin_url);
+  IF OLD.verification_status = 'approved'
+     AND (NEW.linkedin_url IS DISTINCT FROM OLD.linkedin_url OR NEW.name IS DISTINCT FROM OLD.name) THEN
+    NEW.verification_status := 'pending';
+    UPDATE public.profile_private SET submitted_at = NOW() WHERE id = NEW.id;
+    INSERT INTO public.verification_log (member_id, decision, admin_note, actor_id)
+    VALUES (NEW.id, 'submitted', 'Changed their name or LinkedIn after approval.', NEW.id);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER verification_review BEFORE UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION private.reverify_on_identity_change();
+
+-- linkedin_verified is what the app shows as the Verified badge.
+CREATE FUNCTION private.sync_linkedin_verified()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+  NEW.linkedin_verified := NEW.verification_status = 'approved';
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER verification_sync BEFORE INSERT OR UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION private.sync_linkedin_verified();
+
 -- Create the profile rows when someone signs up. The signup form passes its
 -- fields as user metadata, so the profile is complete before email
 -- verification (when the user has no session yet and can't write it).
@@ -479,24 +566,30 @@ RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   meta JSONB := COALESCE(NEW.raw_user_meta_data, '{}'::jsonb);
 BEGIN
-  INSERT INTO public.profiles (id, name, location, hometown, profession, occupation_status, years_abroad, linkedin_url, email_verified)
+  INSERT INTO public.profiles (id, name, location, hometown, profession, occupation_status, years_abroad,
+    linkedin_url, country_code, email_verified)
   VALUES (
     NEW.id,
-    LEFT(COALESCE(NULLIF(TRIM(meta ->> 'full_name'), ''), NULLIF(TRIM(meta ->> 'name'), ''), SPLIT_PART(NEW.email, '@', 1), ''), 200),
-    LEFT(COALESCE(meta ->> 'location', ''), 200),
-    LEFT(COALESCE(meta ->> 'hometown', ''), 200),
-    LEFT(COALESCE(meta ->> 'profession', ''), 200),
+    LEFT(COALESCE(NULLIF(BTRIM(meta ->> 'full_name'), ''), NULLIF(BTRIM(meta ->> 'name'), ''), SPLIT_PART(NEW.email, '@', 1), ''), 200),
+    LEFT(BTRIM(COALESCE(meta ->> 'location', '')), 200),
+    LEFT(BTRIM(COALESCE(meta ->> 'hometown', '')), 200),
+    LEFT(BTRIM(COALESCE(meta ->> 'profession', '')), 200),
     LEFT(COALESCE(NULLIF(meta ->> 'occupation_status', ''), 'Working Professional'), 100),
     LEFT(COALESCE(meta ->> 'years_abroad', ''), 100),
-    LEFT(COALESCE(meta ->> 'linkedin_url', ''), 500),
+    COALESCE(private.normalize_linkedin(meta ->> 'linkedin_url'), ''),
+    CASE WHEN UPPER(COALESCE(meta ->> 'country_code', '')) ~ '^[A-Z]{2}$' THEN UPPER(meta ->> 'country_code') ELSE '' END,
     NEW.email_confirmed_at IS NOT NULL
   )
   ON CONFLICT (id) DO NOTHING;
 
-  INSERT INTO public.profile_private (id, email, gdpr_consent, marketing_consent)
+  INSERT INTO public.profile_private (id, email, gdpr_consent, marketing_consent,
+    age_confirmed_at, terms_accepted_at, terms_version)
   VALUES (NEW.id, NEW.email,
     COALESCE(meta ->> 'gdpr_consent', '') = 'true',
-    COALESCE(meta ->> 'marketing_consent', '') = 'true')
+    COALESCE(meta ->> 'marketing_consent', '') = 'true',
+    CASE WHEN COALESCE(meta ->> 'age_confirmed', '') = 'true' THEN NOW() END,
+    CASE WHEN COALESCE(meta ->> 'terms_version', '') <> '' THEN NOW() END,
+    NULLIF(LEFT(COALESCE(meta ->> 'terms_version', ''), 20), ''))
   ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
 END;
@@ -636,6 +729,147 @@ REVOKE ALL ON FUNCTION public.get_member_preferences(UUID) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_member_preferences(UUID) TO authenticated;
 
 -- ============================================================================
+-- RPC: member verification
+-- ============================================================================
+
+-- A member submits (or corrects) their verification details: city and
+-- country, and a LinkedIn profile link or, without LinkedIn, a short note on
+-- how they're connected to the community. Moves them to 'pending'.
+CREATE FUNCTION public.submit_verification(
+  p_city TEXT, p_country_code TEXT, p_location TEXT,
+  p_linkedin_url TEXT, p_note TEXT, p_voucher TEXT, p_profession TEXT)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  uid UUID := auth.uid();
+  current_status TEXT;
+  v_linkedin TEXT := NULLIF(BTRIM(COALESCE(p_linkedin_url, '')), '');
+  normalized TEXT;
+  v_note TEXT := BTRIM(COALESCE(p_note, ''));
+  v_city TEXT := BTRIM(COALESCE(p_city, ''));
+  v_country TEXT := UPPER(BTRIM(COALESCE(p_country_code, '')));
+BEGIN
+  IF uid IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
+  END IF;
+  SELECT verification_status INTO current_status FROM public.profiles WHERE id = uid;
+  IF current_status IS NULL OR current_status NOT IN ('incomplete', 'pending', 'needs_info') THEN
+    RAISE EXCEPTION 'Your verification can''t be changed right now.' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_city = '' OR char_length(v_city) > 200 THEN
+    RAISE EXCEPTION 'Please enter the city you live in.' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_country !~ '^[A-Z]{2}$' THEN
+    RAISE EXCEPTION 'Please choose your country.' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_linkedin IS NOT NULL THEN
+    normalized := private.normalize_linkedin(v_linkedin);
+    IF normalized IS NULL THEN
+      RAISE EXCEPTION 'That doesn''t look like a LinkedIn profile link (linkedin.com/in/your-name).' USING ERRCODE = 'P0001';
+    END IF;
+  ELSIF char_length(v_note) < 20 THEN
+    RAISE EXCEPTION 'Tell us in a sentence or two how you''re connected to the community.' USING ERRCODE = 'P0001';
+  END IF;
+
+  UPDATE public.profiles SET
+    city = v_city,
+    country_code = v_country,
+    location = LEFT(COALESCE(NULLIF(BTRIM(COALESCE(p_location, '')), ''), v_city), 200),
+    linkedin_url = COALESCE(normalized, ''),
+    profession = CASE WHEN p_profession IS NULL THEN profession ELSE LEFT(BTRIM(p_profession), 200) END,
+    verification_status = 'pending'
+  WHERE id = uid;
+  UPDATE public.profile_private SET
+    verification_note = LEFT(v_note, 1000),
+    voucher = LEFT(BTRIM(COALESCE(p_voucher, '')), 200),
+    submitted_at = NOW()
+  WHERE id = uid;
+  INSERT INTO public.verification_log (member_id, decision, actor_id) VALUES (uid, 'submitted', uid);
+  RETURN 'pending';
+END;
+$$;
+
+-- An admin decides on a member: approved, needs_info or rejected (a message
+-- to the member is required for the last two), or 'pending' to reopen.
+-- The member gets a notification.
+CREATE FUNCTION public.review_member(p_member UUID, p_decision TEXT, p_message TEXT, p_admin_note TEXT)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  message TEXT := LEFT(BTRIM(COALESCE(p_message, '')), 1000);
+BEGIN
+  IF NOT private.is_admin() THEN
+    RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
+  END IF;
+  IF p_decision NOT IN ('approved', 'needs_info', 'rejected', 'pending') THEN
+    RAISE EXCEPTION 'Unknown decision %', p_decision USING ERRCODE = 'P0001';
+  END IF;
+  IF p_decision IN ('needs_info', 'rejected') AND message = '' THEN
+    RAISE EXCEPTION 'Add a message for the member.' USING ERRCODE = 'P0001';
+  END IF;
+
+  UPDATE public.profiles SET verification_status = p_decision WHERE id = p_member;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Member not found' USING ERRCODE = 'P0001';
+  END IF;
+  UPDATE public.profile_private SET
+    reviewed_at = CASE WHEN p_decision = 'pending' THEN NULL ELSE NOW() END,
+    verification_message = CASE WHEN p_decision IN ('needs_info', 'rejected') THEN message ELSE '' END
+  WHERE id = p_member;
+  INSERT INTO public.verification_log (member_id, decision, member_message, admin_note, actor_id)
+  VALUES (p_member, p_decision, message, LEFT(BTRIM(COALESCE(p_admin_note, '')), 2000), auth.uid());
+
+  IF p_decision <> 'pending' THEN
+    INSERT INTO public.notifications (user_id, type, text)
+    VALUES (p_member, 'verification', CASE p_decision
+      WHEN 'approved' THEN 'You''re verified. Welcome to NRIClub!'
+      WHEN 'needs_info' THEN LEFT('We need a little more information to verify you: ' || message, 1000)
+      ELSE LEFT('Your membership request wasn''t approved: ' || message, 1000)
+    END);
+  END IF;
+  RETURN p_decision;
+END;
+$$;
+
+-- The admin review queue: everything needed to decide on each member.
+CREATE FUNCTION public.admin_verification_queue(p_statuses TEXT[] DEFAULT ARRAY['pending'])
+RETURNS TABLE (
+  id UUID, name TEXT, avatar_url TEXT, email TEXT, email_verified BOOLEAN,
+  city TEXT, country_code TEXT, location TEXT, hometown TEXT, profession TEXT,
+  linkedin_url TEXT, verification_note TEXT, voucher TEXT,
+  verification_status TEXT, status TEXT, verification_message TEXT,
+  created_at TIMESTAMPTZ, submitted_at TIMESTAMPTZ, reviewed_at TIMESTAMPTZ,
+  age_confirmed_at TIMESTAMPTZ, terms_accepted_at TIMESTAMPTZ,
+  same_linkedin_count INTEGER, previous_decisions INTEGER)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NOT private.is_admin() THEN
+    RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+  SELECT p.id, p.name, p.avatar_url, pp.email, p.email_verified,
+    p.city, p.country_code, p.location, p.hometown, p.profession,
+    p.linkedin_url, pp.verification_note, pp.voucher,
+    p.verification_status, p.status, pp.verification_message,
+    p.created_at, pp.submitted_at, pp.reviewed_at,
+    pp.age_confirmed_at, pp.terms_accepted_at,
+    (SELECT count(*)::int FROM public.profiles o
+      WHERE o.id <> p.id AND p.linkedin_url <> '' AND o.linkedin_url = p.linkedin_url),
+    (SELECT count(*)::int FROM public.verification_log l
+      WHERE l.member_id = p.id AND l.decision IN ('approved', 'needs_info', 'rejected'))
+  FROM public.profiles p
+  LEFT JOIN public.profile_private pp ON pp.id = p.id
+  WHERE p.verification_status = ANY (p_statuses)
+  ORDER BY pp.submitted_at NULLS LAST, p.created_at;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.submit_verification(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.review_member(UUID, TEXT, TEXT, TEXT) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.admin_verification_queue(TEXT[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.submit_verification(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.review_member(UUID, TEXT, TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_verification_queue(TEXT[]) TO authenticated;
+
+-- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
 
@@ -661,6 +895,7 @@ ALTER TABLE public.help_responses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.blocks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.verification_log ENABLE ROW LEVEL SECURITY;
 
 -- ADMINS: a user can see whether they are an admin; nobody can grant it via the API.
 CREATE POLICY "Users can see their own admin row" ON public.admins
@@ -910,6 +1145,9 @@ CREATE POLICY "Users can view their blocks" ON public.blocks
   FOR SELECT TO authenticated USING (blocker_id = (SELECT auth.uid()));
 CREATE POLICY "Users can block" ON public.blocks
   FOR INSERT TO authenticated WITH CHECK (blocker_id = (SELECT auth.uid()));
+CREATE POLICY "Admins can view the verification history" ON public.verification_log
+  FOR SELECT TO authenticated USING (private.is_admin());
+
 CREATE POLICY "Users can unblock" ON public.blocks
   FOR DELETE TO authenticated USING (blocker_id = (SELECT auth.uid()));
 
