@@ -34,8 +34,6 @@ Issues found while auditing the code for Phase 1 that are outside its scope
 - **Report user** from the chat screen silently fails (`activeConvo` is out of
   scope).
 - Profile preview doesn't show the avatar.
-- If an image upload fails, the UI falls back to storing a base64/blob URL;
-  the database now rejects oversized values, so show an error instead.
 - **Privacy settings**: *Profile visibility* and *Online status* aren't
   enforced; every member sees every profile and everyone shows as online.
 - Notifications are written by the client with free text; generate them with
@@ -44,7 +42,6 @@ Issues found while auditing the code for Phase 1 that are outside its scope
   reports share the reports table; add a content type column / bug table.
 - Marketplace photos are a JSON string in `image_url`; event dates are free
   text.
-- Admin "Bug Reports": *Resolved* and *Dismiss* do the same thing.
 
 ## Phase 5: launch readiness
 
