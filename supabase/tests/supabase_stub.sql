@@ -1,10 +1,15 @@
--- Minimal stand-in for the Supabase platform objects our migrations depend on.
--- Mirrors supabase/postgres definitions closely enough to exercise RLS.
-CREATE ROLE anon NOLOGIN NOINHERIT;
-CREATE ROLE authenticated NOLOGIN NOINHERIT;
-CREATE ROLE service_role NOLOGIN NOINHERIT BYPASSRLS;
-CREATE ROLE supabase_admin NOLOGIN;
-GRANT anon, authenticated, service_role TO postgres;
+-- Minimal stand-in for the Supabase platform objects the migrations depend on
+-- (roles, auth.uid(), storage), close enough to exercise RLS on plain Postgres.
+-- Used by supabase/tests/rls_test.py; never run this against Supabase itself.
+-- Roles are cluster-wide, so tolerate them already existing.
+DO $$
+BEGIN
+  CREATE ROLE anon NOLOGIN NOINHERIT;
+  CREATE ROLE authenticated NOLOGIN NOINHERIT;
+  CREATE ROLE service_role NOLOGIN NOINHERIT BYPASSRLS;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+GRANT anon, authenticated, service_role TO CURRENT_USER;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE SCHEMA IF NOT EXISTS extensions;

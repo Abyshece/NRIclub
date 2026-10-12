@@ -1,267 +1,146 @@
-# IndIn Launch Guide — Step by Step
+# NRIClub Launch Guide
 
-## What You Have
+## What's in the repo
 
-| File | What it is |
+| Path | What it is |
 |------|-----------|
-| `supabase-migration.sql` | Creates all 13 database tables, security policies, triggers, storage buckets, and seed data |
-| `src/supabaseApi.js` | Backend API layer — 50+ functions for auth, posts, messages, groups, events, marketplace, etc. |
-| `src/App.jsx` | Complete frontend — integrated with real Supabase DB calls |
-| `src/main.jsx` | React entry point |
-| `index.html` | HTML shell |
-| `package.json` | Project dependencies |
-| `vite.config.js` | Build config |
+| `supabase/migrations/20261012000000_nriclub_schema.sql` | The whole database: tables, security policies, triggers, storage buckets, realtime |
+| `supabase/seed.sql` | Starter data: city communities and example events |
+| `supabase/tests/` | Automated security tests for the database (see "Testing the database") |
+| `supabase/oneoff/` | One-time scripts for the existing project (already applied ones are documented there) |
+| `src/supabaseApi.js` | API layer: auth, posts, messages, groups, events, marketplace, admin, etc. |
+| `src/App.jsx` | The frontend |
+| `.env.example` | The environment variables the app needs |
 
 ---
 
-## STEP 1: Set Up Supabase Database (5 minutes)
+## Step 1: Database
 
-1. Open your Supabase project dashboard:
-   https://supabase.com/dashboard/project/uzzkdmybsbwknpsucuvv
+**New Supabase project:** open **SQL Editor → New query**, paste the whole of
+`supabase/migrations/20261012000000_nriclub_schema.sql`, run it, then do the
+same with `supabase/seed.sql`. (With the Supabase CLI: `supabase db push`.)
 
-2. Click **SQL Editor** in the left sidebar
+**The existing NRI+ project** (`uzzkdmybsbwknpsucuvv`) is moved to this schema
+with the one-off script in `supabase/oneoff/2026-10-12-phase1-live-reset/`;
+see the README there.
 
-3. Click **New Query**
+## Step 2: Authentication settings
 
-4. Open the `supabase-migration.sql` file, select all (Ctrl+A), copy (Ctrl+C)
+In the Supabase dashboard → **Authentication**:
 
-5. Paste into the SQL Editor
+1. **Sign In / Providers → Email**: email provider ON, *Confirm email* ON,
+   *Secure email change* ON, minimum password length **8**.
+2. **Email templates**: the signup flow asks for a 6-digit code, so the
+   *Confirm signup* and *Magic Link* templates must include `{{ .Token }}`.
+3. **Attack protection**: turn on *Leaked password protection*.
+4. **URL configuration**: Site URL = your live URL (e.g. `https://nriclub.app`),
+   and add `https://nriclub.app/**` and `https://admin.nriclub.app/**` to the
+   redirect URLs. Use `http://localhost:3000` while developing.
 
-6. Click **Run** (or press Ctrl+Enter)
+## Step 3: Make yourself an admin
 
-7. You will see a warning: "Query has destructive operations" — this is normal and safe. Click **"Run this query"**
+Admins sign in to the admin panel with a normal NRIClub account. Sign up in
+the app first, then in the SQL editor run:
 
-8. You should see "Success. No rows returned" — all tables are now created
-
----
-
-## STEP 2: Configure Supabase Authentication (3 minutes)
-
-1. In Supabase dashboard, go to **Authentication** → **Providers**
-
-2. Click on **Email**
-
-3. Make sure these are set:
-   - ✅ Enable Email provider = ON
-   - ✅ Confirm email = ON
-   - ✅ Secure email change = ON
-   - Minimum password length = **8**
-
-4. Go to **Authentication** → **URL Configuration**
-
-5. For now, set Site URL to: `http://localhost:3000`
-   (You'll update this after Vercel deployment)
-
----
-
-## STEP 3: Verify Realtime is Enabled (1 minute)
-
-1. Go to **Database** → **Replication** in Supabase dashboard
-
-2. Check that the `supabase_realtime` publication includes:
-   - `messages`
-   - `notifications`  
-   - `posts`
-
-   (The migration SQL should have done this automatically)
-
----
-
-## STEP 4: Install Git and Node.js (if not already installed)
-
-- **Node.js**: Download from https://nodejs.org (LTS version)
-- **Git**: Download from https://git-scm.com
-
-Verify installation:
-```
-node --version    (should show v18+ or v20+)
-npm --version     (should show 9+ or 10+)
-git --version     (should show 2.x)
+```sql
+INSERT INTO public.admins (user_id)
+SELECT id FROM auth.users WHERE email = 'you@example.com';
 ```
 
----
+To remove an admin: `DELETE FROM public.admins WHERE user_id = (SELECT id FROM auth.users WHERE email = '...');`
 
-## STEP 5: Create the Project on Your Computer (5 minutes)
+The admin panel is at `https://admin.nriclub.app` (any `admin.` host) or
+`<your site>/#admin`.
 
-1. Create a new folder on your computer called `indin`
+There are no admin passwords in the code or in environment variables any more.
+If `VITE_ADMIN_EMAIL` / `VITE_ADMIN_PASS` are still set in Vercel, delete them.
 
-2. Place all the project files in this structure:
+## Step 4: Run locally
+
+Requires Node.js 18+.
+
 ```
-indin/
-├── index.html
-├── package.json
-├── vite.config.js
-└── src/
-    ├── main.jsx
-    ├── App.jsx
-    └── supabaseApi.js
-```
-
-3. Open a terminal/command prompt in the `indin` folder
-
-4. Run:
-```
+cp .env.example .env      # then fill in the two values
 npm install
+npm run dev               # http://localhost:3000
 ```
-This installs React, Vite, and other dependencies.
 
-5. Test locally:
-```
-npm run dev
-```
-Open http://localhost:3000 in your browser. You should see the IndIn landing page.
+The values are in Supabase → **Project Settings → API**: the project URL and
+the `anon` public key. The anon key is meant to be public; the database's
+security policies are what protect the data. Never put the `service_role`
+key in the frontend or in a `VITE_` variable.
 
-6. Try signing up with a real email — you should receive an OTP email from Supabase.
+## Step 5: Deploy to Vercel
+
+1. Import the GitHub repository in Vercel (framework preset **Vite**, build
+   command `npm run build`, output directory `dist`).
+2. **Settings → Environment Variables**: add `VITE_SUPABASE_URL` and
+   `VITE_SUPABASE_ANON_KEY`.
+3. Deploy, then set the Supabase Site URL / redirect URLs to the Vercel or
+   custom domain (Step 2.4).
+
+## Step 6: Testing checklist
+
+With two member accounts and one admin account:
+
+- [ ] Sign up → receive the 6-digit code → verify → land on the dashboard with your details filled in
+- [ ] Log out → log back in; a wrong password is rejected
+- [ ] Create a post, like it from the other account, comment → counts update, notification arrives
+- [ ] Send a Namaste request → accept it from the notification
+- [ ] Send messages both ways; set *Receive messages* to *Nobody* and check the other account can't message
+- [ ] Block a member → neither of you can message the other
+- [ ] Join a community, request a new one → it appears in the admin panel under Communities
+- [ ] RSVP to an event, post a marketplace listing, a doc and a help request
+- [ ] Report a post and file a bug report → both appear in the admin panel
+- [ ] Admin panel: a non-admin account is refused; approve a member, approve/reject a community, remove reported content
+- [ ] Block a member from the admin panel → they can no longer post
+- [ ] Delete an account from Settings → the account can no longer log in
+- [ ] Test on a phone
+
+## Testing the database
+
+The security tests run against a local PostgreSQL with a small stand-in for
+the Supabase platform:
+
+```
+createdb nriclub_test
+psql -d nriclub_test -f supabase/tests/supabase_stub.sql
+psql -d nriclub_test -f supabase/migrations/20261012000000_nriclub_schema.sql
+python3 supabase/tests/rls_test.py "dbname=nriclub_test"
+```
+
+Each check runs as a signed-out visitor, a member, a blocked member or an
+admin, and confirms what that person can and cannot read or change.
 
 ---
 
-## STEP 6: Push to GitHub (3 minutes)
-
-1. Create a new repository on GitHub:
-   - Go to https://github.com/new
-   - Name: `indin`
-   - Keep it Public or Private (your choice)
-   - Do NOT add README, .gitignore, or license (we'll push our own files)
-   - Click **Create repository**
-
-2. In your terminal (inside the `indin` folder):
-```
-git init
-git add .
-git commit -m "IndIn social network - launch ready"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/indin.git
-git push -u origin main
-```
-
-Replace `YOUR_USERNAME` with your actual GitHub username.
-
----
-
-## STEP 7: Deploy to Vercel (3 minutes)
-
-1. Go to https://vercel.com and sign in with GitHub
-
-2. Click **"Add New..."** → **"Project"**
-
-3. Find and select your `indin` repository
-
-4. Vercel will auto-detect it as a Vite project. Settings should show:
-   - Framework Preset: **Vite**
-   - Build Command: `npm run build`
-   - Output Directory: `dist`
-
-5. Click **Deploy**
-
-6. Wait 1-2 minutes. Vercel will build and deploy your site.
-
-7. You'll get a URL like: `https://indin-abc123.vercel.app`
-   This is your live website!
-
----
-
-## STEP 8: Update Supabase with Your Live URL (2 minutes)
-
-1. Copy your Vercel URL (e.g., `https://indin-abc123.vercel.app`)
-
-2. Go back to Supabase dashboard → **Authentication** → **URL Configuration**
-
-3. Update:
-   - **Site URL**: `https://indin-abc123.vercel.app`
-   - **Redirect URLs**: Add `https://indin-abc123.vercel.app/**`
-
-4. Click **Save**
-
----
-
-## STEP 9: Add a Custom Domain (Optional)
-
-If you own a domain like `indin.com`:
-
-1. In Vercel dashboard → your project → **Settings** → **Domains**
-
-2. Add your domain (e.g., `indin.com` or `app.indin.com`)
-
-3. Vercel will give you DNS records to add at your domain registrar
-
-4. After DNS propagates (5-30 minutes), update Supabase URLs to match your custom domain
-
----
-
-## STEP 10: Final Testing Checklist
-
-Test each feature with a real email:
-
-- [ ] Sign up → receive OTP email → verify → land on dashboard
-- [ ] Log out → log back in with same email/password
-- [ ] Create a post → appears in feed
-- [ ] Like a post → count updates
-- [ ] Join a community → member count updates
-- [ ] RSVP to an event → attendee count updates
-- [ ] Open Messages → send a message (need 2 accounts to test)
-- [ ] Post a marketplace listing
-- [ ] Create a doc
-- [ ] Click notification bell → see notifications
-- [ ] Click settings gear → open each settings modal
-- [ ] Test on mobile browser → responsive layout works
-
----
-
-## Architecture Summary
+## Architecture
 
 ```
-User's Browser
-     │
-     ▼
-┌─────────────────┐
-│  Vercel (Free)   │  ← Static hosting, auto-deploys from GitHub
-│  React Frontend  │
-└────────┬────────┘
-         │ HTTPS API calls
-         ▼
-┌─────────────────────────────┐
-│  Supabase (Free Tier)        │
-│                              │
-│  ✦ Auth (email + password)   │  ← User signup/login/OTP
-│  ✦ PostgreSQL Database       │  ← All data: posts, users, groups...
-│  ✦ Row Level Security        │  ← Users can only edit own data
-│  ✦ Realtime WebSockets       │  ← Live messages & notifications
-│  ✦ Storage Buckets           │  ← Profile photos, post images
-│  ✦ Auto Triggers             │  ← Like/comment/member counts
-└─────────────────────────────┘
+Browser ──► Vercel (static React app)
+   │
+   └─HTTPS──► Supabase
+               ✦ Auth (email + password, 6-digit email codes)
+               ✦ PostgreSQL with row-level security on every table
+               ✦ Realtime (chat messages, notifications)
+               ✦ Storage (avatars, post and marketplace images)
+               ✦ Triggers (profiles on signup, counters, consent timestamps)
 ```
-
-## Free Tier Limits
-
-**Vercel Free:**
-- 100 GB bandwidth/month
-- Unlimited deployments
-- Custom domains included
-
-**Supabase Free:**
-- 500 MB database
-- 1 GB file storage
-- 50,000 monthly active users
-- 2 GB bandwidth
-- Unlimited API requests
-
-These limits are more than enough for thousands of active users to start.
-
----
 
 ## Troubleshooting
 
-**"No account found" on login:**
-→ Make sure you ran the SQL migration. The `profiles` table auto-creates a profile when a user signs up.
+**Every request fails with "permission denied" or returns nothing:** you are
+signed out or the session expired; sign in again. Signed-out visitors can't
+read anything by design.
 
-**OTP email not arriving:**
-→ Check spam folder. Supabase free tier uses their default email sender. For production, set up a custom SMTP in Supabase → Settings → Auth → SMTP.
+**"This account does not have admin access" in the admin panel:** the account
+isn't in `public.admins` (Step 3).
 
-**"Permission denied" errors:**
-→ RLS policies might not have been created. Re-run the migration SQL.
+**Signup code email not arriving:** check spam. For production, set up custom
+SMTP in Supabase → **Authentication → SMTP Settings**; the built-in sender is
+heavily rate-limited.
 
-**Site shows blank page after deploy:**
-→ Check Vercel build logs. Most likely a missing dependency — run `npm install` locally and verify `npm run build` works before pushing.
+**Upload fails:** images must be JPEG, PNG, WebP or GIF and at most 5 MB.
 
-**Data not persisting:**
-→ Check browser console for error messages. Usually means the Supabase URL or anon key is wrong, or the tables don't exist yet.
+**Blank page after deploy:** check the Vercel build log, and that both
+`VITE_` variables are set for the Production environment.
