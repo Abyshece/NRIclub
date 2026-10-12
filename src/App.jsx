@@ -1,5 +1,13 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import * as api from "./supabaseApi";
+import "./member/base.css";
+import SignUpFlow from "./member/SignUpFlow";
+import GetVerified from "./member/GetVerified";
+import CodeEntry from "./member/CodeEntry";
+import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner";
+import ProfileChecklist, { missingProfileItems, useProfileCardDismissed } from "./member/ProfileChecklist";
+import { TermsContent } from "./member/LegalModals";
+import { mapProfile, linkedinProblem, authErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
 
 // ============================================================================
@@ -69,7 +77,11 @@ const rateLimiter = (() => {
 })();
 
 const isUserNRI = (userOrLocation) => {
+  // The country chosen when getting verified decides when it's known.
+  const countryCode = typeof userOrLocation === "object" && userOrLocation ? (userOrLocation.countryCode || userOrLocation.country_code) : "";
+  if (countryCode) return countryCode !== "IN";
   const loc = typeof userOrLocation === "string" ? userOrLocation : (userOrLocation?.location || userOrLocation?.currentCity || "");
+  if (/,\s*india\s*$/i.test(loc)) return false;
   if (!loc) {
     // No location - fall back to isNRI flag or yearsAbroad
     if (typeof userOrLocation === "object" && userOrLocation) {
@@ -494,871 +506,118 @@ const LandingPage = ({ onJoin, onLogin }) => (
 );
 
 // ============================================================================
-// SIGN UP PAGE
-// ============================================================================
-
-// Small inline SVG icons for signup labels (matching screenshot exactly)
-const SignUpIcons = {
-  home: () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
-      <polyline points="9 22 9 12 15 12 15 22"/>
-    </svg>
-  ),
-  mapPin: () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="10" r="3"/>
-      <path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 10-16 0c0 3 2.7 7 8 11.7z"/>
-    </svg>
-  ),
-  briefcase: () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
-      <path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>
-    </svg>
-  ),
-  linkedin: () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6z"/>
-      <rect x="2" y="9" width="4" height="12"/>
-      <circle cx="4" cy="4" r="2"/>
-    </svg>
-  ),
-  info: () => (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B7FD6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10"/>
-      <line x1="12" y1="16" x2="12" y2="12"/>
-      <line x1="12" y1="8" x2="12.01" y2="8"/>
-    </svg>
-  ),
-  globe: () => (
-    <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
-      <rect width="40" height="40" rx="10" fill="#F0EFED"/>
-      <circle cx="20" cy="20" r="8" stroke="#37352F" strokeWidth="1.5" fill="none"/>
-      <ellipse cx="20" cy="20" rx="4" ry="8" stroke="#37352F" strokeWidth="1.2" fill="none"/>
-      <line x1="12" y1="20" x2="28" y2="20" stroke="#37352F" strokeWidth="1.2"/>
-    </svg>
-  ),
-  arrowRight: () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="5" y1="12" x2="19" y2="12"/>
-      <polyline points="12 5 19 12 12 19"/>
-    </svg>
-  ),
-};
-
-const SignUpPage = ({ onComplete, onLogin }) => {
-  const [residencyStep, setResidencyStep] = useState(null); // null = show choice, 'abroad' | 'india'
-  const [form, setForm] = useState({
-    firstName: "", middleName: "", lastName: "", email: "",
-    password: "", confirmPassword: "",
-    location: "", hometown: "", profession: "",
-    occupationStatus: "Working Professional", yearsAbroad: "", linkedinUrl: "",
-    isNRI: true,
-  });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  // OTP state
-  const [otpStep, setOtpStep] = useState("form"); // "form" | "otp"
-  const [otpCode, setOtpCode] = useState(["", "", "", "", "", ""]);
-  const [otpError, setOtpError] = useState("");
-  const [otpTimer, setOtpTimer] = useState(0);
-  const [otpSending, setOtpSending] = useState(false);
-  const otpRefs = [useRef(null), useRef(null), useRef(null), useRef(null), useRef(null), useRef(null)];
-
-  // GDPR consent state
-  const [gdprConsent, setGdprConsent] = useState(false);
-  const [marketingConsent, setMarketingConsent] = useState(false);
-  const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
-  const update = (k, v) => setForm((p) => ({ ...p, [k]: v }));
-  const passwordsMatch = form.password && form.confirmPassword && form.password === form.confirmPassword;
-  const passwordLongEnough = form.password.length >= 8;
-  const valid = form.firstName && form.lastName && form.email && passwordLongEnough && passwordsMatch && form.location && form.hometown && form.profession && (residencyStep === "india" || form.yearsAbroad) && gdprConsent;
-
-  // OTP timer countdown
-  useEffect(() => {
-    if (otpTimer > 0) {
-      const t = setTimeout(() => setOtpTimer(otpTimer - 1), 1000);
-      return () => clearTimeout(t);
-    }
-  }, [otpTimer]);
-
-  const handleSendOtp = async () => {
-    if (!form.email || !form.email.includes("@")) {
-      setError("Please enter a valid email address.");
-      return;
-    }
-    if (form.password.length < 8) {
-      setError("Password must be at least 8 characters long.");
-      return;
-    }
-    if (form.password !== form.confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-    if (!valid) return;
-
-    setOtpSending(true);
-    setError("");
-
-    try {
-      const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-      
-      // Step 1: Create user in Supabase
-      try {
-        const signUpResult = await api.signUp(form.email, form.password, {
-          full_name: fullName, location: form.location,
-          hometown: form.hometown, profession: form.profession,
-          occupation_status: form.occupationStatus, years_abroad: form.yearsAbroad,
-          linkedin_url: form.linkedinUrl, gdpr_consent: gdprConsent,
-          marketing_consent: marketingConsent,
-        });
-        // Double check: if signup returned but user already exists
-        if (signUpResult?.user?.identities?.length === 0) {
-          setError("An account with this email already exists. Please log in instead.");
-          setOtpSending(false);
-          return;
-        }
-      } catch (signUpErr) {
-        const msg = (signUpErr.message || "").toLowerCase();
-        if (msg.includes("already") || msg.includes("exists") || msg.includes("duplicate")) {
-          setError("An account with this email already exists. Please log in instead.");
-          setOtpSending(false);
-          return;
-        }
-        // For other errors, throw to outer catch
-        throw signUpErr;
-      }
-
-      // Step 2: Send OTP via Supabase. If this fails the code from the signup
-      // confirmation email still works, and the user can press "Resend".
-      try {
-        await api.sendOtp(form.email);
-      } catch (otpErr) {}
-
-      setOtpStep("otp");
-      setOtpTimer(60);
-      setOtpCode(["", "", "", "", "", ""]);
-      setOtpSending(false);
-
-    } catch (err) {
-      setError(err.message || "Something went wrong. Please try again.");
-      setOtpSending(false);
-    }
-  };
-
-  const handleOtpChange = (index, value) => {
-    if (value.length > 1) value = value[value.length - 1];
-    if (value && !/^\d$/.test(value)) return;
-
-    const newOtp = [...otpCode];
-    newOtp[index] = value;
-    setOtpCode(newOtp);
-    setOtpError("");
-
-    // Auto-focus next input
-    if (value && index < 5) {
-      otpRefs[index + 1].current?.focus();
-    }
-  };
-
-  const handleOtpKeyDown = (index, e) => {
-    if (e.key === "Backspace" && !otpCode[index] && index > 0) {
-      otpRefs[index - 1].current?.focus();
-    }
-  };
-
-  const handleOtpPaste = (e) => {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
-    if (pasted.length === 6) {
-      const newOtp = pasted.split("");
-      setOtpCode(newOtp);
-      otpRefs[5].current?.focus();
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    const entered = otpCode.join("");
-    if (entered.length !== 6) {
-      setOtpError("Please enter the complete 6-digit code.");
-      return;
-    }
-
-    setLoading(true);
-    setOtpError("");
-
-    try {
-      // Real Supabase verification
-      try {
-        let verifyData = await api.verifyOtp(form.email, entered);
-        // If verify didn't return a token, try signing in with password
-        if (!verifyData?.access_token) {
-          try { verifyData = await api.signIn(form.email, form.password); } catch(si) {}
-        }
-        if (!verifyData?.access_token || !verifyData?.user?.id) {
-          throw new Error("Your email is verified, but we couldn't sign you in. Please log in.");
-        }
-        const fullName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-        // The signup trigger already stored these from the metadata; this
-        // covers accounts created before that trigger existed.
-        try {
-          await api.updateProfile({
-            name: fullName, location: form.location, hometown: form.hometown,
-            profession: form.profession, occupation_status: form.occupationStatus,
-            years_abroad: form.yearsAbroad, linkedin_url: form.linkedinUrl,
-            gdpr_consent: true, marketing_consent: marketingConsent,
-          });
-        } catch (ue) {}
-        const profile = {
-          id: verifyData.user.id,
-          name: fullName, email: form.email, location: form.location,
-          hometown: form.hometown, profession: form.profession,
-          occupationStatus: form.occupationStatus, yearsAbroad: form.yearsAbroad,
-          linkedinUrl: form.linkedinUrl, emailVerified: true,
-          isNRI: form.isNRI, avatar_url: "",
-        };
-        localStorage.setItem("nriclub_profile_cache", JSON.stringify(profile));
-        setLoading(false);
-        onComplete(profile);
-      } catch (verifyErr) {
-        setOtpError(verifyErr.message || "Invalid or expired code.");
-        setLoading(false);
-      }
-
-    } catch (err) {
-      setOtpError("Something went wrong. Please try again.");
-      setLoading(false);
-    }
-  };
-
-  const handleResendOtp = async () => {
-    if (otpTimer > 0) return;
-    setOtpSending(true);
-    setOtpError("");
-
-    try {
-      await api.sendOtp(form.email);
-      setOtpTimer(60);
-      setOtpCode(["", "", "", "", "", ""]);
-    } catch {
-      setOtpError("Failed to resend. Please try again.");
-    }
-    setOtpSending(false);
-  };
-
-  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-
-  const inputStyle = {
-    width: "100%",
-    padding: "14px 16px",
-    borderRadius: 8,
-    border: "1px solid #E0E0DE",
-    fontSize: 15,
-    background: "#fff",
-    outline: "none",
-    color: "#37352F",
-    fontFamily: font,
-    boxSizing: "border-box",
-    transition: "border-color 0.15s",
-  };
-
-  const labelStyle = {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 11,
-    fontWeight: 700,
-    color: "#5F5E5B",
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    marginBottom: 8,
-    fontFamily: font,
-  };
-
-  // ---- RESIDENCY CHOICE SCREEN ----
-  if (!residencyStep) {
-    return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
-        <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
-          <div style={{ width: 56, height: 56, borderRadius: 16, background: "#37352F", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", color: "#fff" }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-          </div>
-          <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>Where do you live?</h2>
-          <p style={{ fontSize: 14, color: "#9B9A97", marginBottom: 32 }}>This helps us personalize your experience on NRIClub.</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 320, margin: "0 auto" }}>
-            <button onClick={() => { setResidencyStep("abroad"); update("isNRI", true); }} style={{ padding: "18px 24px", borderRadius: 12, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
-              onMouseOver={(e) => { e.currentTarget.style.borderColor = "#37352F"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
-              onMouseOut={(e) => { e.currentTarget.style.borderColor = "#E0E0DE"; e.currentTarget.style.boxShadow = "none"; }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ width: 42, height: 42, borderRadius: 10, background: "#E3FCEF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>
-                </div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#37352F" }}>I live outside India</div>
-                  <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>NRI, student abroad, or recently moved</div>
-                </div>
-              </div>
-            </button>
-            <button onClick={() => { setResidencyStep("india"); update("isNRI", false); update("yearsAbroad", "Not lived abroad"); }} style={{ padding: "18px 24px", borderRadius: 12, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
-              onMouseOver={(e) => { e.currentTarget.style.borderColor = "#37352F"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
-              onMouseOut={(e) => { e.currentTarget.style.borderColor = "#E0E0DE"; e.currentTarget.style.boxShadow = "none"; }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ width: 42, height: 42, borderRadius: 10, background: "#FFF3E0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E65100" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/></svg>
-                </div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#37352F" }}>I live in India</div>
-                  <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>Connect with NRIs for advice & support</div>
-                </div>
-              </div>
-            </button>
-          </div>
-          <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 24 }}>Already have an account? <button onClick={onLogin} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontSize: 12 }}>Log in</button></p>
-        </div>
-      </div>
-    );
-  }
-
-  // ---- OTP VERIFICATION SCREEN ----
-  if (otpStep === "otp") {
-    return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
-        <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
-          <div style={{ marginBottom: 24, display: "inline-block" }}>
-            <div style={{ width: 56, height: 56, borderRadius: 16, background: "#EDF4FF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#5B9CFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 6L2 7"/>
-              </svg>
-            </div>
-          </div>
-          <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>Check your email</h2>
-          <p style={{ fontSize: 14, color: "#9B9A97", marginBottom: 8, lineHeight: 1.6 }}>
-            We sent a 6-digit verification code to<br />
-            <strong style={{ color: "#37352F" }}>{form.email}</strong>
-          </p>
-          <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 24 }}>Check your inbox and spam folder for the 6-digit code.</p>
-
-          {otpError && (
-            <div style={{ padding: "10px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#DC2626" }}>{otpError}</div>
-          )}
-
-          {/* OTP Input Boxes */}
-          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 28 }}>
-            {otpCode.map((digit, i) => (
-              <input
-                key={i}
-                ref={otpRefs[i]}
-                type="text"
-                inputMode="numeric"
-                maxLength={1}
-                value={digit}
-                onChange={(e) => handleOtpChange(i, e.target.value)}
-                onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                onPaste={i === 0 ? handleOtpPaste : undefined}
-                style={{
-                  width: 48, height: 56, borderRadius: 10,
-                  border: digit ? "2px solid #37352F" : "1px solid #E0E0DE",
-                  fontSize: 22, fontWeight: 700, textAlign: "center", outline: "none",
-                  color: "#37352F", fontFamily: font, background: "#fff",
-                  transition: "border-color 0.15s",
-                }}
-                autoFocus={i === 0}
-              />
-            ))}
-          </div>
-
-          {/* Verify Button */}
-          <button
-            onClick={handleVerifyOtp}
-            disabled={otpCode.join("").length !== 6 || loading}
-            style={{
-              width: "100%", padding: "14px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600,
-              background: otpCode.join("").length === 6 ? "#37352F" : "#EDEDEB",
-              color: otpCode.join("").length === 6 ? "#fff" : "#9B9A97",
-              cursor: otpCode.join("").length === 6 ? "pointer" : "not-allowed",
-              fontFamily: font, marginBottom: 20,
-            }}
-          >
-            {loading ? "Verifying..." : "Verify & Create Account"}
-          </button>
-
-          {/* Resend */}
-          <div style={{ fontSize: 13, color: "#9B9A97" }}>
-            Didn't receive the code?{" "}
-            {otpTimer > 0 ? (
-              <span>Resend in <strong style={{ color: "#37352F" }}>{otpTimer}s</strong></span>
-            ) : (
-              <button onClick={handleResendOtp} disabled={otpSending} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13 }}>
-                {otpSending ? "Sending..." : "Resend Code"}
-              </button>
-            )}
-          </div>
-
-          {/* Back button */}
-          <button
-            onClick={() => { setOtpStep("form"); setOtpError(""); }}
-            style={{ background: "none", border: "none", color: "#9B9A97", fontSize: 13, cursor: "pointer", marginTop: 20, fontFamily: font, display: "inline-flex", alignItems: "center", gap: 4 }}
-          >
-            ← Back to form
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ---- MAIN FORM ----
-  return (
-    <div style={{
-      minHeight: "100vh",
-      display: "flex",
-      alignItems: "flex-start",
-      justifyContent: "center",
-      padding: "48px 1rem 60px",
-      background: "#F7F7F5",
-      fontFamily: font,
-    }}>
-      <div style={{ maxWidth: 580, width: "100%" }}>
-        {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: 48 }}>
-          <div style={{ marginBottom: 20, display: "inline-block" }}>
-            <SignUpIcons.globe />
-          </div>
-          <h2 style={{
-            fontSize: 28,
-            fontWeight: 700,
-            color: "#37352F",
-            letterSpacing: "-0.03em",
-            marginBottom: 8,
-          }}>Create your profile</h2>
-          <p style={{
-            color: "#9B9A97",
-            fontSize: 15,
-            fontWeight: 400,
-          }}>Join the NRIClub network to start connecting.</p>
-        </div>
-
-        {error && (
-          <div style={{ padding: "12px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#DC2626" }}>{error}</div>
-        )}
-
-        <form onSubmit={(e) => { e.preventDefault(); handleSendOtp(); }}>
-
-          {/* LEGAL NAME section */}
-          <div style={{ marginBottom: 28 }}>
-            <label style={{ ...labelStyle, marginBottom: 12 }}>
-              LEGAL NAME
-            </label>
-
-            {/* Blue info banner */}
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "14px 16px",
-              background: "#EEF2FF",
-              borderRadius: 8,
-              marginBottom: 16,
-              border: "1px solid #E0E7FF",
-            }}>
-              <div style={{ flexShrink: 0 }}>
-                <SignUpIcons.info />
-              </div>
-              <p style={{
-                fontSize: 13,
-                color: "#4B5EAA",
-                lineHeight: 1.45,
-                margin: 0,
-                fontWeight: 400,
-              }}>
-                Please provide your real name as it appears on your Indian or current nationality passport.
-              </p>
-            </div>
-
-            {/* 3-column name fields */}
-            <div className="form-grid-3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-              <input style={inputStyle} value={form.firstName} onChange={(e) => update("firstName", e.target.value)} placeholder="First Name" required />
-              <input style={inputStyle} value={form.middleName} onChange={(e) => update("middleName", e.target.value)} placeholder="Middle (Optional)" />
-              <input style={inputStyle} value={form.lastName} onChange={(e) => update("lastName", e.target.value)} placeholder="Last Name" required />
-            </div>
-          </div>
-
-          {/* EMAIL */}
-          <div style={{ marginBottom: 28 }}>
-            <label style={labelStyle}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 6L2 7"/>
-              </svg>
-              EMAIL ADDRESS
-            </label>
-            <input
-              style={inputStyle}
-              type="email"
-              value={form.email}
-              onChange={(e) => update("email", e.target.value)}
-              placeholder="you@email.com"
-              required
-            />
-            <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 6, fontFamily: font }}>
-              A verification code will be sent to this email.
-            </p>
-          </div>
-
-          {/* PASSWORD */}
-          <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
-            <div>
-              <label style={labelStyle}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
-                </svg>
-                PASSWORD
-              </label>
-              <div style={{ position: "relative" }}>
-                <input
-                  style={inputStyle}
-                  type={showPassword ? "text" : "password"}
-                  value={form.password}
-                  onChange={(e) => update("password", e.target.value)}
-                  placeholder="Min. 8 characters"
-                  required
-                  minLength={8}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}
-                >
-                  {showPassword ? Icons.eye({ size: 16 }) : Icons.eye({ size: 16 })}
-                </button>
-              </div>
-              {form.password && form.password.length < 8 && (
-                <p style={{ fontSize: 11, color: "#DC2626", marginTop: 5, fontFamily: font }}>Must be at least 8 characters</p>
-              )}
-              {form.password && form.password.length >= 8 && (
-                <p style={{ fontSize: 11, color: "#22A06B", marginTop: 5, fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
-                  Strong enough
-                </p>
-              )}
-            </div>
-            <div>
-              <label style={labelStyle}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
-                </svg>
-                CONFIRM PASSWORD
-              </label>
-              <div style={{ position: "relative" }}>
-                <input
-                  style={{
-                    ...inputStyle,
-                    borderColor: form.confirmPassword ? (passwordsMatch ? "#22A06B" : "#DC2626") : "#E0E0DE",
-                  }}
-                  type={showConfirmPassword ? "text" : "password"}
-                  value={form.confirmPassword}
-                  onChange={(e) => update("confirmPassword", e.target.value)}
-                  placeholder="Retype password"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}
-                >
-                  {showConfirmPassword ? Icons.eye({ size: 16 }) : Icons.eye({ size: 16 })}
-                </button>
-              </div>
-              {form.confirmPassword && !passwordsMatch && (
-                <p style={{ fontSize: 11, color: "#DC2626", marginTop: 5, fontFamily: font }}>Passwords do not match</p>
-              )}
-              {form.confirmPassword && passwordsMatch && (
-                <p style={{ fontSize: 11, color: "#22A06B", marginTop: 5, fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
-                  Passwords match
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* CURRENT CITY & HOMETOWN */}
-          <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
-            <div>
-              <label style={labelStyle}><SignUpIcons.home /> CURRENT CITY</label>
-              <input style={inputStyle} value={form.location} onChange={(e) => update("location", e.target.value)} placeholder="Berlin, Germany" required />
-            </div>
-            <div>
-              <label style={labelStyle}><SignUpIcons.mapPin /> HOMETOWN (INDIA)</label>
-              <input style={inputStyle} value={form.hometown} onChange={(e) => update("hometown", e.target.value)} placeholder="Mumbai, MH" required />
-            </div>
-          </div>
-
-          {/* CURRENT STATUS & LIVING ABROAD SINCE */}
-          <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
-            <div>
-              <label style={labelStyle}>CURRENT STATUS</label>
-              <div style={{ position: "relative" }}>
-                <select style={{ ...inputStyle, cursor: "pointer", appearance: "none", paddingRight: 36 }} value={form.occupationStatus} onChange={(e) => update("occupationStatus", e.target.value)}>
-                  {OCCUPATION_TYPES.map((o) => <option key={o}>{o}</option>)}
-                </select>
-                <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
-              </div>
-            </div>
-            <div>
-              <label style={labelStyle}>LIVING ABROAD SINCE?</label>
-              <div style={{ position: "relative" }}>
-                {residencyStep === "india" ? (
-                  <div style={{ ...inputStyle, background: "#F0EFED", color: "#9B9A97", cursor: "not-allowed" }}>Not lived abroad</div>
-                ) : (
-                  <select style={{ ...inputStyle, cursor: "pointer", appearance: "none", paddingRight: 36, color: form.yearsAbroad ? "#37352F" : "#9B9A97" }} value={form.yearsAbroad} onChange={(e) => update("yearsAbroad", e.target.value)} required>
-                    <option value="" disabled>Select duration</option>
-                    {YEARS_OPTIONS.map((y) => <option key={y}>{y}</option>)}
-                  </select>
-                )}
-                {residencyStep !== "india" && <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>}
-              </div>
-            </div>
-          </div>
-
-          {/* JOB TITLE / INDUSTRY */}
-          <div style={{ marginBottom: 28 }}>
-            <label style={labelStyle}>
-              <SignUpIcons.briefcase />
-              {form.occupationStatus === "Student" ? "MAJOR / UNIVERSITY" : "JOB TITLE / INDUSTRY"}
-            </label>
-            <input style={inputStyle} value={form.profession} onChange={(e) => update("profession", e.target.value)} placeholder={form.occupationStatus === "Student" ? "e.g. Computer Science, TU Munich" : "e.g. Software Engineer"} required />
-          </div>
-
-          {/* LINKEDIN PROFILE */}
-          <div style={{ marginBottom: 28 }}>
-            <label style={labelStyle}>
-              <SignUpIcons.linkedin /> LINKEDIN PROFILE (REQUIRED FOR VERIFICATION)
-            </label>
-            <input style={inputStyle} value={form.linkedinUrl} onChange={(e) => update("linkedinUrl", e.target.value)} placeholder="https://linkedin.com/in/..." required />
-          </div>
-
-          {/* GDPR CONSENT SECTION */}
-          <div style={{
-            padding: "20px", borderRadius: 10, border: "1px solid #E0E0DE",
-            background: "#FAFAF8", marginBottom: 28,
-          }}>
-            <h4 style={{ fontSize: 12, fontWeight: 700, color: "#37352F", marginBottom: 14, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-              Data Protection & Privacy
-            </h4>
-
-            {/* Required consent */}
-            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", marginBottom: 14 }}>
-              <input
-                type="checkbox"
-                checked={gdprConsent}
-                onChange={(e) => setGdprConsent(e.target.checked)}
-                style={{ marginTop: 3, accentColor: "#37352F", width: 16, height: 16, flexShrink: 0 }}
-              />
-              <span style={{ fontSize: 13, color: "#37352F", lineHeight: 1.5, fontFamily: font }}>
-                I agree to the{" "}
-                <button type="button" onClick={() => setPrivacyModalOpen(true)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
-                  Privacy Policy
-                </button>
-                {" "}and{" "}
-                <button type="button" onClick={() => setPrivacyModalOpen(true)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
-                  Terms of Service
-                </button>
-                . I consent to the processing of my personal data as described.
-                <span style={{ color: "#DC2626" }}> *</span>
-              </span>
-            </label>
-
-            {/* Optional marketing consent */}
-            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={marketingConsent}
-                onChange={(e) => setMarketingConsent(e.target.checked)}
-                style={{ marginTop: 3, accentColor: "#37352F", width: 16, height: 16, flexShrink: 0 }}
-              />
-              <span style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, fontFamily: font }}>
-                I'd like to receive community updates, event notifications, and tips for life abroad via email. <span style={{ color: "#9B9A97" }}>(Optional)</span>
-              </span>
-            </label>
-          </div>
-
-          {/* GDPR info note */}
-          <div style={{
-            display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px",
-            background: "#F0EFED", borderRadius: 8, marginBottom: 28, fontSize: 11, color: "#5F5E5B", lineHeight: 1.55, fontFamily: font,
-          }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-            </svg>
-            <span>
-              Your data is stored securely and processed in accordance with GDPR. You can request data export or deletion at any time from your account settings. We never sell your personal data to third parties.
-            </span>
-          </div>
-
-          {/* Submit button */}
-          <button
-            type="submit"
-            disabled={!valid || otpSending}
-            style={{
-              width: "100%",
-              padding: "14px",
-              borderRadius: 8,
-              border: "none",
-              fontSize: 15,
-              fontWeight: 600,
-              background: valid ? "#37352F" : "#EDEDEB",
-              color: valid ? "#fff" : "#9B9A97",
-              cursor: valid ? "pointer" : "not-allowed",
-              fontFamily: font,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              transition: "background 0.15s",
-            }}
-          >
-            {otpSending ? "Sending verification code..." : "Continue — Verify Email"}
-            {!otpSending && <SignUpIcons.arrowRight />}
-          </button>
-        </form>
-
-        {/* Bottom link */}
-        <p style={{ textAlign: "center", marginTop: 28, fontSize: 13, color: "#9B9A97", fontWeight: 400 }}>
-          <button onClick={onLogin} style={{ background: "none", border: "none", color: "#6B7280", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3, fontFamily: font, fontSize: 13, fontWeight: 400 }}>
-            Already have an account? Log in
-          </button>
-        </p>
-      </div>
-
-      {/* Privacy Policy Modal */}
-      {privacyModalOpen && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setPrivacyModalOpen(false)}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "80vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED", position: "sticky", top: 0, background: "#fff", zIndex: 1 }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy Policy & Terms</h3>
-              <button onClick={() => setPrivacyModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <div style={{ padding: 24, fontSize: 13, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>1. Data We Collect</h4>
-              <p style={{ marginBottom: 16 }}>We collect the personal information you provide during registration: your name, email, location, hometown, profession, LinkedIn URL, and occupation status. We also collect usage data such as posts, comments, and interactions within the platform.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>2. How We Use Your Data</h4>
-              <p style={{ marginBottom: 16 }}>Your data is used to: provide and personalize the NRIClub service, connect you with relevant community members, send essential service notifications, and (with your consent) send marketing communications.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>3. Legal Basis (GDPR Art. 6)</h4>
-              <p style={{ marginBottom: 16 }}>We process your data based on: your explicit consent (Art. 6(1)(a)), performance of our service contract (Art. 6(1)(b)), and our legitimate interest in operating the platform (Art. 6(1)(f)).</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>4. Your Rights</h4>
-              <p style={{ marginBottom: 16 }}>Under GDPR, you have the right to: access your personal data, rectify inaccurate data, request erasure ("right to be forgotten"), restrict processing, data portability (export your data), object to processing, and withdraw consent at any time. You can exercise these rights from your Account Settings.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>5. Data Retention</h4>
-              <p style={{ marginBottom: 16 }}>We retain your data for as long as your account is active. Upon account deletion, all personal data is permanently erased within 30 days.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>6. Data Sharing</h4>
-              <p style={{ marginBottom: 16 }}>We do not sell your personal data. Data is only shared with essential service providers (email delivery, hosting) under data processing agreements compliant with GDPR.</p>
-
-              <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>7. Contact</h4>
-              <p>For any data protection inquiries, contact our Data Protection Officer at privacy@nriclub.app.</p>
-
-              <p style={{ marginTop: 20, fontSize: 11, color: "#9B9A97", fontStyle: "italic" }}>Last updated: April 2026</p>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ============================================================================
 // LOGIN PAGE
 // ============================================================================
-const LoginPage = ({ onComplete, onSignUp }) => {
-  const [email, setEmail] = useState("");
+const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resetMode, setResetMode] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  // Signed up but never entered the email code: offer a new one and take it
+  // right here.
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [codeMode, setCodeMode] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [resendAt, setResendAt] = useState(0);
   const font = "'DM Sans', sans-serif";
+  const cleanEmail = email.trim().toLowerCase();
+
+  // Load the profile for the session that was just started; on failure the
+  // caller signs out again so no half-finished login is kept.
+  const finishLogin = async () => {
+    const dbProfile = await api.getMyProfile();
+    if (!dbProfile) throw new Error("No profile");
+    rateLimiter.reset("login_" + cleanEmail);
+    onComplete(mapProfile({ ...dbProfile, email: dbProfile.email || cleanEmail }));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    if (loading) return;
     setError("");
-
+    setUnconfirmed(false);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { setError("Please enter a valid email address."); return; }
+    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
     // Rate limiting: max 5 attempts per 15 minutes
-    const rl = rateLimiter.check("login_" + email, 5, 900000);
+    const rl = rateLimiter.check("login_" + cleanEmail, 5, 900000);
     if (!rl.allowed) {
       setError(`Too many login attempts. Please wait ${Math.ceil(rl.waitSecs / 60)} minutes.`);
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.signIn(cleanEmail, password);
+    } catch (err) {
+      const msg = (err.message || "").toLowerCase();
+      if (msg.includes("not confirmed")) {
+        setUnconfirmed(true);
+        setError("You haven't confirmed your email address yet. We'll send you a new 6-digit code.");
+      } else if (msg.includes("invalid login credentials")) {
+        setError("That email and password don't match. Try again, or reset your password.");
+      } else {
+        setError(authErrorMessage(err) || err.message || "We couldn't log you in. Please try again.");
+      }
       setLoading(false);
       return;
     }
-
-    // Validate inputs
-    const cleanEmail = validateInput(email, 254).toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes("@")) {
-      setError("Please enter a valid email."); setLoading(false); return;
-    }
-    if (!password || password.length < 6) {
-      setError("Password must be at least 6 characters."); setLoading(false); return;
-    }
-
     try {
-      const data = await api.signIn(cleanEmail, password);
-      const dbProfile = await api.getMyProfile();
-      if (dbProfile) {
-        const profile = {
-          id: dbProfile.id, name: dbProfile.name, email: dbProfile.email || email,
-          location: dbProfile.location, hometown: dbProfile.hometown,
-          profession: dbProfile.profession, occupationStatus: dbProfile.occupation_status,
-          yearsAbroad: dbProfile.years_abroad, linkedinUrl: dbProfile.linkedin_url,
-          emailVerified: dbProfile.email_verified,
-          linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "", status: dbProfile.status || "active",
-          isNRI: dbProfile.years_abroad && dbProfile.years_abroad !== "Not lived abroad",
-        };
-        localStorage.setItem("nriclub_profile_cache", JSON.stringify(profile));
-        setLoading(false);
-        onComplete(profile);
-        return;
-      }
-      await api.signOut();
-      setError("We couldn't load your profile. Please try again or contact support.");
-      setLoading(false);
+      await finishLogin();
     } catch (err) {
-      // signIn's errors are readable ("Invalid login credentials"); anything
-      // after it is a server error, so don't keep a half-finished login.
-      if (api.getCurrentUser()) {
-        await api.signOut();
-        setError("We couldn't load your profile. Please try again in a moment.");
-      } else {
-        setError(err.message || "Invalid email or password.");
-      }
+      await api.signOut();
+      setError("We couldn't load your profile. Please try again in a moment.");
       setLoading(false);
     }
   };
 
+  const sendCode = async () => {
+    if (sendingCode) return;
+    setSendingCode(true);
+    try {
+      await api.sendOtp(cleanEmail);
+      setResendAt(Date.now() + 60000);
+      setError("");
+      setCodeMode(true);
+    } catch (err) {
+      // A code was sent moments ago: let them enter that one.
+      const wait = /after (\d+) seconds?/i.exec(err.message || "");
+      if (wait) {
+        setResendAt(Date.now() + Number(wait[1]) * 1000);
+        setError("");
+        setCodeMode(true);
+      } else {
+        setError(authErrorMessage(err) || "We couldn't send a code. Please try again in a minute.");
+      }
+    }
+    setSendingCode(false);
+  };
+
+  const verifyCode = async (code) => {
+    let session = await api.verifyOtp(cleanEmail, code); // wrong codes throw here
+    try {
+      if (!session?.access_token) session = await api.signIn(cleanEmail, password).catch(() => null);
+      if (!session?.access_token) throw Object.assign(new Error("No session"), { userMessage: "Your email is confirmed. Please log in." });
+      await finishLogin();
+    } catch (err) {
+      if (err.userMessage) throw err;
+      await api.signOut();
+      throw Object.assign(new Error("Login failed"), {
+        userMessage: isNetworkError(err) ? NETWORK_MESSAGE : "Your email is confirmed, but we couldn't load your profile. Please log in again.",
+      });
+    }
+  };
+
   const handleResetPassword = async () => {
-    if (!email || !email.includes("@")) { setError("Please enter your email first."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { setError("Please enter your email first."); return; }
     setLoading(true);
     setError("");
     try {
-      await api.resetPassword(email);
+      await api.resetPassword(cleanEmail);
       setResetSent(true);
     } catch(e) {
-      setError(e.message || "Failed to send reset email.");
+      setError(authErrorMessage(e) || e.message || "Failed to send reset email.");
     }
     setLoading(false);
   };
@@ -1368,38 +627,58 @@ const LoginPage = ({ onComplete, onSignUp }) => {
     fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F",
     fontFamily: font, boxSizing: "border-box",
   };
+  const labelStyle = { display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font };
+  const errorStyle = { padding: "12px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 16, fontSize: 13, lineHeight: 1.5, color: "#B91C1C", fontFamily: font };
 
   // Eye icon SVGs
-  const EyeIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
-  const EyeOffIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9B9A97" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+  const EyeIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#787774" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
+  const EyeOffIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#787774" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+
+  if (codeMode) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
+        <div style={{ maxWidth: 400, width: "100%" }}>
+          <CodeEntry
+            email={cleanEmail}
+            onVerify={verifyCode}
+            onResend={async () => { await api.sendOtp(cleanEmail); setResendAt(Date.now() + 60000); }}
+            resendAt={resendAt}
+            onChangeEmail={() => { setCodeMode(false); setUnconfirmed(false); setError(""); }}
+            changeLabel="Back to login"
+            submitLabel="Verify and log in"
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (resetMode) {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", background: "#FAFAF8" }}>
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
         <div style={{ maxWidth: 360, width: "100%" }}>
           <div style={{ textAlign: "center", marginBottom: 40 }}>
             <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
               {Icons.shield({ size: 24, stroke: "#37352F" })}
             </div>
             <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Reset Password</h2>
-            <p style={{ color: "#9B9A97", fontSize: 14, marginTop: 8, fontFamily: font }}>Enter your email and we'll send you a reset link</p>
+            <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Enter your email and we'll send you a reset link</p>
           </div>
-          {error && <div style={{ padding: "12px 16px", background: "#FEE", borderRadius: 8, marginBottom: 16, fontSize: 13, color: "#C00" }}>{error}</div>}
+          {error && <div role="alert" style={errorStyle}>{error}</div>}
           {resetSent ? (
             <div style={{ padding: "20px", background: "#E3FCEF", borderRadius: 10, textAlign: "center", marginBottom: 20 }}>
-              <p style={{ fontSize: 14, color: "#22A06B", fontWeight: 600, fontFamily: font, marginBottom: 8 }}>Reset email sent!</p>
+              <p style={{ fontSize: 14, color: "#126B45", fontWeight: 600, fontFamily: font, marginBottom: 8 }}>Reset email sent!</p>
               <p style={{ fontSize: 13, color: "#5F5E5B", fontFamily: font }}>Check your inbox for a password reset link. It may take a few minutes.</p>
             </div>
           ) : (
             <>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font }}>Email</label>
-                <input style={inputStyle} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus />
+                <label htmlFor="reset-email" style={labelStyle}>Email</label>
+                <input id="reset-email" style={inputStyle} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus />
               </div>
               <button onClick={handleResetPassword} disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600, background: "#37352F", color: "#fff", cursor: "pointer", fontFamily: font }}>{loading ? "Sending..." : "Send Reset Link"}</button>
             </>
           )}
-          <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#9B9A97", fontFamily: font }}>
+          <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#6B6A67", fontFamily: font }}>
             <button onClick={() => { setResetMode(false); setResetSent(false); setError(""); }} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Back to login</button>
           </p>
         </div>
@@ -1408,48 +687,58 @@ const LoginPage = ({ onComplete, onSignUp }) => {
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", background: "#FAFAF8" }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
       <div style={{ maxWidth: 360, width: "100%" }}>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
           <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
             {Icons.globe({ size: 24, stroke: "#37352F" })}
           </div>
           <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Welcome back</h2>
-          <p style={{ color: "#9B9A97", fontSize: 14, marginTop: 8, fontFamily: font }}>Log in to NRIClub</p>
+          <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Log in to NRIClub</p>
         </div>
 
-        {error && <div style={{ padding: "12px 16px", background: "#FEE", borderRadius: 8, marginBottom: 16, fontSize: 13, color: "#C00" }}>{error}</div>}
+        {error && (
+          unconfirmed ? (
+            <div role="alert" style={{ ...errorStyle, background: "#FFF8E6", border: "1px solid #FCE7B2", color: "#7A4D00" }}>
+              {error}
+              <button type="button" onClick={sendCode} disabled={sendingCode} style={{ display: "block", marginTop: 10, padding: "8px 14px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, opacity: sendingCode ? 0.7 : 1 }}>
+                {sendingCode ? "Sending..." : "Send me a new code"}
+              </button>
+            </div>
+          ) : (
+            <div role="alert" style={errorStyle}>{error}</div>
+          )
+        )}
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font }}>Email</label>
-            <input style={inputStyle} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" required autoFocus />
+            <label htmlFor="login-email" style={labelStyle}>Email</label>
+            <input id="login-email" style={inputStyle} type="email" autoComplete="email" inputMode="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus={!initialEmail} />
           </div>
           <div style={{ marginBottom: 10 }}>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font }}>Password</label>
+            <label htmlFor="login-password" style={labelStyle}>Password</label>
             <div style={{ position: "relative" }}>
-              <input style={{ ...inputStyle, paddingRight: 44 }} type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex" }}>
+              <input id="login-password" style={{ ...inputStyle, paddingRight: 44 }} type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoFocus={!!initialEmail} />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"} aria-controls="login-password" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex", borderRadius: 6 }}>
                 {showPassword ? <EyeOffIcon /> : <EyeIcon />}
               </button>
             </div>
           </div>
           <div style={{ textAlign: "right", marginBottom: 20 }}>
-            <button type="button" onClick={() => { setResetMode(true); setError(""); }} style={{ background: "none", border: "none", color: "#5B9CFF", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Forgot password?</button>
+            <button type="button" onClick={() => { setResetMode(true); setError(""); }} style={{ background: "none", border: "none", color: "#2F6FD6", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, padding: 4 }}>Forgot password?</button>
           </div>
           <button
-            type="submit" disabled={!email || !password || loading}
+            type="submit" disabled={loading}
             style={{
               width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600,
-              background: email && password ? "#37352F" : "#E8E7E4", color: email && password ? "#fff" : "#9B9A97",
-              cursor: email && password ? "pointer" : "not-allowed", fontFamily: font,
+              background: "#37352F", color: "#fff", cursor: loading ? "default" : "pointer", opacity: loading ? 0.75 : 1, fontFamily: font,
             }}
           >
             {loading ? "Logging in..." : "Continue"}
           </button>
         </form>
 
-        <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#9B9A97", fontFamily: font }}>
+        <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#6B6A67", fontFamily: font }}>
           Don't have an account?{" "}
           <button onClick={onSignUp} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>
             Sign up
@@ -1703,7 +992,7 @@ const BlockedUsersModal = ({ onClose, font }) => {
   );
 };
 
-const Dashboard = ({ user, onLogout }) => {
+const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [view, setView] = useState("home");
   const [posts, setPosts] = useState([]);
   const [likedPostIds, setLikedPostIds] = useState(new Set());
@@ -1731,14 +1020,9 @@ const Dashboard = ({ user, onLogout }) => {
   const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
   const [eventPhoto, setEventPhoto] = useState(null); // { url, preview }
   const [helpRequests, setHelpRequests] = useState([]);
-  const [linkedinBannerDismissed, setLinkedinBannerDismissed] = useState(false);
-  const [linkedinReviewBannerDismissed, setLinkedinReviewBannerDismissed] = useState(false);
-
-  // Check if profile is incomplete (no LinkedIn) and older than 72 hours
-  const profileAge = user?.createdAt ? (Date.now() - user.createdAt) : (user?.created_at ? (Date.now() - new Date(user.created_at).getTime()) : 0);
-  const hoursOld = profileAge / (1000 * 60 * 60);
-  const hasLinkedin = user?.linkedinUrl && user.linkedinUrl.trim().length > 5;
-  const isBlocked = !hasLinkedin && hoursOld > 72;
+  // "Update details" (an admin asked for more information) opens Get verified.
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [profileCardDismissed, dismissProfileCard] = useProfileCardDismissed(user.id);
   const [helpModal, setHelpModal] = useState(false);
   const [selectedHelp, setSelectedHelp] = useState(null);
   const [helpResponse, setHelpResponse] = useState("");
@@ -1746,6 +1030,9 @@ const Dashboard = ({ user, onLogout }) => {
   const [newHelp, setNewHelp] = useState({ title: "", description: "", category: "General", urgency: "Low" });
   const [profileModal, setProfileModal] = useState(false);
   const [editProfile, setEditProfile] = useState({ ...user });
+  const [profileFocus, setProfileFocus] = useState(null); // field to focus when Edit Profile opens
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileErrors, setProfileErrors] = useState({});
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [feedSort, setFeedSort] = useState("new");
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
@@ -2216,18 +1503,54 @@ const Dashboard = ({ user, onLogout }) => {
     try { await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgency }); } catch (e) {}
   };
 
+  const openProfileEditor = (focusField = null) => {
+    setEditProfile({ ...user });
+    setProfileErrors({});
+    setProfileFocus(focusField);
+    setProfileModal(true);
+  };
+
   const saveProfileChanges = async () => {
-    const updated = { ...user, ...editProfile };
+    if (profileSaving) return;
+    const trim = (v) => (v || "").trim();
+    const linkedinUrl = trim(editProfile.linkedinUrl);
+    // An empty link is fine (members verified without LinkedIn).
+    const linkedinError = linkedinUrl ? linkedinProblem(linkedinUrl) : null;
+    if (linkedinError) { setProfileErrors({ linkedinUrl: linkedinError }); return; }
+    const updates = {
+      location: trim(editProfile.location), profession: trim(editProfile.profession),
+      linkedin_url: linkedinUrl, occupation_status: editProfile.occupationStatus || "",
+    };
+    if (isUserNRI(user)) {
+      updates.hometown = trim(editProfile.hometown);
+      updates.years_abroad = editProfile.yearsAbroad || "";
+    }
+    setProfileSaving(true);
+    setProfileErrors({});
     try {
-      await api.updateProfile({
-        name: updated.name, location: updated.location, hometown: updated.hometown,
-        profession: updated.profession, linkedin_url: updated.linkedinUrl,
-      });
-    } catch (e) { console.log("Profile update:", e.message); }
-    localStorage.setItem("nriclub_profile_cache", JSON.stringify(updated));
-    // Update the user state so UI reflects changes immediately
-    Object.assign(user, updated);
+      await api.updateProfile(updates);
+    } catch (e) {
+      setProfileErrors({ form: "Your changes couldn't be saved. Please try again." });
+      setProfileSaving(false);
+      return;
+    }
+    let refreshed = null;
+    try { refreshed = mapProfile(await api.getMyProfile()); } catch (e) {}
+    onUserUpdate(refreshed || {
+      ...user, location: updates.location, profession: updates.profession, linkedinUrl: updates.linkedin_url,
+      occupationStatus: updates.occupation_status,
+      ...(updates.hometown !== undefined ? { hometown: updates.hometown, yearsAbroad: updates.years_abroad } : {}),
+    });
+    setProfileSaving(false);
     setProfileModal(false);
+  };
+
+  // "Complete your profile" card
+  const profileItems = profileCardDismissed ? [] : missingProfileItems(user, groups);
+  const handleProfileItem = (item) => {
+    if (item.key === "photo") document.getElementById("avatar-upload")?.click();
+    else if (item.key === "group") toggleGroup(item.groupId);
+    else openProfileEditor(item.key);
   };
 
   // Styles
@@ -2257,6 +1580,10 @@ const Dashboard = ({ user, onLogout }) => {
       case "home":
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
+            {/* Complete your profile (mobile; the left column has it on desktop) */}
+            <div className="nc-mobile-only">
+              <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} style={{ marginBottom: 20 }} />
+            </div>
             {/* Header with Filters + Add Post button */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
               <div>
@@ -2389,6 +1716,7 @@ const Dashboard = ({ user, onLogout }) => {
                 setNetworkUsers(dbUsers.map(u => ({
                   id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
                   hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
+                  linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "",
                   avatar_url: u.avatar_url || "",
                   followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
                 })));
@@ -2512,8 +1840,9 @@ const Dashboard = ({ user, onLogout }) => {
                       {/* Name + verified badge + NRI badge */}
                       <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 14, marginBottom: 2, flexWrap: "wrap", justifyContent: "center" }}>
                         <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>{u.name}</h3>
-                        {u.linkedinUrl && (
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="#22C55E" stroke="none">
+                        {u.linkedin_verified && (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="#22C55E" stroke="none" role="img" aria-label="Verified member">
+                            <title>Verified member</title>
                             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                           </svg>
                         )}
@@ -3800,14 +3129,15 @@ const Dashboard = ({ user, onLogout }) => {
                   </span>
                 )}
               </div>
-              {user.linkedinUrl && (
+              {user.linkedin_verified && (
                 <div style={{ marginTop: 16 }}>
-                  <span style={{ fontSize: 12, color: "#0077B5", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                    {Icons.linkedin({ size: 14, stroke: "#0077B5" })} LinkedIn Verified
+                  <span style={{ fontSize: 12, color: "#1A7F52", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="#22C55E" stroke="none" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                    Verified member
                   </span>
                 </div>
               )}
-              <button onClick={() => { setEditProfile({ ...user }); setProfileModal(true); }} style={{ ...btnPrimary, marginTop: 24 }}>
+              <button onClick={() => openProfileEditor()} style={{ ...btnPrimary, marginTop: 24 }}>
                 {Icons.edit({ size: 14 })} Edit Profile
               </button>
 
@@ -3860,21 +3190,18 @@ const Dashboard = ({ user, onLogout }) => {
 
   return (
     <div style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: font }}>
-      {/* LinkedIn block overlay - blocks after 72 hours without LinkedIn */}
-      {isBlocked && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.85)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ background: "#fff", borderRadius: 18, padding: "40px 32px", maxWidth: 420, width: "100%", textAlign: "center", boxShadow: "0 12px 40px rgba(0,0,0,0.1)", border: "1px solid #E8E7E4" }}>
-            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
-              {Icons.shield({ size: 28, stroke: "#DC2626" })}
-            </div>
-            <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Complete Your Profile</h2>
-            <p style={{ fontSize: 14, color: "#9B9A97", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>Your account has been temporarily restricted because your LinkedIn profile is missing. Please add your LinkedIn URL to verify your identity and continue using NRIClub.</p>
-            <button onClick={() => { setView("profile"); setEditProfile({ ...user }); setProfileModal(true); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "14px", fontSize: 15 }}>
-              {Icons.edit({ size: 16 })} Complete Profile Now
-            </button>
-            <button onClick={onLogout} style={{ background: "none", border: "none", color: "#9B9A97", cursor: "pointer", fontSize: 12, marginTop: 16, fontFamily: font }}>Sign Out</button>
-          </div>
-        </div>
+      {/* Rejected verification: full-screen card (blocked members see the blocked overlay instead) */}
+      {user?.verificationStatus === "rejected" && user?.status !== "blocked" && (
+        <RejectedScreen user={user} onSignOut={onLogout} />
+      )}
+      {/* Get verified again, when an admin asked for more information */}
+      {verifyOpen && (
+        <GetVerified
+          user={user}
+          mode="update"
+          onCancel={() => setVerifyOpen(false)}
+          onDone={(updated) => { onUserUpdate(updated); setVerifyOpen(false); }}
+        />
       )}
       {/* NAV */}
       <nav style={{ background: "#fff", borderBottom: "1px solid #E8E7E4", position: "sticky", top: 0, zIndex: 30 }}>
@@ -4094,28 +3421,8 @@ const Dashboard = ({ user, onLogout }) => {
         </div>
       )}
 
-      {/* LinkedIn warning banner */}
-      {!hasLinkedin && !linkedinBannerDismissed && !isBlocked && (
-        <div style={{ background: "#FEF2F2", borderBottom: "1px solid #FECACA", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-          <p style={{ fontSize: 12, color: "#991B1B", margin: 0, fontFamily: font }}>
-            {Icons.info({ size: 14, stroke: "#DC2626" })} Your profile is incomplete. Please add your LinkedIn URL within {Math.max(0, Math.ceil(72 - hoursOld))} hours to keep your account active.
-          </p>
-          <button onClick={() => { setView("profile"); setEditProfile({ ...user }); setProfileModal(true); setLinkedinBannerDismissed(true); }} style={{ padding: "4px 12px", borderRadius: 6, border: "none", background: "#DC2626", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", fontFamily: font }}>Add LinkedIn</button>
-          <button onClick={() => setLinkedinBannerDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#991B1B", padding: 2 }}>{Icons.x({ size: 14 })}</button>
-        </div>
-      )}
-
-      {/* Profile under review banner (blue) - shows until admin approves */}
-      {!user?.linkedin_verified && (
-        <div style={{ background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-          <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            {Icons.shield({ size: 14, stroke: "#2563EB" })}
-          </div>
-          <p style={{ fontSize: 12, color: "#1E40AF", margin: 0, fontFamily: font, lineHeight: 1.5 }}>
-            Your profile is pending review by our team. Once approved, this banner will disappear. Please ensure your LinkedIn profile is up-to-date and your signup details are accurate.
-          </p>
-        </div>
-      )}
+      {/* Verification status: pending (blue) or needs_info (amber, with Update details) */}
+      <VerificationBanner user={user} onUpdateDetails={() => setVerifyOpen(true)} />
 
       {/* Create Post Modal */}
       {createPostModal && (
@@ -4201,10 +3508,10 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
             <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Profile Blocked</h2>
             <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 20, fontFamily: font }}>
-              Your profile has been blocked by our admin team. You have <strong>72 hours</strong> to update your LinkedIn profile and ensure your signup details are accurate.
+              Your profile has been blocked by our admin team.
             </p>
-            <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 24, fontFamily: font }}>
-              Once you've updated your details, our team will review and reactivate your profile. If you believe this is an error, please contact support.
+            <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>
+              If you believe this is an error, please contact <a href="mailto:support@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>support@nriclub.app</a>.
             </p>
             <button onClick={onLogout} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Sign Out</button>
           </div>
@@ -4218,7 +3525,7 @@ const Dashboard = ({ user, onLogout }) => {
             <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "24px 20px", textAlign: "center", position: "relative" }}>
               {/* Edit button top-right */}
               <button
-                onClick={() => { setEditProfile({ ...user }); setProfileModal(true); }}
+                onClick={() => openProfileEditor()} aria-label="Edit profile"
                 style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}
               >
                 {Icons.edit({ size: 16 })}
@@ -4264,8 +3571,9 @@ const Dashboard = ({ user, onLogout }) => {
               {/* Name with green verified badge */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 2 }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>{user.name}</h3>
-                {user.linkedinUrl && (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E" stroke="none">
+                {user.linkedin_verified && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E" stroke="none" role="img" aria-label="Verified member">
+                    <title>Verified member</title>
                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                   </svg>
                 )}
@@ -4349,6 +3657,9 @@ const Dashboard = ({ user, onLogout }) => {
                 ))}
               </div>
             </div>
+
+            {/* Complete your profile (desktop; on mobile it sits at the top of the feed) */}
+            <ProfileChecklist className="profile-checklist-side" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} style={{ marginTop: 16 }} />
 
             {/* Sign Out link */}
             <div style={{ textAlign: "center", marginTop: 16 }}>
@@ -5053,12 +4364,8 @@ const Dashboard = ({ user, onLogout }) => {
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Terms & Policies</h3>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
-            <div style={{ padding: 24, overflow: "auto", flex: 1, fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
-              <p><strong style={{ color: "#37352F" }}>1. Acceptance of Terms</strong><br/>By accessing and using this platform, you accept and agree to be bound by the terms and provision of this agreement.</p>
-              <p style={{ marginTop: 16 }}><strong style={{ color: "#37352F" }}>2. Community Guidelines</strong><br/>We are committed to maintaining a safe and respectful community. Hate speech, harassment, and spam are strictly prohibited.</p>
-              <p style={{ marginTop: 16 }}><strong style={{ color: "#37352F" }}>3. Privacy Policy</strong><br/>We respect your privacy and are committed to protecting your personal data. Please review our full Privacy Policy to understand how we collect and use your information.</p>
-              <p style={{ marginTop: 16 }}><strong style={{ color: "#37352F" }}>4. User Content</strong><br/>You retain ownership of the content you post, but grant us a license to use, store, and display that content in connection with the service.</p>
-              <p style={{ marginTop: 16, fontSize: 11, color: "#9B9A97", fontStyle: "italic" }}>Last updated: October 2024</p>
+            <div style={{ padding: 24, overflow: "auto", flex: 1, fontSize: 13, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
+              <TermsContent />
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8", flexShrink: 0 }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
@@ -5652,33 +4959,57 @@ const Dashboard = ({ user, onLogout }) => {
       )}
 
       {/* Edit Profile Modal */}
-      {profileModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfileModal(false)}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "16px 20px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
-              <h3 style={{ fontSize: 15, fontWeight: 600 }}>Edit Profile</h3>
-              <button onClick={() => setProfileModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
-            </div>
-            <div style={{ padding: 24 }}>
-              {[
-                { key: "profession", label: "Profession" },
-                { key: "location", label: "Location" },
-                { key: "hometown", label: "Hometown" },
-                { key: "linkedinUrl", label: "LinkedIn URL" },
-              ].map((f) => (
-                <div key={f.key} style={{ marginBottom: 16 }}>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{f.label}</label>
-                  <input style={inputStyle} value={editProfile[f.key] || ""} onChange={(e) => setEditProfile({ ...editProfile, [f.key]: e.target.value })} />
-                </div>
-              ))}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8 }}>
-                <button onClick={() => setProfileModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>
-                <button onClick={saveProfileChanges} style={btnPrimary}>Save Changes</button>
+      {profileModal && (() => {
+        const abroad = isUserNRI(user);
+        const editLabel = { display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font };
+        const setField = (key, value) => { setEditProfile({ ...editProfile, [key]: value }); if (profileErrors[key] || profileErrors.form) setProfileErrors({}); };
+        const textField = (key, label, placeholder, extra = {}) => (
+          <div key={key} style={{ marginBottom: 16 }}>
+            <label htmlFor={`edit-${key}`} style={editLabel}>{label}</label>
+            <input id={`edit-${key}`} style={{ ...inputStyle, borderColor: profileErrors[key] ? "#DC2626" : "#E0E0DE" }} value={editProfile[key] || ""} placeholder={placeholder}
+              onChange={(e) => setField(key, e.target.value)} autoFocus={profileFocus === key}
+              aria-invalid={!!profileErrors[key]} aria-describedby={profileErrors[key] ? `edit-${key}-error` : extra.help ? `edit-${key}-help` : undefined} {...extra.input} />
+            {profileErrors[key] ? <p id={`edit-${key}-error`} style={{ fontSize: 12, color: "#DC2626", marginTop: 6, fontFamily: font }}>{profileErrors[key]}</p>
+              : extra.help ? <p id={`edit-${key}-help`} style={{ fontSize: 12, color: "#6B6A67", marginTop: 6, lineHeight: 1.45, fontFamily: font }}>{extra.help}</p> : null}
+          </div>
+        );
+        const selectField = (key, label, placeholder, options) => (
+          <div key={key} style={{ marginBottom: 16 }}>
+            <label htmlFor={`edit-${key}`} style={editLabel}>{label}</label>
+            <select id={`edit-${key}`} style={{ ...inputStyle, cursor: "pointer", color: editProfile[key] ? "#37352F" : "#6B6A67" }} value={editProfile[key] || ""}
+              onChange={(e) => setField(key, e.target.value)} autoFocus={profileFocus === key}>
+              <option value="">{placeholder}</option>
+              {options.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+        );
+        return (
+          <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfileModal(false)}>
+            <div role="dialog" aria-modal="true" aria-labelledby="edit-profile-title" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
+                <h3 id="edit-profile-title" style={{ fontSize: 15, fontWeight: 600 }}>Edit Profile</h3>
+                <button type="button" onClick={() => setProfileModal(false)} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "#6B6A67" }}>{Icons.x({ size: 18 })}</button>
               </div>
+              <form style={{ padding: 24 }} noValidate onSubmit={(e) => { e.preventDefault(); saveProfileChanges(); }}>
+                {textField("profession", "What do you do?", "e.g. Software Engineer at SAP")}
+                {textField("location", "Location", "City, Country")}
+                {abroad && textField("hometown", "Hometown in India", "e.g. Pune, Maharashtra")}
+                {abroad && selectField("yearsAbroad", "Years abroad", "When did you move abroad?", YEARS_OPTIONS)}
+                {selectField("occupationStatus", "Status", "Choose your status", OCCUPATION_TYPES)}
+                {textField("linkedinUrl", "LinkedIn profile", "linkedin.com/in/your-name", {
+                  input: { inputMode: "url", autoCapitalize: "none", spellCheck: false },
+                  help: user.verificationStatus === "approved" ? "Changing your LinkedIn sends your profile back for a quick review." : null,
+                })}
+                {profileErrors.form && <div role="alert" style={{ padding: "10px 12px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, fontSize: 13, color: "#B91C1C", marginBottom: 12, fontFamily: font }}>{profileErrors.form}</div>}
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8 }}>
+                  <button type="button" onClick={() => setProfileModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>
+                  <button type="submit" disabled={profileSaving} style={{ ...btnPrimary, opacity: profileSaving ? 0.7 : 1 }}>{profileSaving ? "Saving..." : "Save Changes"}</button>
+                </div>
+              </form>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Responsive CSS */}
       <style>{`
@@ -5770,6 +5101,7 @@ const CookieConsent = () => {
   const [visible, setVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
+  const bannerRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -5781,6 +5113,18 @@ const CookieConsent = () => {
       }
     })();
   }, []);
+
+  // While the banner shows, pad the page by its height so it never covers
+  // the last buttons on a page (Continue, Log in...).
+  useEffect(() => {
+    if (!visible || !bannerRef.current) return;
+    const el = bannerRef.current;
+    const pad = () => { document.body.style.paddingBottom = `${el.offsetHeight}px`; };
+    pad();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(pad) : null;
+    ro?.observe(el);
+    return () => { ro?.disconnect(); document.body.style.paddingBottom = ""; };
+  }, [visible]);
 
   const acceptAll = async () => {
     try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: true, date: new Date().toISOString() })); } catch (e) {}
@@ -5796,15 +5140,15 @@ const CookieConsent = () => {
   const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
   return (
-    <div style={{
+    <div ref={bannerRef} role="region" aria-label="Cookie consent" style={{
       position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
       background: "#fff", borderTop: "1px solid #E0E0DE",
       boxShadow: "0 -4px 24px rgba(0,0,0,0.08)", padding: "0",
       fontFamily: font,
     }}>
-      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 24px" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 280 }}>
+      <div className="nc-cookie-inner" style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 24px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div className="nc-cookie-text" style={{ flex: 1, minWidth: 280 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -5852,7 +5196,7 @@ const CookieConsent = () => {
             )}
           </div>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
+          <div className="nc-cookie-actions" style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
             <button onClick={acceptEssential} style={{
               padding: "10px 18px", borderRadius: 8, border: "1px solid #E0E0DE",
               background: "#fff", fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
@@ -5912,6 +5256,7 @@ const ResetPasswordPage = ({ onDone }) => {
 export default function App() {
   const [authState, setAuthState] = useState("loading");
   const [user, setUser] = useState(null);
+  const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead"
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPass, setAdminPass] = useState("");
@@ -6005,30 +5350,8 @@ export default function App() {
         const session = await api.getSession();
         if (session && session.user) {
           const dbProfile = await api.getMyProfile();
-          const cachedProfile = JSON.parse(localStorage.getItem("nriclub_profile_cache") || "null");
-          const cached = cachedProfile?.id === session.user.id ? cachedProfile : null;
           if (dbProfile) {
-            // Merge: prefer DB values, but fall back to cache for fields that might be empty in DB
-            const mapped = {
-              id: dbProfile.id,
-              name: dbProfile.name || cached?.name || "",
-              email: dbProfile.email || cached?.email || "",
-              location: dbProfile.location || cached?.location || "",
-              hometown: dbProfile.hometown || cached?.hometown || "",
-              profession: dbProfile.profession || cached?.profession || "",
-              occupationStatus: dbProfile.occupation_status || cached?.occupationStatus || "",
-              yearsAbroad: dbProfile.years_abroad || cached?.yearsAbroad || "",
-              linkedinUrl: dbProfile.linkedin_url || cached?.linkedinUrl || "",
-              isNRI: !!(dbProfile.years_abroad || cached?.yearsAbroad) && (dbProfile.years_abroad || cached?.yearsAbroad) !== "Not lived abroad",
-              emailVerified: dbProfile.email_verified,
-              linkedin_verified: dbProfile.linkedin_verified || false, avatar_url: dbProfile.avatar_url || "", status: dbProfile.status || "active",
-            };
-            // If DB has empty fields but cache has them, push cache values to DB
-            if (!dbProfile.location && cached?.location) {
-              try { await api.updateProfile({ location: cached.location, hometown: cached.hometown, profession: cached.profession, occupation_status: cached.occupationStatus, years_abroad: cached.yearsAbroad, linkedin_url: cached.linkedinUrl }); } catch(e) {}
-            }
-            setUser(mapped);
-            localStorage.setItem("nriclub_profile_cache", JSON.stringify(mapped));
+            setUser(mapProfile(dbProfile));
             setAuthState("authenticated");
             return;
           }
@@ -6088,9 +5411,11 @@ export default function App() {
     if (authState === "reset-password") return <ResetPasswordPage onDone={() => window.location.reload()} />;
     if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={handleAdminLogout} />;
     if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
-    if (authState === "signup") return <SignUpPage onComplete={handleAuthComplete} onLogin={() => setAuthState("login")} />;
-    if (authState === "login") return <LoginPage onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
-    if (authState === "authenticated" && user) return <Dashboard user={user} onLogout={handleLogout} />;
+    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onLogin={(email) => { setLoginEmail(email || ""); setAuthState("login"); }} />;
+    if (authState === "login") return <LoginPage initialEmail={loginEmail} onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
+    // Members who haven't given their verification details yet do that first.
+    if (authState === "authenticated" && user && user.verificationStatus === "incomplete") return <GetVerified user={user} onDone={setUser} onSignOut={handleLogout} />;
+    if (authState === "authenticated" && user) return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
     return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
   })();
 
