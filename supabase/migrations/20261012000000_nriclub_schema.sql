@@ -35,13 +35,13 @@ CREATE TABLE public.admins (
 CREATE TABLE public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL DEFAULT '',
-  avatar_url TEXT NOT NULL DEFAULT '',
-  location TEXT NOT NULL DEFAULT '',
-  hometown TEXT NOT NULL DEFAULT '',
-  profession TEXT NOT NULL DEFAULT '',
-  occupation_status TEXT NOT NULL DEFAULT 'Working Professional',
-  years_abroad TEXT NOT NULL DEFAULT '',
-  linkedin_url TEXT NOT NULL DEFAULT '',
+  avatar_url TEXT NOT NULL DEFAULT '' CHECK (char_length(avatar_url) <= 2048),
+  location TEXT NOT NULL DEFAULT '' CHECK (char_length(location) <= 200),
+  hometown TEXT NOT NULL DEFAULT '' CHECK (char_length(hometown) <= 200),
+  profession TEXT NOT NULL DEFAULT '' CHECK (char_length(profession) <= 200),
+  occupation_status TEXT NOT NULL DEFAULT 'Working Professional' CHECK (char_length(occupation_status) <= 100),
+  years_abroad TEXT NOT NULL DEFAULT '' CHECK (char_length(years_abroad) <= 100),
+  linkedin_url TEXT NOT NULL DEFAULT '' CHECK (char_length(linkedin_url) <= 500),
   bio TEXT NOT NULL DEFAULT '',
   email_verified BOOLEAN NOT NULL DEFAULT FALSE,   -- mirrors auth.users.email_confirmed_at
   linkedin_verified BOOLEAN NOT NULL DEFAULT FALSE, -- set by admins on approval
@@ -64,8 +64,8 @@ CREATE TABLE public.profile_private (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Privacy and notification preferences. Other members can read a row to see
--- whether someone accepts messages or Namaste requests.
+-- Privacy and notification preferences. Only the owner (and admins) can read
+-- a row; other members see the public part via public.get_member_preferences().
 CREATE TABLE public.user_settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL UNIQUE REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -84,7 +84,7 @@ CREATE TABLE public.groups (
   name TEXT NOT NULL UNIQUE CHECK (char_length(name) <= 200),
   description TEXT NOT NULL DEFAULT '' CHECK (char_length(description) <= 2000),
   category TEXT NOT NULL DEFAULT 'City' CHECK (category IN ('City', 'Professional', 'Interest', 'Support')),
-  image_url TEXT NOT NULL DEFAULT '',
+  image_url TEXT NOT NULL DEFAULT '' CHECK (char_length(image_url) <= 2048),
   members_count INTEGER NOT NULL DEFAULT 0,
   created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   is_approved BOOLEAN NOT NULL DEFAULT FALSE,
@@ -106,8 +106,8 @@ CREATE TABLE public.posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   content TEXT NOT NULL CHECK (char_length(content) <= 10000),
-  image_url TEXT,
-  tags TEXT[] NOT NULL DEFAULT '{}',
+  image_url TEXT CHECK (char_length(image_url) <= 2048),
+  tags TEXT[] NOT NULL DEFAULT '{}' CHECK (cardinality(tags) <= 30 AND char_length(array_to_string(tags, '')) <= 1500),
   likes_count INTEGER NOT NULL DEFAULT 0,
   comments_count INTEGER NOT NULL DEFAULT 0,
   group_id UUID REFERENCES public.groups(id) ON DELETE SET NULL,
@@ -154,15 +154,15 @@ CREATE TABLE public.events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL CHECK (char_length(title) <= 300),
   description TEXT NOT NULL DEFAULT '' CHECK (char_length(description) <= 10000),
-  date TEXT NOT NULL,
-  time TEXT NOT NULL DEFAULT 'TBD',
-  location TEXT NOT NULL DEFAULT '',
-  city TEXT NOT NULL DEFAULT '',
-  image_url TEXT NOT NULL DEFAULT '',
-  link TEXT NOT NULL DEFAULT '',
+  date TEXT NOT NULL CHECK (char_length(date) <= 100),
+  time TEXT NOT NULL DEFAULT 'TBD' CHECK (char_length(time) <= 100),
+  location TEXT NOT NULL DEFAULT '' CHECK (char_length(location) <= 300),
+  city TEXT NOT NULL DEFAULT '' CHECK (char_length(city) <= 200),
+  image_url TEXT NOT NULL DEFAULT '' CHECK (char_length(image_url) <= 2048),
+  link TEXT NOT NULL DEFAULT '' CHECK (char_length(link) <= 2048),
   attendees_count INTEGER NOT NULL DEFAULT 0,
   organizer_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
-  organizer_name TEXT NOT NULL DEFAULT '',
+  organizer_name TEXT NOT NULL DEFAULT '' CHECK (char_length(organizer_name) <= 200),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_events_organizer ON public.events(organizer_id);
@@ -209,7 +209,7 @@ CREATE TABLE public.marketplace (
   description TEXT NOT NULL DEFAULT '' CHECK (char_length(description) <= 10000),
   price TEXT NOT NULL CHECK (char_length(price) <= 100),
   category TEXT NOT NULL DEFAULT 'Items' CHECK (category IN ('Housing', 'Jobs', 'Items', 'Vehicles', 'Services')),
-  location TEXT NOT NULL DEFAULT '',
+  location TEXT NOT NULL DEFAULT '' CHECK (char_length(location) <= 200),
   image_url TEXT NOT NULL DEFAULT '' CHECK (char_length(image_url) <= 20000),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'sold', 'expired')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -221,11 +221,11 @@ CREATE TABLE public.docs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   title TEXT NOT NULL CHECK (char_length(title) <= 300),
-  excerpt TEXT NOT NULL DEFAULT '' CHECK (char_length(excerpt) <= 2000),
+  excerpt TEXT NOT NULL DEFAULT '' CHECK (char_length(excerpt) <= 50000),
   content TEXT NOT NULL DEFAULT '' CHECK (char_length(content) <= 50000),
-  category TEXT NOT NULL DEFAULT 'General',
-  city TEXT NOT NULL DEFAULT '',
-  read_time TEXT NOT NULL DEFAULT '1 min read',
+  category TEXT NOT NULL DEFAULT 'General' CHECK (char_length(category) <= 100),
+  city TEXT NOT NULL DEFAULT '' CHECK (char_length(city) <= 200),
+  read_time TEXT NOT NULL DEFAULT '1 min read' CHECK (char_length(read_time) <= 50),
   likes_count INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -246,7 +246,7 @@ CREATE TABLE public.help_requests (
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   title TEXT NOT NULL CHECK (char_length(title) <= 300),
   description TEXT NOT NULL CHECK (char_length(description) <= 10000),
-  category TEXT NOT NULL DEFAULT 'General',
+  category TEXT NOT NULL DEFAULT 'General' CHECK (char_length(category) <= 100),
   urgency TEXT NOT NULL DEFAULT 'Low' CHECK (urgency IN ('Low', 'Medium', 'High')),
   status TEXT NOT NULL DEFAULT 'Open' CHECK (status IN ('Open', 'Resolved')),
   responses_count INTEGER NOT NULL DEFAULT 0,
@@ -623,6 +623,18 @@ $$;
 REVOKE ALL ON FUNCTION public.delete_my_account() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.delete_my_account() TO authenticated;
 
+-- RPC: the settings other members need to see before contacting someone.
+CREATE FUNCTION public.get_member_preferences(member UUID)
+RETURNS TABLE (namaste_requests TEXT, receive_messages TEXT, profile_visibility TEXT)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT s.namaste_requests, s.receive_messages, s.profile_visibility
+  FROM public.user_settings s
+  WHERE s.user_id = member AND (SELECT auth.uid()) IS NOT NULL;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_member_preferences(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_member_preferences(UUID) TO authenticated;
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
@@ -674,8 +686,8 @@ CREATE POLICY "Users can update their own private profile data" ON public.profil
   USING (id = (SELECT auth.uid())) WITH CHECK (id = (SELECT auth.uid()));
 
 -- USER_SETTINGS
-CREATE POLICY "Members can view settings" ON public.user_settings
-  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "Users can view their own settings" ON public.user_settings
+  FOR SELECT TO authenticated USING (user_id = (SELECT auth.uid()) OR private.is_admin());
 CREATE POLICY "Users can create their own settings" ON public.user_settings
   FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()));
 CREATE POLICY "Users can update their own settings" ON public.user_settings
@@ -703,6 +715,7 @@ CREATE POLICY "Users can join approved groups" ON public.group_members
   FOR INSERT TO authenticated
   WITH CHECK (
     user_id = (SELECT auth.uid())
+    AND private.is_active_member()
     AND EXISTS (SELECT 1 FROM public.groups g WHERE g.id = group_id AND g.is_approved)
   );
 CREATE POLICY "Users can leave groups" ON public.group_members
@@ -733,7 +746,7 @@ CREATE POLICY "Users and admins can delete comments" ON public.comments
 CREATE POLICY "Members can view likes" ON public.likes
   FOR SELECT TO authenticated USING (TRUE);
 CREATE POLICY "Users can like" ON public.likes
-  FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()));
+  FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()) AND private.is_active_member());
 CREATE POLICY "Users can unlike" ON public.likes
   FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
 
@@ -771,7 +784,7 @@ CREATE POLICY "Organizers and admins can delete events" ON public.events
 CREATE POLICY "Members can view RSVPs" ON public.event_rsvps
   FOR SELECT TO authenticated USING (TRUE);
 CREATE POLICY "Users can RSVP" ON public.event_rsvps
-  FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()));
+  FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()) AND private.is_active_member());
 CREATE POLICY "Users can cancel their RSVP" ON public.event_rsvps
   FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
 
@@ -856,13 +869,24 @@ CREATE POLICY "Users can respond to help requests" ON public.help_responses
 CREATE POLICY "Users and admins can delete help responses" ON public.help_responses
   FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()) OR private.is_admin());
 
--- NOTIFICATIONS: members notify others in their own name; admins can notify anyone.
+-- NOTIFICATIONS: members notify others in their own name, never someone who
+-- blocked them (or whom they blocked); a Namaste notification must point at
+-- the matching pending request. Admins can notify anyone.
 CREATE POLICY "Users can view their notifications" ON public.notifications
   FOR SELECT TO authenticated USING (user_id = (SELECT auth.uid()));
 CREATE POLICY "Users can notify other members" ON public.notifications
   FOR INSERT TO authenticated
   WITH CHECK (
-    (actor_id = (SELECT auth.uid()) AND user_id <> (SELECT auth.uid()) AND private.is_active_member())
+    (
+      actor_id = (SELECT auth.uid())
+      AND user_id <> (SELECT auth.uid())
+      AND private.is_active_member()
+      AND NOT private.is_blocked_between(actor_id, user_id)
+      AND (type <> 'request' OR EXISTS (
+        SELECT 1 FROM public.connections c
+        WHERE c.id = reference_id AND c.requester_id = actor_id
+          AND c.recipient_id = user_id AND c.status = 'pending'))
+    )
     OR private.is_admin()
   );
 CREATE POLICY "Users can mark their notifications read" ON public.notifications

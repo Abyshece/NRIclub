@@ -1338,7 +1338,14 @@ const LoginPage = ({ onComplete, onSignUp }) => {
       setError("We couldn't load your profile. Please try again or contact support.");
       setLoading(false);
     } catch (err) {
-      setError(err.message || "Invalid email or password.");
+      // signIn's errors are readable ("Invalid login credentials"); anything
+      // after it is a server error, so don't keep a half-finished login.
+      if (api.getCurrentUser()) {
+        await api.signOut();
+        setError("We couldn't load your profile. Please try again in a moment.");
+      } else {
+        setError(err.message || "Invalid email or password.");
+      }
       setLoading(false);
     }
   };
@@ -1872,9 +1879,9 @@ const Dashboard = ({ user, onLogout }) => {
     } catch (e) {
       console.log("Connection may already exist:", e.message);
     }
+    if (!connId) return;
     try {
-      const actorId = user.id && !user.id.startsWith("user_") ? user.id : null;
-      await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, actorId, connId);
+      await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, user.id, connId);
     } catch(ne) { console.log("Notification failed:", ne.message); }
   };
 
@@ -4822,7 +4829,10 @@ const Dashboard = ({ user, onLogout }) => {
                     if (confirm("This is your final warning. Type OK in the next prompt to confirm.") && prompt("Type DELETE to confirm account deletion:") === "DELETE") {
                       try {
                         await api.deleteAccount();
-                      } catch(e) {}
+                      } catch(e) {
+                        alert("Your account could not be deleted. Please try again, or contact support if it keeps failing.");
+                        return;
+                      }
                       localStorage.clear();
                       setSettingsModal(null);
                       onLogout();
@@ -5407,23 +5417,29 @@ const Dashboard = ({ user, onLogout }) => {
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => { setMarketModal(false); setMarketPhotos([]); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
                 <button disabled={!newMarket.title || !newMarket.price} onClick={async () => {
-                  try {
-                    // Upload photos to Supabase Storage
-                    let imageUrls = [];
-                    for (const photo of marketPhotos) {
-                      try {
-                        // Convert base64 to blob
-                        const res = await fetch(photo);
-                        const blob = await res.blob();
-                        const file = new File([blob], `market_${Date.now()}_${imageUrls.length}.jpg`, { type: 'image/jpeg' });
-                        const url = await api.uploadMarketImage(file);
-                        if (url) imageUrls.push(url);
-                      } catch(ue) { imageUrls.push(photo); } // Fallback: store base64
+                  // Upload photos to Supabase Storage
+                  let imageUrls = [];
+                  for (const photo of marketPhotos) {
+                    try {
+                      // Convert base64 to blob
+                      const res = await fetch(photo);
+                      const blob = await res.blob();
+                      const file = new File([blob], `market_${Date.now()}_${imageUrls.length}.jpg`, { type: 'image/jpeg' });
+                      const url = await api.uploadMarketImage(file);
+                      if (url) imageUrls.push(url);
+                    } catch(ue) {
+                      alert("A photo couldn't be uploaded. Photos must be JPEG, PNG, WebP or GIF and under 5 MB.");
+                      return;
                     }
-                    await api.createMarketItem({ title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
+                  }
+                  try {
+                    const created = await api.createMarketItem({ title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
                     // Add to local state immediately
-                    setMarketItems(prev => [{ id: "m_" + Date.now(), title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
-                  } catch(e) {}
+                    setMarketItems(prev => [{ id: created?.[0]?.id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
+                  } catch(e) {
+                    alert("Your listing couldn't be posted. Please try again.");
+                    return;
+                  }
                   setNewMarket({ title: "", price: "", category: "Items", city: "", description: "" }); setMarketPhotos([]); setMarketModal(false);
                 }} style={{ ...btnPrimary, opacity: newMarket.title && newMarket.price ? 1 : 0.4 }}>Post Item</button>
               </div>
@@ -5569,7 +5585,7 @@ const Dashboard = ({ user, onLogout }) => {
                       if (!file) return;
                       const preview = URL.createObjectURL(file);
                       try { const url = await api.uploadPostImage(file); setEventPhoto({ url, preview }); }
-                      catch(err) { setEventPhoto({ url: preview, preview }); }
+                      catch(err) { alert("The photo couldn't be uploaded. Photos must be JPEG, PNG, WebP or GIF and under 5 MB."); }
                     }} />
                     {Icons.image({ size: 18 })} Click to add a cover photo
                   </label>
@@ -5856,6 +5872,43 @@ const CookieConsent = () => {
   );
 };
 
+// Shown after following a password-reset email link.
+const ResetPasswordPage = ({ onDone }) => {
+  const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  const save = async (e) => {
+    e.preventDefault();
+    if (password.length < 8) { setError("Use at least 8 characters."); return; }
+    setSaving(true);
+    setError("");
+    try {
+      await api.updatePassword(password);
+      onDone();
+    } catch (err) {
+      setError(err.message || "Couldn't update your password. The link may have expired; request a new one.");
+      setSaving(false);
+    }
+  };
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
+      <form onSubmit={save} style={{ maxWidth: 380, width: "100%", background: "#fff", borderRadius: 16, padding: 32, border: "1px solid #EDEDEB" }}>
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 6 }}>Set a new password</h2>
+        <p style={{ fontSize: 13, color: "#787774", marginBottom: 20 }}>Choose a password with at least 8 characters.</p>
+        {error && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{error}</div>}
+        <label htmlFor="new-password" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>New password</label>
+        <div style={{ position: "relative", marginBottom: 20 }}>
+          <input id="new-password" type={show ? "text" : "password"} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", padding: "12px 64px 12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 15, boxSizing: "border-box", outline: "none", fontFamily: font }} />
+          <button type="button" onClick={() => setShow(!show)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#787774", fontSize: 12, cursor: "pointer" }}>{show ? "Hide" : "Show"}</button>
+        </div>
+        <button type="submit" disabled={saving} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1 }}>{saving ? "Saving..." : "Save password"}</button>
+      </form>
+    </div>
+  );
+};
+
 export default function App() {
   const [authState, setAuthState] = useState("loading");
   const [user, setUser] = useState(null);
@@ -5864,6 +5917,7 @@ export default function App() {
   const [adminPass, setAdminPass] = useState("");
   const [adminErr, setAdminErr] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
+  const [adminNotice, setAdminNotice] = useState("");
 
   // Admins sign in with their normal NRIClub account; the database decides
   // whether that account is an admin (public.admins), so nothing here can be
@@ -5876,19 +5930,42 @@ export default function App() {
     setAdminErr("");
     try {
       await api.signIn(adminEmail.trim().toLowerCase(), adminPass);
-      if (await api.isAdmin()) {
-        rateLimiter.reset("admin_login");
-        setAdminPass("");
-        setIsAdmin(true);
-        setAuthState("admin");
-      } else {
-        await api.signOut();
-        setAdminErr("This account does not have admin access.");
-      }
     } catch (e) {
-      setAdminErr("Invalid email or password.");
+      setAdminErr(e.message || "Invalid email or password.");
+      setAdminLoading(false);
+      return;
+    }
+    let admin = false;
+    try {
+      admin = await api.isAdmin();
+    } catch (e) {
+      await api.signOut();
+      setAdminErr("Couldn't check admin access. Please try again.");
+      setAdminLoading(false);
+      return;
+    }
+    if (admin) {
+      rateLimiter.reset("admin_login");
+      setAdminPass("");
+      setIsAdmin(true);
+      setAuthState("admin");
+    } else {
+      await api.signOut();
+      setAdminErr("This account does not have admin access.");
     }
     setAdminLoading(false);
+  };
+
+  const handleAdminForgotPassword = async () => {
+    const email = adminEmail.trim().toLowerCase();
+    if (!email.includes("@")) { setAdminErr("Enter your email first, then click Forgot password."); return; }
+    try {
+      await api.resetPassword(email);
+      setAdminErr("");
+      setAdminNotice("If that account exists, we've emailed it a link to set a new password.");
+    } catch (e) {
+      setAdminErr(e.message || "Couldn't send the reset email. Please try again.");
+    }
   };
 
   const handleAdminLogout = async () => {
@@ -5897,7 +5974,16 @@ export default function App() {
     setAuthState("admin-login");
   };
 
+  // Leave the signed-in screens if the session ends by itself (revoked,
+  // expired, or another tab signed in as someone else).
+  useEffect(() => { api.onSessionEnded(() => window.location.reload()); }, []);
+
   useEffect(() => {
+    // Password-reset links land here with a one-time session in the URL.
+    if (api.takeRecoverySession()) {
+      setAuthState("reset-password");
+      return;
+    }
     // Check for admin route
     const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
     if (isAdminDomain || window.location.hash === "#admin") {
@@ -5989,14 +6075,17 @@ export default function App() {
               <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 4 }}>Admin Panel Login</p>
             </div>
             {adminErr && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminErr}</div>}
+            {adminNotice && !adminErr && <div style={{ background: "#E3FCEF", border: "1px solid #ABF5D1", color: "#22A06B", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminNotice}</div>}
             <input type="email" autoComplete="username" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
             <input type="password" autoComplete="current-password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") handleAdminLogin(); }} />
             <button onClick={handleAdminLogin} disabled={adminLoading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: adminLoading ? "default" : "pointer", opacity: adminLoading ? 0.7 : 1 }}>{adminLoading ? "Signing in..." : "Sign In"}</button>
+            <p style={{ fontSize: 11, textAlign: "center", marginTop: 12 }}><button type="button" onClick={handleAdminForgotPassword} style={{ background: "none", border: "none", color: "#5B9CFF", fontSize: 11, cursor: "pointer", padding: 0 }}>Forgot password?</button></p>
             <p style={{ fontSize: 11, color: "#9B9A97", textAlign: "center", marginTop: 16 }}><a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ""; setAuthState("landing"); }} style={{ color: "#5B9CFF" }}>← Back to NRIClub</a></p>
           </div>
         </div>
       );
     }
+    if (authState === "reset-password") return <ResetPasswordPage onDone={() => window.location.reload()} />;
     if (authState === "admin" && isAdmin) return <AdminDashboard onLogout={handleAdminLogout} />;
     if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
     if (authState === "signup") return <SignUpPage onComplete={handleAuthComplete} onLogin={() => setAuthState("login")} />;

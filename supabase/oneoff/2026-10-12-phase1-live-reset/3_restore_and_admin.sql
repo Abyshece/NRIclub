@@ -96,15 +96,17 @@ FROM phase1_backup.event_rsvps b
 WHERE b.event_id IN (SELECT id FROM public.events) AND b.user_id IN (SELECT id FROM public.profiles);
 ALTER TABLE public.event_rsvps ENABLE TRIGGER update_event_attendees_count;
 
--- Conversations keep their last-message preview. The old messages table had
+-- Conversations keep their last-message preview; if a pair was stored twice
+-- (A->B and B->A) the most recent one is kept. The old messages table had
 -- been overwritten, so there are no messages to restore.
 INSERT INTO public.conversations (id, participant_1, participant_2, last_message_text, last_message_at, created_at)
-SELECT b.id, b.participant_1, b.participant_2, COALESCE(b.last_message_text, ''),
+SELECT DISTINCT ON (LEAST(b.participant_1, b.participant_2), GREATEST(b.participant_1, b.participant_2))
+  b.id, b.participant_1, b.participant_2, COALESCE(b.last_message_text, ''),
   COALESCE(b.last_message_at, NOW()), COALESCE(b.created_at, NOW())
 FROM phase1_backup.conversations b
 WHERE b.participant_1 <> b.participant_2
   AND b.participant_1 IN (SELECT id FROM public.profiles) AND b.participant_2 IN (SELECT id FROM public.profiles)
-ON CONFLICT DO NOTHING;
+ORDER BY LEAST(b.participant_1, b.participant_2), GREATEST(b.participant_1, b.participant_2), b.last_message_at DESC NULLS LAST;
 
 INSERT INTO public.marketplace (id, user_id, title, description, price, category, location, image_url, status, created_at)
 SELECT b.id, b.user_id, b.title, COALESCE(b.description, ''), b.price, COALESCE(b.category, 'Items'),

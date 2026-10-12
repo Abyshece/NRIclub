@@ -11,6 +11,44 @@ const REFRESH_KEY = "nriclub_refresh";
 let accessToken = null;
 let currentUser = null;
 
+// Builds from before the NRIclub rename kept the session under indin_* keys,
+// and an old signup fallback cached the plain password in indin_profile_cache.
+// Move the cookie choice over, sign the old session out and drop the rest.
+// Runs at import so it happens before anything reads storage.
+(function clearLegacyStorage() {
+  try {
+    const legacyToken = localStorage.getItem("indin_token");
+    const consent = localStorage.getItem("indin_cookie_consent");
+    if (consent && !localStorage.getItem("nriclub_cookie_consent")) {
+      localStorage.setItem("nriclub_cookie_consent", consent);
+    }
+    ["indin_token", "indin_refresh", "indin_profile_cache", "indin_admin", "indin_cookie_consent"]
+      .forEach((key) => localStorage.removeItem(key));
+    if (legacyToken) {
+      fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${legacyToken}` },
+      }).catch(() => {});
+    }
+  } catch {}
+})();
+
+// The app registers this to leave the signed-in screens when the session ends
+// on its own (revoked or expired, or another tab signed in as someone else).
+let sessionEndedHandler = null;
+export function onSessionEnded(handler) { sessionEndedHandler = handler; }
+
+function endSession({ clearStorage }) {
+  const hadUser = !!currentUser;
+  accessToken = null;
+  currentUser = null;
+  if (clearStorage) {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_KEY);
+  }
+  if (hadUser && sessionEndedHandler) sessionEndedHandler();
+}
+
 function headers(extra = {}) {
   const h = {
     "Content-Type": "application/json",
@@ -90,7 +128,8 @@ export async function signOut() {
 }
 
 export async function resetPassword(email) {
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+  const redirectTo = encodeURIComponent(window.location.origin + window.location.pathname);
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/recover?redirect_to=${redirectTo}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
     body: JSON.stringify({ email }),
@@ -100,6 +139,31 @@ export async function resetPassword(email) {
     throw new Error(err.message || err.msg || "Failed to send reset email");
   }
   return true;
+}
+
+// The password-reset email links back to the site with the session in the URL
+// hash (#access_token=...&type=recovery). Take it, clean the URL, and return
+// true so the app can ask for a new password.
+export function takeRecoverySession() {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  if (params.get("type") !== "recovery" || !params.get("access_token")) return false;
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  accessToken = params.get("access_token");
+  localStorage.setItem(TOKEN_KEY, accessToken);
+  if (params.get("refresh_token")) localStorage.setItem(REFRESH_KEY, params.get("refresh_token"));
+  return true;
+}
+
+export async function updatePassword(password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Couldn't update your password.");
+  currentUser = data;
+  return data;
 }
 
 export async function sendOtp(email) {
@@ -144,22 +208,33 @@ export function refreshSession() {
 async function doRefreshSession() {
   const refresh = localStorage.getItem(REFRESH_KEY);
   if (!refresh) return null;
+  let res;
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
       body: JSON.stringify({ refresh_token: refresh }),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    accessToken = data.access_token;
-    currentUser = data.user;
-    localStorage.setItem(TOKEN_KEY, data.access_token);
-    if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
-    return data;
   } catch {
+    return null; // offline: keep the session and try again later
+  }
+  if (!res.ok) {
+    // Revoked, expired or already-used refresh token: the session is over.
+    if (res.status >= 400 && res.status < 500) endSession({ clearStorage: true });
     return null;
   }
+  const data = await res.json();
+  // Tokens are shared by every tab. Save the rotated ones, but if another tab
+  // signed in as someone else, don't switch this tab to that account.
+  localStorage.setItem(TOKEN_KEY, data.access_token);
+  if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
+  if (currentUser && data.user?.id !== currentUser.id) {
+    endSession({ clearStorage: false });
+    return null;
+  }
+  accessToken = data.access_token;
+  currentUser = data.user;
+  return data;
 }
 
 export async function getSession() {
@@ -205,7 +280,7 @@ export async function getMyProfile() {
   restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { last_active: new Date().toISOString() }).catch(() => {});
   const [profile, privateRows] = await Promise.all([
     getProfile(currentUser.id),
-    restCall("GET", `/rest/v1/profile_private?id=eq.${currentUser.id}&select=*`),
+    restCall("GET", `/rest/v1/profile_private?id=eq.${currentUser.id}&select=*`).catch(() => []),
   ]);
   if (!profile) return null;
   const { id, created_at, updated_at, ...privateFields } = privateRows?.[0] || {};
@@ -732,7 +807,7 @@ export async function saveUserSettings(settings) {
 
 export async function getOtherUserSettings(userId) {
   // Fetch another user's public settings (for checking if they accept messages/requests)
-  const data = await restCall("GET", `/rest/v1/user_settings?user_id=eq.${userId}&select=namaste_requests,receive_messages,profile_visibility`);
+  const data = await restCall("POST", "/rest/v1/rpc/get_member_preferences", { member: userId });
   return data && data.length > 0 ? data[0] : null;
 }
 
@@ -831,27 +906,37 @@ export async function adminGetDashboardData() {
   };
 }
 
+// RLS turns a forbidden write into a silent no-op, so ask for the changed
+// rows back and treat "none" as a failure.
+async function adminWrite(method, path, body = null) {
+  const rows = await restCall(method, path, body, { Prefer: "return=representation" });
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("Nothing was changed. It may already have been handled, or this account is no longer an admin.");
+  }
+  return rows;
+}
+
 export async function adminUpdateUser(userId, { linkedinVerified, status }) {
-  return restCall("PATCH", `/rest/v1/profiles?id=eq.${userId}`, { linkedin_verified: linkedinVerified, status });
+  return adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}`, { linkedin_verified: linkedinVerified, status });
 }
 
 export async function adminApproveGroup(groupId) {
-  return restCall("PATCH", `/rest/v1/groups?id=eq.${groupId}`, { is_approved: true });
+  return adminWrite("PATCH", `/rest/v1/groups?id=eq.${groupId}`, { is_approved: true });
 }
 
 export async function adminDeleteGroup(groupId) {
-  return restCall("DELETE", `/rest/v1/groups?id=eq.${groupId}`);
+  return adminWrite("DELETE", `/rest/v1/groups?id=eq.${groupId}`);
 }
 
 export async function adminDeleteReport(reportId) {
-  return restCall("DELETE", `/rest/v1/reports?id=eq.${reportId}`);
+  return adminWrite("DELETE", `/rest/v1/reports?id=eq.${reportId}`);
 }
 
 const MODERATED_TABLES = ["posts", "docs", "events", "help_requests", "marketplace"];
 
 export async function adminDeleteContent(table, id) {
   if (!MODERATED_TABLES.includes(table)) throw new Error(`Cannot moderate ${table}`);
-  return restCall("DELETE", `/rest/v1/${table}?id=eq.${id}`);
+  return adminWrite("DELETE", `/rest/v1/${table}?id=eq.${id}`);
 }
 
 export async function adminNotify(userId, type, text) {

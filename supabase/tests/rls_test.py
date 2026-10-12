@@ -192,6 +192,12 @@ def main():
           f"INSERT INTO connections (requester_id, recipient_id) VALUES ('{ALICE}', '{CAROL}')", as_user=ALICE, expect="error")
 
     # --- conversations / messages ------------------------------------------
+    check("other members can't read someone's settings row",
+          "SELECT count(*) FROM user_settings", as_user=ALICE, expect="0")
+    check("get_member_preferences exposes only the contact settings",
+          f"SELECT namaste_requests FROM public.get_member_preferences('{CAROL}')", as_user=ALICE, expect="Nobody")
+    check("anon cannot call get_member_preferences",
+          f"SELECT * FROM public.get_member_preferences('{CAROL}')", role="anon", expect="error")
     check("start conversation",
           f"INSERT INTO conversations (id, participant_1, participant_2) VALUES ('30000000-0000-0000-0000-000000000001', '{ALICE}', '{BOB}') RETURNING 1",
           as_user=ALICE, expect="1")
@@ -210,6 +216,9 @@ def main():
           f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('30000000-0000-0000-0000-000000000001', '{BOB}', 'spoof')",
           as_user=ALICE, expect="error")
     check("bob blocks alice", f"INSERT INTO blocks (blocker_id, blocked_id) VALUES ('{BOB}', '{ALICE}') RETURNING 1", as_user=BOB, expect="1")
+    check("blocked user cannot notify the blocker",
+          f"INSERT INTO notifications (user_id, type, actor_id, text) VALUES ('{BOB}', 'like', '{ALICE}', 'Alice liked your post')",
+          as_user=ALICE, expect="error")
     check("blocked user cannot message",
           f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('30000000-0000-0000-0000-000000000001', '{ALICE}', 'still here?')",
           as_user=ALICE, expect="error")
@@ -236,6 +245,9 @@ def main():
           as_user=ALICE, expect="error")
     check("cannot send actorless notifications",
           f"INSERT INTO notifications (user_id, type, text) VALUES ('{BOB}', 'group', 'Your group was approved')",
+          as_user=ALICE, expect="error")
+    check("Namaste notification needs a matching pending request",
+          f"INSERT INTO notifications (user_id, type, actor_id, text) VALUES ('{BOB}', 'request', '{ALICE}', 'Alice sent you a Namaste')",
           as_user=ALICE, expect="error")
     check("admin can send system notifications",
           f"INSERT INTO notifications (user_id, type, text) VALUES ('{ALICE}', 'group', 'Your community was approved') RETURNING 1",
@@ -293,6 +305,17 @@ def main():
           f"INSERT INTO posts (user_id, content) VALUES ('{CAROL}', 'spam')", as_user=CAROL, expect="error")
     check("blocked member cannot list items",
           f"INSERT INTO marketplace (user_id, title, price) VALUES ('{CAROL}', 'x', '1')", as_user=CAROL, expect="error")
+    check("post for the blocked-member checks",
+          f"INSERT INTO posts (id, user_id, content) VALUES ('10000000-0000-0000-0000-000000000002', '{ALICE}', 'hi') RETURNING 1",
+          as_user=ALICE, expect="1")
+    check("blocked member cannot like",
+          f"INSERT INTO likes (post_id, user_id) VALUES ('10000000-0000-0000-0000-000000000002', '{CAROL}')", as_user=CAROL, expect="error")
+    check("blocked member cannot RSVP",
+          f"INSERT INTO event_rsvps (event_id, user_id) VALUES ('40000000-0000-0000-0000-000000000001', '{CAROL}')",
+          as_user=CAROL, expect="error")
+    check("blocked member cannot join groups",
+          f"INSERT INTO group_members (group_id, user_id) VALUES ('70000000-0000-0000-0000-000000000001', '{CAROL}')",
+          as_user=CAROL, expect="error")
     check("blocked member can still edit profile",
           "UPDATE profiles SET linkedin_url = 'https://linkedin.com/in/carol' WHERE id = auth.uid() RETURNING status",
           as_user=CAROL, expect="blocked")

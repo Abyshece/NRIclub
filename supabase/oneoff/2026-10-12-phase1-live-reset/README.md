@@ -31,8 +31,23 @@ What changes in the data:
 - Group member and event attendee counts are kept as they were.
 - Post like counts restart at 0 (the old likes had already been overwritten);
   comment counts are recounted.
-- A conversation stored twice (A→B and B→A) is kept once.
+- A conversation stored twice (A→B and B→A) is kept once (the most recent).
 - Private chat messages: none to restore (the table had been overwritten).
+
+## Before running it
+
+- Make sure you can sign in to the app as `abyshece@gmail.com` (the account
+  that becomes admin). If you don't know its password, use **Forgot password?**
+  on the login page after this branch is deployed, or in the Supabase
+  dashboard: Authentication → Users → the account → *Send password recovery*.
+- Optional check that no existing value is longer than the new limits (all
+  were well within them on 2026-10-12):
+
+  ```sql
+  SELECT 'posts', count(*) FROM public.posts WHERE char_length(content) > 10000
+  UNION ALL SELECT 'marketplace image_url', count(*) FROM public.marketplace WHERE char_length(image_url) > 20000
+  UNION ALL SELECT 'reports', count(*) FROM public.reports WHERE char_length(reason) > 5000;
+  ```
 
 ## Running it
 
@@ -59,7 +74,13 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 \
 
 ## Afterwards
 
+- Deploy the app from this branch right after the reset commits (merge the
+  pull request). The new app needs the new schema, and the old app's admin
+  panel stops working against it.
 - Delete `VITE_ADMIN_EMAIL` / `VITE_ADMIN_PASS` from the Vercel project; they
   are no longer used.
 - Check the app and the admin panel (LAUNCH-GUIDE.md, Step 6).
 - Once you're happy, drop the backup: `DROP SCHEMA phase1_backup CASCADE;`
+- If you start using the Supabase CLI for this project, mark the schema as
+  already applied so `supabase db push` doesn't run it again:
+  `supabase migration repair --status applied 20261012000000`.
