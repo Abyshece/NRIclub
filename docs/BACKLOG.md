@@ -29,10 +29,6 @@ Issues found while auditing the code for Phase 1 that are outside its scope
 - The **city** chosen for events and help requests is never saved.
 - **Doc likes, event likes/comments and "Clear chat"** only change local
   state.
-- The **"LinkedIn Verified"** badge shows whenever a LinkedIn URL exists, not
-  when an admin verified it.
-- The **72-hour LinkedIn lock** never triggers (profile creation date isn't
-  mapped into the user object).
 - **Network** shows at most 20 members.
 - **Account settings**: name change and password change aren't wired up.
 - **Report user** from the chat screen silently fails (`activeConvo` is out of
@@ -54,7 +50,13 @@ Issues found while auditing the code for Phase 1 that are outside its scope
 
 - Deleting an account doesn't delete the user's uploaded images in Storage.
 - Signup reveals whether an email already has an account.
-- Login accepts 6-character passwords while signup requires 8.
 - The client-side rate limiter resets on reload; rely on Supabase Auth limits.
 - Terms page says "Last updated: October 2024"; the privacy contact
   `privacy@nriclub.app` must be a real mailbox.
+- Members' LinkedIn URLs are visible to all members; consider an option to
+  show them only to admins.
+- Delete rejected or never-completed applications after a set period (and
+  say so in the Privacy Policy).
+- Email members about verification decisions (in-app notifications exist;
+  email needs SMTP or an Edge Function).
+- The Terms of Use text is a plain-language draft and needs legal review.

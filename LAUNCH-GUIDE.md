@@ -32,6 +32,8 @@ In the Supabase dashboard → **Authentication**:
    *Secure email change* ON, minimum password length **8**.
 2. **Email templates**: the signup flow asks for a 6-digit code, so the
    *Confirm signup* and *Magic Link* templates must include `{{ .Token }}`.
+   The *Reset password* template keeps its link (`{{ .ConfirmationURL }}`);
+   it opens the app's "Set a new password" screen.
 3. **Attack protection**: turn on *Leaked password protection*.
 4. **URL configuration**: Site URL = your live URL (e.g. `https://nriclub.app`),
    and add `https://nriclub.app/**` and `https://admin.nriclub.app/**` to the
@@ -83,7 +85,9 @@ key in the frontend or in a `VITE_` variable.
 
 With two member accounts and one admin account:
 
-- [ ] Sign up → receive the 6-digit code → verify → land on the dashboard with your details filled in
+- [ ] Sign up → receive the 6-digit code → it fills in and submits by itself → **Get verified** (city + LinkedIn, or "I don't have LinkedIn") → dashboard with the "we're reviewing your profile" banner
+- [ ] Admin panel → **Verification**: open the new member, check the LinkedIn link, **Ask for more info** → the member sees the message and updates their details → **Approve** → the member's banner disappears and the Verified badge shows
+- [ ] Reject a test member with a reason → they see the "We couldn't verify your membership" screen and can't post
 - [ ] Log out → log back in; a wrong password is rejected
 - [ ] Create a post, like it from the other account, comment → counts update, notification arrives
 - [ ] Send a Namaste request → accept it from the notification
