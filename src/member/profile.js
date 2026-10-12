@@ -31,6 +31,9 @@ export function mapProfile(p) {
     // Private (owner and admins only), used to prefill "Update details".
     verificationNote: p.verification_note || "",
     voucher: p.voucher || "",
+    // "18 or older" and Terms acceptance; older accounts give them in Get verified.
+    ageConfirmedAt: p.age_confirmed_at || null,
+    termsAcceptedAt: p.terms_accepted_at || null,
     marketingConsent: !!p.marketing_consent,
     status: p.status || "active",
     createdAt: p.created_at || null,
@@ -45,11 +48,11 @@ export const firstName = (name) => (name || "").trim().split(/\s+/)[0] || "there
 // ---------------------------------------------------------------------------
 
 // ISO 3166-1 alpha-2 codes for places people live (uninhabited territories
-// left out). India is handled separately: members in India don't pick one.
+// left out).
 const COUNTRY_CODES = (
   "AD AE AF AG AI AL AM AO AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BW BY BZ " +
   "CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO " +
-  "FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GT GU GW GY HK HN HR HT HU ID IE IL IM IO IQ IR IS IT JE JM JO " +
+  "FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GT GU GW GY HK HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO " +
   "JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP " +
   "MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW " +
   "PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TG TH TJ TK TL TM " +
@@ -65,7 +68,7 @@ export function countryName(code) {
 }
 
 let countryOptions = null;
-// [{ code, name }] sorted by name, India excluded.
+// [{ code, name }] sorted by name.
 export function getCountryOptions() {
   if (!countryOptions) {
     countryOptions = COUNTRY_CODES
@@ -73,17 +76,6 @@ export function getCountryOptions() {
       .sort((a, b) => a.name.localeCompare(b.name, "en"));
   }
   return countryOptions;
-}
-
-// The region of the browser language ("de-DE" -> "DE"), if it's one of ours.
-export function guessCountryFromBrowser() {
-  try {
-    const m = /[-_]([A-Za-z]{2})$/.exec(navigator.language || "");
-    const code = m ? m[1].toUpperCase() : "";
-    return code && code !== "IN" && COUNTRY_CODES.includes(code) ? code : "";
-  } catch {
-    return "";
-  }
 }
 
 export const MAJOR_INDIAN_CITIES = [

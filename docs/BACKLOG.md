@@ -24,9 +24,15 @@ Issues found while auditing the code for Phase 1 that are outside its scope
 
 - **Following list** is overwritten with bare ids (`App.jsx` ~2074), so the
   Following tab shows "User" with no avatar.
-- Newly created **events and help requests** keep a temporary id until
-  reload, so RSVP/delete on them fails.
-- The **city** chosen for events and help requests is never saved.
+- The **city** chosen for a help request is never saved (the table has no
+  city column).
+- **Edit Profile**'s free-text Location can drift from the verified city and
+  country; edit city and country there with the Get verified fields, or
+  make Location read-only.
+- Small glitches: Namaste notifications repeat the sender's name; "From:"
+  shows with an empty hometown; nearby members only load after a search;
+  notifications for deleted content stay; an admin list row has an empty
+  aria-label when a member has no name.
 - **Doc likes, event likes/comments and "Clear chat"** only change local
   state.
 - **Network** shows at most 20 members.
@@ -47,6 +53,10 @@ Issues found while auditing the code for Phase 1 that are outside its scope
 
 - Deleting an account doesn't delete the user's uploaded images in Storage.
 - Signup reveals whether an email already has an account.
+- Every signup sends one password update that fails harmlessly (it's only
+  needed when an unfinished signup is resumed); skip it for new accounts.
+- Rejected and blocked members can still file reports (on purpose, so they
+  can report bugs); add a per-member rate limit.
 - The client-side rate limiter resets on reload; rely on Supabase Auth limits.
 - Terms page says "Last updated: October 2024"; the privacy contact
   `privacy@nriclub.app` must be a real mailbox.

@@ -21,7 +21,12 @@ function enrichReports(data) {
   data.docs.forEach((d) => { content[d.id] = { type: "doc", content: d.title, excerpt: d.excerpt, authorId: d.user_id }; });
   data.events.forEach((e) => { content[e.id] = { type: "event", content: e.title, excerpt: e.description, date: e.date, authorId: e.organizer_id }; });
   data.helpRequests.forEach((h) => { content[h.id] = { type: "help", content: h.title, excerpt: h.description, authorId: h.user_id }; });
-  data.marketItems.forEach((m) => { content[m.id] = { type: "marketplace", content: m.title, excerpt: m.description, price: m.price, image: m.image_url, authorId: m.user_id }; });
+  data.marketItems.forEach((m) => {
+    // Listings keep image_url as a JSON array of URLs; show the first.
+    let img = m.image_url;
+    try { const a = JSON.parse(img); img = Array.isArray(a) ? a[0] : img; } catch { img = m.image_url; }
+    content[m.id] = { type: "marketplace", content: m.title, excerpt: m.description, price: m.price, image: img, authorId: m.user_id };
+  });
   const person = (u) => (u ? { name: u.name, email: u.email } : null);
   return data.reports.map((r) => {
     const reportedContent = content[r.reported_post_id || r.reported_user_id] || null;

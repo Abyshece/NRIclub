@@ -58,11 +58,12 @@ export function initials(name) {
 }
 
 export function Avatar({ name, url, size = 28 }) {
-  const [broken, setBroken] = useState(false);
+  // Remember which url failed, so a new url (e.g. the next member in the peek) gets a fresh try.
+  const [brokenUrl, setBrokenUrl] = useState(null);
   const color = AVATAR_COLORS[String(name || "").length % AVATAR_COLORS.length];
   return (
     <span className="adm-avatar" style={{ width: size, height: size, fontSize: Math.round(size * 0.38), background: color }} aria-hidden="true">
-      {url && !broken ? <img src={url} alt="" onError={() => setBroken(true)} /> : initials(name)}
+      {url && url !== brokenUrl ? <img src={url} alt="" onError={() => setBrokenUrl(url)} /> : initials(name)}
     </span>
   );
 }

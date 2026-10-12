@@ -7,7 +7,7 @@ import CodeEntry from "./member/CodeEntry";
 import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner";
 import ProfileChecklist, { missingProfileItems, useProfileCardDismissed } from "./member/ProfileChecklist";
 import { TermsContent } from "./member/LegalModals";
-import { mapProfile, linkedinProblem, authErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
+import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
 
 // ============================================================================
@@ -713,7 +713,7 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
         <form onSubmit={handleSubmit} noValidate>
           <div style={{ marginBottom: 16 }}>
             <label htmlFor="login-email" style={labelStyle}>Email</label>
-            <input id="login-email" style={inputStyle} type="email" autoComplete="email" inputMode="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus={!initialEmail} />
+            <input id="login-email" style={inputStyle} type="email" autoComplete="email" inputMode="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => { setEmail(e.target.value); if (unconfirmed) { setUnconfirmed(false); setError(""); } }} placeholder="you@email.com" autoFocus={!initialEmail} />
           </div>
           <div style={{ marginBottom: 10 }}>
             <label htmlFor="login-password" style={labelStyle}>Password</label>
@@ -1052,6 +1052,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [convosLoaded, setConvosLoaded] = useState(false);
   const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
   const lastSeenMsgRef = useRef(null); // Track last seen conversation state
+  const lastVerificationNotifRef = useRef(null); // Newest unread verification decision seen
+  const dashboardRef = useRef(null);
+  // Rejected and blocked members only see a full-screen card: make
+  // everything behind it unreachable (Tab, screen readers) and focus the card.
+  const locked = user?.status === "blocked" || user?.verificationStatus === "rejected";
+  useEffect(() => {
+    const root = dashboardRef.current;
+    if (!locked || !root) return;
+    const overlay = root.querySelector("[data-lock-overlay]");
+    const behind = [...root.children].filter(el => el !== overlay);
+    behind.forEach(el => { el.inert = true; });
+    overlay?.querySelector("a[href], button")?.focus();
+    return () => behind.forEach(el => { el.inert = false; });
+  }, [locked, user?.status]);
   const [chatSettings, setChatSettings] = useState(false);
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [blockTargetId, setBlockTargetId] = useState(null);
@@ -1218,7 +1232,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         } catch(e) {}
         const dbEvents = await api.getEvents();
         if (dbEvents && dbEvents.length) {
-          setEvents(dbEvents.map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
+          setEvents(dbEvents.map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
           const myR = await api.getMyRsvps();
           setRsvps(new Set(myR));
         } else { setEvents([]); }
@@ -1313,6 +1327,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         try {
           const dbNotifs = await api.getNotifications();
           if (dbNotifs && dbNotifs.length) {
+            lastVerificationNotifRef.current = dbNotifs.find(n => n.type === "verification" && !n.read)?.id || null;
             setNotifications(dbNotifs.map(n => ({
               id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
               text: n.text, time: new Date(n.created_at).toLocaleString(),
@@ -1338,6 +1353,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       }
     })();
   }, []);
+
+  const refreshMyProfile = async () => {
+    try {
+      const db = await api.getMyProfile();
+      if (!db) return null;
+      const fresh = mapProfile(db);
+      onUserUpdate(fresh);
+      return fresh;
+    } catch (e) { return null; }
+  };
 
   // Live polling for messages and notifications (every 5 seconds)
   useEffect(() => {
@@ -1380,6 +1405,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             text: n.text, time: new Date(n.created_at).toLocaleString(),
             read: n.read, reference_id: n.reference_id,
           })));
+          // An admin decided on this member's verification: reload their status.
+          const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
+          if (decision && decision.id !== lastVerificationNotifRef.current) {
+            lastVerificationNotifRef.current = decision.id;
+            refreshMyProfile();
+          }
         }
       } catch (e) {}
     }, 5000);
@@ -1449,7 +1480,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     setPosts([post, ...posts]);
     setNewPost("");
     setPostImage(null);
-    try { const r = await api.createPost(cleanContent || newPost, tags, imageUrl, groupId); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch (e) { console.error("Post creation failed:", e.message); }
+    try {
+      const r = await api.createPost(cleanContent || newPost, tags, imageUrl, groupId);
+      if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p));
+    } catch (e) {
+      // Take the post back out and give the text back to the composer.
+      setPosts(prev => prev.filter(p => p.id !== post.id));
+      setNewPost(prev => prev || post.content);
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your post couldn't be published. Please try again.");
+    }
   };
 
   const deletePost = async (id) => {
@@ -1460,35 +1499,47 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const createEvent = async () => {
     if (!newEvent.title || !newEvent.date) return;
     const e = {
-      id: "e_" + Date.now(), title: newEvent.title,
+      id: "e_" + Date.now(), organizerId: user.id, title: newEvent.title,
       date: newEvent.date, time: newEvent.time || "TBD",
-      location: newEvent.location || "TBD", attendees: 1,
+      location: newEvent.location || "TBD", city: newEvent.city || "", attendees: 0,
       organizer: user.name, description: newEvent.description,
       link: newEvent.link || "", image: eventPhoto?.url || "",
     };
     setEvents([e, ...events]);
     setNewEvent({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" }); setEventPhoto(null);
     setEventModal(false);
-    try { await api.createEvent({ title: newEvent.title, date: newEvent.date, time: newEvent.time || "TBD", location: newEvent.location, description: newEvent.description, organizer_name: user.name, link: newEvent.link || "", image_url: eventPhoto?.url || "" }); } catch (er) { console.error("Event creation failed:", er.message); alert("Event could not be saved: " + er.message); }
+    try {
+      const r = await api.createEvent({ title: e.title, date: e.date, time: e.time, location: newEvent.location, city: e.city, description: e.description, organizer_name: user.name, link: e.link, image_url: e.image });
+      // Swap the temporary id for the saved one so RSVP and delete work.
+      if (r?.[0]) setEvents(prev => prev.map(x => x.id === e.id ? { ...x, id: r[0].id, attendees: r[0].attendees_count } : x));
+    } catch (er) {
+      setEvents(prev => prev.filter(x => x.id !== e.id));
+      alert(isNetworkError(er) ? NETWORK_MESSAGE : "Your event couldn't be saved. Please try again.");
+    }
   };
 
   const toggleRsvp = async (id) => {
-    const s = new Set(rsvps);
-    if (s.has(id)) s.delete(id); else s.add(id);
-    setRsvps(s);
-    try { await api.toggleRsvp(id); } catch (e) {}
+    const going = !rsvps.has(id);
+    const bump = (delta) => setEvents(prev => prev.map(x => x.id === id ? { ...x, attendees: Math.max(0, (x.attendees || 0) + delta) } : x));
+    setRsvps(prev => { const s = new Set(prev); if (going) s.add(id); else s.delete(id); return s; });
+    bump(going ? 1 : -1);
+    try { await api.toggleRsvp(id); } catch (e) {
+      setRsvps(prev => { const s = new Set(prev); if (going) s.delete(id); else s.add(id); return s; });
+      bump(going ? -1 : 1);
+    }
   };
 
   const toggleGroup = async (id) => {
     const g = groups.find(x => x.id === id);
     const newJoined = !g?.joined;
-    const updated = groups.map((x) => x.id === id ? { ...x, joined: newJoined } : x);
-    setGroups(updated);
-    // Also update selectedGroup if it's the one being toggled
-    if (selectedGroup && selectedGroup.id === id) {
-      setSelectedGroup({ ...selectedGroup, joined: newJoined });
-    }
-    try { if (g?.joined) await api.leaveGroup(id); else await api.joinGroup(id); } catch (e) {}
+    const apply = (joined) => {
+      const change = (x) => ({ ...x, joined, members: Math.max(0, (x.members || 0) + (joined ? 1 : -1)) });
+      setGroups(prev => prev.map((x) => x.id === id ? change(x) : x));
+      // Also update selectedGroup if it's the one being toggled
+      setSelectedGroup(prev => prev && prev.id === id ? change(prev) : prev);
+    };
+    apply(newJoined);
+    try { if (g?.joined) await api.leaveGroup(id); else await api.joinGroup(id); } catch (e) { apply(!newJoined); }
   };
 
   const createHelp = async () => {
@@ -1500,7 +1551,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     setHelpRequests([h, ...helpRequests]);
     setNewHelp({ title: "", description: "", category: "General", urgency: "Low", city: "" });
     setHelpModal(false);
-    try { await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgency }); } catch (e) {}
+    try {
+      const r = await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgency });
+      // Swap the temporary id for the saved one so responses and delete work.
+      if (r?.[0]) setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, id: r[0].id, userId: user.id } : x));
+    } catch (e) {
+      setHelpRequests(prev => prev.filter(x => x.id !== h.id));
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your request couldn't be posted. Please try again.");
+    }
   };
 
   const openProfileEditor = (focusField = null) => {
@@ -1513,14 +1571,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const saveProfileChanges = async () => {
     if (profileSaving) return;
     const trim = (v) => (v || "").trim();
-    const linkedinUrl = trim(editProfile.linkedinUrl);
-    // An empty link is fine (members verified without LinkedIn).
-    const linkedinError = linkedinUrl ? linkedinProblem(linkedinUrl) : null;
-    if (linkedinError) { setProfileErrors({ linkedinUrl: linkedinError }); return; }
     const updates = {
       location: trim(editProfile.location), profession: trim(editProfile.profession),
-      linkedin_url: linkedinUrl, occupation_status: editProfile.occupationStatus || "",
+      occupation_status: editProfile.occupationStatus || "",
     };
+    // Only check and send the LinkedIn link when it was changed: older
+    // accounts can hold links in other formats. An empty link is fine
+    // (members verified without LinkedIn).
+    const linkedinUrl = trim(editProfile.linkedinUrl);
+    if (linkedinUrl !== (user.linkedinUrl || "")) {
+      const linkedinError = linkedinUrl ? linkedinProblem(linkedinUrl) : null;
+      if (linkedinError) { setProfileErrors({ linkedinUrl: linkedinError }); return; }
+      updates.linkedin_url = linkedinUrl;
+    }
     if (isUserNRI(user)) {
       updates.hometown = trim(editProfile.hometown);
       updates.years_abroad = editProfile.yearsAbroad || "";
@@ -1530,14 +1593,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     try {
       await api.updateProfile(updates);
     } catch (e) {
-      setProfileErrors({ form: "Your changes couldn't be saved. Please try again." });
+      const msg = apiErrorMessage(e, "Your changes couldn't be saved. Please try again.");
+      setProfileErrors(updates.linkedin_url !== undefined && /LinkedIn/.test(msg) ? { linkedinUrl: msg } : { form: msg });
       setProfileSaving(false);
       return;
     }
     let refreshed = null;
     try { refreshed = mapProfile(await api.getMyProfile()); } catch (e) {}
     onUserUpdate(refreshed || {
-      ...user, location: updates.location, profession: updates.profession, linkedinUrl: updates.linkedin_url,
+      ...user, location: updates.location, profession: updates.profession, linkedinUrl: updates.linkedin_url ?? user.linkedinUrl,
       occupationStatus: updates.occupation_status,
       ...(updates.hometown !== undefined ? { hometown: updates.hometown, yearsAbroad: updates.years_abroad } : {}),
     });
@@ -2414,12 +2478,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {/* Event Cards */}
             {filteredEvents.length > 0 ? filteredEvents.map((e, idx) => {
-              const datePart = (e.date || "").split("•")[0].trim();
-              const timePart = (e.date || "").split("•")[1]?.trim() || "TBD";
+              // Older events keep the time in the date ("Mar 25, 2026 • 10:00 AM");
+              // new ones have a date picker value and a separate time.
+              let datePart = (e.date || "").split("•")[0].trim();
+              if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+                datePart = new Date(datePart + "T00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+              }
+              const timePart = (e.date || "").split("•")[1]?.trim() || e.time || "TBD";
               const timeMain = timePart.split(" ")[0] || timePart;
               const timeAmPm = timePart.split(" ")[1] || "";
               const locMain = (e.location || "").split(",")[0].trim();
-              const locCity = (e.location || "").split(",").slice(1).join(",").trim();
+              const locCity = (e.location || "").split(",").slice(1).join(",").trim() || e.city || "";
               const evtColor = evtColors[idx % evtColors.length];
 
               return (
@@ -3189,10 +3258,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: font }}>
+    <div ref={dashboardRef} style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: font }}>
       {/* Rejected verification: full-screen card (blocked members see the blocked overlay instead) */}
       {user?.verificationStatus === "rejected" && user?.status !== "blocked" && (
-        <RejectedScreen user={user} onSignOut={onLogout} />
+        <div data-lock-overlay><RejectedScreen user={user} onSignOut={onLogout} /></div>
       )}
       {/* Get verified again, when an admin asked for more information */}
       {verifyOpen && (
@@ -3276,6 +3345,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           } else if (n.type === "message") {
                             setView("messages");
                             setNotifOpen(false);
+                          } else if (n.type === "verification") {
+                            setNotifOpen(false);
+                            Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+                            refreshMyProfile().then(fresh => {
+                              if (fresh?.verificationStatus === "needs_info") setVerifyOpen(true);
+                            });
                           }
                         }} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", gap: 12, background: n.read ? "#fff" : "#F5F8FF", cursor: n.type !== "request" ? "pointer" : "default" }}>
                           <div style={{ flexShrink: 0, marginTop: 2 }}>
@@ -3287,7 +3363,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                               </div>
                             ) : (
                               <div style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: n.type === "event" ? "#FFF3E0" : n.type === "group" ? "#EDF4FF" : "#F0EFED", color: n.type === "event" ? "#E65100" : n.type === "group" ? "#5B9CFF" : "#5F5E5B" }}>
-                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : Icons.trending({ size: 16 })}
+                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : n.type === "verification" ? Icons.shield({ size: 16 }) : Icons.trending({ size: 16 })}
                               </div>
                             )}
                           </div>
@@ -3501,8 +3577,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Blocked user overlay */}
       {user?.status === "blocked" && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
+        <div data-lock-overlay style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div role="alertdialog" aria-modal="true" aria-label="Profile blocked" style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
             </div>

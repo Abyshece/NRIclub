@@ -114,10 +114,11 @@ export async function signIn(email, password) {
   return data;
 }
 
+// Signs out this browser only; other devices stay signed in.
 export async function signOut() {
   try {
     if (accessToken) {
-      await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+      await fetch(`${SUPABASE_URL}/auth/v1/logout?scope=local`, {
         method: "POST",
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
       });
@@ -168,11 +169,13 @@ export async function updatePassword(password) {
   return data;
 }
 
+// Emails a 6-digit code to an existing account (used to confirm an email
+// address); never creates an account.
 export async function sendOtp(email) {
   const res = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, create_user: false }),
   });
   if (!res.ok) {
     const data = await res.json();
@@ -273,8 +276,9 @@ export async function getProfile(userId) {
   return data?.[0] || null;
 }
 
-// Email and consent live in profile_private, which only the owner and admins
-// can read; the app still sees them as fields of the user's own profile.
+// Email, consent and verification status live in profile_private, which
+// only the owner and admins can read; the app still sees them as fields of
+// the user's own profile.
 const PRIVATE_PROFILE_FIELDS = ["email", "gdpr_consent", "gdpr_consent_date", "marketing_consent"];
 
 export async function getMyProfile() {
@@ -313,10 +317,13 @@ export async function updateProfile(updates) {
 
 // Submit (or correct) verification details. Either linkedinUrl or a note of
 // at least 20 characters is required; the server validates and normalises.
-export async function submitVerification({ city, countryCode, location, linkedinUrl = "", note = "", voucher = "", profession = null }) {
+// acceptTerms records "18 or older" and the Terms for accounts that never
+// confirmed them at signup.
+export async function submitVerification({ city, countryCode, location, linkedinUrl = "", note = "", voucher = "", profession = null, acceptTerms = false }) {
   return restCall("POST", "/rest/v1/rpc/submit_verification", {
     p_city: city, p_country_code: countryCode, p_location: location,
     p_linkedin_url: linkedinUrl, p_note: note, p_voucher: voucher, p_profession: profession,
+    p_accept_terms: acceptTerms,
   });
 }
 
@@ -899,7 +906,7 @@ export async function adminGetDashboardData() {
   const get = (path) => restCall("GET", path);
   const [profiles, privateRows, groups, reports, posts, docs, events, helpRequests, marketItems] = await Promise.all([
     get("/rest/v1/profiles?select=*&order=created_at.desc"),
-    get("/rest/v1/profile_private?select=id,email"),
+    get("/rest/v1/profile_private?select=id,email,verification_status,status"),
     get("/rest/v1/groups?select=*&order=members_count.desc"),
     get("/rest/v1/reports?select=*&order=created_at.desc"),
     get("/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200"),
@@ -908,9 +915,12 @@ export async function adminGetDashboardData() {
     get("/rest/v1/help_requests?select=id,title,description,user_id&order=created_at.desc&limit=100"),
     get("/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100"),
   ]);
-  const emails = Object.fromEntries((privateRows || []).map((p) => [p.id, p.email]));
+  const privateById = Object.fromEntries((privateRows || []).map((p) => [p.id, p]));
   return {
-    users: (profiles || []).map((p) => ({ ...p, email: emails[p.id] || "" })),
+    users: (profiles || []).map((p) => {
+      const pp = privateById[p.id] || {};
+      return { ...p, email: pp.email || "", verification_status: pp.verification_status || "incomplete", status: pp.status || "active" };
+    }),
     groups: groups || [],
     reports: reports || [],
     posts: posts || [],
@@ -934,7 +944,7 @@ async function adminWrite(method, path, body = null) {
 // Moderation only (block / unblock). Verification decisions go through
 // adminReviewMember.
 export async function adminSetMemberStatus(userId, status) {
-  return adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}`, { status });
+  return adminWrite("PATCH", `/rest/v1/profile_private?id=eq.${userId}`, { status });
 }
 
 // Members waiting for a decision (or any other verification statuses), with

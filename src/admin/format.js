@@ -156,7 +156,7 @@ export function verificationChecks(m) {
         ? { key: "dupe", ok: true, label: "No other account uses this LinkedIn" }
         : { key: "dupe", ok: false, label: `Used by ${n} other account${n === 1 ? "" : "s"}` });
     }
-  } else if (m.verification_note !== undefined || m.verification_status !== "incomplete") {
+  } else if (m.verification_note !== undefined) {
     checks.push(note.length >= 20
       ? { key: "link", ok: true, label: "No LinkedIn — explanation provided" }
       : { key: "link", ok: false, label: "No LinkedIn and no explanation yet" });

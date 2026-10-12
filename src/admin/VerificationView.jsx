@@ -156,12 +156,13 @@ export default function VerificationView({ usersById, counts, cache, onMemberCha
     showToast({
       text,
       icon: decision === "approved" ? "check" : undefined,
-      undo: counted ? async () => {
+      // Undo moves the member back to pending, so only offer it if that's where they were.
+      undo: counted && m.verification_status === "pending" ? async () => {
         await api.adminReviewMember(m.id, "pending", "", "Undo");
         const restored = { ...updated, verification_status: "pending", verification_message: "", reviewed_at: null };
         restoreRow(restored, index < 0 ? 0 : index, f);
         onMemberChange(m.id, { verification_status: "pending", linkedin_verified: false });
-        return m.verification_status === "pending" ? `Undone. ${who} is back in the queue.` : `Undone. ${who} is now pending.`;
+        return `Undone. ${who} is back in the queue.`;
       } : undefined,
     });
   };

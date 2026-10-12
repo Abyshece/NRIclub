@@ -140,6 +140,8 @@ export default function MemberPeek({
   // Keyboard shortcuts while the peek is open.
   const keyHandler = useRef(null);
   keyHandler.current = (e) => {
+    // Holding a key down mustn't act on member after member.
+    if (e.repeat) return;
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || confirmBlock) return;
     const t = e.target;
     const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
@@ -219,8 +221,8 @@ export default function MemberPeek({
               </div>
               {noteText && <blockquote className="adm-quote" style={{ marginTop: 14 }}>{noteText}</blockquote>}
             </>
-          ) : loadingDetails && member.verification_note === undefined ? (
-            <p className="adm-faint">Loading…</p>
+          ) : member.verification_note === undefined ? (
+            <p className="adm-faint">{loadingDetails ? "Loading…" : "Their details didn't load. Close and reopen to try again."}</p>
           ) : noteText || voucher ? (
             <blockquote className="adm-quote">
               {noteText || <span className="adm-faint">No explanation given.</span>}

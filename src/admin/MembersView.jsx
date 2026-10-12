@@ -14,7 +14,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
   const [limit, setLimit] = useState(PAGE);
   const [openId, setOpenId] = useState(null);
   const [details, setDetails] = useState({}); // id -> row from admin_verification_queue
-  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState({}); // status -> true while its rows load
   const [confirm, setConfirm] = useState(null); // member to block
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmError, setConfirmError] = useState("");
@@ -44,11 +44,11 @@ export default function MembersView({ users, onMemberChange, showToast }) {
     const status = openUser.verification_status;
     if (details[openUser.id] || fetchedStatuses.current.has(status)) return;
     fetchedStatuses.current.add(status);
-    let alive = true;
-    setLoadingDetails(true);
+    setLoadingDetails((l) => ({ ...l, [status]: true }));
+    // Rows are keyed by id, so keep them even if the admin has moved on.
+    // On failure, forget the status so the next open tries again.
     api.adminVerificationQueue([status])
       .then((rows) => {
-        if (!alive) return;
         setDetails((d) => {
           const next = { ...d };
           (rows || []).forEach((r) => { next[r.id] = r; });
@@ -56,8 +56,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
         });
       })
       .catch(() => { fetchedStatuses.current.delete(status); })
-      .finally(() => { if (alive) setLoadingDetails(false); });
-    return () => { alive = false; };
+      .finally(() => { setLoadingDetails((l) => ({ ...l, [status]: false })); });
   }, [openUser?.id, openUser?.verification_status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const peekMember = useMemo(() => {
@@ -95,7 +94,8 @@ export default function MembersView({ users, onMemberChange, showToast }) {
     showToast({
       text: { approved: `Approved ${who}`, needs_info: `Asked ${who} for more info`, rejected: `Rejected ${who}`, pending: `Moved ${who} back to pending` }[decision],
       icon: decision === "approved" ? "check" : undefined,
-      undo: counted ? async () => {
+      // Undo moves the member back to pending, so only offer it if that's where they were.
+      undo: counted && m.verification_status === "pending" ? async () => {
         await api.adminReviewMember(m.id, "pending", "", "Undo");
         patchDetails(m.id, { ...before, verification_message: "", reviewed_at: null, verification_status: "pending" });
         onMemberChange(m.id, { verification_status: "pending", linkedin_verified: false });
@@ -210,7 +210,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
       {peekMember && (
         <MemberPeek
           member={peekMember}
-          loadingDetails={loadingDetails && !details[peekMember.id]}
+          loadingDetails={!!loadingDetails[peekMember.verification_status] && !details[peekMember.id]}
           index={openIndex >= 0 ? openIndex : 0}
           total={openIndex >= 0 ? filtered.length : 1}
           onClose={() => { const id = openId; setOpenId(null); focusRow(id); }}

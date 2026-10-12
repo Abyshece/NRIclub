@@ -40,7 +40,7 @@ function ContentPreview({ r }) {
     const main = c.type === "post" ? (c.content || "").slice(0, 200) + ((c.content || "").length > 200 ? "…" : "") : c.content;
     return (
       <div className="adm-preview">
-        {c.image && <img src={c.image} alt="" loading="lazy" />}
+        {/^https?:\/\//i.test(c.image || "") && <img src={c.image} alt="" loading="lazy" />}
         <div className="adm-preview-title">{main || <span className="adm-faint">(no text)</span>}</div>
         {c.excerpt && <div className="adm-preview-text">{c.excerpt.slice(0, 150)}{c.excerpt.length > 150 ? "…" : ""}</div>}
         {(c.price || c.date || r.contentAuthor) && (
