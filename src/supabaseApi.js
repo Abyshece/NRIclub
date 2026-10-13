@@ -978,6 +978,25 @@ export async function toggleRsvp(eventId) {
   }
 }
 
+// ---- Desi places (per city, recommended by members) ----
+export async function getPlaces(city) {
+  const rows = await restCall("GET", `/rest/v1/places?city=ilike.${encodeURIComponent(city)}&select=*,place_recommendations(user_id)&order=created_at.desc&limit=200`);
+  return (rows || []).map(p => ({ ...p, recs: (p.place_recommendations || []).map(r => r.user_id) }));
+}
+export async function addPlace({ city, name, kind, address, note }) {
+  if (!currentUser) throw new Error("Not logged in");
+  const rows = await restCall("POST", "/rest/v1/places", { city, name, kind, address, note, created_by: currentUser.id }, { Prefer: "return=representation" });
+  return rows?.[0];
+}
+export async function deletePlace(id) {
+  return restCall("DELETE", `/rest/v1/places?id=eq.${encodeURIComponent(id)}`);
+}
+export async function recommendPlace(id, on) {
+  if (!currentUser) throw new Error("Not logged in");
+  if (on) return restCall("POST", "/rest/v1/place_recommendations", { place_id: id, user_id: currentUser.id });
+  return restCall("DELETE", `/rest/v1/place_recommendations?place_id=eq.${encodeURIComponent(id)}&user_id=eq.${currentUser.id}`);
+}
+
 // Who's going to an event (with their name and photo).
 export async function getEventAttendees(eventId) {
   const rows = await restCall("GET", `/rest/v1/event_rsvps?event_id=eq.${encodeURIComponent(eventId)}&select=user_id,profiles:user_id(id,name,avatar_url)&limit=200`);

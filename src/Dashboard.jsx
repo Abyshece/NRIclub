@@ -164,6 +164,17 @@ const NewBadge = () => (
   <span title="Joined in the last 30 days" style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em", background: "#FFF3E0", color: "#C2410C", border: "1px solid #FED7AA" }}>NEW</span>
 );
 
+// Market categories as members see them, and what each one asks for.
+const MARKET_LABELS = { Housing: "Housing & roommates", Referrals: "Job referrals", Travel: "Travel companion" };
+const marketLabel = (c) => MARKET_LABELS[c] || c;
+const MARKET_FORM = {
+  Housing: { title: "e.g. Room in a 2-bedroom flat, Kreuzberg", price: "Rent / month", pricePh: "e.g. €650", desc: "Area, move-in date, who you're looking for..." },
+  Jobs: { title: "e.g. Hiring: Java developer", price: "Salary (optional)", pricePh: "e.g. €60k", desc: "Role, company, how to apply..." },
+  Referrals: { title: "e.g. I can refer at Siemens (software roles)", price: null, desc: "Which company and roles, or which referral you're looking for..." },
+  Travel: { title: "e.g. Delhi → Frankfurt, 12 Dec (LH 761)", price: null, desc: "Who is travelling (e.g. my parents), and what help they'd like..." },
+};
+const marketForm = (c) => MARKET_FORM[c] || { title: "What are you selling?", price: "Price", pricePh: "e.g. €50", desc: "Describe your item..." };
+
 const isUserNRI = (userOrLocation) => {
   // The country chosen when getting verified decides when it's known.
   const countryCode = typeof userOrLocation === "object" && userOrLocation ? (userOrLocation.countryCode || userOrLocation.country_code) : "";
@@ -1802,6 +1813,36 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }).catch(() => {});
   }, [selectedGroup?.id, canBrowse]);
 
+  // Desi places for the open city group (Places tab).
+  const [places, setPlaces] = useState({ city: null, list: [] });
+  const [newPlace, setNewPlace] = useState({ name: "", kind: "Grocery", address: "", note: "" });
+  const placesCity = selectedGroup?.category === "City" ? (selectedGroup.name || "").replace(/^Indians in /i, "") : null;
+  useEffect(() => {
+    if (!placesCity || communityTab !== "places" || !canBrowse) return;
+    api.getPlaces(placesCity).then(list => setPlaces({ city: placesCity, list })).catch(() => setPlaces({ city: placesCity, list: [] }));
+  }, [placesCity, communityTab, canBrowse]);
+  const addNewPlace = async (city) => {
+    const name = newPlace.name.trim();
+    if (!name) return;
+    try {
+      const row = await api.addPlace({ city, name, kind: newPlace.kind, address: newPlace.address.trim(), note: newPlace.note.trim() });
+      if (row) setPlaces(prev => ({ city, list: [{ ...row, recs: [] }, ...(prev.city === city ? prev.list : [])] }));
+      setNewPlace({ name: "", kind: newPlace.kind, address: "", note: "" });
+    } catch (e) {
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : /42501|row-level/.test(e.message || "") ? "Places can be added once your membership is confirmed." : "Couldn't add the place. Please try again.");
+    }
+  };
+  const togglePlaceRec = async (pl, on) => {
+    const flip = (yes) => setPlaces(prev => ({ ...prev, list: prev.list.map(x => x.id === pl.id ? { ...x, recs: yes ? [...x.recs.filter(u => u !== user.id), user.id] : x.recs.filter(u => u !== user.id) } : x) }));
+    flip(on);
+    try { await api.recommendPlace(pl.id, on); } catch (e) { flip(!on); }
+  };
+  const removePlace = async (pl) => {
+    if (!confirm(`Delete ${pl.name}?`)) return;
+    try { await api.deletePlace(pl.id); setPlaces(prev => ({ ...prev, list: prev.list.filter(x => x.id !== pl.id) })); }
+    catch (e) { alert(isNetworkError(e) ? NETWORK_MESSAGE : "Couldn't delete the place. Please try again."); }
+  };
+
   // Who's going to the open event.
   const [eventAttendees, setEventAttendees] = useState({ id: null, list: [] });
   useEffect(() => {
@@ -2351,7 +2392,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
               {/* Feed / Members Tabs */}
               <div style={{ display: "flex", gap: 24, borderBottom: "1px solid #E8E7E4", margin: "24px 0 20px" }}>
-                {["feed", "members"].map((tab) => (
+                {(selectedGroup.category === "City" ? ["feed", "members", "places"] : ["feed", "members"]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setCommunityTab(tab)}
@@ -2362,7 +2403,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       textTransform: "capitalize",
                     }}
                   >
-                    {tab === "feed" ? "Feed" : "Members"}
+                    {tab === "feed" ? "Feed" : tab === "members" ? "Members" : "Places"}
                   </button>
                 ))}
               </div>
@@ -2420,6 +2461,48 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     </div>
                   )}
                 </>
+              ) : communityTab === "places" ? (
+                /* Places: desi groceries, restaurants, temples and shops in the city */
+                (() => {
+                  const city = (selectedGroup.name || "").replace(/^Indians in /i, "");
+                  const list = places.city === city ? places.list : [];
+                  const sorted = [...list].sort((a, b) => b.recs.length - a.recs.length);
+                  return (
+                    <div>
+                      <p style={{ fontSize: 13, color: "#6B6A67", fontFamily: font, marginBottom: 14 }}>Indian groceries, restaurants, temples and shops in {city}, recommended by members.</p>
+                      {sorted.map(pl => {
+                        const mine = pl.recs.includes(user.id);
+                        return (
+                          <div key={pl.id} style={{ background: "#fff", border: "1px solid #E8E7E4", borderRadius: 12, padding: "12px 14px", marginBottom: 10, display: "flex", gap: 12, alignItems: "flex-start" }}>
+                            <div style={{ fontSize: 22, lineHeight: 1 }} aria-hidden="true">{{ Grocery: "🛒", Restaurant: "🍛", Temple: "🛕", Shop: "🛍️" }[pl.kind] || "📍"}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font }}>{pl.name} <span style={{ fontSize: 11, fontWeight: 500, color: "#9B9A97" }}>· {pl.kind}</span></div>
+                              {pl.address && <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(pl.name + ", " + pl.address)}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#5F5E5B", fontFamily: font }}>{pl.address}</a>}
+                              {pl.note && <p style={{ fontSize: 13, color: "#5F5E5B", margin: "4px 0 0", fontFamily: font, overflowWrap: "anywhere" }}>{pl.note}</p>}
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+                              <button onClick={() => togglePlaceRec(pl, !mine)} style={{ padding: "6px 10px", borderRadius: 8, border: mine ? "1px solid #B5E4CA" : "1px solid #E0E0DE", background: mine ? "#E3FCEF" : "#fff", color: mine ? "#22A06B" : "#37352F", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>👍 {pl.recs.length}</button>
+                              {pl.created_by === user.id && <button onClick={() => removePlace(pl)} style={{ background: "none", border: "none", padding: 0, color: "#9B9A97", fontSize: 11, cursor: "pointer", fontFamily: font, textDecoration: "underline" }}>Delete</button>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {sorted.length === 0 && <EmptyCard text={`No places in ${city} yet. Add the first one!`} />}
+                      <div style={{ background: "#FAFAF8", border: "1px dashed #E0E0DE", borderRadius: 12, padding: 14, marginTop: 14 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font, marginBottom: 8 }}>Add a place</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", gap: 8, marginBottom: 8 }}>
+                          <input style={inputStyle} placeholder="Name, e.g. Spice Bazaar" value={newPlace.name} maxLength={200} onChange={e => setNewPlace({ ...newPlace, name: e.target.value })} />
+                          <select style={{ ...inputStyle, cursor: "pointer" }} value={newPlace.kind} onChange={e => setNewPlace({ ...newPlace, kind: e.target.value })}>
+                            {["Grocery", "Restaurant", "Temple", "Shop", "Other"].map(k => <option key={k}>{k}</option>)}
+                          </select>
+                        </div>
+                        <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="Address or area (optional)" value={newPlace.address} maxLength={300} onChange={e => setNewPlace({ ...newPlace, address: e.target.value })} />
+                        <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="Why you recommend it (optional)" value={newPlace.note} maxLength={500} onChange={e => setNewPlace({ ...newPlace, note: e.target.value })} />
+                        <button onClick={() => addNewPlace(city)} disabled={!newPlace.name.trim()} style={{ ...btnPrimary, fontSize: 13, padding: "9px 16px", opacity: newPlace.name.trim() ? 1 : 0.5 }}>Add place</button>
+                      </div>
+                    </div>
+                  );
+                })()
               ) : (
                 /* Members Tab */
                 (() => {
@@ -3062,8 +3145,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
           );
         }
+        const essentials = docs.filter(d => d.category === "Essentials");
         const filteredDocs = docs.filter(d => {
-          if (docCityFilter !== "All" && !(d.city || "").includes(docCityFilter)) return false;
+          if (d.category === "Essentials" && !docSearch.trim()) return false; // pinned above
+          if (docCityFilter !== "All" && !(d.city || "").includes(docCityFilter) && d.category !== "Essentials") return false;
           if (docSearch.trim()) {
             const q = docSearch.toLowerCase();
             return (d.title || "").toLowerCase().includes(q) || (d.excerpt || "").toLowerCase().includes(q) || (d.content || "").toLowerCase().includes(q) || (d.category || "").toLowerCase().includes(q) || (d.author || "").toLowerCase().includes(q);
@@ -3103,6 +3188,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </select>
               </div>
             </div>
+            {essentials.length > 0 && !docSearch.trim() && (
+              <div style={{ background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, padding: "14px 16px", marginBottom: 20 }}>
+                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>📌 NRI essentials</h4>
+                {essentials.map(d => (
+                  <button key={d.id} onClick={() => setSelectedDoc(d)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, width: "100%", padding: "9px 0", background: "none", border: "none", borderTop: "1px solid #F5F5F3", cursor: "pointer", textAlign: "left", fontFamily: font }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: "#37352F" }}>{d.title}</span>
+                    <span style={{ fontSize: 11, color: "#9B9A97", flexShrink: 0 }}>{d.readTime}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="docs-grid">
               {filteredDocs.map((d) => (
                 <div key={d.id} onClick={async () => {
@@ -3181,9 +3277,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             {/* Category pills */}
             <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-              {["All", "Housing", "Jobs", "Items", "Vehicles", "Services"].map(c => (
+              {["All", "Housing", "Referrals", "Travel", "Jobs", "Items", "Vehicles", "Services"].map(c => (
                 <button key={c} onClick={() => setMarketCategory(c)} style={{ padding: "7px 16px", borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font, border: marketCategory === c ? "none" : "1px solid #E0E0DE", background: marketCategory === c ? "#37352F" : "#fff", color: marketCategory === c ? "#fff" : "#5F5E5B", transition: "all 0.1s" }}>
-                  {c}
+                  {marketLabel(c)}
                 </button>
               ))}
             </div>
@@ -3198,8 +3294,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     {item.photos && item.photos.length > 0 && (
                       <img src={item.photos[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     )}
-                    <div style={{ position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,0.9)", backdropFilter: "blur(4px)", padding: "5px 10px", borderRadius: 4, fontSize: 12, fontWeight: 700, color: "#37352F" }}>{item.price}</div>
-                    <div style={{ position: "absolute", bottom: 12, left: 12, background: "rgba(0,0,0,0.6)", padding: "3px 8px", borderRadius: 4, fontSize: 9, fontWeight: 600, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>{item.category}</div>
+                    <div style={{ position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,0.9)", backdropFilter: "blur(4px)", padding: "5px 10px", borderRadius: 4, fontSize: 12, fontWeight: 700, color: "#37352F", display: item.price ? "block" : "none" }}>{item.price}</div>
+                    <div style={{ position: "absolute", bottom: 12, left: 12, background: "rgba(0,0,0,0.6)", padding: "3px 8px", borderRadius: 4, fontSize: 9, fontWeight: 600, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>{marketLabel(item.category)}</div>
                     {item.photos && item.photos.length > 1 && (
                       <div style={{ position: "absolute", top: 12, left: 12, background: "rgba(0,0,0,0.5)", padding: "3px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, color: "#fff" }}>{item.photos.length} photos</div>
                     )}
@@ -4300,7 +4396,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
                 <div style={{ padding: "12px 14px", background: "#FAFAF8", borderRadius: 8, border: "1px solid #EDEDEB" }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4, fontFamily: font }}>Category</div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{expandedMarketItem.category}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{marketLabel(expandedMarketItem.category)}</div>
                 </div>
                 <div style={{ padding: "12px 14px", background: "#FAFAF8", borderRadius: 8, border: "1px solid #EDEDEB" }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4, fontFamily: font }}>Seller</div>
@@ -5021,23 +5117,24 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setMarketModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Post an Item</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Post in Market</h3>
               <button onClick={() => setMarketModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
-                <input style={inputStyle} value={newMarket.title} onChange={(e) => setNewMarket({...newMarket, title: e.target.value})} placeholder="What are you selling?" />
+                <input style={inputStyle} value={newMarket.title} onChange={(e) => setNewMarket({...newMarket, title: e.target.value})} placeholder={marketForm(newMarket.category).title} />
               </div>
               <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+                {marketForm(newMarket.category).price ? (
                 <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Price</label>
-                  <input style={inputStyle} value={newMarket.price} onChange={(e) => setNewMarket({...newMarket, price: e.target.value})} placeholder="e.g. €50" />
-                </div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{marketForm(newMarket.category).price}</label>
+                  <input style={inputStyle} value={newMarket.price} onChange={(e) => setNewMarket({...newMarket, price: e.target.value})} placeholder={marketForm(newMarket.category).pricePh} />
+                </div>) : <div />}
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
                   <select style={{ ...inputStyle, appearance: "none", cursor: "pointer" }} value={newMarket.category} onChange={(e) => setNewMarket({...newMarket, category: e.target.value})}>
-                    {["Housing", "Jobs", "Items", "Vehicles", "Services"].map(c => <option key={c}>{c}</option>)}
+                    {["Housing", "Referrals", "Travel", "Jobs", "Items", "Vehicles", "Services"].map(c => <option key={c} value={c}>{marketLabel(c)}</option>)}
                   </select>
                 </div>
               </div>
@@ -5050,7 +5147,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
-                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newMarket.description} onChange={(e) => setNewMarket({...newMarket, description: e.target.value})} placeholder="Describe your item..." />
+                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newMarket.description} onChange={(e) => setNewMarket({...newMarket, description: e.target.value})} placeholder={marketForm(newMarket.category).desc} />
               </div>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Photos (max 4)</label>
@@ -5078,7 +5175,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => { setMarketModal(false); setMarketPhotos([]); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button disabled={!newMarket.title || !newMarket.price} onClick={async () => {
+                <button disabled={!newMarket.title || (marketForm(newMarket.category).price && !newMarket.price && newMarket.category !== "Jobs")} onClick={async () => {
                   // Upload photos to Supabase Storage
                   let imageUrls = [];
                   for (const photo of marketPhotos) {
@@ -5095,7 +5192,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     }
                   }
                   try {
-                    const created = await api.createMarketItem({ title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
+                    const created = await api.createMarketItem({ title: newMarket.title, price: marketForm(newMarket.category).price ? newMarket.price : "", category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
                     // Add to local state immediately
                     setMarketItems(prev => [{ id: created?.[0]?.id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
                   } catch(e) {
@@ -5103,7 +5200,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     return;
                   }
                   setNewMarket({ title: "", price: "", category: "Items", city: "", description: "" }); setMarketPhotos([]); setMarketModal(false);
-                }} style={{ ...btnPrimary, opacity: newMarket.title && newMarket.price ? 1 : 0.4 }}>Post Item</button>
+                }} style={{ ...btnPrimary, opacity: newMarket.title && (!marketForm(newMarket.category).price || newMarket.price || newMarket.category === "Jobs") ? 1 : 0.4 }}>Post</button>
               </div>
             </div>
           </div>
