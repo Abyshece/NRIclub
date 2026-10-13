@@ -45,6 +45,10 @@ the phase that will handle them.
 - **Doc likes, event likes/comments and "Clear chat"** only change local
   state.
 - **Network** shows at most 20 members.
+- **"Mark all read"** in the notifications also marks open Namaste requests
+  as read, and read requests are hidden, so they can't be accepted any more
+  (the sender's button stays "Sent"). Leave requests out of it, or list
+  open requests from `connections` instead of the notifications.
 - **Account settings**: name change and password change aren't wired up.
 - **Report user** from the chat screen silently fails (`activeConvo` is out of
   scope).
@@ -72,7 +76,9 @@ the phase that will handle them.
 - `user_settings.marketing_emails` is no longer read or written by the site
   (marketing consent is `profile_private.marketing_consent`), and it's
   FALSE by default for everyone, so it says nothing about consent. Drop the
-  column, and never build a mailing list from it.
+  column, and never build a mailing list from it. Build mailing lists from
+  `marketing_consent`, and only from confirmed accounts
+  (`profiles.email_verified`).
 - Marketplace photos are a JSON string in `image_url`; event dates are free
   text.
 
@@ -103,17 +109,44 @@ the phase that will handle them.
   A link changed later (for example after approval, which puts the member
   back in review) isn't matched. Show admins in the review queue whether a
   member's current link matches a moderation record, without telling the
-  member.
+  member. A hold ends only through an admin's decision on the member
+  (approving them, or moving them back to unfinished) or the account's
+  deletion; sending the details again never ends it.
+- The LinkedIn match key (`private.linkedin_slug`, built on
+  `private.normalize_linkedin`) is indexed on `profiles`
+  (`idx_profiles_linkedin_slug`) and stored in
+  `private.moderation_record.linkedin_slug`. A migration that changes either
+  function must also run `REINDEX INDEX public.idx_profiles_linkedin_slug`
+  and recompute the stored keys, or matching and the review queue's
+  duplicate counts go wrong.
 - Resuming someone else's unfinished signup: the site now keeps the new
   session in memory until the password is replaced and the earlier visit's
-  details are cleared, so nobody is left signed in half-way. If the tab is
-  closed after the code is entered but before the new password is saved,
-  the confirmed account still has the earlier visit's password (its owner
-  uses "Forgot password?"). Closing that gap needs the server, e.g. an
-  Edge Function that sets the password when the code is confirmed. The
-  signup step only stores the name and country an earlier visit sent (the
-  same tab replaces both), so no LinkedIn link, hometown or job from it
-  survives.
+  details are cleared, so nobody is left signed in half-way. The signup
+  step only stores the name and country from the signup data, so no
+  LinkedIn link, hometown, job, marketing opt-in or 18+/Terms record from
+  an earlier visit survives; the site records the marketing choice and the
+  18+/Terms tick once the code is confirmed. A resumed signup replaces the
+  earlier visit's name and country, and records this visit's choices, both
+  before and after it saves the new password. If the tab is closed after
+  the code is entered but before the new password is saved, the confirmed
+  account still has the earlier visit's password (and, if this visit's
+  details weren't saved yet either, its name and country): its owner uses
+  "Forgot password?", and Get verified asks her for 18+ and the Terms if
+  they weren't recorded. Closing that gap needs the server, e.g. an Edge
+  Function that sets the password when the code is confirmed. An owner who
+  takes such an account over with "Forgot password?" instead of signing up
+  again keeps the earlier visit's name until she changes it (Get verified
+  asks her for her country, 18+ and the Terms).
+- Someone who signs up, leaves at the code screen and later confirms the
+  address from the log-in page ("Send me a new code") ends with marketing
+  off even if they ticked it: only the signup screen knows the choice. They
+  can switch it on in Settings.
+- An admin can only reject or block an unconfirmed, unfinished signup, not
+  delete it. If the address really belongs to someone else, its owner who
+  later signs up lands in that account and sees "We couldn't verify your
+  membership" (no email record was kept, so after she deletes the account
+  from that screen her new signup isn't held). Let admins delete
+  unconfirmed signups instead (needs an Edge Function with the service key).
 - Vercel wasn't part of the Phase 1 review: check its settings, old preview
   deployments, and whether Vercel Analytics needs the cookie banner's
   consent. Add security headers, including a Content-Security-Policy whose
@@ -132,9 +165,10 @@ the phase that will handle them.
   confirm it.
 - **Legal review** before inviting the public:
   - The Terms of Use text is a plain-language draft.
-  - Consent at signup: every signup is stored with `gdpr_consent = true`
-    and a consent date from the Terms tick, but no separate consent is asked,
-    while the Privacy Policy names consent (Art. 6(1)(a)) as a legal basis.
+  - Consent at signup: accepting the Terms (at signup, in Get verified or on
+    the Terms screen) also stores `gdpr_consent = true` and a consent date,
+    but no separate consent is asked, while the Privacy Policy names consent
+    (Art. 6(1)(a)) as a legal basis.
     Either rely on the contract (Art. 6(1)(b)) plus `terms_accepted_at` and
     stop recording `gdpr_consent` from the Terms tick, or add a real,
     unticked consent box, and align the Privacy Policy. Not changed in the
@@ -142,13 +176,16 @@ the phase that will handle them.
   - The moderation record kept when a member is rejected or blocked, also
     after they delete their account (`private.moderation_record`, described
     in the Privacy Policy, section 5). It holds a keyed hash of the email
-    address (SHA-256 with a secret key, `moderation_salt` in
-    `private.app_config`): it can't be turned back into the address, but
-    anyone with the key, such as someone with full database access, can
-    check whether an address they already know matches, so it is still
-    personal data. It also holds the LinkedIn profile name from the link
-    the account had when the admin decided, the decision, its date and the
-    admin's note. The account id is removed when the account is deleted.
+    address, only if the account confirmed it (SHA-256 with a secret key,
+    `moderation_salt` in `private.app_config`): it can't be turned back
+    into the address, but anyone with the key, such as someone with full
+    database access, can check whether an address they already know
+    matches, so it is still personal data. It also holds the LinkedIn
+    profile name from the link the account had at the admin's last review
+    of its details (when it was last approved, asked for more information
+    or rejected; for a block before any review, the link it had when
+    blocked, which the admin screens show), the decision, its
+    date and the admin's note. The account id is removed when the account is deleted.
     It's checked when someone signs up (email address), sends their
     verification details (email address and LinkedIn link) or is moved back
     into review by an admin. Confirm the legal basis (legitimate interest,

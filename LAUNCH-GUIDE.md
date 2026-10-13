@@ -238,7 +238,8 @@ isn't in `public.admins` (Step 3).
 take part" and an empty feed:** their email address or LinkedIn link matched
 a member who was rejected or blocked. Admin panel → **Verification** shows
 them as **Held for review**, with what they matched and any note on the
-earlier decision. Approve them if they're genuine.
+earlier decision. Approve them if they're genuine. The hold stays until an
+admin decides: sending their details again doesn't end it.
 
 **Every member sees "Before you continue" again, or members suddenly see an
 empty feed:** the Terms version on the site (`TERMS_VERSION` in
