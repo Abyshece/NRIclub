@@ -761,7 +761,7 @@ export async function searchProfiles(query = "", filters = {}) {
   if (filters.city && filters.city !== "All") url += `&location=ilike.%25${filters.city}%25`;
   if (filters.hometown && filters.hometown !== "All") url += `&hometown=ilike.%25${filters.hometown}%25`;
   if (currentUser) url += `&id=neq.${currentUser.id}`;
-  url += "&limit=20";
+  url += "&limit=200";
   return restCall("GET", url);
 }
 

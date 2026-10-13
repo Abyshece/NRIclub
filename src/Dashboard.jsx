@@ -5,7 +5,7 @@ import "./member/base.css";
 import GetVerified from "./member/GetVerified";
 import CodeEntry from "./member/CodeEntry";
 import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner";
-import ProfileChecklist, { missingProfileItems, useProfileCardDismissed } from "./member/ProfileChecklist";
+import ProfileChecklist, { setupSteps, useProfileCardDismissed } from "./member/ProfileChecklist";
 import { TermsContent, PrivacyContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
 import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { rateLimiter } from "./rateLimiter";
@@ -156,6 +156,13 @@ const postTags = (content, hasLink) => {
   if (hasLink) tags.push(EXTERNAL_TAG);
   return tags;
 };
+
+// Joined in the last 30 days: shown with a small "New" badge so others can
+// welcome them.
+const isNewMember = (createdAt) => !!createdAt && Date.now() - new Date(createdAt).getTime() < 30 * 86400000;
+const NewBadge = () => (
+  <span title="Joined in the last 30 days" style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em", background: "#FFF3E0", color: "#C2410C", border: "1px solid #FED7AA" }}>NEW</span>
+);
 
 const isUserNRI = (userOrLocation) => {
   // The country chosen when getting verified decides when it's known.
@@ -1147,7 +1154,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         setNetworkUsers(dbUsers.map(u => ({
           id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
           hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
-          linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "",
+          linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "", createdAt: u.created_at || "",
           avatar_url: u.avatar_url || "",
           followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
         })));
@@ -1709,6 +1716,32 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const welcomeKey = `nriclub_welcome_done_${user.id}`;
   const [welcomeDone, setWelcomeDone] = useState(() => { try { return !!localStorage.getItem(welcomeKey); } catch (e) { return true; } });
   const dismissWelcome = () => { setWelcomeDone(true); try { localStorage.setItem(welcomeKey, "1"); } catch (e) {} };
+  // "Introduce yourself": a ready-made first post for the city group.
+  const introKey = `nriclub_intro_done_${user.id}`;
+  const [introDone, setIntroDone] = useState(() => { try { return !!localStorage.getItem(introKey); } catch (e) { return false; } });
+  const [introText, setIntroText] = useState(() => {
+    const first = (user.name || "").split(" ")[0];
+    const bits = [user.profession, user.hometown && `from ${user.hometown.split(",")[0]}`, (user.city || (user.location || "").split(",")[0]) && `living in ${user.city || (user.location || "").split(",")[0]}`].filter(Boolean);
+    return `Hi everyone! I'm ${first || "new here"}${bits.length ? ", " + bits.join(", ") : ""}. Happy to connect and help where I can 🙏`;
+  });
+  const [introBusy, setIntroBusy] = useState(false);
+  const postIntro = async () => {
+    const text = validateInput(introText, 5000);
+    if (!text.trim() || introBusy) return;
+    setIntroBusy(true);
+    try {
+      const r = await api.createPost(text, postTags(text, false), null, cityGroup?.id || null);
+      const row = r?.[0];
+      setPosts(prev => [{ id: row?.id || "p_" + Date.now(), userId: user.id, content: text,
+        author: { name: user.name, profession: user.profession, occupation_status: user.occupationStatus || "", location: user.location, hometown: user.hometown, avatar_url: user.avatar_url || "" },
+        likes: 0, comments: [], tags: [], timestamp: Date.now(), groupName: cityGroup?.name || null, groupId: cityGroup?.id || null, image: null, externalUrl: null }, ...prev]);
+      setIntroDone(true);
+      try { localStorage.setItem(introKey, "1"); } catch (e) {}
+    } catch (e) {
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your post couldn't be published. Please try again.");
+    }
+    setIntroBusy(false);
+  };
   useEffect(() => {
     if (!canBrowse || !listsLoaded || !cityGroup || cityGroup.joined) return;
     const key = `nriclub_city_group_${user.id}`;
@@ -1854,11 +1887,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   // "Complete your profile" card
-  const profileItems = profileCardDismissed ? [] : missingProfileItems(user, groups);
+  const saidHello = posts.some(p => p.userId === user.id) || sentNamaste.size > 0 || acceptedConnections.size > 0;
+  const profileItems = profileCardDismissed ? [] : setupSteps(user, groups, { said: saidHello });
   const handleProfileItem = (item) => {
     if (item.key === "photo") document.getElementById("avatar-upload")?.click();
-    else if (item.key === "group") toggleGroup(item.groupId);
-    else openProfileEditor(item.key);
+    else if (item.key === "groups") { setSelectedGroup(null); setView("groups"); }
+    else { setWelcomeDone(false); setView("home"); window.scrollTo(0, 0); setTimeout(() => document.getElementById("intro-text")?.focus(), 300); }
   };
 
   // Styles
@@ -1906,7 +1940,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
             {/* Welcome: a new member's first steps */}
-            {!welcomeDone && myFollowing.length === 0 && (
+            {!welcomeDone && (myFollowing.length === 0 || !introDone) && (
               <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 20px 16px", marginBottom: 20, position: "relative" }}>
                 <button onClick={dismissWelcome} aria-label="Close" style={{ position: "absolute", top: 10, right: 10, padding: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 16 })}</button>
                 <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font, marginBottom: 4 }}>Welcome to NRIClub, {(user.name || "").split(" ")[0] || "friend"}! 🙏</h3>
@@ -1925,6 +1959,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <button onClick={() => handleSendNamaste(u.id)} disabled={sentNamaste.has(u.id) || acceptedConnections.has(u.id)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: sentNamaste.has(u.id) ? "#9B9A97" : "#37352F", fontSize: 12, fontWeight: 600, cursor: sentNamaste.has(u.id) ? "default" : "pointer", fontFamily: font, flexShrink: 0 }}>{sentNamaste.has(u.id) || acceptedConnections.has(u.id) ? "Sent" : "🙏 Namaste"}</button>
                   </div>
                 )) : <button onClick={() => setView("network")} style={{ ...btnPrimary, fontSize: 13, padding: "9px 16px" }}>Find members</button>}
+                <div style={{ borderTop: "1px solid #F0EFED", marginTop: 12, paddingTop: 12 }}>
+                  {introDone ? (
+                    <p style={{ fontSize: 13, color: "#138808", fontWeight: 600, fontFamily: font, margin: 0 }}>✓ You've introduced yourself{cityGroup ? ` in ${cityGroup.name}` : ""}.</p>
+                  ) : (<>
+                    <label htmlFor="intro-text" style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font, marginBottom: 6 }}>Introduce yourself{cityGroup ? ` in ${cityGroup.name}` : ""}</label>
+                    <textarea id="intro-text" value={introText} onChange={(e) => setIntroText(e.target.value)} maxLength={TEXT_LIMIT} rows={3} style={{ ...inputStyle, resize: "vertical", fontSize: 13, lineHeight: 1.5 }} />
+                    <button onClick={postIntro} disabled={introBusy || !introText.trim()} style={{ ...btnPrimary, marginTop: 8, fontSize: 13, padding: "9px 16px", opacity: introBusy ? 0.7 : 1 }}>{introBusy ? "Posting..." : "Post"}</button>
+                  </>)}
+                </div>
                 <div style={{ borderTop: "1px solid #F0EFED", marginTop: 12, paddingTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, color: "#6B6A67", fontFamily: font }}>Know other Indians abroad?</span>
                   <button onClick={() => setSettingsModal("invite")} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: font, textDecoration: "underline" }}>Invite a friend</button>
@@ -2111,6 +2154,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       {/* Name + verified badge + NRI badge */}
                       <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 14, marginBottom: 2, flexWrap: "wrap", justifyContent: "center" }}>
                         <h3 onClick={() => openMember(u.id)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font, cursor: "pointer" }}>{u.name}</h3>
+                        {isNewMember(u.createdAt) && <NewBadge />}
                         {u.linkedin_verified && (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="#22C55E" stroke="none" role="img" aria-label="Verified member">
                             <title>Verified member</title>
@@ -3407,6 +3451,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <div style={{ display: "flex", justifyContent: "center" }}><Avatar name={m.name || "Member"} size={96} url={m.avatar_url} /></div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>{m.name || "Member"}</h2>
+                  {isNewMember(m.created_at) && <NewBadge />}
                   {m.linkedin_verified && (
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E" role="img" aria-label="Verified member"><title>Verified member</title><path d="M12 2l2.4 2.2 3.3-.4.9 3.2 2.9 1.7-1.2 3.1 1.2 3.1-2.9 1.7-.9 3.2-3.3-.4L12 22l-2.4-2.2-3.3.4-.9-3.2-2.9-1.7L3.7 12 2.5 8.9l2.9-1.7.9-3.2 3.3.4z"/><path d="M8.5 12.5l2.2 2.2 4.8-4.8" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                   )}
