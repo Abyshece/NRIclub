@@ -4,7 +4,8 @@ Ready-to-send messages for getting the first members in each city. Copy, change 
 
 Links to use:
 - Home: `https://nriclub.app`
-- A city page: `https://nriclub.app/city/[City]` (for example `https://nriclub.app/city/Berlin`). It shows the city's member, event and desi-place counts, and works without an account.
+- A city page: `https://nriclub.app/city/[city]`, in lower case with hyphens for spaces (for example `https://nriclub.app/city/berlin` or `https://nriclub.app/city/new-york-city`). It shows the city's member, event and desi-place counts, works without an account, and has its own link preview ("Indians in Berlin · NRIClub").
+- The guides: `https://nriclub.app/guides`, ten short guides anyone can read (passport renewal, OCI, NRE/NRO accounts, taxes, sending money home and more). Good to share when someone asks one of these questions in a WhatsApp group, for example `https://nriclub.app/guides/oci-card-the-basics`.
 - Your invite link: in NRIClub, open the ⚙ menu, then **Invite friends**. People who join through it name you as their voucher, so they're verified faster.
 
 Shared links show a preview card with the Indian flag and "One home for Indians abroad".
@@ -32,7 +33,7 @@ Most cities already have Indian WhatsApp or Telegram groups. Ask the admin first
 > • Desi groceries, restaurants and temples, recommended by members
 > • Diwali, Holi and meetups near you
 >
-> [City] page: https://nriclub.app/city/[City]
+> [City] page: https://nriclub.app/city/[city]
 
 ---
 
@@ -50,7 +51,7 @@ Students arrive every semester and need the most help. Reach them before the sem
 >
 > New students ask the same questions every year: where to stay, how to open a bank account, where to buy Indian groceries, how the NRE/NRO accounts work. On NRIClub they can ask people who already live in [City], and read short guides on the basics.
 >
-> Could you share our [City] page with your new students, in your welcome email or group? https://nriclub.app/city/[City]
+> Could you share our [City] page with your new students, in your welcome email or group? https://nriclub.app/city/[city]
 >
 > If someone on your committee would like to be our [City] ambassador, we'd love that too.
 >
@@ -73,7 +74,7 @@ Their notice boards and newsletters reach families who are not on social media.
 >
 > We'd be grateful if you could mention us in your newsletter or on your notice board, or let us list your [festival] celebration on our Events page so more people can come.
 >
-> [City] page: https://nriclub.app/city/[City]
+> [City] page: https://nriclub.app/city/[city]
 >
 > With thanks,
 > [your name]
@@ -82,7 +83,7 @@ Their notice boards and newsletters reach families who are not on social media.
 
 > 🇮🇳 New to [City]? Indians in [City] help each other on NRIClub.
 > Ask questions · Rooms and referrals · Desi places · Festivals
-> Free and verified: nriclub.app/city/[City]
+> Free and verified: nriclub.app/city/[city]
 
 ---
 
@@ -104,7 +105,7 @@ Their notice boards and newsletters reach families who are not on social media.
 
 **Before a festival (two to three weeks ahead):**
 
-> 🪔 [Festival] in [City]? Find a celebration near you, or host one, on NRIClub: https://nriclub.app/city/[City]
+> 🪔 [Festival] in [City]? Find a celebration near you, or host one, on NRIClub: https://nriclub.app/city/[city]
 
 ---
 

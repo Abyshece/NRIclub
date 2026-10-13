@@ -1,5 +1,7 @@
 // Overview: a few calm numbers, recent activity and signups per month.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import * as api from "../supabaseApi";
+import { slug } from "../content/slug";
 import { PageHeader, SectionTitle } from "./ui";
 import { DAY, msSince } from "./format";
 
@@ -62,6 +64,62 @@ function SignupsChart({ users }) {
   );
 }
 
+// Members and activity per city group, to see where NRIClub grows and where
+// outreach is needed. Cities without members are hidden until "Show all".
+function CityStats() {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    api.adminCityStats().then(setRows).catch(() => setError("City numbers couldn't be loaded. If the 2026-10-17 database update hasn't been run yet, run it first."));
+  }, []);
+  if (error) return <p className="adm-faint adm-small">{error}</p>;
+  if (!rows) return <p className="adm-faint adm-small">Loading…</p>;
+  const q = query.trim().toLowerCase();
+  const active = (r) => r.members > 0 || r.posts_30d > 0 || r.questions_30d > 0 || r.events_upcoming > 0 || r.ambassadors;
+  const shown = rows.filter((r) => (q ? r.city.toLowerCase().includes(q) : all || active(r)));
+  const th = { textAlign: "left", fontWeight: 600, fontSize: 12, color: "var(--text-faint, #9B9A97)", padding: "8px 10px", borderBottom: "1px solid rgba(55,53,47,0.09)", whiteSpace: "nowrap" };
+  const td = { padding: "8px 10px", borderBottom: "1px solid rgba(55,53,47,0.06)", fontSize: 13, whiteSpace: "nowrap" };
+  const num = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a city" aria-label="Find a city"
+          style={{ padding: "6px 10px", border: "1px solid rgba(55,53,47,0.16)", borderRadius: 6, fontSize: 13, fontFamily: "inherit", minWidth: 180 }} />
+        {!q && <label className="adm-small" style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+          <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Show all {rows.length} cities
+        </label>}
+      </div>
+      <div style={{ overflowX: "auto", border: "1px solid rgba(55,53,47,0.09)", borderRadius: 8 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>
+            <th style={th}>City</th><th style={{ ...th, textAlign: "right" }}>Members</th><th style={{ ...th, textAlign: "right" }}>New, 7 days</th>
+            <th style={{ ...th, textAlign: "right" }}>New, 30 days</th><th style={{ ...th, textAlign: "right" }}>Posts, 30 days</th>
+            <th style={{ ...th, textAlign: "right" }}>Questions, 30 days</th><th style={{ ...th, textAlign: "right" }}>Upcoming events</th><th style={th}>Ambassador</th>
+          </tr></thead>
+          <tbody>
+            {shown.slice(0, 200).map((r) => (
+              <tr key={r.city}>
+                <td style={td}><a href={`https://nriclub.app/city/${slug(r.city) || encodeURIComponent(r.city)}`} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>{r.city}</a></td>
+                <td style={num}>{r.members}</td>
+                <td style={{ ...num, color: r.joined_7d ? "#0F7B6C" : undefined }}>{r.joined_7d || "–"}</td>
+                <td style={num}>{r.joined_30d || "–"}</td>
+                <td style={num}>{r.posts_30d || "–"}</td>
+                <td style={num}>{r.questions_30d || "–"}</td>
+                <td style={num}>{r.events_upcoming || "–"}</td>
+                <td style={{ ...td, color: r.ambassadors ? undefined : "#D9730D" }}>{r.ambassadors || (r.members >= 10 ? "Needs one" : "–")}</td>
+              </tr>
+            ))}
+            {shown.length === 0 && <tr><td style={td} colSpan={8}>{q ? "No city matches." : "No city has members yet."}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {shown.length > 200 && <p className="adm-faint adm-small" style={{ marginTop: 6 }}>Showing the first 200 of {shown.length}. Search to find a city.</p>}
+    </>
+  );
+}
+
 // users: the newest members loaded (at most 1,000); membersTotal and
 // blockedTotal count all of them.
 export default function OverviewView({ users, membersTotal = users.length, blockedTotal = null, counts, openReports, pendingGroups, onNavigate }) {
@@ -111,6 +169,11 @@ export default function OverviewView({ users, membersTotal = users.length, block
       <div style={{ marginTop: 40 }}>
         <SectionTitle>Signups per month</SectionTitle>
         <SignupsChart users={users} />
+      </div>
+
+      <div style={{ marginTop: 40 }}>
+        <SectionTitle>Cities</SectionTitle>
+        <CityStats />
       </div>
     </>
   );
