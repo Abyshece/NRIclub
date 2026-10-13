@@ -384,9 +384,10 @@ const LandingPage = ({ onJoin, onLogin }) => {
         style={{
           fontSize: 14,
           fontWeight: 500,
-          padding: "8px 4px",
-          border: "none",
-          background: "transparent",
+          padding: "8px 16px",
+          border: "1px solid #E0E0DE",
+          borderRadius: 8,
+          background: "#fff",
           cursor: "pointer",
           color: "#37352F",
           letterSpacing: "-0.01em",
@@ -592,7 +593,8 @@ const LandingPage = ({ onJoin, onLogin }) => {
 // LOGIN PAGE
 // ============================================================================
 // notice: a confirmation to show above the form (e.g. after a new password).
-const LoginPage = ({ onComplete, onSignUp, initialEmail = "", notice = "" }) => {
+// onBack: back to the landing page.
+const LoginPage = ({ onComplete, onSignUp, onBack, initialEmail = "", notice = "" }) => {
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -714,10 +716,6 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "", notice = "" }) => 
   const labelStyle = { display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font };
   const errorStyle = { padding: "12px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 16, fontSize: 13, lineHeight: 1.5, color: "#B91C1C", fontFamily: font };
 
-  // Eye icon SVGs
-  const EyeIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#787774" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
-  const EyeOffIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#787774" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
-
   if (codeMode) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
@@ -744,23 +742,22 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "", notice = "" }) => 
             <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
               {Icons.shield({ size: 24, stroke: "#37352F" })}
             </div>
-            <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Reset Password</h2>
-            <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Enter your email and we'll send you a reset link</p>
+            <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Reset your password</h2>
+            {!resetSent && <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Enter your email and we'll send you a reset link</p>}
           </div>
           {error && <div role="alert" style={errorStyle}>{error}</div>}
           {resetSent ? (
             <div style={{ padding: "20px", background: "#E3FCEF", borderRadius: 10, textAlign: "center", marginBottom: 20 }}>
-              <p style={{ fontSize: 14, color: "#126B45", fontWeight: 600, fontFamily: font, marginBottom: 8 }}>Reset email sent!</p>
-              <p style={{ fontSize: 13, color: "#5F5E5B", fontFamily: font }}>Check your inbox for a password reset link. It may take a few minutes.</p>
+              <p style={{ fontSize: 14, lineHeight: 1.5, color: "#126B45", fontFamily: font, margin: 0, overflowWrap: "anywhere" }}>We sent a reset link to <strong>{cleanEmail}</strong>. It can take a few minutes. Can't find it? Check your spam folder.</p>
             </div>
           ) : (
-            <>
+            <form onSubmit={(e) => { e.preventDefault(); handleResetPassword(); }} noValidate>
               <div style={{ marginBottom: 20 }}>
                 <label htmlFor="reset-email" style={labelStyle}>Email</label>
-                <input id="reset-email" style={inputStyle} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus />
+                <input id="reset-email" style={inputStyle} type="email" autoComplete="email" inputMode="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus />
               </div>
-              <button onClick={handleResetPassword} disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600, background: "#37352F", color: "#fff", cursor: "pointer", fontFamily: font }}>{loading ? "Sending..." : "Send Reset Link"}</button>
-            </>
+              <button type="submit" disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600, background: "#37352F", color: "#fff", cursor: "pointer", fontFamily: font }}>{loading ? "Sending..." : "Send reset link"}</button>
+            </form>
           )}
           <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#6B6A67", fontFamily: font }}>
             <button onClick={() => { setResetMode(false); setResetSent(false); setError(""); }} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Back to login</button>
@@ -773,6 +770,9 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "", notice = "" }) => 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
       <div style={{ maxWidth: 360, width: "100%" }}>
+        <button type="button" onClick={onBack} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: font, fontSize: 13, fontWeight: 500, color: "#6B6A67", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
+          <span aria-hidden="true">←</span> Back
+        </button>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
           <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
             {Icons.globe({ size: 24, stroke: "#37352F" })}
@@ -805,14 +805,14 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "", notice = "" }) => 
           <div style={{ marginBottom: 10 }}>
             <label htmlFor="login-password" style={labelStyle}>Password</label>
             <div style={{ position: "relative" }}>
-              <input id="login-password" style={{ ...inputStyle, paddingRight: 44 }} type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoFocus={!!initialEmail} />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"} aria-controls="login-password" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex", borderRadius: 6 }}>
-                {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+              <input id="login-password" style={{ ...inputStyle, paddingRight: 72 }} type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus={!!initialEmail} />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"} aria-controls="login-password" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#5F5E5B", fontSize: 13, fontWeight: 600, padding: "8px 10px", borderRadius: 6, fontFamily: font }}>
+                {showPassword ? "Hide" : "Show"}
               </button>
             </div>
           </div>
           <div style={{ textAlign: "right", marginBottom: 20 }}>
-            <button type="button" onClick={() => { setResetMode(true); setError(""); }} style={{ background: "none", border: "none", color: "#2F6FD6", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, padding: 4 }}>Forgot password?</button>
+            <button type="button" onClick={() => { setResetMode(true); setError(""); }} style={{ background: "none", border: "none", color: "#2F6FD6", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, padding: "8px 4px" }}>Forgot password?</button>
           </div>
           <button
             type="submit" disabled={loading}
@@ -821,7 +821,7 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "", notice = "" }) => 
               background: "#37352F", color: "#fff", cursor: loading ? "default" : "pointer", opacity: loading ? 0.75 : 1, fontFamily: font,
             }}
           >
-            {loading ? "Logging in..." : "Continue"}
+            {loading ? "Logging in..." : "Log in"}
           </button>
         </form>
 
@@ -5417,7 +5417,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 const CookieConsent = () => {
   const [visible, setVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [legal, setLegal] = useState(null); // "terms" | "privacy"
   const bannerRef = useRef(null);
 
@@ -5449,7 +5448,7 @@ const CookieConsent = () => {
     setVisible(false);
   };
   const acceptEssential = async () => {
-    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: analyticsConsent, date: new Date().toISOString() })); } catch (e) {}
+    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: false, date: new Date().toISOString() })); } catch (e) {}
     setVisible(false);
   };
 
@@ -5499,20 +5498,7 @@ const CookieConsent = () => {
                     <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>Analytics Cookies</span>
                     <p style={{ fontSize: 11, color: "#9B9A97", margin: "2px 0 0" }}>Help us understand how you use NRIClub to improve the experience.</p>
                   </div>
-                  <button
-                    onClick={() => setAnalyticsConsent(!analyticsConsent)}
-                    style={{
-                      width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer",
-                      background: analyticsConsent ? "#37352F" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0,
-                    }}
-                  >
-                    <div style={{
-                      width: 14, height: 14, borderRadius: "50%", background: "#fff",
-                      position: "absolute", top: 3,
-                      left: analyticsConsent ? 19 : 3,
-                      transition: "left 0.2s",
-                    }} />
-                  </button>
+                  <span style={{ fontSize: 11, color: "#6B6A67", fontWeight: 600, background: "#F0EFED", padding: "3px 8px", borderRadius: 4 }}>Optional</span>
                 </div>
               </div>
             )}
@@ -5872,8 +5858,8 @@ export default function App() {
     if (authState === "link-expired") return <ExpiredLinkPage onContinue={() => restoreSession("login")} />;
     if (authState === "admin" && isAdmin) return <AdminPanel onLogout={handleAdminLogout} />;
     if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
-    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
-    if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={handleAuthComplete} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
+    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
+    if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
     if (authState === "authenticated" && user) {
       // In this order: blocked members only see the blocked card (whatever
       // their verification status); members who haven't given their
