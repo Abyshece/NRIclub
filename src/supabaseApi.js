@@ -770,9 +770,16 @@ export async function searchProfiles(query = "", filters = {}) {
 // ============================================================================
 
 export async function getPosts(limit = 30, groupId = null) {
-  let url = `/rest/v1/posts?select=*,profiles:user_id(id,name,avatar_url,profession,location,hometown,linkedin_url)&order=created_at.desc&limit=${limit}`;
+  let url = `/rest/v1/posts?select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown,linkedin_url)&order=created_at.desc&limit=${limit}`;
   if (groupId) url += `&group_id=eq.${groupId}`;
   return restCall("GET", url);
+}
+
+// One post with its author, or null: for a shared link (#post=<id>) to a
+// post older than the ones the feed loads.
+export async function getPost(postId) {
+  const rows = await restCall("GET", `/rest/v1/posts?id=eq.${encodeURIComponent(postId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown,linkedin_url)`);
+  return rows?.[0] || null;
 }
 
 export async function createPost(content, tags = [], imageUrl = null, groupId = null) {
@@ -815,7 +822,7 @@ export async function deleteEvent(id) {
 // ============================================================================
 
 export async function getComments(postId) {
-  return restCall("GET", `/rest/v1/comments?post_id=eq.${postId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.desc`);
+  return restCall("GET", `/rest/v1/comments?post_id=eq.${postId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
 }
 
 export async function addComment(postId, content) {
