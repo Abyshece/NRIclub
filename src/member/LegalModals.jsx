@@ -1,15 +1,30 @@
-import { useEffect, useRef } from "react";
-import { FONT } from "./ui";
+import { useEffect, useRef, useState } from "react";
+import { FONT, linkButtonStyle } from "./ui";
 
-// A simple centred dialog in the style of the app's other modals.
+const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+// A simple centred dialog in the style of the app's other modals. Escape
+// closes it, Tab stays inside it, and focus goes back to where it was.
 export function LegalModal({ title, onClose, children }) {
   const closeRef = useRef(null);
+  const dialogRef = useRef(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   useEffect(() => {
     const previous = document.activeElement;
     closeRef.current?.focus();
-    const onKey = (e) => { if (e.key === "Escape") onCloseRef.current(); };
+    const onKey = (e) => {
+      if (e.key === "Escape") onCloseRef.current();
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const items = [...dialogRef.current.querySelectorAll(FOCUSABLE)];
+      if (!items.length) return;
+      const i = items.indexOf(document.activeElement);
+      const outside = !dialogRef.current.contains(document.activeElement);
+      if (outside || (e.shiftKey ? i <= 0 : i === items.length - 1)) {
+        e.preventDefault();
+        items[e.shiftKey ? items.length - 1 : 0].focus();
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
@@ -19,7 +34,7 @@ export function LegalModal({ title, onClose, children }) {
   const titleId = `legal-${title.replace(/\W+/g, "-").toLowerCase()}`;
   return (
     <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 150, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: "16px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED", position: "sticky", top: 0, background: "#fff", zIndex: 1 }}>
           <h3 id={titleId} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: FONT, margin: 0 }}>{title}</h3>
           <button ref={closeRef} type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "#6B6A67", padding: 6, borderRadius: 6, display: "flex" }}>
@@ -43,7 +58,10 @@ const para = { margin: "0 0 16px" };
 // TERMS_VERSION below, which signup stores with each member).
 export const TERMS_VERSION = "2026-10";
 
+// The Privacy Policy can be opened from inside the Terms, so it can be read
+// wherever the Terms are shown (also Settings > Terms & Policies).
 export function TermsContent() {
+  const [showPrivacy, setShowPrivacy] = useState(false);
   return (
     <>
       <h4 style={h4}>1. Who NRIClub is for</h4>
@@ -64,7 +82,19 @@ export function TermsContent() {
       <p style={para}>Admins may remove content or restrict, block or delete accounts that break these rules or put other members at risk.</p>
       <h4 style={h4}>9. Leaving</h4>
       <p style={para}>You can delete your account at any time from your account settings.</p>
-      <h4 style={h4}>10. Contact</h4>
+      <h4 style={h4}>10. Privacy</h4>
+      <p style={para}>
+        Our Privacy Policy explains what data we collect, how we use it and your rights.{" "}
+        <button type="button" onClick={() => setShowPrivacy((v) => !v)} aria-expanded={showPrivacy} aria-controls="terms-privacy-policy" style={{ ...linkButtonStyle, color: "#37352F" }}>
+          {showPrivacy ? "Hide the Privacy Policy" : "Read the Privacy Policy"}
+        </button>
+      </p>
+      {showPrivacy && (
+        <div id="terms-privacy-policy" style={{ background: "#F7F7F5", borderRadius: 8, padding: "16px 18px", margin: "0 0 16px" }}>
+          <PrivacyContent />
+        </div>
+      )}
+      <h4 style={h4}>11. Contact</h4>
       <p style={{ margin: 0 }}>Questions? Write to <a href="mailto:support@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>support@nriclub.app</a>.</p>
     </>
   );
@@ -83,6 +113,12 @@ export function PrivacyContent() {
       <p style={para}>Under GDPR, you have the right to: access your personal data, rectify inaccurate data, request erasure ("right to be forgotten"), restrict processing, data portability (export your data), object to processing, and withdraw consent at any time. You can exercise these rights from your Account Settings.</p>
       <h4 style={h4}>5. Data Retention</h4>
       <p style={para}>We retain your data for as long as your account is active. Upon account deletion, all personal data is permanently erased within 30 days.</p>
+      {/* LEGAL REVIEW NEEDED: the moderation record (private.moderation_record,
+          migration 20261013000000_review_fixes.sql) is kept after the account
+          is deleted. Confirm the legal basis (legitimate interest, Art.
+          6(1)(f)), set a retention period, and decide whether the admin's
+          note may be kept in it. */}
+      <p style={para}>One exception: if our team rejected or blocked an account, we keep a minimal record so the same person can't simply sign up again. It holds a scrambled (hashed) form of the email address that can't be turned back into the address, the LinkedIn profile link if one was given, and our decision with its date and our note on it. We only use it to flag a new signup that matches it for a closer review.</p>
       <h4 style={h4}>6. Data Sharing</h4>
       <p style={para}>We do not sell your personal data. Data is only shared with essential service providers (email delivery, hosting) under data processing agreements compliant with GDPR.</p>
       <h4 style={h4}>7. Contact</h4>

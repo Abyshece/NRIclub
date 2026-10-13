@@ -1,6 +1,5 @@
 /* Base styles for every screen, including the landing, signup and login
    pages (the dashboard adds its own on top while it is shown). */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700;800&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; }
 

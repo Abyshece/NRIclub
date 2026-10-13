@@ -31,9 +31,15 @@ export function mapProfile(p) {
     // Private (owner and admins only), used to prefill "Update details".
     verificationNote: p.verification_note || "",
     voucher: p.voucher || "",
-    // "18 or older" and Terms acceptance; older accounts give them in Get verified.
+    // "18 or older" and Terms acceptance; accounts without them confirm them
+    // in Get verified or on the Terms screen (TermsGate) before the dashboard.
     ageConfirmedAt: p.age_confirmed_at || null,
     termsAcceptedAt: p.terms_accepted_at || null,
+    termsVersion: p.terms_version || "",
+    // Set by the server when the email or LinkedIn link matches an account
+    // that was rejected or blocked (e.g. "previously blocked"): the member
+    // can't use NRIClub until an admin approves them. Never shown as is.
+    reviewFlag: p.review_flag || "",
     marketingConsent: !!p.marketing_consent,
     status: p.status || "active",
     createdAt: p.created_at || null,

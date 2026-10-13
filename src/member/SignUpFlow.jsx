@@ -7,6 +7,12 @@ import { mapProfile, authErrorMessage, isExistingAccountResponse, isExistingAcco
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const RESEND_MS = 60 * 1000;
+// Supabase refuses to "change" a password to the one it already has.
+const SAME_PASSWORD_RE = /different from the old password|same_password/i;
+// Profile details a signup can carry in its metadata. An unfinished signup
+// from an earlier visit may have been made by someone else with this email,
+// so these start empty when it is resumed.
+const RESUMED_CLEAR = ["location", "hometown", "profession", "occupation_status", "years_abroad", "linkedin_url"];
 
 const withUserMessage = (userMessage) => Object.assign(new Error(userMessage), { userMessage });
 
@@ -14,7 +20,8 @@ const withUserMessage = (userMessage) => Object.assign(new Error(userMessage), {
 // Calls onComplete(user) once the code is verified and the member is signed
 // in; the app then asks for verification details (Get verified).
 export default function SignUpFlow({ onComplete, onLogin }) {
-  const [step, setStep] = useState("residency"); // residency | account | code
+  const [step, setStep] = useState("residency"); // residency | account | code | stopped
+  const [stopMessage, setStopMessage] = useState(""); // why signup stopped (step "stopped")
   const [residency, setResidency] = useState(null); // abroad | india
   const [form, setForm] = useState({ name: "", email: "", password: "", agree: false, marketing: false });
   const [errors, setErrors] = useState({});
@@ -30,8 +37,12 @@ export default function SignUpFlow({ onComplete, onLogin }) {
   const fieldRefs = { name: useRef(null), email: useRef(null), password: useRef(null), agree: useRef(null) };
   const submitErrorRef = useRef(null);
   const focusOnAccountStep = useRef(null);
+  const stopTitleRef = useRef(null);
 
-  useEffect(() => { window.scrollTo(0, 0); }, [step]);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    if (step === "stopped") stopTitleRef.current?.focus();
+  }, [step]);
   useEffect(() => {
     if (submitError) submitErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [submitError]);
@@ -116,6 +127,43 @@ export default function SignUpFlow({ onComplete, onLogin }) {
     setSubmitting(false);
   };
 
+  // Sets the password typed in this visit, trying twice. Supabase saying
+  // it's already that password counts as done.
+  const replacePassword = async () => {
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        await api.updatePassword(form.password);
+        return true;
+      } catch (err) {
+        if (SAME_PASSWORD_RE.test(err?.message || "")) return true;
+        if (attempt === 1) await new Promise((r) => setTimeout(r, 800));
+      }
+    }
+    return false;
+  };
+
+  // Ends signup on a screen that explains why and sends the member to log in.
+  const stop = (message) => {
+    setStopMessage(message);
+    setStep("stopped");
+  };
+
+  // The profile changes that bring it in line with this visit's answers
+  // (they differ if the member went back and edited them, or signed up
+  // before). db is the stored profile; without it every answer is sent.
+  const profilePatch = (db) => {
+    const want = { name: form.name, marketing_consent: form.marketing };
+    if (residency === "india") want.country_code = "IN";
+    else if (account.resumed || db?.country_code === "IN") want.country_code = "";
+    if (account.resumed) RESUMED_CLEAR.forEach((k) => { want[k] = ""; });
+    const patch = {};
+    for (const [k, v] of Object.entries(want)) {
+      const stored = k === "marketing_consent" ? !!db?.[k] : db?.[k] || "";
+      if (!db || stored !== v) patch[k] = v;
+    }
+    return patch;
+  };
+
   const verifyCode = async (code) => {
     const email = account.email;
     // Wrong or expired codes throw here and CodeEntry says so.
@@ -123,8 +171,25 @@ export default function SignUpFlow({ onComplete, onLogin }) {
     try {
       if (!session?.access_token) session = await api.signIn(email, form.password).catch(() => null);
       if (!session?.access_token) {
-        throw withUserMessage("Your email is confirmed, but we couldn't sign you in. Please log in with your email and password.");
+        stop("We couldn't sign you in. Please log in with your email and password. If your password doesn't work, choose “Forgot password?” to set a new one.");
+        return;
       }
+
+      // An unfinished signup from an earlier visit keeps that visit's
+      // password (as does going back and changing it here), and that visit
+      // may not have been this person. Set the one typed now before anything
+      // else; if that fails, sign out rather than leave the old one working.
+      if (account.resumed || account.password !== form.password) {
+        if (!(await replacePassword())) {
+          // Still put this visit's name and answers in place, so the account
+          // doesn't keep the earlier visit's details after a password reset.
+          await api.updateProfile(profilePatch(null)).catch(() => {});
+          await api.signOut().catch(() => {});
+          stop("We couldn't save your password, so we've signed you out to keep your account safe. On the login page, choose “Forgot password?” to set a new one.");
+          return;
+        }
+      }
+
       let db = await api.getMyProfile();
       if (!db) {
         await new Promise((r) => setTimeout(r, 800));
@@ -132,22 +197,15 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       }
       if (!db) throw withUserMessage("Your email is confirmed, but we couldn't load your profile. Please log in.");
 
-      // An unfinished signup from an earlier visit keeps that visit's
-      // password (as does going back and changing it here); set the one
-      // typed now so logging in later works.
-      if (account.resumed || account.password !== form.password) {
-        await api.updatePassword(form.password).catch(() => {});
-      }
-
-      // Bring the profile in line with this visit's answers (they differ if
-      // the member went back and edited them, or signed up before).
-      const patch = {};
-      if (db.name !== form.name) patch.name = form.name;
-      if (!!db.marketing_consent !== form.marketing) patch.marketing_consent = form.marketing;
-      if (residency === "india" && db.country_code !== "IN") patch.country_code = "IN";
-      if (residency === "abroad" && db.country_code === "IN") patch.country_code = "";
+      const patch = profilePatch(db);
       if (Object.keys(patch).length) {
-        try { await api.updateProfile(patch); } catch { Object.keys(patch).forEach((k) => delete patch[k]); }
+        try {
+          await api.updateProfile(patch);
+        } catch {
+          // Keep showing the earlier visit's details as empty, so Get
+          // verified doesn't offer them; the rest stays as stored.
+          Object.keys(patch).forEach((k) => { if (!(account.resumed && RESUMED_CLEAR.includes(k))) delete patch[k]; });
+        }
       }
       onComplete(mapProfile({ ...db, ...patch }));
     } catch (err) {
@@ -209,6 +267,19 @@ export default function SignUpFlow({ onComplete, onLogin }) {
         <p style={{ fontSize: 13, color: COLORS.helper, marginTop: 24 }}>
           Already have an account? <button type="button" onClick={() => onLogin()} style={linkButtonStyle}>Log in</button>
         </p>
+      </div>
+    );
+  }
+
+  // ---- SIGNUP STOPPED (email confirmed, but the member must log in) ----
+  if (step === "stopped") {
+    return page(
+      <div style={{ maxWidth: 400, width: "100%", textAlign: "center" }}>
+        <h2 ref={stopTitleRef} tabIndex={-1} style={{ fontSize: 24, fontWeight: 700, color: COLORS.text, margin: "0 0 16px", outline: "none" }}>Your email is confirmed</h2>
+        <ErrorBox style={{ textAlign: "left", marginBottom: 20 }}>{stopMessage}</ErrorBox>
+        <button type="button" onClick={() => onLogin(account?.email)} style={primaryButtonStyle()}>
+          Go to log in <ArrowRight />
+        </button>
       </div>
     );
   }

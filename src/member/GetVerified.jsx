@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import { TermsModal, PrivacyModal } from "./LegalModals";
+import { AccountFooter } from "./AccountActions";
+import { VERIFICATION_BANNER_ID } from "./VerificationBanner";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, helperStyle, fieldErrorStyle } from "./ui";
 import {
   mapProfile, countryName, getCountryOptions, MAJOR_INDIAN_CITIES,
@@ -12,9 +14,10 @@ const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), selec
 
 // "Get verified": city, country and LinkedIn (or a short note on how the
 // member is connected to the community). Required for members whose
-// verification_status is 'incomplete' (mode "required": they can only sign
-// out from here); also opened from the dashboard to answer an admin's
-// request for more information (mode "update", prefilled, can be cancelled).
+// verification_status is 'incomplete' (mode "required": besides the form they
+// can sign out, download their data or delete their account); also opened
+// from the dashboard to answer an admin's request for more information (mode
+// "update", prefilled, can be cancelled).
 // Calls onDone(updatedUser) after a successful submit.
 export default function GetVerified({ user, mode = "required", onDone, onCancel, onSignOut }) {
   const isUpdate = mode === "update";
@@ -65,7 +68,9 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
 
   useEffect(() => { if (submitError) submitErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }, [submitError]);
   // Opened over the dashboard: focus moves into it and Tab stays inside,
-  // Escape closes it, and focus goes back to where it was afterwards.
+  // Escape closes it, and focus goes back to where it was afterwards. After a
+  // submit the "Update details" button is gone (the banner now says the
+  // profile is in review), so focus goes to that banner instead.
   const cancelRef = useRef(onCancel);
   cancelRef.current = onCancel;
   const modalOpen = useRef(false);
@@ -90,7 +95,8 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      if (previous && previous.focus) previous.focus();
+      const target = previous && previous.isConnected ? previous : document.getElementById(VERIFICATION_BANNER_ID);
+      if (target && target.focus) target.focus();
     };
   }, [mode]);
   useEffect(() => {
@@ -183,7 +189,9 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
           </div>
           <h2 id="gv-title" ref={titleRef} tabIndex={-1} style={{ fontSize: 28, fontWeight: 700, color: COLORS.text, letterSpacing: "-0.03em", margin: "0 0 8px", outline: "none" }}>Get verified</h2>
           <p style={{ color: COLORS.helper, fontSize: 15, lineHeight: 1.55, margin: 0 }}>
-            NRIClub is for real people only, so our team checks every new member. It takes a minute, and you can use NRIClub while we review.
+            NRIClub is for real people only, so our team checks every new member.{" "}
+            {/* Members flagged for review (user.reviewFlag) wait for approval. */}
+            {user.reviewFlag ? "It takes a minute, and you can use NRIClub once we've approved your profile." : "It takes a minute, and you can use NRIClub while we review."}
           </p>
         </div>
 
@@ -285,22 +293,21 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
             </div>
           )}
 
-          <button type="submit" disabled={submitting} style={{ ...primaryButtonStyle(submitting), marginTop: 6 }}>
+          {/* Not disabled while sending: a disabled button loses keyboard focus. */}
+          <button type="submit" aria-disabled={submitting} aria-describedby={submitError ? "gv-submit-error" : undefined} style={{ ...primaryButtonStyle(submitting), marginTop: 6 }}>
             {submitting ? "Sending..." : "Submit for review"}
           </button>
-          {submitError && <ErrorBox boxRef={submitErrorRef} style={{ marginTop: 12 }}>{submitError}</ErrorBox>}
+          {submitError && <ErrorBox id="gv-submit-error" boxRef={submitErrorRef} style={{ marginTop: 12 }}>{submitError}</ErrorBox>}
         </form>
 
-        <p style={{ textAlign: "center", marginTop: 28, fontSize: 13, color: COLORS.helper, lineHeight: 1.6 }}>
-          {isUpdate ? (
+        {isUpdate ? (
+          <p style={{ textAlign: "center", marginTop: 28, fontSize: 13, color: COLORS.helper, lineHeight: 1.6 }}>
             <button type="button" onClick={onCancel} style={{ ...linkButtonStyle, fontWeight: 500, color: COLORS.label }}>Cancel</button>
-          ) : (
-            <>
-              {user.email && <>Signed in as {user.email}. </>}
-              <button type="button" onClick={onSignOut} style={{ ...linkButtonStyle, fontWeight: 500, color: COLORS.label }}>Sign out</button>
-            </>
-          )}
-        </p>
+          </p>
+        ) : (
+          // Settings can't be reached from here, so the account actions are too.
+          <AccountFooter email={user.email} onSignOut={onSignOut} />
+        )}
       </div>
       {modal === "terms" && <TermsModal onClose={() => setModal(null)} />}
       {modal === "privacy" && <PrivacyModal onClose={() => setModal(null)} />}
