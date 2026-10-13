@@ -42,8 +42,20 @@ DAVE_PLUS = "00000000-0000-0000-0000-0000000000f4"
 ENCODED = "00000000-0000-0000-0000-0000000000f5"
 PROBE = "00000000-0000-0000-0000-0000000000f6"
 OLGA = "00000000-0000-0000-0000-0000000000f7"
+TROLL = "00000000-0000-0000-0000-0000000000f8"
+VICTIM = "00000000-0000-0000-0000-0000000000f9"
+BAD = "00000000-0000-0000-0000-0000000000fa"
+HAL = "00000000-0000-0000-0000-0000000000fb"
+SPAMMER = "00000000-0000-0000-0000-0000000000fc"
+ANITA = "00000000-0000-0000-0000-0000000000fd"
+PLANTED = "00000000-0000-0000-0000-0000000000fe"
+ROGUE = "00000000-0000-0000-0000-0000000000ff"
+ROGUE2 = "00000000-0000-0000-0000-0000000001a1"
+JOSE1 = "00000000-0000-0000-0000-000000000201"
+JOSE2 = "00000000-0000-0000-0000-000000000202"
+JOSE3 = "00000000-0000-0000-0000-000000000203"
 CONVO2 = "30000000-0000-0000-0000-000000000002"
-TERMS = {"age_confirmed": True, "terms_version": "2026-10"}  # what the signup form sends
+TERMS_VERSION = "2026-10"
 STORE = "https://abcdefgh.supabase.co/storage/v1/object/public"
 BOB_POST = "10000000-0000-0000-0000-000000000005"
 
@@ -101,12 +113,18 @@ def in_background(sql, as_user):
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 
-def sign_up(uid, email, meta):
-    """A new auth user, as Supabase Auth would create it (the trigger does the rest)."""
+def sign_up(uid, email, meta, accept_terms=False, confirmed=True):
+    """A new auth user, as Supabase Auth would create it (the trigger does the
+    rest). accept_terms: then they confirm 18+ and accept the Terms, as the
+    site does once the email code is confirmed (the signup data can't)."""
     ok, _, err = psql(f"INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at) "
-                      f"VALUES ('{uid}', '{email}', '{json.dumps(meta)}', now())")
+                      f"VALUES ('{uid}', '{email}', '{json.dumps(meta)}', {'now()' if confirmed else 'NULL'})")
     if not ok:
         sys.exit(f"sign-up of {email} failed: {err}")
+    if accept_terms:
+        ok, _, err = psql(f"SELECT public.accept_terms('{TERMS_VERSION}')", "authenticated", uid)
+        if not ok:
+            sys.exit(f"accept_terms for {email} failed: {err}")
 
 
 def migration_section(banner):
@@ -173,12 +191,22 @@ def main():
           FROM profiles WHERE id = '00000000-0000-0000-0000-0000000000e9';
           DELETE FROM auth.users WHERE id = '00000000-0000-0000-0000-0000000000e9'""",
           expect="Meta M|FR|||||||true")
+    check("... and no consent, marketing opt-in, 18+ or Terms record from it (Q3)",
+          f"""INSERT INTO auth.users (id, email, raw_user_meta_data) VALUES
+            ('{PLANTED}', 'planted@example.com',
+             '{{"full_name": "Mallory M", "gdpr_consent": true, "marketing_consent": true, "age_confirmed": true,
+               "terms_version": "2026-10"}}');
+          SELECT concat_ws('|', gdpr_consent, gdpr_consent_date IS NULL, marketing_consent, age_confirmed_at IS NULL,
+            terms_accepted_at IS NULL, terms_version IS NULL)
+          FROM profile_private WHERE id = '{PLANTED}';
+          DELETE FROM auth.users WHERE id = '{PLANTED}'""",
+          expect="f|t|f|t|t|t")
     check("signup trigger stores the name and email confirmation",
           f"SELECT name || '|' || location || '|' || occupation_status || '|' || linkedin_url || '|' || email_verified FROM profiles WHERE id = '{ALICE}'",
           expect="Alice A|Berlin, Germany|Student|https://www.linkedin.com/in/alice|true")
-    check("signup trigger stores email + consent privately",
+    check("signup trigger stores the email privately, but not the consent in the signup data (Q3)",
           f"SELECT email || '|' || gdpr_consent || '|' || (gdpr_consent_date IS NOT NULL) FROM profile_private WHERE id = '{ALICE}'",
-          expect="alice@example.com|true|true")
+          expect="alice@example.com|false|false")
     check("unconfirmed email -> email_verified false",
           f"SELECT email_verified::text FROM profiles WHERE id = '{CAROL}'", expect="false")
 
@@ -463,14 +491,18 @@ def main():
 
     # --- member verification ------------------------------------------------
     diana = "00000000-0000-0000-0000-0000000000d1"
-    check("signup records country, age and terms, ignores the LinkedIn link; starts incomplete",
+    check("signup records the name and country, not the LinkedIn link, 18+ or Terms in the signup data; starts incomplete",
           f"""INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at) VALUES ('{diana}', 'diana@example.com',
           '{{"full_name": "  Diana D  ", "country_code": "de", "age_confirmed": true, "terms_version": "2026-10",
             "linkedin_url": "de.linkedin.com/in/Diana-D/"}}', now());
           SELECT p.name || '|' || p.country_code || '|' || pp.verification_status || '|' || p.linkedin_url || '|'
-            || (pp.age_confirmed_at IS NOT NULL) || '|' || pp.terms_version
+            || (pp.age_confirmed_at IS NOT NULL) || '|' || COALESCE(pp.terms_version, 'none')
           FROM profiles p JOIN profile_private pp USING (id) WHERE id = '{diana}'""",
-          expect="Diana D|DE|incomplete||true|2026-10")
+          expect="Diana D|DE|incomplete||false|none")
+    check("the site records 18+ and the Terms once the email code is confirmed (accept_terms, Q3)",
+          "SELECT public.accept_terms('2026-10'); "
+          "SELECT (age_confirmed_at IS NOT NULL)::text || '|' || terms_version || '|' || gdpr_consent FROM profile_private",
+          as_user=diana, expect="2026-10\ntrue|2026-10|true")
     check("member cannot set their own verification status",
           "UPDATE profile_private SET verification_status = 'approved' WHERE id = auth.uid() RETURNING verification_status",
           as_user=diana, expect="incomplete")
@@ -501,6 +533,9 @@ def main():
           "SELECT public.submit_verification('Berlin', 'DE', 'Berlin, Germany', 'linkedin.com/in/lena', '', '', NULL, true); "
           "SELECT (age_confirmed_at IS NOT NULL)::text || '|' || terms_version FROM profile_private",
           as_user=LEGACY, expect="pending\ntrue|2026-10")
+    check("... with consent to the Privacy Policy, as accept_terms records it (Q3)",
+          "SELECT gdpr_consent::text || '|' || (gdpr_consent_date IS NOT NULL) FROM profile_private",
+          as_user=LEGACY, expect="true|true")
     check("valid submission moves to pending",
           "SELECT public.submit_verification('Munich', 'de', 'Munich, Germany', 'linkedin.com/in/Diana-D', '', '', 'Engineer at SAP')",
           as_user=diana, expect="pending")
@@ -592,7 +627,7 @@ def main():
           f"SELECT count(*) FROM public.get_member_preferences('{BOB}')", as_user=diana, expect="0")
     check("a blocked member sees none of other members' rows", OTHERS, as_user=CAROL, expect=NONE_OF_OTHERS)
     check("... but still their own post", "SELECT count(*) FROM posts WHERE user_id = auth.uid()", as_user=CAROL, expect="1")
-    sign_up(IVAN, "ivan@example.com", {"full_name": "Ivan I", **TERMS})
+    sign_up(IVAN, "ivan@example.com", {"full_name": "Ivan I"}, accept_terms=True)
     check("a member who hasn't submitted their details sees none of other members' rows",
           OTHERS, as_user=IVAN, expect=NONE_OF_OTHERS)
     check("... but sees the approved communities for Get verified",
@@ -614,8 +649,12 @@ def main():
           "SELECT public.accept_terms('2026-10'); SELECT (age_confirmed_at IS NOT NULL)::text || '|' || "
           "(terms_accepted_at IS NOT NULL) || '|' || terms_version FROM profile_private",
           as_user=RESTORED, expect="2026-10\ntrue|true|2026-10")
-    check("accepting again keeps the first acceptance date",
-          "SELECT public.accept_terms('2026-10'); SELECT (terms_accepted_at < now())::text FROM profile_private",
+    check("... and consent to the Terms and Privacy Policy, with its date (Q3)",
+          "SELECT gdpr_consent::text || '|' || (gdpr_consent_date IS NOT NULL) FROM profile_private",
+          as_user=RESTORED, expect="true|true")
+    check("accepting again keeps the first acceptance and consent dates",
+          "SELECT public.accept_terms('2026-10'); "
+          "SELECT (terms_accepted_at < now() AND gdpr_consent_date < now())::text FROM profile_private",
           as_user=RESTORED, expect="2026-10\ntrue")
     check("members can't backdate or change their acceptance",
           "UPDATE profile_private SET terms_accepted_at = '2020-01-01', terms_version = '2030-01' WHERE id = auth.uid() "
@@ -625,7 +664,7 @@ def main():
           "SELECT (count(*) > 1)::text FROM profiles", as_user=RESTORED, expect="1\ntrue")
 
     # --- verification decisions (F5, F6, F31) -------------------------------
-    sign_up(GITA, "gita@example.com", {"full_name": "Gita G", **TERMS})
+    sign_up(GITA, "gita@example.com", {"full_name": "Gita G"}, accept_terms=True)
     for decision in ("approved", "needs_info", "pending"):
         check(f"'{decision}' is refused for a member who hasn't submitted their details",
               f"SELECT public.review_member('{GITA}', '{decision}', 'Please add your city and LinkedIn', '')",
@@ -688,7 +727,7 @@ def main():
           "SELECT count(*) FROM pg_proc WHERE proname = 'review_member'", expect="1")
 
     # --- a submission and a decision at the same moment (F25) ---------------
-    sign_up(HARI, "hari@example.com", {"full_name": "Hari H", **TERMS})
+    sign_up(HARI, "hari@example.com", {"full_name": "Hari H"}, accept_terms=True)
     check("hari submits", "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/hari', '', '', NULL)",
           as_user=HARI, expect="pending")
     check("admin asks hari for more info",
@@ -725,7 +764,7 @@ def main():
           f"WHERE id = '{HARI}'", expect="pending|false")
 
     # --- removed members signing up again (F7) ------------------------------
-    sign_up(DAVE, "dave@example.com", {"full_name": "Dave D", **TERMS})
+    sign_up(DAVE, "dave@example.com", {"full_name": "Dave D"}, accept_terms=True)
     check("dave submits", "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/Dave-Scam', '', '', NULL)",
           as_user=DAVE, expect="pending")
     check("admin rejects dave with a private note",
@@ -747,7 +786,7 @@ def main():
           f"SELECT (SELECT count(*) FROM private.moderation_record WHERE member_id = '{DAVE}') || '|' || "
           "(SELECT count(*) FROM private.moderation_record WHERE linkedin_slug = 'dave-scam' AND member_id IS NULL)",
           expect="0|1")
-    sign_up(DAVE2, "Dave@Example.com", {"full_name": "Dave D", **TERMS})
+    sign_up(DAVE2, "Dave@Example.com", {"full_name": "Dave D"}, accept_terms=True)
     check("signing up again with the same email holds them for review",
           f"SELECT review_flag FROM profile_private WHERE id = '{DAVE2}'", expect="held")
     check("... (the hold says it was the email address)",
@@ -779,11 +818,11 @@ def main():
           f"INSERT INTO posts (user_id, content) VALUES ('{DAVE2}', 'still here')", as_user=DAVE2, expect="error")
     check("admin approves dave's new account again",
           f"SELECT public.review_member('{DAVE2}', 'approved', '', '')", as_user=ADMIN, expect="approved")
-    sign_up(EVE, "eve@example.com", {"full_name": "Eve E", **TERMS})
+    sign_up(EVE, "eve@example.com", {"full_name": "Eve E"}, accept_terms=True)
     check("another email with the rejected LinkedIn link is held at submit",
           "SELECT public.submit_verification('Pune', 'IN', '', 'https://in.linkedin.com/in/dave-scam/', '', '', NULL); "
           "SELECT review_flag FROM profile_private", as_user=EVE, expect="pending\nheld")
-    sign_up(FRANK, "frank@example.com", {"full_name": "Frank F", **TERMS})
+    sign_up(FRANK, "frank@example.com", {"full_name": "Frank F"}, accept_terms=True)
     check("frank submits a note instead of LinkedIn",
           "SELECT public.submit_verification('Pune', 'IN', '', '', 'I moved to Pune for work last year.', '', NULL)",
           as_user=FRANK, expect="pending")
@@ -807,7 +846,7 @@ def main():
           SELECT decision FROM private.moderation_record WHERE member_id = '{RESTORED_BLOCKED}'""", expect="blocked")
 
     # --- blocked members can't submit (F30) ---------------------------------
-    sign_up(BO, "bo@example.com", {"full_name": "Bo B", **TERMS})
+    sign_up(BO, "bo@example.com", {"full_name": "Bo B"}, accept_terms=True)
     check("admin blocks bo before he submits",
           f"UPDATE profile_private SET status = 'blocked' WHERE id = '{BO}' RETURNING status", as_user=ADMIN, expect="blocked")
     check("a blocked member can't submit their details",
@@ -1029,7 +1068,7 @@ def main():
     check("carol gone everywhere",
           f"SELECT (SELECT count(*) FROM auth.users WHERE id = '{CAROL}') + (SELECT count(*) FROM profiles WHERE id = '{CAROL}') + "
           f"(SELECT count(*) FROM reports WHERE reporter_id = '{CAROL}')", expect="0")
-    sign_up(CAROL2, "carol@example.com", {"full_name": "Carol C", **TERMS})
+    sign_up(CAROL2, "carol@example.com", {"full_name": "Carol C"}, accept_terms=True)
     check("signing up again after a block holds them for review",
           f"SELECT review_flag FROM profile_private WHERE id = '{CAROL2}'", expect="held")
     check("... and the admin sees it was a block",
@@ -1038,6 +1077,7 @@ def main():
           expect="blocked|email")
 
     review_fixes_2()
+    review_fixes_3()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -1057,12 +1097,32 @@ def review_fixes_2():
     for link, slug in [("https://www.linkedin.com/in/d%61ve-kumar", "dave-kumar"),
                        ("in.linkedin.com/in/Dave-Kumar/?trk=x", "dave-kumar"),
                        ("linkedin.com/in/%44%41VE-kumar", "dave-kumar"),
-                       ("linkedin.com/in/d%C3%A9ve", ""),  # é: not in a profile link
+                       ("linkedin.com/in/dave%7Ekumar", "dave~kumar"),
+                       # Other escapes stay escapes, in lower case (Q2): accented
+                       # and non-Latin names keep a key.
+                       ("linkedin.com/in/d%C3%A9ve", "d%c3%a9ve"),
+                       ("LinkedIn.com/in/J%c3%BCrgen-M%C3%BCller-4b2a1c/", "j%c3%bcrgen-m%c3%bcller-4b2a1c"),
+                       ("linkedin.com/in/%E5%BC%A0%E4%BC%9F-12345", "%e5%bc%a0%e4%bc%9f-12345"),
+                       ("linkedin.com/in/dave%3Ax", "dave%3ax"),
+                       # Not a single profile name, so not a profile link.
                        ("linkedin.com/in/dave%2fx", ""),
                        ("linkedin.com/in/dave%00x", ""),
+                       ("linkedin.com/in/dave-kumar%20", ""),
+                       ("linkedin.com/in/dave%3Fx", ""),
+                       ("linkedin.com/in/dave%23x", ""),
+                       ("linkedin.com/in/dave%2541", ""),
+                       ("linkedin.com/in/dave%7F", ""),
                        ("linkedin.com/in/dave%zz", ""),
                        ("https://twitter.com/dave", "")]:
         check(f"LinkedIn slug of '{link}'", f"SELECT COALESCE(private.linkedin_slug('{link}'), '')", expect=slug)
+    escaped = ("SELECT 'linkedin.com/in/ab%' || upper(lpad(to_hex(b), 2, '0')) || 'cd' AS link, b "
+               "FROM generate_series(0, 255) b")
+    check("every link normalize_linkedin accepts has a match key, whatever it escapes (Q2)",
+          f"SELECT count(*) FROM ({escaped}) x "
+          "WHERE private.normalize_linkedin(link) IS NOT NULL AND private.linkedin_slug(link) IS NULL", expect="0")
+    check("... and only escapes of control characters, space, # % / and ? are refused",
+          f"SELECT string_agg(to_hex(b), ',' ORDER BY b) FILTER (WHERE b >= 32) || '|' || count(*) FILTER (WHERE b < 32) "
+          f"FROM ({escaped}) x WHERE private.normalize_linkedin(link) IS NULL", expect="20,23,25,2f,3f,7f|32")
     check("members can't hash emails for the moderation records",
           "SELECT private.email_hash('dave@example.com')", as_user=ALICE, expect="error")
     check("... or look the records up",
@@ -1070,10 +1130,10 @@ def review_fixes_2():
           as_user=ALICE, expect="error")
     check("... or end their own hold",
           f"SELECT private.recheck_review_hold('{DAVE2}', 'new@example.com', NULL)", as_user=DAVE2, expect="error")
-    sign_up(DAVE_PLUS, "Dave+NRI@example.com", {"full_name": "Dave D", **TERMS})
+    sign_up(DAVE_PLUS, "Dave+NRI@example.com", {"full_name": "Dave D"}, accept_terms=True)
     check("a plus-address of a rejected email is held at signup (R9)",
           f"SELECT review_flag FROM profile_private WHERE id = '{DAVE_PLUS}'", expect="held")
-    sign_up(ENCODED, "someone.new@example.com", {"full_name": "Dave D", **TERMS})
+    sign_up(ENCODED, "someone.new@example.com", {"full_name": "Dave D"}, accept_terms=True)
     check("a percent-encoded copy of a rejected LinkedIn link is held at submit (R9)",
           "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/d%61ve-scam', '', '', NULL); "
           "SELECT review_flag FROM profile_private", as_user=ENCODED, expect="pending\nheld")
@@ -1083,7 +1143,7 @@ def review_fixes_2():
           f"FROM public.admin_verification_queue() q WHERE q.id = '{ENCODED}'", as_user=ADMIN, expect="true")
 
     # --- the flag can't be used to test links (R7) -------------------------
-    sign_up(PROBE, "probe@example.com", {"full_name": "Pat Probe", **TERMS})
+    sign_up(PROBE, "probe@example.com", {"full_name": "Pat Probe"}, accept_terms=True)
     check("an unfinished account that sets a rejected LinkedIn link isn't held (R7)",
           "UPDATE profiles SET linkedin_url = 'linkedin.com/in/dave-scam' WHERE id = auth.uid(); "
           "SELECT review_flag FROM profile_private", as_user=PROBE, expect="")
@@ -1094,7 +1154,7 @@ def review_fixes_2():
 
     # --- signup checks the email only; submit checks again (R8) -------------
     sign_up(SQUATTED, "priya.s@example.com",
-            {"full_name": "Mallory M", "linkedin_url": "linkedin.com/in/dave-scam", **TERMS})
+            {"full_name": "Mallory M", "linkedin_url": "linkedin.com/in/dave-scam"}, accept_terms=True)
     check("signup data with a rejected LinkedIn link doesn't hold the account (R8)",
           f"SELECT review_flag FROM profile_private WHERE id = '{SQUATTED}'", expect="")
     check("the address's owner submits their own link and isn't held",
@@ -1102,19 +1162,42 @@ def review_fixes_2():
           "SELECT review_flag FROM profile_private", as_user=SQUATTED, expect="pending")
     check("... and can take part", f"INSERT INTO posts (user_id, content) VALUES ('{SQUATTED}', 'hello') RETURNING 1",
           as_user=SQUATTED, expect="1")
-    check("a resubmission is checked again: a corrected link ends a hold",
+    check("sending the details again with another link doesn't end a hold (Q1)",
           "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/eve-e', '', '', NULL); "
-          "SELECT review_flag FROM profile_private", as_user=EVE, expect="pending")
-    check("... (and its details)", f"SELECT count(*) FROM private.review_hold WHERE member_id = '{EVE}'", expect="0")
+          "SELECT review_flag FROM profile_private", as_user=EVE, expect="pending\nheld")
+    check("... nor does sending them without a link, when asked for more information",
+          f"SELECT public.review_member('{EVE}', 'needs_info', 'Please tell us how you know the community.', '')",
+          as_user=ADMIN, expect="needs_info")
+    check("... (checked)",
+          "SELECT public.submit_verification('Pune', 'IN', '', '', 'I moved to Pune for work last year.', '', NULL); "
+          "SELECT review_flag FROM profile_private", as_user=EVE, expect="pending\nheld")
+    check("... so they still can't take part",
+          f"INSERT INTO posts (user_id, content) VALUES ('{EVE}', 'I am in') RETURNING 1", as_user=EVE, expect="error")
+    check("... or see other members", "SELECT count(*) FROM profiles", as_user=EVE, expect="1")
+    check("... and the admin still sees what they matched",
+          "SELECT concat_ws('|', review_flag, flag_decision, flag_matched_on, flag_note) "
+          f"FROM public.admin_verification_queue() WHERE id = '{EVE}'", as_user=ADMIN,
+          expect="held|rejected|linkedin|scammer, reported by 3 members")
+    check("only an admin's approval ends the hold (Q1)",
+          f"SELECT public.review_member('{EVE}', 'approved', '', '')", as_user=ADMIN, expect="approved")
+    check("... (checked)", f"SELECT review_flag || '|' || (SELECT count(*) FROM private.review_hold WHERE member_id = '{EVE}') "
+          f"FROM profile_private WHERE id = '{EVE}'", expect="|0")
+    check("... and gives access", f"INSERT INTO posts (user_id, content) VALUES ('{EVE}', 'hello') RETURNING 1",
+          as_user=EVE, expect="1")
     check("a member held for their email stays held whatever link they submit",
           "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/dave-new', '', '', NULL); "
+          "SELECT review_flag FROM profile_private", as_user=DAVE_PLUS, expect="pending\nheld")
+    check("... also after confirming a new email address and sending the details again (Q1)",
+          f"UPDATE auth.users SET email = 'dave.new@example.com' WHERE id = '{DAVE_PLUS}'; SELECT 1", expect="1")
+    check("... (checked)",
+          "SELECT public.submit_verification('Pune', 'IN', '', '', 'I moved to Pune for work last year.', '', NULL); "
           "SELECT review_flag FROM profile_private", as_user=DAVE_PLUS, expect="pending\nheld")
     check("deleting a held account removes what it matched too",
           "SELECT public.delete_my_account()", as_user=DAVE_PLUS)
     check("... (checked)", f"SELECT count(*) FROM private.review_hold WHERE member_id = '{DAVE_PLUS}'", expect="0")
 
     # --- a rejected member can't plant someone else's link (R1) -------------
-    sign_up(MALLORY, "mallory@example.com", {"full_name": "Mallory M", **TERMS})
+    sign_up(MALLORY, "mallory@example.com", {"full_name": "Mallory M"}, accept_terms=True)
     check("mallory submits her own link",
           "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/mallory-m', '', '', NULL)",
           as_user=MALLORY, expect="pending")
@@ -1141,13 +1224,13 @@ def review_fixes_2():
           f"SELECT count(*) FROM private.moderation_record WHERE member_id = '{MALLORY}'", expect="5")
     check("no record holds the planted link",
           "SELECT count(*) FROM private.moderation_record WHERE linkedin_slug = 'victim-priya'", expect="0")
-    sign_up(PRIYA, "priya@example.com", {"full_name": "Priya P", **TERMS})
+    sign_up(PRIYA, "priya@example.com", {"full_name": "Priya P"}, accept_terms=True)
     check("the planted link's owner submits it and isn't held",
           "SELECT public.submit_verification('Berlin', 'DE', '', 'linkedin.com/in/victim-priya', '', '', NULL); "
           "SELECT review_flag FROM profile_private", as_user=PRIYA, expect="pending")
     check("... and can take part", f"INSERT INTO posts (user_id, content) VALUES ('{PRIYA}', 'hello') RETURNING 1",
           as_user=PRIYA, expect="1")
-    sign_up(MALLORY2, "mallory2@example.com", {"full_name": "Mallory M", **TERMS})
+    sign_up(MALLORY2, "mallory2@example.com", {"full_name": "Mallory M"}, accept_terms=True)
     check("mallory signing up with her earlier address is held",
           f"SELECT review_flag FROM profile_private WHERE id = '{MALLORY2}'", expect="held")
     check("... and the admin sees it was the block, matched on the email (R16)",
@@ -1170,7 +1253,7 @@ def review_fixes_2():
               as_user=who, expect="1")
 
     # --- the current Terms version (R20) ------------------------------------
-    sign_up(OLGA, "olga@example.com", {"full_name": "Olga O", **TERMS})
+    sign_up(OLGA, "olga@example.com", {"full_name": "Olga O"}, accept_terms=True)
     check("olga submits", "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/olga-o', '', '', NULL)",
           as_user=OLGA, expect="pending")
     check("olga accepted an older version of the Terms",
@@ -1288,6 +1371,156 @@ def review_fixes_2():
           {migration_section("EXISTING DATA")}
           SELECT submitted_at::date FROM profile_private WHERE id = '{omar}';
           ROLLBACK;""", expect="2026-09-01")
+
+
+
+def review_fixes_3():
+    """Fixes from the second round of review (Q1-Q12; Q1 and Q3 are checked
+    above, next to the checks they changed)."""
+
+    # --- links with accented or non-Latin names keep a match key (Q2) -------
+    jose = "linkedin.com/in/jos%C3%A9-garc%C3%ADa-1a2b3c"
+    for uid, email in [(JOSE1, "jose1@example.com"), (JOSE2, "jose2@example.com"), (JOSE3, "jose3@example.com")]:
+        sign_up(uid, email, {"full_name": "Jose G"}, accept_terms=True)
+    check("a link whose name has an escaped separator is refused at submit (Q2)",
+          "SELECT public.submit_verification('Madrid', 'ES', '', 'linkedin.com/in/jose-g%2Fdetails', '', '', NULL)",
+          as_user=JOSE1, error_has="look like a LinkedIn profile link")
+    check("... and on a profile edit",
+          "UPDATE profiles SET linkedin_url = 'linkedin.com/in/jose-g%20' WHERE id = auth.uid()",
+          as_user=JOSE1, error_has="look like a LinkedIn profile link")
+    check("two accounts send the same link with an accented name",
+          f"SELECT public.submit_verification('Madrid', 'ES', '', '{jose}', '', '', NULL)", as_user=JOSE1, expect="pending")
+    check("... (written a little differently)",
+          "SELECT public.submit_verification('Madrid', 'ES', '', 'https://es.linkedin.com/in/JOS%c3%a9-Garc%C3%ADa-1a2b3c/', "
+          "'', '', NULL)", as_user=JOSE2, expect="pending")
+    check("... and the admin queue counts each as used by one other account",
+          "SELECT string_agg(same_linkedin_count::text, ',') FROM public.admin_verification_queue() "
+          f"WHERE id IN ('{JOSE1}', '{JOSE2}')", as_user=ADMIN, expect="1,1")
+    check("admin rejects the first",
+          f"SELECT public.review_member('{JOSE1}', 'rejected', 'We could not verify you.', 'fake profile (jose)')",
+          as_user=ADMIN, expect="rejected")
+    check("... whose record keeps the link's key",
+          f"SELECT linkedin_slug FROM private.moderation_record WHERE member_id = '{JOSE1}'",
+          expect="jos%c3%a9-garc%c3%ada-1a2b3c")
+    check("a third account sending the identical link is held",
+          f"SELECT public.submit_verification('Madrid', 'ES', '', '{jose}', '', '', NULL); "
+          "SELECT review_flag FROM profile_private", as_user=JOSE3, expect="pending\nheld")
+    check("... and the admin sees why, and that two other accounts use the link",
+          "SELECT concat_ws('|', flag_decision, flag_matched_on, flag_note, same_linkedin_count) "
+          f"FROM public.admin_verification_queue() WHERE id = '{JOSE3}'", as_user=ADMIN,
+          expect="rejected|linkedin|fake profile (jose)|2")
+
+    # --- the duplicate count doesn't compute every member's key (Q12) -------
+    check("profiles are indexed on their LinkedIn match key (Q12)",
+          "SELECT pg_get_indexdef(i.indexrelid) || '|' || i.indisvalid FROM pg_index i "
+          "WHERE i.indexrelid = 'public.idx_profiles_linkedin_slug'::regclass",
+          expect="CREATE INDEX idx_profiles_linkedin_slug ON public.profiles USING btree "
+                 "(private.linkedin_slug(linkedin_url))|true")
+
+    # --- an unconfirmed signup doesn't record the address's owner (Q5) ------
+    sign_up(SPAMMER, "anita.rao+deals@example.net", {"full_name": "CHEAP FOLLOWERS dm me"}, confirmed=False)
+    check("someone else's address, never confirmed, with a link set before any review",
+          f"UPDATE profiles SET linkedin_url = 'https://www.linkedin.com/in/cheap-followers' WHERE id = '{SPAMMER}'; "
+          f"SELECT email_verified::text FROM profiles WHERE id = '{SPAMMER}'", expect="false")
+    check("admin rejects the unfinished signup",
+          f"SELECT public.review_member('{SPAMMER}', 'rejected', 'Spam', 'spam signup', NULL, NULL, 'incomplete')",
+          as_user=ADMIN, expect="rejected")
+    check("admin blocks it too", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{SPAMMER}' RETURNING status",
+          as_user=ADMIN, expect="blocked")
+    check("the records keep the link and the note, but not the unconfirmed address (Q5)",
+          "SELECT string_agg(concat_ws('|', decision, linkedin_slug, admin_note, (email_hash IS NULL)::text), ',' "
+          f"ORDER BY decision) FROM private.moderation_record WHERE member_id = '{SPAMMER}'",
+          expect="blocked|cheap-followers||true,rejected|cheap-followers|spam signup|true")
+    sign_up(ANITA, "Anita.Rao@example.net", {"full_name": "Anita Rao"}, accept_terms=True)
+    check("so the address's owner isn't held when she signs up",
+          f"SELECT review_flag FROM profile_private WHERE id = '{ANITA}'", expect="")
+
+    # --- a block from the Reports page records the reviewed link (Q6) -------
+    sign_up(TROLL, "troll@example.com", {"full_name": "Troll T"}, accept_terms=True)
+    check("troll submits their own link", "SELECT public.submit_verification('Pune', 'IN', '', "
+          "'linkedin.com/in/troll-own', '', '', NULL)", as_user=TROLL, expect="pending")
+    check("admin approves them", f"SELECT public.review_member('{TROLL}', 'approved', '', '')", as_user=ADMIN,
+          expect="approved")
+    check("they put someone else's link on their profile and stay active",
+          "UPDATE profiles SET linkedin_url = 'linkedin.com/in/priya-sharma-q6' WHERE id = auth.uid(); "
+          "SELECT (SELECT verification_status FROM profile_private) || '|' || "
+          "(SELECT count(*) > 1 FROM profiles)", as_user=TROLL, expect="pending|true")
+    check("members can't read or write the reviewed links",
+          f"INSERT INTO private.reviewed_link (member_id, linkedin_url) VALUES ('{TROLL}', 'x')",
+          as_user=TROLL, expect="error")
+    check("... (or read them)", "SELECT count(*) FROM private.reviewed_link", as_user=TROLL, expect="error")
+    check("admin blocks them from the Reports page (which sends only the status)",
+          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{TROLL}' RETURNING status", as_user=ADMIN,
+          expect="blocked")
+    check("the record has the link the admin approved, not the one put there since (Q6)",
+          f"SELECT decision || '|' || linkedin_slug FROM private.moderation_record WHERE member_id = '{TROLL}'",
+          expect="blocked|troll-own")
+    check("troll deletes the account", "SELECT public.delete_my_account()", as_user=TROLL)
+    check("... and its reviewed link goes with it",
+          f"SELECT count(*) FROM private.reviewed_link WHERE member_id = '{TROLL}'", expect="0")
+    sign_up(VICTIM, "priya.sharma.q6@example.com", {"full_name": "Priya Sharma"}, accept_terms=True)
+    check("the link's owner submits it and isn't held",
+          "SELECT public.submit_verification('Berlin', 'DE', '', 'https://de.linkedin.com/in/priya-sharma-q6/', '', '', NULL); "
+          "SELECT review_flag FROM profile_private", as_user=VICTIM, expect="pending")
+    check("... and can take part", f"INSERT INTO posts (user_id, content) VALUES ('{VICTIM}', 'hello') RETURNING 1",
+          as_user=VICTIM, expect="1")
+    sign_up(ROGUE, "rogue@example.com", {"full_name": "Rogue R"}, accept_terms=True)
+    check("a member blocked before any admin looked at their details",
+          "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/someone-famous', '', '', NULL)",
+          as_user=ROGUE, expect="pending")
+    check("... (from the Reports page)",
+          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{ROGUE}' RETURNING status", as_user=ADMIN,
+          expect="blocked")
+    check("... records the link they had when blocked (the Reports page shows it)",
+          f"SELECT decision || '|' || COALESCE(linkedin_slug, 'none') FROM private.moderation_record "
+          f"WHERE member_id = '{ROGUE}'", expect="blocked|someone-famous")
+    check("rogue deletes the account", "SELECT public.delete_my_account()", as_user=ROGUE)
+    sign_up(ROGUE2, "rogue.again@example.com", {"full_name": "Rogue Again"}, accept_terms=True)
+    check("... and comes back with a new address and the same link: held",
+          "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/someone-famous', '', '', NULL); "
+          "SELECT review_flag FROM profile_private", as_user=ROGUE2, expect="pending\nheld")
+
+    # --- the hold's decision after it was reversed and made again (Q7) ------
+    sign_up(BAD, "bad@example.com", {"full_name": "Bad Actor"}, accept_terms=True)
+    sign_up(HAL, "hal@example.com", {"full_name": "Hal H"}, accept_terms=True)
+    check("bad submits", "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/bad-q7', '', '', NULL)",
+          as_user=BAD, expect="pending")
+    check("admin rejects bad", f"SELECT public.review_member('{BAD}', 'rejected', 'Not verified.', 'note1')",
+          as_user=ADMIN, expect="rejected")
+    check("hal sends the same link and is held",
+          "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/bad-q7', '', '', NULL); "
+          "SELECT review_flag FROM profile_private", as_user=HAL, expect="pending\nheld")
+    hold = ("SELECT concat_ws('|', review_flag, COALESCE(flag_decision, '-'), flag_matched_on, COALESCE(flag_note, '-'), "
+            f"(flag_date IS NOT NULL)::text) FROM public.admin_verification_queue() WHERE id = '{HAL}'")
+    check("... and the queue says what hal matched", hold, as_user=ADMIN, expect="held|rejected|linkedin|note1|true")
+    check("admin moves bad back to pending", f"SELECT public.review_member('{BAD}', 'pending', '', '')",
+          as_user=ADMIN, expect="pending")
+    check("... so hal's match was reversed (hal stays held)", hold, as_user=ADMIN, expect="held|-|linkedin|-|false")
+    check("admin rejects bad again with another note",
+          f"SELECT public.review_member('{BAD}', 'rejected', 'Still not verified.', 'note2')", as_user=ADMIN,
+          expect="rejected")
+    check("... and the queue shows hal matching that decision (Q7)", hold, as_user=ADMIN,
+          expect="held|rejected|linkedin|note2|true")
+    check("... while hal still waits for an admin",
+          f"INSERT INTO posts (user_id, content) VALUES ('{HAL}', 'hi')", as_user=HAL, expect="error")
+
+    # --- the migration's changes to existing rows (Q2, Q5) ------------------
+    zoe, yan = "00000000-0000-0000-0000-000000000106", "00000000-0000-0000-0000-000000000107"
+    check("existing rows: records of rejected and blocked members keep any link's key, and only a confirmed email", f"""
+          BEGIN;
+          INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at) VALUES
+            ('{zoe}', 'zoe@example.com', '{{"full_name": "Zoe Z"}}', now()),
+            ('{yan}', 'yan@example.com', '{{"full_name": "Yan Y"}}', NULL);
+          UPDATE profiles SET linkedin_url = 'https://www.linkedin.com/in/z%c3%b6e-z' WHERE id = '{zoe}';
+          UPDATE profiles SET linkedin_url = 'https://www.linkedin.com/in/yan-y' WHERE id = '{yan}';
+          ALTER TABLE public.profile_private DISABLE TRIGGER moderation_record;
+          UPDATE profile_private SET verification_status = 'rejected' WHERE id = '{zoe}';
+          UPDATE profile_private SET status = 'blocked' WHERE id = '{yan}';
+          ALTER TABLE public.profile_private ENABLE TRIGGER moderation_record;
+          {migration_section("EXISTING DATA")}
+          SELECT string_agg(decision || '=' || linkedin_slug || '/' || (email_hash IS NOT NULL), ',' ORDER BY decision)
+          FROM private.moderation_record WHERE member_id IN ('{zoe}', '{yan}');
+          ROLLBACK;""", expect="blocked=yan-y/false,rejected=z%c3%b6e-z/true")
 
 
 if __name__ == "__main__":

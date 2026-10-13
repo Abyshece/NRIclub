@@ -1,7 +1,7 @@
 # Review fixes on the live project (NRI+ project, `uzzkdmybsbwknpsucuvv`)
 
-The fixes from the Phase 1 review (2026-10-12), and from the review of those
-fixes (2026-10-13), come in two halves:
+The fixes from the Phase 1 review (2026-10-12), and from the two rounds of
+review of those fixes (2026-10-13), come in two halves:
 
 - the website: the pull request with the review fixes;
 - the database: `supabase/migrations/20261013000000_review_fixes.sql`.
@@ -39,15 +39,22 @@ The current site stays up and works, with these differences:
   everything is back as soon as they tick the box.
 - **Members who signed up or sent their Get verified details on the Phase 1
   site** already have these records: nothing changes for them.
+- **Someone who signs up on the current site in those minutes**: the
+  database no longer takes the 18+ and Terms tick from the signup form (only
+  the person who confirmed the email address can give it), so Get verified
+  asks them to tick it again before they send their details. Their
+  marketing choice is still saved: the current site sends it again once
+  they enter the code.
 - **Rejected, blocked and unfinished accounts** no longer receive other
   members' data. The current site already shows them a lock screen or Get
   verified, so they see no difference.
 - **Someone who signs up with the email address of a rejected or blocked
   account**, or sends their Get verified details with such an email address
-  or LinkedIn link, is held for review until an admin approves them: on the
-  current site they see an empty feed and can't post. Email addresses are
-  compared in a standard form, so `dave+1@gmail.com` or `d.ave@gmail.com`
-  matches `dave@gmail.com`. The current admin panel doesn't show why; the
+  or LinkedIn link, is held for review until an admin approves them
+  (sending their details again doesn't end it): on the current site they
+  see an empty feed and can't post. Email addresses are compared in a
+  standard form, so `dave+1@gmail.com` or `d.ave@gmail.com` matches
+  `dave@gmail.com`. The current admin panel doesn't show why; the
   new one marks them "Held for review" and says what they matched: the
   earlier decision, its date and note, and whether the email address, the
   LinkedIn link or both matched.
@@ -64,7 +71,9 @@ The current site stays up and works, with these differences:
   the member gave (`profile_private.marketing_consent`, at signup or with
   the new site's switch), and neither the migration nor the follow-ups
   change it. Anyone who changes the switch in those minutes can set it again
-  on the new site. (When this was written, no member had opted in.)
+  on the new site. (When this was written, no member had opted in.) Build
+  any mailing list from `marketing_consent`, and only from members whose
+  email address is confirmed (`profiles.email_verified`).
 - Not visible to members: dates are now set by the server, event organiser
   names come from the organiser's profile, message previews have a length
   limit, and photo links must be uploads to this project.
@@ -90,9 +99,9 @@ What it changes in the existing data (nothing is deleted):
 - community member counts are set to the real number of members;
 - members already rejected or blocked get a moderation record, so they're
   recognised if they delete their account and sign up again. It keeps their
-  email address only as a keyed hash. The key (`moderation_salt` in
-  `private.app_config`) is made once by the migration: never change or
-  delete it, or no stored record matches again.
+  email address only as a keyed hash, and only if they confirmed it. The
+  key (`moderation_salt` in `private.app_config`) is made once by the
+  migration: never change or delete it, or no stored record matches again.
 
 Marketing consent isn't changed: every member keeps the choice they gave.
 

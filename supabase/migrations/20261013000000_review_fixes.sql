@@ -1,6 +1,6 @@
 -- ============================================================================
--- NRIclub: fixes from the Phase 1 review (2026-10-12) and from the review of
--- those fixes (2026-10-13, R1-R26)
+-- NRIclub: fixes from the Phase 1 review (2026-10-12) and from the two
+-- rounds of review of those fixes (2026-10-13, R1-R26 and Q1-Q12)
 --
 -- Runs after 20261012000000_nriclub_schema.sql, on a database that may
 -- already hold members and content. No rows are deleted. Existing rows are
@@ -13,9 +13,14 @@
 --   * Being active now also needs the 18+ record and the current Terms
 --     version (F14, R20), and a member who matches a rejected or blocked
 --     account is held for review and isn't active until an admin approves
---     them (F7). Matching compares a keyed hash of the email address and the
---     LinkedIn link, both in a standard form (R9, R18), and only happens at
---     signup and when details are submitted (R7, R8).
+--     them (F7); sending their details again doesn't end the hold (Q1).
+--     Matching compares a keyed hash of the email address (kept only for
+--     confirmed addresses, Q5) and the LinkedIn link, both in a standard
+--     form (R9, R18, Q2), and only happens at signup and when details are
+--     submitted (R7, R8).
+--   * Signup keeps only the name and country from the signup data; consent,
+--     18+ and the Terms are recorded when the member accepts the Terms
+--     (accept_terms, or p_accept_terms when submitting their details) (Q3).
 --   * Verification decisions lock the member's rows, follow the allowed
 --     status changes and refuse if the member's status, name or LinkedIn
 --     changed since the admin looked (F5, F6, F25, F31, R15). A rejected
@@ -34,7 +39,8 @@
 -- 'held' while a member waits for an admin because their email address or
 -- LinkedIn link matched a rejected or blocked account; '' otherwise. Members
 -- can read it, so it says no more than that: what matched is in
--- private.review_hold. Set by the server; cleared when an admin approves.
+-- private.review_hold. Set by the server; cleared only when an admin
+-- approves them or moves them back to unfinished.
 ALTER TABLE public.profile_private
   ADD COLUMN review_flag TEXT NOT NULL DEFAULT '' CHECK (review_flag IN ('', 'held'));
 
@@ -44,10 +50,11 @@ COMMENT ON COLUMN public.user_settings.marketing_emails IS
 
 -- Rejections and blocks, kept after the account is deleted so the same
 -- person signing up again is held for review. Holds no email address, only
--- a keyed hash of it (private.email_hash), plus the LinkedIn slug, the
--- decision and the admin's note. The account id is removed when the account
--- is deleted (private.forget_moderation_member). In the private schema: not
--- reachable through the API.
+-- a keyed hash of it (private.email_hash; only once the account confirmed
+-- the address), plus the LinkedIn slug, the decision and the admin's note.
+-- The account id is removed when the account is deleted
+-- (private.forget_moderation_member). In the private schema: not reachable
+-- through the API.
 CREATE TABLE private.moderation_record (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   member_id UUID,                                   -- the account, until it's deleted
@@ -65,7 +72,8 @@ CREATE INDEX idx_moderation_record_member ON private.moderation_record(member_id
 -- record they matched, and whether the email address, the LinkedIn link or
 -- both matched. For admins only. If that record goes later (an admin
 -- reversed the decision), record_id is empty and the member stays held
--- until an admin decides.
+-- until an admin decides (the review queue then shows what they match now,
+-- if anything).
 CREATE TABLE private.review_hold (
   member_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
   record_id UUID REFERENCES private.moderation_record(id) ON DELETE SET NULL,
@@ -73,6 +81,18 @@ CREATE TABLE private.review_hold (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_review_hold_record ON private.review_hold(record_id);
+
+-- The LinkedIn link a member had when an admin last approved them, asked
+-- them for more information or rejected them (when their verification
+-- status last changed to one of those), so a block records that link, not
+-- one the member put on their profile since (Q6). Written by the database only
+-- (private.record_moderation); removed with the account
+-- (private.forget_moderation_member).
+CREATE TABLE private.reviewed_link (
+  member_id UUID PRIMARY KEY,
+  linkedin_url TEXT NOT NULL,
+  reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- Settings the database needs to know. Set the project's public Storage
 -- address once per project, e.g.:
@@ -88,7 +108,8 @@ CREATE TABLE private.app_config (
 INSERT INTO private.app_config (key, value) VALUES ('moderation_salt', gen_random_uuid()::text)
 ON CONFLICT (key) DO NOTHING;
 
-REVOKE ALL ON private.moderation_record, private.review_hold, private.app_config FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON private.moderation_record, private.review_hold, private.reviewed_link, private.app_config
+  FROM PUBLIC, anon, authenticated;
 
 -- An admin can move a rejected signup back to unfinished (R4).
 ALTER TABLE public.verification_log
@@ -139,26 +160,60 @@ RETURNS TEXT LANGUAGE sql STABLE SET search_path = '' AS $$
   WHERE c.key = 'moderation_salt' AND private.canonical_email(email) IS NOT NULL;
 $$;
 
--- '<slug>' from any LinkedIn profile link, with %XX escapes decoded (so
--- /in/d%61ve and /in/dave are the same profile); NULL for anything else,
--- including a slug that decodes to characters other than a-z, 0-9, _ . -
-CREATE FUNCTION private.linkedin_slug(url TEXT)
+-- Replaces the Phase 1 version. 'https://www.linkedin.com/in/<name>' for
+-- anything that is a LinkedIn profile link (with or without https://, www.,
+-- a country subdomain, a trailing slash or a query string); NULL for
+-- anything else. The name is 3 to 100 of a-z, 0-9, _ . - and %XX escapes;
+-- an escape of a control character, a space, / ? # or % itself (or a %
+-- that doesn't start an escape) isn't a single profile name, so such links
+-- are refused (Q2). (The same rules as before otherwise, matched without a
+-- {3,100} repetition, which made each call about ten times slower.)
+CREATE OR REPLACE FUNCTION private.normalize_linkedin(url TEXT)
 RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT CASE WHEN s.decoded ~ '^[a-z0-9_.-]+$' THEN s.decoded END
-  FROM (
-    SELECT lower(string_agg(CASE WHEN c[1] ~* '^%[0-9a-f]{2}$' AND c[1] <> '%00'
-                                 THEN chr(('x' || right(c[1], 2))::bit(8)::int) ELSE c[1] END, '' ORDER BY n)) AS decoded
-    FROM regexp_matches(substring(private.normalize_linkedin(url) FROM '/in/(.+)$'), '(%[0-9a-f]{2}|.)', 'gi')
-      WITH ORDINALITY AS t(c, n)
-  ) s;
+  SELECT 'https://www.linkedin.com/in/' || lower(m[1])
+  FROM regexp_match(
+    btrim(COALESCE(url, '')),
+    '^(?:https?://)?(?:[a-z]{2,3}\.)?(?:www\.)?linkedin\.com/in/([a-z0-9%_.-]+)/?(?:[?#].*)?$',
+    'i') AS m
+  WHERE char_length(m[1]) BETWEEN 3 AND 100
+    AND m[1] !~* '%(?![0-9a-f]{2})|%([01][0-9a-f]|2[035f]|3f|7f)';
 $$;
+
+-- The match key of a LinkedIn profile link: the name after /in/ in lower
+-- case, with escapes of letters, digits and - . _ ~ decoded (so /in/d%61ve
+-- and /in/dave are the same profile) and every other escape kept as
+-- lower-case %xx (so identical links with accented or non-Latin names
+-- match too). Never NULL for a link normalize_linkedin accepts; NULL for
+-- anything else.
+-- public.profiles is indexed on this (idx_profiles_linkedin_slug, below):
+-- if this function or normalize_linkedin ever changes, the same migration
+-- must run REINDEX INDEX public.idx_profiles_linkedin_slug (and recompute
+-- private.moderation_record.linkedin_slug).
+CREATE FUNCTION private.linkedin_slug(url TEXT)
+RETURNS TEXT LANGUAGE plpgsql IMMUTABLE SET search_path = '' AS $$
+DECLARE
+  slug TEXT := substr(private.normalize_linkedin(url), char_length('https://www.linkedin.com/in/') + 1);
+BEGIN
+  IF strpos(slug, '%') = 0 THEN
+    RETURN slug;
+  END IF;
+  RETURN (
+    SELECT lower(string_agg(CASE WHEN t.c[1] ~ '^%(3[0-9]|[46][1-9a-f]|[57][0-9a]|2[de]|5f|7e)$'
+                                 THEN chr(('x' || right(t.c[1], 2))::bit(8)::int) ELSE t.c[1] END, '' ORDER BY t.n))
+    FROM regexp_matches(slug, '%[0-9a-f]{2}|[^%]+', 'g') WITH ORDINALITY AS t(c, n));
+END;
+$$;
+
+-- Finds the other accounts with the same LinkedIn link (the review queue's
+-- same_linkedin_count) without computing the key for every member (Q12).
+CREATE INDEX idx_profiles_linkedin_slug ON public.profiles (private.linkedin_slug(linkedin_url));
 
 -- The moderation record (not the member's own) that an email address or a
 -- LinkedIn link matches: one matching both first, then a block before a
 -- rejection, then the latest. No row if nothing matches.
 CREATE FUNCTION private.moderation_match(member UUID, email TEXT, linkedin_url TEXT)
 RETURNS TABLE (record_id UUID, matched_on TEXT)
-LANGUAGE sql STABLE SET search_path = '' AS $$
+LANGUAGE sql STABLE ROWS 1 SET search_path = '' AS $$
   SELECT r.id, CASE WHEN m.on_email AND m.on_linkedin THEN 'both' WHEN m.on_email THEN 'email' ELSE 'linkedin' END
   FROM (SELECT private.email_hash(email) AS hash, private.linkedin_slug(linkedin_url) AS slug) k
   JOIN private.moderation_record r ON r.email_hash = k.hash OR r.linkedin_slug = k.slug
@@ -170,11 +225,16 @@ LANGUAGE sql STABLE SET search_path = '' AS $$
 $$;
 
 -- Holds a member for review if their email address or LinkedIn link matches
--- a rejected or blocked account, and ends an earlier hold if nothing matches
--- now; returns the member's review_flag. Only signup (the email address),
--- submitting details (the email address and the submitted link) and an
--- admin moving a member back to review check: editing a profile doesn't, so
--- nobody can try links one by one and watch their own flag.
+-- a rejected or blocked account; returns the member's review_flag. It never
+-- ends a hold, also when nothing matches any more (Q1): only an admin's
+-- decision on the member does (approving them, or moving them back to
+-- unfinished, in review_member), or deleting the account. An existing hold
+-- keeps the record it matched while that record exists, adding whatever
+-- else of it matches now, so the admin keeps seeing why they were held.
+-- Only signup (the email address), submitting details (the email address
+-- and the submitted link) and an admin moving a member back to review
+-- check: editing a profile doesn't, so nobody can try links one by one and
+-- watch their own flag.
 CREATE FUNCTION private.recheck_review_hold(member UUID, email TEXT, linkedin_url TEXT)
 RETURNS TEXT LANGUAGE plpgsql SET search_path = '' AS $$
 DECLARE
@@ -184,12 +244,14 @@ BEGIN
   SELECT m.record_id, m.matched_on INTO hit_id, hit_on
   FROM private.moderation_match(member, email, linkedin_url) m;
   IF hit_id IS NULL THEN
-    DELETE FROM private.review_hold h WHERE h.member_id = member;
-    UPDATE public.profile_private SET review_flag = '' WHERE id = member AND review_flag <> '';
-    RETURN '';
+    RETURN (SELECT pp.review_flag FROM public.profile_private pp WHERE pp.id = member);
   END IF;
-  INSERT INTO private.review_hold (member_id, record_id, matched_on) VALUES (member, hit_id, hit_on)
-  ON CONFLICT (member_id) DO UPDATE SET record_id = EXCLUDED.record_id, matched_on = EXCLUDED.matched_on, created_at = NOW();
+  INSERT INTO private.review_hold AS h (member_id, record_id, matched_on) VALUES (member, hit_id, hit_on)
+  ON CONFLICT (member_id) DO UPDATE SET
+    record_id = EXCLUDED.record_id,
+    matched_on = CASE WHEN h.record_id = EXCLUDED.record_id AND h.matched_on <> EXCLUDED.matched_on
+                      THEN 'both' ELSE EXCLUDED.matched_on END
+  WHERE h.record_id IS NULL OR h.record_id = EXCLUDED.record_id;
   UPDATE public.profile_private SET review_flag = 'held' WHERE id = member AND review_flag <> 'held';
   RETURN 'held';
 END;
@@ -375,10 +437,17 @@ $$;
 
 -- Keep a moderation record when a member is rejected or blocked (with the
 -- admin's note, which review_member passes in nriclub.moderation_note), and
--- drop it when an admin reverses that decision. A record only ever holds a
--- LinkedIn link an admin had in front of them: the profile's link when the
--- member is first rejected or blocked, after that the link already on
--- record (a rejected or blocked member can still edit their profile).
+-- drop it when an admin reverses that decision. A record holds the LinkedIn
+-- link the member had at the admin's last decision on their details
+-- (private.reviewed_link, kept here), so a block never records one the
+-- member put on their profile after that (Q6). A member whose details no
+-- admin has decided on yet (pending members can take part) gets the link
+-- they have when blocked, which every admin screen that can block shows
+-- (the Reports page shows it with the reported profile). Once there is a
+-- record, the link already on record (a rejected or blocked member can
+-- still edit their profile). The email
+-- address is only kept once the account confirmed it (Q5): anyone can sign
+-- up with someone else's address and never confirm it.
 CREATE FUNCTION private.record_moderation()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -387,26 +456,42 @@ DECLARE
   is_now BOOLEAN;
   was BOOLEAN;
   earlier private.moderation_record;
+  email_key TEXT := CASE WHEN EXISTS (SELECT 1 FROM auth.users u
+                                      WHERE u.id = NEW.id AND u.email_confirmed_at IS NOT NULL)
+                         THEN private.email_hash(NEW.email) END;
 BEGIN
+  -- An admin decided on the member's details: the link they had in front of
+  -- them. (Not on other changes, such as a block of an approved member.)
+  IF NEW.verification_status IN ('approved', 'needs_info', 'rejected')
+     AND (TG_OP = 'INSERT' OR NEW.verification_status IS DISTINCT FROM OLD.verification_status) THEN
+    INSERT INTO private.reviewed_link (member_id, linkedin_url)
+    SELECT p.id, p.linkedin_url FROM public.profiles p WHERE p.id = NEW.id
+    ON CONFLICT (member_id) DO UPDATE SET linkedin_url = EXCLUDED.linkedin_url, reviewed_at = NOW();
+  END IF;
   FOREACH kind IN ARRAY ARRAY['rejected', 'blocked'] LOOP
     is_now := CASE kind WHEN 'rejected' THEN NEW.verification_status = 'rejected' ELSE NEW.status = 'blocked' END;
     was := TG_OP = 'UPDATE' AND CASE kind WHEN 'rejected' THEN OLD.verification_status = 'rejected' ELSE OLD.status = 'blocked' END;
     IF is_now AND NOT was THEN
       SELECT * INTO earlier FROM private.moderation_record r WHERE r.member_id = NEW.id ORDER BY r.created_at LIMIT 1;
       INSERT INTO private.moderation_record (member_id, email_hash, linkedin_slug, decision, admin_note)
-      VALUES (NEW.id, private.email_hash(NEW.email),
+      VALUES (NEW.id, email_key,
         CASE WHEN earlier.id IS NOT NULL THEN earlier.linkedin_slug
-             ELSE (SELECT private.linkedin_slug(p.linkedin_url) FROM public.profiles p WHERE p.id = NEW.id) END,
+             WHEN EXISTS (SELECT 1 FROM private.reviewed_link l WHERE l.member_id = NEW.id)
+             THEN (SELECT private.linkedin_slug(l.linkedin_url) FROM private.reviewed_link l
+                   WHERE l.member_id = NEW.id)
+             ELSE (SELECT private.linkedin_slug(NULLIF(p.linkedin_url, '')) FROM public.profiles p
+                   WHERE p.id = NEW.id) END,
         kind, CASE WHEN kind = 'rejected' THEN note ELSE '' END);
     ELSIF is_now AND NEW.email IS DISTINCT FROM OLD.email THEN
-      -- A new email address: one more record, with the link, note and date
-      -- of the decision.
+      -- A new (confirmed) email address: one more record, with the link,
+      -- note and date of the decision.
       SELECT * INTO earlier FROM private.moderation_record r
       WHERE r.member_id = NEW.id AND r.decision = kind ORDER BY r.created_at LIMIT 1;
-      IF NOT EXISTS (SELECT 1 FROM private.moderation_record r WHERE r.member_id = NEW.id AND r.decision = kind
-                     AND r.email_hash = private.email_hash(NEW.email)) THEN
+      IF email_key IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM private.moderation_record r WHERE r.member_id = NEW.id AND r.decision = kind
+           AND r.email_hash = email_key) THEN
         INSERT INTO private.moderation_record (member_id, email_hash, linkedin_slug, decision, admin_note, created_at)
-        VALUES (NEW.id, private.email_hash(NEW.email), earlier.linkedin_slug, kind,
+        VALUES (NEW.id, email_key, earlier.linkedin_slug, kind,
           COALESCE(earlier.admin_note, ''), COALESCE(earlier.created_at, NOW()));
       END IF;
     ELSIF is_now AND kind = 'rejected' AND note <> '' THEN
@@ -425,13 +510,15 @@ CREATE TRIGGER moderation_record AFTER INSERT OR UPDATE OF verification_status, 
 
 -- A deleted account's moderation records stay, but no longer say whose
 -- account it was (its id is also the folder name of any photos left in
--- Storage). A trigger, not a foreign key: a foreign key would lock the
--- profile row each time a block adds a record, in the opposite order to
--- review_member, and the two could deadlock.
+-- Storage), and the link of its last review goes. A trigger, not a foreign
+-- key: a foreign key would lock the profile row each time a block adds a
+-- record, in the opposite order to review_member, and the two could
+-- deadlock.
 CREATE FUNCTION private.forget_moderation_member()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
   UPDATE private.moderation_record SET member_id = NULL WHERE member_id = OLD.id;
+  DELETE FROM private.reviewed_link WHERE member_id = OLD.id;
   RETURN NULL;
 END;
 $$;
@@ -449,9 +536,11 @@ RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   meta JSONB := COALESCE(NEW.raw_user_meta_data, '{}'::jsonb);
 BEGIN
-  -- Only what the signup form sends (name and country). Anything else in the
-  -- metadata is ignored: whoever registers an address first through the API
-  -- must not be able to leave a LinkedIn link, hometown or job on it.
+  -- Only the name and country from the signup data. Anything else in it is
+  -- ignored: whoever registers an address first through the API must not be
+  -- able to leave a LinkedIn link, hometown or job on it, nor a marketing
+  -- opt-in, consent, 18+ or Terms record (Q3). The site records the
+  -- marketing choice and accept_terms once the email code is confirmed.
   INSERT INTO public.profiles (id, name, country_code, email_verified)
   VALUES (
     NEW.id,
@@ -461,14 +550,7 @@ BEGIN
   )
   ON CONFLICT (id) DO NOTHING;
 
-  INSERT INTO public.profile_private (id, email, gdpr_consent, marketing_consent,
-    age_confirmed_at, terms_accepted_at, terms_version)
-  VALUES (NEW.id, NEW.email,
-    COALESCE(meta ->> 'gdpr_consent', '') = 'true',
-    COALESCE(meta ->> 'marketing_consent', '') = 'true',
-    CASE WHEN COALESCE(meta ->> 'age_confirmed', '') = 'true' THEN NOW() END,
-    CASE WHEN COALESCE(meta ->> 'terms_version', '') <> '' THEN NOW() END,
-    NULLIF(LEFT(COALESCE(meta ->> 'terms_version', ''), 20), ''))
+  INSERT INTO public.profile_private (id, email) VALUES (NEW.id, NEW.email)
   ON CONFLICT (id) DO NOTHING;
   IF FOUND THEN
     PERFORM private.recheck_review_hold(NEW.id, NEW.email, NULL);
@@ -498,10 +580,11 @@ $$;
 
 -- As before, plus: the member's rows are locked first (in the same order as
 -- review_member, so the two wait for each other instead of overwriting each
--- other), blocked members can't submit, p_accept_terms records the current
--- Terms version, and the email address and the submitted LinkedIn link are
--- checked against rejected and blocked accounts (a match holds the member
--- for review; no match ends an earlier hold).
+-- other), blocked members can't submit, p_accept_terms records 18+ and the
+-- current Terms version (with consent to the Privacy Policy, as
+-- accept_terms does), and the email address and the submitted LinkedIn
+-- link are checked against rejected and blocked accounts (a match holds the
+-- member for review; sending the details again never ends a hold, Q1).
 CREATE OR REPLACE FUNCTION public.submit_verification(
   p_city TEXT, p_country_code TEXT, p_location TEXT,
   p_linkedin_url TEXT, p_note TEXT, p_voucher TEXT, p_profession TEXT,
@@ -535,7 +618,9 @@ BEGIN
       age_confirmed_at = COALESCE(age_confirmed_at, NOW()),
       terms_accepted_at = CASE WHEN terms_accepted_at IS NULL OR terms_version IS DISTINCT FROM private.current_terms_version()
                                THEN NOW() ELSE terms_accepted_at END,
-      terms_version = private.current_terms_version()
+      terms_version = private.current_terms_version(),
+      gdpr_consent = TRUE,
+      gdpr_consent_date = COALESCE(gdpr_consent_date, NOW())
     WHERE id = uid;
   END IF;
   IF EXISTS (SELECT 1 FROM public.profile_private
@@ -694,11 +779,13 @@ $$;
 
 -- The admin review queue, now with the review flag and, for a member held
 -- for review, what they matched: the earlier decision, its note and date,
--- and whether the email address, the LinkedIn link or both matched (all
--- empty if that decision was reversed since). same_linkedin_count compares
--- links in their standard form. Unfinished signups (incomplete) come newest
--- first, so the latest are within the API's 1,000-row limit; everyone else
--- oldest first, as before.
+-- and whether the email address, the LinkedIn link or both matched. If that
+-- decision was reversed since, it's the decision they match now, if any
+-- (Q7); otherwise only what matched. same_linkedin_count counts the other
+-- accounts with the same LinkedIn match key, only for the members listed
+-- (through idx_profiles_linkedin_slug, Q12). Unfinished signups
+-- (incomplete) come newest first, so the latest are within the API's
+-- 1,000-row limit; everyone else oldest first, as before.
 DROP FUNCTION public.admin_verification_queue(TEXT[]);
 CREATE FUNCTION public.admin_verification_queue(p_statuses TEXT[] DEFAULT ARRAY['pending'])
 RETURNS TABLE (
@@ -716,25 +803,26 @@ BEGIN
     RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
   END IF;
   RETURN QUERY
-  WITH links AS (
-    SELECT private.linkedin_slug(o.linkedin_url) AS slug, count(*)::int AS n
-    FROM public.profiles o WHERE o.linkedin_url <> ''
-    GROUP BY 1)
   SELECT p.id, p.name, p.avatar_url, pp.email, p.email_verified,
     p.city, p.country_code, p.location, p.hometown, p.profession,
     p.linkedin_url, pp.verification_note, pp.voucher,
     pp.verification_status, pp.status, pp.verification_message,
     p.created_at, pp.submitted_at, pp.reviewed_at,
     pp.age_confirmed_at, pp.terms_accepted_at,
-    COALESCE(li.n - 1, 0),
+    (SELECT count(*)::int FROM public.profiles o
+      WHERE private.linkedin_slug(o.linkedin_url) = private.linkedin_slug(p.linkedin_url) AND o.id <> p.id),
     (SELECT count(*)::int FROM public.verification_log l
       WHERE l.member_id = p.id AND l.decision IN ('approved', 'needs_info', 'rejected')),
-    pp.review_flag, r.decision, h.matched_on, r.admin_note, r.created_at
+    pp.review_flag, r.decision, COALESCE(now_match.matched_on, h.matched_on), r.admin_note, r.created_at
   FROM public.profiles p
   LEFT JOIN public.profile_private pp ON pp.id = p.id
-  LEFT JOIN links li ON li.slug = private.linkedin_slug(p.linkedin_url)
   LEFT JOIN private.review_hold h ON h.member_id = p.id AND pp.review_flag = 'held'
-  LEFT JOIN private.moderation_record r ON r.id = h.record_id
+  -- Only looked up for a hold whose record is gone (OFFSET 0 keeps the
+  -- condition in front of the lookup).
+  LEFT JOIN LATERAL (
+    SELECT m.record_id, m.matched_on FROM private.moderation_match(p.id, pp.email, p.linkedin_url) m
+    WHERE h.member_id IS NOT NULL AND h.record_id IS NULL OFFSET 0) now_match ON TRUE
+  LEFT JOIN private.moderation_record r ON r.id = COALESCE(h.record_id, now_match.record_id)
   WHERE pp.verification_status = ANY (p_statuses)
   ORDER BY pp.submitted_at NULLS LAST,
     CASE WHEN pp.verification_status = 'incomplete' THEN p.created_at END DESC NULLS LAST,
@@ -743,8 +831,10 @@ END;
 $$;
 
 -- A member confirms they're 18 or older and accepts the current Terms of
--- Use (p_version is the version the site showed them). Accepting a newer
--- version than the one on record stamps a new acceptance date.
+-- Use and the Privacy Policy (p_version is the version the site showed
+-- them), which also records their consent (gdpr_consent, dated when first
+-- given; Q3). Accepting a newer version than the one on record stamps a new
+-- acceptance date.
 CREATE FUNCTION public.accept_terms(p_version TEXT)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -761,7 +851,9 @@ BEGIN
     age_confirmed_at = COALESCE(age_confirmed_at, NOW()),
     terms_accepted_at = CASE WHEN terms_accepted_at IS NULL OR terms_version IS DISTINCT FROM version
                              THEN NOW() ELSE terms_accepted_at END,
-    terms_version = version
+    terms_version = version,
+    gdpr_consent = TRUE,
+    gdpr_consent_date = COALESCE(gdpr_consent_date, NOW())
   WHERE id = uid;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Member not found' USING ERRCODE = 'P0001';
@@ -951,19 +1043,25 @@ CREATE POLICY "Users can notify other members" ON public.notifications
 -- (supabase/tests/rls_test.py runs this section again, in a transaction it
 -- rolls back, to check the changes to existing rows.)
 
--- Members already rejected or blocked get their moderation record now.
+-- Members already rejected or blocked get their moderation record now, with
+-- the link their profile has (there's no record of the link an admin saw)
+-- and the email address if the account confirmed it.
 INSERT INTO private.moderation_record (member_id, email_hash, linkedin_slug, decision, admin_note, created_at)
-SELECT pp.id, private.email_hash(pp.email), private.linkedin_slug(p.linkedin_url), 'rejected',
+SELECT pp.id, CASE WHEN u.email_confirmed_at IS NOT NULL THEN private.email_hash(pp.email) END,
+  private.linkedin_slug(p.linkedin_url), 'rejected',
   COALESCE((SELECT l.admin_note FROM public.verification_log l
             WHERE l.member_id = pp.id AND l.decision = 'rejected' ORDER BY l.created_at DESC LIMIT 1), ''),
   COALESCE(pp.reviewed_at, NOW())
 FROM public.profile_private pp
 JOIN public.profiles p ON p.id = pp.id
+LEFT JOIN auth.users u ON u.id = pp.id
 WHERE pp.verification_status = 'rejected';
 INSERT INTO private.moderation_record (member_id, email_hash, linkedin_slug, decision)
-SELECT pp.id, private.email_hash(pp.email), private.linkedin_slug(p.linkedin_url), 'blocked'
+SELECT pp.id, CASE WHEN u.email_confirmed_at IS NOT NULL THEN private.email_hash(pp.email) END,
+  private.linkedin_slug(p.linkedin_url), 'blocked'
 FROM public.profile_private pp
 JOIN public.profiles p ON p.id = pp.id
+LEFT JOIN auth.users u ON u.id = pp.id
 WHERE pp.status = 'blocked';
 
 -- Members approved or waiting for review have sent their details, or were
