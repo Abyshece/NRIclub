@@ -1614,6 +1614,7 @@ const REPORTED_ITEMS = {
   event: ["events", "id,title,description,date,organizer_id"],
   help: ["help_requests", "id,title,description,user_id"],
   market: ["marketplace", "id,title,description,price,user_id,image_url"],
+  review: ["mentor_reviews", "id,rating,comment,mentee_id,mentor_id,created_at"],
 };
 REPORTED_ITEMS.marketplace = REPORTED_ITEMS.market;
 
@@ -1727,7 +1728,7 @@ export async function adminDeleteReport(reportId) {
   return adminWrite("DELETE", `/rest/v1/reports?id=eq.${reportId}`);
 }
 
-const MODERATED_TABLES = ["posts", "docs", "events", "help_requests", "marketplace"];
+const MODERATED_TABLES = ["posts", "docs", "events", "help_requests", "marketplace", "mentor_reviews"];
 
 export async function adminDeleteContent(table, id) {
   if (!MODERATED_TABLES.includes(table)) throw new Error(`Cannot moderate ${table}`);
@@ -1744,4 +1745,73 @@ export async function getCitySummary(city) {
 }
 export async function getPublicCities() {
   return (await restCall("POST", "/rest/v1/rpc/public_cities", {})) || [];
+}
+
+// ============================================================================
+// MENTORING (open times, sessions, reviews)
+// ============================================================================
+
+// Open times from now on (all mentors, or one).
+export async function getMentorSlots(mentorId = null) {
+  let url = `/rest/v1/mentor_slots?booked=eq.false&starts_at=gt.${encodeURIComponent(new Date().toISOString())}&select=id,mentor_id,starts_at,duration_min&order=starts_at.asc&limit=500`;
+  if (mentorId) url += `&mentor_id=eq.${encodeURIComponent(mentorId)}`;
+  return (await restCall("GET", url)) || [];
+}
+
+// The mentor's own times (free and booked) from now on.
+export async function getMyMentorSlots() {
+  if (!currentUser) return [];
+  return (await restCall("GET", `/rest/v1/mentor_slots?mentor_id=eq.${currentUser.id}&starts_at=gt.${encodeURIComponent(new Date().toISOString())}&select=*&order=starts_at.asc`)) || [];
+}
+
+export async function addMentorSlots(times) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/mentor_slots", times.map(t => ({ mentor_id: currentUser.id, starts_at: t.starts_at, duration_min: t.duration_min })), { Prefer: "return=representation" });
+}
+
+export async function deleteMentorSlot(id) {
+  const rows = await restCall("DELETE", `/rest/v1/mentor_slots?id=eq.${encodeURIComponent(id)}`, null, { Prefer: "return=representation" });
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error("That time is booked or already gone.");
+}
+
+// Sessions the member is in (as mentor or as the one being helped).
+export async function getMySessions() {
+  if (!currentUser) return [];
+  return (await restCall("GET", `/rest/v1/mentor_bookings?or=(mentor_id.eq.${currentUser.id},mentee_id.eq.${currentUser.id})&select=*,mentor:mentor_id(id,name,avatar_url),mentee:mentee_id(id,name,avatar_url)&order=starts_at.desc&limit=100`)) || [];
+}
+
+export async function bookMentorSession(slotId, topic, note) {
+  return restCall("POST", "/rest/v1/rpc/book_mentor_session", { p_slot: slotId, p_topic: topic || "", p_note: note || "" });
+}
+
+export async function cancelMentorSession(bookingId, reason) {
+  return restCall("POST", "/rest/v1/rpc/cancel_mentor_session", { p_booking: bookingId, p_reason: reason || "" });
+}
+
+export async function setSessionLink(bookingId, link) {
+  return restCall("POST", "/rest/v1/rpc/set_session_link", { p_booking: bookingId, p_link: link || "" });
+}
+
+export async function reviewMentorSession(bookingId, rating, comment) {
+  return restCall("POST", "/rest/v1/rpc/review_mentor_session", { p_booking: bookingId, p_rating: rating, p_comment: comment || "" });
+}
+
+// { [mentor id]: { rating, reviews } }
+export async function getMentorRatings() {
+  const rows = (await restCall("POST", "/rest/v1/rpc/mentor_ratings", {})) || [];
+  return Object.fromEntries(rows.map(r => [r.mentor_id, { rating: Number(r.rating), reviews: r.reviews }]));
+}
+
+export async function getMentorReviews(mentorId) {
+  return (await restCall("GET", `/rest/v1/mentor_reviews?mentor_id=eq.${encodeURIComponent(mentorId)}&select=*,mentee:mentee_id(id,name,avatar_url)&order=created_at.desc&limit=50`)) || [];
+}
+
+// The reviews the member wrote (booking ids), to know which sessions are rated.
+export async function getMyReviews() {
+  if (!currentUser) return [];
+  return (await restCall("GET", `/rest/v1/mentor_reviews?mentee_id=eq.${currentUser.id}&select=id,booking_id,rating,comment`)) || [];
+}
+
+export async function deleteMyReview(id) {
+  return restCall("DELETE", `/rest/v1/mentor_reviews?id=eq.${encodeURIComponent(id)}&mentee_id=eq.${currentUser?.id}`);
 }

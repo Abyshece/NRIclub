@@ -18,7 +18,7 @@ export const isOpenReport = (r) => !isFeedback(r) && isPending(r);
 export const isOpenBug = (r) => isBugReport(r) && isPending(r);
 export const isOpenIdea = (r) => isIdea(r) && isPending(r);
 
-const CATEGORIES = ["Feed posts", "Marketplace", "Docs", "Events", "Help requests", "Profiles"];
+const CATEGORIES = ["Feed posts", "Marketplace", "Docs", "Events", "Help requests", "Mentor reviews", "Profiles"];
 
 const HANDLED_PAGE = 20;
 
@@ -48,6 +48,7 @@ function categoryOf(r) {
   if (reason.startsWith("[DOC]")) return "Docs";
   if (reason.startsWith("[EVENT]")) return "Events";
   if (reason.startsWith("[HELP]")) return "Help requests";
+  if (reason.startsWith("[REVIEW]")) return "Mentor reviews";
   if (reason.startsWith("[USER]")) return "Profiles";
   if (reason.startsWith("[POST]")) return "Feed posts";
   if (r.reported_user_id && !r.reported_post_id) return "Profiles";
@@ -61,11 +62,12 @@ function kindOf(r) {
     : reason.startsWith("[DOC]") ? "doc"
     : reason.startsWith("[EVENT]") ? "event"
     : reason.startsWith("[HELP]") ? "help"
+    : reason.startsWith("[REVIEW]") ? "review"
     : "post";
 }
 
-const TABLES = { post: "posts", market: "marketplace", doc: "docs", event: "events", help: "help_requests" };
-const CONTENT_NOUN = { post: "post", market: "listing", doc: "doc", event: "event", help: "help request" };
+const TABLES = { post: "posts", market: "marketplace", doc: "docs", event: "events", help: "help_requests", review: "mentor_reviews" };
+const CONTENT_NOUN = { post: "post", market: "listing", doc: "doc", event: "event", help: "help request", review: "review" };
 
 const isProfileReport = (r) => !r.reported_post_id && !!r.reported_user_id;
 
@@ -85,6 +87,7 @@ export function contentPreview(kind, row) {
   if (kind === "doc") return { type: "doc", content: row.title, excerpt: row.excerpt, authorId: row.user_id };
   if (kind === "event") return { type: "event", content: row.title, excerpt: row.description, date: row.date, authorId: row.organizer_id };
   if (kind === "help") return { type: "help", content: row.title, excerpt: row.description, authorId: row.user_id };
+  if (kind === "review") return { type: "review", content: `${"★".repeat(row.rating)}${"☆".repeat(5 - row.rating)} mentoring review`, excerpt: row.comment, authorId: row.mentee_id };
   // Listings keep image_url as a JSON array of URLs; show the first.
   let img = row.image_url;
   try { const a = JSON.parse(img); img = Array.isArray(a) ? a[0] : img; } catch { img = row.image_url; }

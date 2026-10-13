@@ -11,6 +11,7 @@ import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
 import { slug, HOME_TITLE } from "./content/slug";
+import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
 
@@ -621,7 +622,7 @@ const toHelp = (h, responses) => ({
 });
 
 // The small sign on a notification's avatar, by type.
-const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋" };
+const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐" };
 
 // For urgent questions: who to call first, and the Indian embassy's help.
 const EmergencyHelp = () => (
@@ -649,6 +650,7 @@ const EmptyCard = ({ text, action, onAction }) => (
 //   /messages[/conversation id]  /profile  /u/<member id>  /post/<post id>
 //   /city/<city> (the public city page's address; members get its group)
 //   /guides[/<slug>] (the public guides; members get them in Guides)
+//   /mentoring (your sessions and settings)  /mentors (Find → Mentors)
 const parsePath = (path, selfId) => {
   const [, a = "", b = ""] = (path || "/").split("/");
   let id = "";
@@ -666,6 +668,8 @@ const parsePath = (path, selfId) => {
     case "post": return { view: "home", post: id || null };
     case "city": return { view: "groups", pending: id ? { kind: "city", id } : null };
     case "guides": return { view: "docs", pending: id ? { kind: "guide", id } : null };
+    case "mentoring": return { view: "mentoring" };
+    case "mentors": return { view: "network", findTab: "mentors" };
     default: return { view: "home" };
   }
 };
@@ -973,6 +977,7 @@ const STATUS_FIELDS = ["verificationStatus", "status", "reviewFlag", "termsVersi
 
 const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [startRoute] = useState(() => parsePath(window.location.pathname, user?.id));
+  const [findTab, setFindTab] = useState(startRoute.findTab || "people"); // Find: people | mentors
   const [view, setView] = useState(startRoute.view);
   // A group, event, doc or listing the address points at, opened once the
   // lists have loaded.
@@ -1227,6 +1232,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
           hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
           linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "", createdAt: u.created_at || "", ambassadorCity: u.ambassador_city || "", askMeAbout: u.ask_me_about || "",
+          mentorOpen: !!u.mentor_open, mentorAreas: u.mentor_areas || "", menteeOpen: !!u.mentee_open, menteeNeeds: u.mentee_needs || "",
           avatar_url: u.avatar_url || "",
           followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
         })));
@@ -1465,7 +1471,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     if (expandedEvent) return `/events/${expandedEvent.id}`;
     if (expandedMarketItem) return `/market/${expandedMarketItem.id}`;
     switch (view) {
-      case "network": return "/find";
+      case "network": return findTab === "mentors" ? "/mentors" : "/find";
+      case "mentoring": return "/mentoring";
       case "groups": return selectedGroup ? `/groups/${selectedGroup.id}` : "/groups";
       case "events": return "/events";
       case "help": return "/help";
@@ -1492,6 +1499,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       setSelectedDoc(null);
       setSelectedConvo(r.convo || null);
       if (r.member) setMemberId(r.member);
+      setFindTab(r.findTab || "people");
       setPendingRoute(r.pending || null);
       if (r.post) setSharedLink({ kind: "post", id: r.post });
       setView(r.view);
@@ -1973,10 +1981,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [newGroupKind, setNewGroupKind] = useState("City"); // City | University, when requesting a group
   const [cityAmbassadors, setCityAmbassadors] = useState({ city: "", list: [] });
   const [isAdminUser, setIsAdminUser] = useState(false);
+  const [bookingMentor, setBookingMentor] = useState(null);
+  const [mentorRatings, setMentorRatings] = useState({});
   const placesCity = selectedGroup?.category === "City" ? (selectedGroup.name || "").replace(/^Indians in /i, "") : null;
   useEffect(() => { setPlaceKind("All"); }, [placesCity]);
   useEffect(() => { api.isAdmin().then(setIsAdminUser).catch(() => {}); }, []);
   useEffect(() => { document.title = HOME_TITLE; }, []);
+  useEffect(() => { if (canBrowse) api.getMentorRatings().then(setMentorRatings).catch(() => {}); }, [canBrowse]);
+  // "Book" on a mentor (null: go to Find → Mentors).
+  const bookMentor = (m) => {
+    if (!m) { setFindTab("mentors"); setView("network"); return; }
+    setBookingMentor({ id: m.id, name: m.name, avatar_url: m.avatar_url, mentorAreas: m.mentorAreas ?? m.mentor_areas ?? "" });
+  };
+  const messageMember = (m) => { if (m?.id) openChatWith({ id: m.id, name: m.name, avatar_url: m.avatar_url }); };
   // A city group: its ambassadors, and its pinned post even if it's older
   // than the posts already loaded.
   useEffect(() => {
@@ -2235,6 +2252,42 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             )}
 
+            {/* Mentoring: mentors for members looking for one; people to help for mentors */}
+            {(() => {
+              const city = helpNearbyCity.toLowerCase();
+              const near = (u) => (u.location || "").toLowerCase().startsWith(city);
+              const others = networkUsers.filter(u => u.id !== user.id && !blockedIds.has(u.id));
+              const mentors = user.menteeOpen ? others.filter(u => u.mentorOpen && u.linkedin_verified).sort((a, b) => (near(b) - near(a)) || ((mentorRatings[b.id]?.rating || 0) - (mentorRatings[a.id]?.rating || 0))).slice(0, 3) : [];
+              const seekers = user.mentorOpen ? others.filter(u => u.menteeOpen) : [];
+              if (!mentors.length && !seekers.length) return null;
+              return (
+                <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #A7F3D0", padding: "16px 18px", marginBottom: 16, fontFamily: font }}>
+                  {mentors.length > 0 && (<>
+                    <h3 style={{ fontSize: 15, fontWeight: 700, color: "#37352F" }}>🤝 Mentors who could help you</h3>
+                    {mentors.map(m => (
+                      <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid #F0EFED", marginTop: 6 }}>
+                        <button type="button" onClick={() => openMember(m.id)} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+                          <Avatar name={m.name} size={34} url={m.avatar_url} />
+                          <span style={{ minWidth: 0 }}>
+                            <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#37352F" }}>{m.name}</span>
+                            <span style={{ display: "block", fontSize: 11, color: "#9B9A97", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.mentorAreas || m.profession}</span>
+                          </span>
+                        </button>
+                        <button onClick={() => bookMentor(m)} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Book</button>
+                      </div>
+                    ))}
+                    <button onClick={() => bookMentor(null)} style={{ background: "none", border: "none", padding: "6px 0 0", fontSize: 12, fontWeight: 600, color: "#37352F", textDecoration: "underline", cursor: "pointer", fontFamily: font }}>See all mentors</button>
+                  </>)}
+                  {seekers.length > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: mentors.length ? 12 : 0, paddingTop: mentors.length ? 12 : 0, borderTop: mentors.length ? "1px solid #F0EFED" : "none" }}>
+                      <span style={{ flex: 1, fontSize: 13, color: "#37352F" }}>🌱 <b>{seekers.length}</b> {seekers.length === 1 ? "member is" : "members are"} looking for a mentor.</span>
+                      <button onClick={() => setView("mentoring")} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>See who</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Complete your profile (mobile; the left column has it on desktop) */}
             <div className="nc-mobile-only">
               <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} collapseAfter={2} style={{ marginBottom: 20 }} />
@@ -2305,11 +2358,32 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           </div>
         );
 
-      case "network":
+      case "network": {
+        const findTabs = (
+          <div role="tablist" style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8, marginBottom: 18, width: "fit-content" }}>
+            {[{ k: "people", l: "People" }, { k: "mentors", l: "🤝 Mentors" }].map(t => (
+              <button key={t.k} role="tab" aria-selected={findTab === t.k} onClick={() => setFindTab(t.k)} style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: findTab === t.k ? "#fff" : "transparent", color: findTab === t.k ? "#37352F" : "#9B9A97", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{t.l}</button>
+            ))}
+          </div>
+        );
+        if (findTab === "mentors") return (
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Find a mentor</h2>
+                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Free sessions with verified members who've been there.</p>
+              </div>
+              <button onClick={() => setView("mentoring")} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>My sessions</button>
+            </div>
+            {findTabs}
+            <MentorsList user={user} people={networkUsers.filter(u => !blockedIds.has(u.id))} ratings={mentorRatings} onBook={bookMentor} openMember={openMember} Avatar={Avatar} />
+          </div>
+        );
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
             {/* Header */}
-            <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 20, fontFamily: font }}>Find Indians Abroad</h2>
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 14, fontFamily: font }}>Find Indians Abroad</h2>
+            {findTabs}
             <InfoBanner text="Tap Namaste to follow someone. They get a request to accept. You can also send them a message." />
 
             {/* Search & Filters Card */}
@@ -2417,6 +2491,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         <h3 onClick={() => openMember(u.id)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font, cursor: "pointer" }}>{u.name}</h3>
                         {isNewMember(u.createdAt) && <NewBadge />}
                         <AmbassadorBadge city={u.ambassadorCity} />
+                        {u.mentorOpen && u.linkedin_verified && <MentorBadge />}
                         {u.linkedin_verified && (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="#22C55E" stroke="none" role="img" aria-label="Verified member">
                             <title>Verified member</title>
@@ -2541,6 +2616,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             )}
           </div>
         );
+      }
 
       case "groups":
         if (selectedGroup) {
@@ -3818,6 +3894,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           </div>
         );
 
+      case "mentoring":
+        return <MentoringPage user={user} onUserUpdate={onUserUpdate} people={networkUsers.filter(u => !blockedIds.has(u.id))} ratings={mentorRatings} onBook={bookMentor} onMessage={messageMember} openMember={openMember} Avatar={Avatar} />;
+
       case "member": {
         const mp = memberPage && memberPage.id === memberId ? memberPage : null;
         const m = mp?.profile;
@@ -3843,6 +3922,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>{m.name || "Member"}</h2>
                   {isNewMember(m.created_at) && <NewBadge />}
                   <AmbassadorBadge city={m.ambassador_city} />
+                  {m.mentor_open && m.linkedin_verified && <MentorBadge />}
                   {m.linkedin_verified && (
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E" role="img" aria-label="Verified member"><title>Verified member</title><path d="M12 2l2.4 2.2 3.3-.4.9 3.2 2.9 1.7-1.2 3.1 1.2 3.1-2.9 1.7-.9 3.2-3.3-.4L12 22l-2.4-2.2-3.3.4-.9-3.2-2.9-1.7L3.7 12 2.5 8.9l2.9-1.7.9-3.2 3.3.4z"/><path d="M8.5 12.5l2.2 2.2 4.8-4.8" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                   )}
@@ -3864,6 +3944,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </div>
                 )}
                 {mp.helped > 0 && <p style={{ fontSize: 13, color: "#1A7F52", fontWeight: 600, marginTop: 12, fontFamily: font }}>🙏 Helped {mp.helped === 1 ? "1 member" : `${mp.helped} members`}</p>}
+                {m.mentee_open && <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 10, fontFamily: font }}>🌱 Looking for a mentor{m.mentee_needs ? `: ${m.mentee_needs}` : ""}</p>}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "16px 0 0", fontSize: 13, fontFamily: font }}>
                   <span><b style={{ color: "#37352F" }}>{counts.followers || 0}</b> <span style={{ color: "#9B9A97" }}>{counts.followers === 1 ? "follower" : "followers"}</span></span>
                   <span style={{ color: "#D4D4D2" }}>·</span>
@@ -3883,6 +3964,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </button>
                 </div>
               </div>
+              {m.mentor_open && m.linkedin_verified && (
+                <MentorProfileCard member={{ id: m.id, name: m.name, avatar_url: m.avatar_url, mentorAreas: m.mentor_areas }} rating={mentorRatings[m.id]} isSelf={m.id === user.id} me={user.id} onBook={() => bookMentor({ id: m.id, name: m.name, avatar_url: m.avatar_url, mentorAreas: m.mentor_areas })} Avatar={Avatar} />
+              )}
               {shared.length > 0 && (
                 <div style={{ marginBottom: 20 }}>
                   <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, fontFamily: font }}>Groups you share</h4>
@@ -4099,6 +4183,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             }
                           } else if (n.type === "request") {
                             // Don't navigate for requests - they have Accept/Ignore buttons
+                          } else if (["booking", "booking_cancelled", "review"].includes(n.type)) {
+                            setNotifOpen(false);
+                            Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+                            setView("mentoring");
                           } else if (["answer", "thanks", "best", "urgent", "rsvp", "member"].includes(n.type)) {
                             setNotifOpen(false);
                             Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
@@ -4251,11 +4340,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     ))}
                     <div style={{ height: 1, background: "#F0EFED", margin: "4px 0" }} />
                     {[
+                      { key: "mentoring", icon: Icons.users, label: "Mentoring" },
                       { key: "feedback", icon: Icons.message, label: "Send feedback" },
                       { key: "helpCenter", icon: Icons.help, label: "Support" },
                       { key: "terms", icon: Icons.file, label: "Terms & Policies" },
                     ].map(item => (
-                      <button key={item.key} onClick={() => { if (item.key === "feedback") { setFeedbackKind(null); setBugError(""); } setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
+                      <button key={item.key} onClick={() => { setSettingsOpen(false); if (item.key === "mentoring") { setView("mentoring"); return; } if (item.key === "feedback") { setFeedbackKind(null); setBugError(""); } setSettingsModal(item.key); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
                         onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
                         onMouseOut={(e) => e.currentTarget.style.background = "none"}>
                         {item.icon({ size: 16, stroke: "#9B9A97" })} {item.label}
@@ -5784,6 +5874,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           </div>
         </div>
       )}
+
+      {bookingMentor && <BookingModal mentor={bookingMentor} onClose={() => setBookingMentor(null)} onMessage={messageMember} Avatar={Avatar} />}
 
       {/* Edit Profile Modal */}
       {profileModal && (() => {
