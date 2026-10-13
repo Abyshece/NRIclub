@@ -1043,7 +1043,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
 // DASHBOARD
 // ============================================================================
 // Blocked Users Modal Component
-const BlockedUsersModal = ({ onClose, font }) => {
+const BlockedUsersModal = ({ onClose, onUnblocked, font }) => {
   const [blockedList, setBlockedList] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -1061,7 +1061,7 @@ const BlockedUsersModal = ({ onClose, font }) => {
     <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={onClose}>
       <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, maxHeight: "80vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-          <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Blocked Users</h3>
+          <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Blocked members</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
         </div>
         <div style={{ padding: 24 }}>
@@ -1077,6 +1077,7 @@ const BlockedUsersModal = ({ onClose, font }) => {
               <button onClick={async () => {
                 try { await api.unblockUser(b.blocked_id); } catch(e) {}
                 setBlockedList(prev => prev.filter(x => x.blocked_id !== b.blocked_id));
+                onUnblocked?.(b.blocked_id);
               }} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Unblock</button>
             </div>
           ))}
@@ -1210,6 +1211,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModal, setSettingsModal] = useState(null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
   const [notifications, setNotifications] = useState([]);
+  const [acceptedNotifs, setAcceptedNotifs] = useState([]); // Namaste requests just accepted, shown as "✓ Accepted" for a moment
   const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
   const [privSettingsLoaded, setPrivSettingsLoaded] = useState(false);
   // marketing mirrors the member's marketing consent (profile_private), the
@@ -1284,6 +1286,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // Network users loaded from DB
   const [networkUsers, setNetworkUsers] = useState([]);
   const [networkLoaded, setNetworkLoaded] = useState(false);
+  const [networkReady, setNetworkReady] = useState(false); // the members list has finished loading
 
   const isNetworkFilterActive = networkSearch.trim() !== "" || networkCityFilter !== "All" || networkHometownFilter !== "All" || networkNearby;
 
@@ -1305,6 +1308,40 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     setNetworkHometownFilter("All");
     setNetworkNearby(false);
   };
+
+  // Members for Find, the right sidebar and profile previews: loaded once
+  // when the dashboard opens (again if the member may browse after all).
+  const loadNetworkUsers = async () => {
+    if (networkLoaded || !canBrowse) return;
+    setNetworkLoaded(true);
+    try {
+      const dbUsers = await api.searchProfiles();
+      if (dbUsers && dbUsers.length) {
+        // Fetch all connections to count followers/following
+        let connCounts = {};
+        try {
+          const allConns = await api.getAllConnections();
+          if (allConns) {
+            allConns.forEach(c => {
+              if (!connCounts[c.recipient_id]) connCounts[c.recipient_id] = { followers: 0, following: 0 };
+              if (!connCounts[c.requester_id]) connCounts[c.requester_id] = { followers: 0, following: 0 };
+              connCounts[c.recipient_id].followers++;
+              connCounts[c.requester_id].following++;
+            });
+          }
+        } catch(ce) {}
+        setNetworkUsers(dbUsers.map(u => ({
+          id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
+          hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
+          linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "",
+          avatar_url: u.avatar_url || "",
+          followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
+        })));
+      }
+    } catch (e) {}
+    setNetworkReady(true);
+  };
+  useEffect(() => { if (canBrowse) loadNetworkUsers(); }, [canBrowse]);
 
   const handleSendNamaste = async (userId) => {
     // Block self-requests
@@ -1345,7 +1382,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // left to the database, which knows about a Namaste accepted since the
   // page loaded; messageErrorText explains its refusal.
   const messageBlockedReason = async (otherUserId) => {
-    if (blockedIds.has(otherUserId)) return "You've blocked this member. You can unblock them in Settings → Blocked Users.";
+    if (blockedIds.has(otherUserId)) return "You've blocked this member. You can unblock them in Settings → Privacy & Safety.";
     try {
       const targetSettings = await api.getOtherUserSettings(otherUserId);
       if (targetSettings?.receive_messages === "Nobody") return "This user is not accepting messages.";
@@ -1513,7 +1550,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             }
             setNotifications(dbNotifs.map(n => ({
               id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
-              text: n.text, time: new Date(n.created_at).toLocaleString(),
+              text: n.text, created_at: n.created_at,
               read: n.read, reference_id: n.reference_id,
             })));
           }
@@ -1566,7 +1603,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   useEffect(() => {
     if (canBrowse) return;
     setPosts([]); setGroups([]); setEvents([]); setHelpRequests([]); setDocs([]); setMarketItems([]);
-    setMyFollowers([]); setMyFollowing([]); setNetworkUsers([]); setNetworkLoaded(false);
+    setMyFollowers([]); setMyFollowing([]); setNetworkUsers([]); setNetworkLoaded(false); setNetworkReady(false);
     setConvos([]); setConvosLoaded(false); setChatMessages({}); setSelectedConvo(null);
   }, [canBrowse]);
 
@@ -1638,7 +1675,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         if (dbNotifs && dbNotifs.length) {
           setNotifications(dbNotifs.map(n => ({
             id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
-            text: n.text, time: new Date(n.created_at).toLocaleString(),
+            text: n.text, created_at: n.created_at,
             read: n.read, reference_id: n.reference_id,
           })));
           // An admin decided on this member's verification (including moving
@@ -1905,7 +1942,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
             {/* Complete your profile (mobile; the left column has it on desktop) */}
             <div className="nc-mobile-only">
-              <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} style={{ marginBottom: 20 }} />
+              <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} collapseAfter={2} style={{ marginBottom: 20 }} />
             </div>
             {/* Header with Filters + Add Post button */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -2016,43 +2053,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         );
 
       case "network":
-        // Load users from DB on first visit
-        if (!networkLoaded && canBrowse) {
-          setNetworkLoaded(true);
-          (async () => {
-            try {
-              const dbUsers = await api.searchProfiles();
-              if (dbUsers && dbUsers.length) {
-                // Fetch all connections to count followers/following
-                let connCounts = {};
-                try {
-                  const allConns = await api.getAllConnections();
-                  if (allConns) {
-                    allConns.forEach(c => {
-                      if (!connCounts[c.recipient_id]) connCounts[c.recipient_id] = { followers: 0, following: 0 };
-                      if (!connCounts[c.requester_id]) connCounts[c.requester_id] = { followers: 0, following: 0 };
-                      connCounts[c.recipient_id].followers++;
-                      connCounts[c.requester_id].following++;
-                    });
-                  }
-                } catch(ce) {}
-                setNetworkUsers(dbUsers.map(u => ({
-                  id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
-                  hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
-                  linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "",
-                  avatar_url: u.avatar_url || "",
-                  followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
-                })));
-              }
-            } catch (e) {}
-          })();
-        }
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
             {/* Header */}
-            <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 4, fontFamily: font }}>Find Indians Abroad</h2>
-            <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 20, fontFamily: font }}>Connect with people from your community.</p>
-            <InfoBanner text="Search and connect with Indians in your city. Send a Namaste request to start a conversation." />
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 20, fontFamily: font }}>Find Indians Abroad</h2>
+            <InfoBanner text="Tap Namaste to follow someone. They get a request to accept. You can also send them a message." />
 
             {/* Search & Filters Card */}
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "20px 20px 16px", marginBottom: 24 }}>
@@ -2327,7 +2332,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ maxWidth: 700, margin: "0 auto" }}>
               {/* Back link */}
               <button onClick={() => { setSelectedGroup(null); setCommunityTab("feed"); }} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#9B9A97", background: "none", border: "none", cursor: "pointer", marginBottom: 16, fontFamily: font, fontWeight: 500 }}>
-                {Icons.chevronLeft({ size: 16 })} Back to Communities
+                {Icons.chevronLeft({ size: 16 })} Back to Groups
               </button>
 
               {/* Hero Banner */}
@@ -2355,7 +2360,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         color: selectedGroup.joined ? "#5F5E5B" : "#fff",
                       }}
                     >
-                      {selectedGroup.joined ? "✓ Joined" : "Join Community"}
+                      {selectedGroup.joined ? "✓ Joined" : "Join"}
                     </button>
                   </div>
                   <div style={{ display: "flex", gap: 16, marginTop: 14, fontSize: 12, color: "#9B9A97" }}>
@@ -2531,7 +2536,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
             {/* Header with Request New + Search */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Communities</h2>
+              <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Groups</h2>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <button
                   onClick={() => setGroupRequestModal(true)}
@@ -2561,7 +2566,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {/* My Groups / All Groups tabs */}
             <div style={{ display: "flex", gap: 0, marginBottom: 20, background: "#fff", borderRadius: 8, border: "1px solid #E0E0DE", overflow: "hidden", width: "fit-content" }}>
-              {[{ key: "all", label: "All Communities" }, { key: "my", label: `My Groups (${myGroups.length})` }].map(t => (
+              {[{ key: "all", label: "All groups" }, { key: "my", label: `My groups (${myGroups.length})` }].map(t => (
                 <button key={t.key} onClick={() => setGroupTab(t.key)}
                   style={{ padding: "8px 18px", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", fontFamily: font,
                     background: groupTab === t.key ? "#37352F" : "#fff", color: groupTab === t.key ? "#fff" : "#5F5E5B" }}>
@@ -2623,7 +2628,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         transition: "all 0.15s",
                       }}
                     >
-                      {g.joined ? "✓ Joined" : "Join Community"}
+                      {g.joined ? "✓ Joined" : "Join"}
                     </button>
                   </div>
                 </div>
@@ -2632,7 +2637,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {groupTabList.length === 0 && (
               <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", color: "#9B9A97", fontSize: 14, fontFamily: font }}>
-                No communities found.
+                No groups found.
                 <br />
                 <button onClick={() => setGroupSearchQuery("")} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", cursor: "pointer", marginTop: 8, fontSize: 13, fontFamily: font }}>
                   Clear Search
@@ -2665,7 +2670,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {Icons.plus({ size: 14 })} Host Event
               </button>
             </div>
-            <InfoBanner text="Browse and RSVP to events in your city. Host your own to bring the community together." />
 
             {/* Search Bar */}
             <div style={{ position: "relative", marginBottom: 12 }}>
@@ -2871,7 +2875,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         return (
           <div style={{ maxWidth: 560, margin: "0 auto" }}>
             <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 20, fontFamily: font }}>Trending Topics</h2>
-            <InfoBanner text="Top 10 trending hashtags in the community. Post with #hashtags to start a trend." />
+            <InfoBanner text="The 10 most-used #hashtags. Tap one to see its posts." />
             {trendingTags.length === 0 ? (
               <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                 {Icons.trending({ size: 32, stroke: "#D4D4D2" })}
@@ -2908,7 +2912,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <button onClick={() => setHelpModal(true)} style={btnPrimary}>Ask for Help</button>
             </div>
-            <InfoBanner text="Need advice on housing, visas, or daily life? Ask the community. Your city members will see it first." />
             {helpRequests.map((h) => (
               <div key={h.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px", marginBottom: 14 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -3066,7 +3069,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <button onClick={() => setDocModal(true)} style={btnPrimary}>{Icons.plus({ size: 14 })} Create Doc</button>
             </div>
-            <InfoBanner text="Share guides, tips, and local knowledge. Help newcomers settle in your city." />
             {/* Search Bar */}
             <div style={{ position: "relative", marginBottom: 12 }}>
               <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 16 })}</div>
@@ -3146,7 +3148,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <button onClick={() => setMarketModal(true)} style={btnPrimary}>{Icons.plus({ size: 14 })} Post Item</button>
             </div>
-            <InfoBanner text="List housing, jobs, items, or services. Posts are visible to users in your city first." />
             {/* Search + city */}
             <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
               <div style={{ position: "relative", flex: 1 }}>
@@ -3278,7 +3279,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
         return (
           <div>
-          <InfoBanner text="Send direct messages to your connections. Start a conversation after sending a Namaste request." />
           <div className="msg-layout" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: "calc(100vh - 220px)", minHeight: 500, maxHeight: 800, display: "flex" }}>
             {/* Conversation List */}
             <div className="msg-sidebar" style={{ width: 240, borderRight: "1px solid #E8E7E4", background: "#FAFAF8", display: "flex", flexDirection: "column", flexShrink: 0 }}>
@@ -3531,12 +3531,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
           {/* Desktop Nav - aligned with center content column */}
           <div style={{ display: "flex", alignItems: "center", background: "#F5F5F3", borderRadius: 24, padding: "3px 4px", gap: 2, justifyContent: "center" }} className="desktop-nav">
-            <button style={navBtn("home")} onClick={() => setView("home")}>Feed</button>
+            <button style={navBtn("home")} onClick={() => setView("home")}>Home</button>
             <button style={navBtn("network")} onClick={() => setView("network")}>Find</button>
             <button style={navBtn("groups")} onClick={() => { setView("groups"); setSelectedGroup(null); }}>Groups</button>
             <button style={navBtn("events")} onClick={() => setView("events")}>Events</button>
             <button style={navBtn("trending")} onClick={() => setView("trending")}>Trending</button>
-            <button style={navBtn("docs")} onClick={() => setView("docs")}>Doc</button>
+            <button style={navBtn("docs")} onClick={() => setView("docs")}>Docs</button>
             <button style={navBtn("market")} onClick={() => setView("market")}>Market</button>
             <button style={navBtn("help")} onClick={() => setView("help")}>Help</button>
           </div>
@@ -3561,7 +3561,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <button onClick={async () => { setNotifications(p => p.map(n => ({...n, read: true}))); try { await api.markNotificationsRead(); } catch(e) {} }} style={{ background: "none", border: "none", fontSize: 12, color: "#9B9A97", cursor: "pointer", fontFamily: font }}>Mark all read</button>
                     </div>
                     <div style={{ overflow: "auto", maxHeight: 380 }}>
-                      {notifications.map(n => (
+                      {(acceptedNotifs.length ? [...notifications.filter(n => !acceptedNotifs.some(a => a.id === n.id)), ...acceptedNotifs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : notifications).map(n => (
                         <div key={n.id} onClick={() => {
                           // Navigate based on notification type
                           if (n.type === "like" || n.type === "comment") {
@@ -3616,10 +3616,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           </div>
                           <div style={{ flex: 1 }}>
                             <p style={{ fontSize: 13, color: "#37352F", lineHeight: 1.4, fontFamily: font, margin: 0 }}>
-                              {n.actor && <strong>{n.actor} </strong>}{n.text}
+                              {n.actor && (n.text || "").startsWith(n.actor)
+                                ? <><strong>{n.actor}</strong>{n.text.slice(n.actor.length)}</>
+                                : <>{n.actor && <strong>{n.actor} </strong>}{n.text}</>}
                             </p>
-                            <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 3, fontFamily: font }}>{n.time}</p>
-                            {n.type === "request" && (
+                            <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 3, fontFamily: font }}>{timeAgo(new Date(n.created_at).getTime())}</p>
+                            {n.type === "request" && acceptedNotifs.some(a => a.id === n.id) ? (
+                              <p role="status" style={{ fontSize: 13, fontWeight: 600, color: "#22A06B", marginTop: 8, fontFamily: font }}>
+                                ✓ Accepted.{n.actor ? ` ${n.actor.split(" ")[0]} can now follow you.` : ""}
+                              </p>
+                            ) : n.type === "request" && (
                               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                                 <button onClick={async () => {
                                   // Accept the connection request. If that doesn't work, the request
@@ -3634,16 +3640,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                                       return;
                                     }
                                   }
-                                  // Add to followers
-                                  if (n.actor) {
-                                    setMyFollowers(prev => [...prev, { name: n.actor }]);
-                                    setAcceptedConnections(prev => { const s = new Set(prev); if (n.actor_id) s.add(n.actor_id); return s; });
-                                  }
-                                  // Remove from local state
+                                  // Say it worked in place of the buttons for a few seconds,
+                                  // then remove the row
+                                  setAcceptedNotifs(prev => [...prev, n]);
                                   setNotifications(p => p.filter(x => x.id !== n.id));
+                                  setTimeout(() => setAcceptedNotifs(prev => prev.filter(x => x.id !== n.id)), 3000);
                                   // Mark as handled in DB so it never comes back
                                   try { await api.markNotificationHandled(n.id); } catch(e) {}
-                                }} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Accept</button>
+                                  // They sent the Namaste, so they now follow this member: reload
+                                  // the followers (with their photos)
+                                  try {
+                                    const conns = await api.getMyConnections();
+                                    setMyFollowers((conns || []).filter(c => c.recipient_id === user.id).map(c => c.requester).filter(Boolean));
+                                  } catch (e) {
+                                    if (n.actor) setMyFollowers(prev => [...prev, { id: n.actor_id, name: n.actor }]);
+                                  }
+                                }} style={{ padding: "8px 18px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Accept</button>
                                 <button onClick={async () => {
                                   if (n.reference_id) {
                                     try { await api.respondToNamaste(n.reference_id, false); } catch(e) {}
@@ -3651,7 +3663,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                                   setNotifications(p => p.filter(x => x.id !== n.id));
                                   // Mark as handled in DB
                                   try { await api.markNotificationHandled(n.id); } catch(e) {}
-                                }} style={{ padding: "5px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Ignore</button>
+                                }} style={{ padding: "8px 18px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Ignore</button>
                               </div>
                             )}
                           </div>
@@ -3663,6 +3675,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </>
               )}
             </div>
+            {/* Messages (desktop; phones have it in the bottom bar) */}
+            <button className="nav-messages-btn" aria-label="Messages" title="Messages"
+              onClick={() => { setView("messages"); setHasUnreadMessages(false); setNotifOpen(false); setSettingsOpen(false); }}
+              style={{ background: view === "messages" ? "#F0EFED" : "none", border: "none", cursor: "pointer", padding: 6, color: "#9B9A97", position: "relative", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
+              onMouseOver={(e) => (e.currentTarget.style.background = "#F0EFED")}
+              onMouseOut={(e) => (e.currentTarget.style.background = view === "messages" ? "#F0EFED" : "none")}>
+              {Icons.message({ size: 20 })}
+              {hasUnreadMessages ? <span style={{ position: "absolute", top: 5, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
+            </button>
             {/* Settings gear */}
             <div style={{ position: "relative" }}>
               <button onClick={() => { setSettingsOpen(!settingsOpen); setNotifOpen(false); }}
@@ -3678,8 +3699,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     {[
                       { key: "account", icon: Icons.user, label: "Account Settings" },
                       { key: "privacy", icon: Icons.shield, label: "Privacy & Safety" },
-                      { key: "blocked", icon: Icons.x, label: "Blocked Users" },
-                      { key: "notifications", icon: Icons.bell, label: "Notifications" },
+                      { key: "notifications", icon: Icons.bell, label: "Email Notifications" },
                       { key: "activity", icon: Icons.trending, label: "Activity Log" },
                     ].map(item => (
                       <button key={item.key} onClick={() => { setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
@@ -3690,9 +3710,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     ))}
                     <div style={{ height: 1, background: "#F0EFED", margin: "4px 0" }} />
                     {[
-                      { key: "helpCenter", icon: Icons.help, label: "Help Center" },
-                      { key: "reportBug", icon: Icons.flag, label: "Report a Bug" },
-                      { key: "terms", icon: Icons.file, label: "Terms & Policy" },
+                      { key: "helpCenter", icon: Icons.help, label: "Support" },
+                      { key: "terms", icon: Icons.file, label: "Terms & Policies" },
                     ].map(item => (
                       <button key={item.key} onClick={() => { setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
                         onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
@@ -3700,6 +3719,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         {item.icon({ size: 16, stroke: "#9B9A97" })} {item.label}
                       </button>
                     ))}
+                    <div style={{ height: 1, background: "#F0EFED", margin: "4px 0" }} />
+                    <button onClick={() => { setSettingsOpen(false); onLogout(); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#E25555", fontSize: 13, fontFamily: font }}
+                      onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
+                      onMouseOut={(e) => e.currentTarget.style.background = "none"}>
+                      {Icons.logout({ size: 16 })} Sign Out
+                    </button>
                   </div>
                 </>
               )}
@@ -3708,7 +3733,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <button onClick={() => setView("profile")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
               <Avatar name={user.name} size={32} url={user.avatar_url || user.avatarUrl} />
             </button>
-            <button onClick={() => setMobileMenu(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#37352F", display: "none" }} className="mobile-menu-btn">
+            <button onClick={() => setMobileMenu(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#37352F", display: "none", padding: 11, margin: "0 -5px" }} className="mobile-menu-btn">
               {Icons.menu({ size: 22 })}
             </button>
           </div>
@@ -3724,13 +3749,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button onClick={() => setMobileMenu(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 20 })}</button>
             </div>
             {[
-              { v: "home", icon: Icons.home, label: "Feed" },
+              { v: "home", icon: Icons.home, label: "Home" },
               { v: "network", icon: Icons.search, label: "Find" },
-              { v: "groups", icon: Icons.users, label: "Communities" },
+              { v: "groups", icon: Icons.users, label: "Groups" },
               { v: "events", icon: Icons.calendar, label: "Events" },
               { v: "trending", icon: Icons.trending, label: "Trending" },
               { v: "docs", icon: Icons.file, label: "Docs" },
-              { v: "market", icon: Icons.shop, label: "Marketplace" },
+              { v: "market", icon: Icons.shop, label: "Market" },
               { v: "help", icon: Icons.help, label: "Help" },
               { v: "messages", icon: Icons.message, label: "Messages" },
               { v: "profile", icon: Icons.user, label: "Profile" },
@@ -3933,41 +3958,27 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* Divider */}
               <div style={{ borderTop: "1px solid #F0EFED", margin: "0 0 16px" }} />
 
-              {/* Icon Grid - 4 across, 2 rows matching screenshot */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}>
+              {/* Shortcuts, labelled (LinkedIn only when a link is saved) */}
+              <div style={{ display: "flex", gap: 0 }}>
                 {[
-                  { icon: Icons.message, view: "messages", label: "Messages", hasNotif: hasUnreadMessages },
-                  { icon: Icons.calendar, view: "events", label: "Events" },
-                  { icon: Icons.users, view: "groups", label: "Groups" },
-                  { icon: Icons.linkedin, view: null, label: "LinkedIn", action: () => { if (user.linkedinUrl) window.open(user.linkedinUrl.startsWith("http") ? user.linkedinUrl : `https://${user.linkedinUrl}`, "_blank"); } },
-                ].map((item, i) => (
-                  <button key={i} onClick={() => { if (item.action) item.action(); else if (item.view) { setView(item.view); if (item.view === "messages") setHasUnreadMessages(false); } }} style={{
-                    padding: 10, borderRadius: 8, border: "none", background: "none",
-                    cursor: "pointer", color: "#9B9A97", display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "all 0.1s", position: "relative",
+                  { icon: Icons.message, label: "Messages", hasNotif: hasUnreadMessages, action: () => { setView("messages"); setHasUnreadMessages(false); } },
+                  { icon: Icons.file, label: "My Posts", action: () => { setView("profile"); setProfileTab("posts"); } },
+                  { icon: Icons.image, label: "My Photos", action: () => { setView("profile"); setProfileTab("photos"); } },
+                  user.linkedinUrl ? { icon: Icons.linkedin, label: "LinkedIn", action: () => window.open(user.linkedinUrl.startsWith("http") ? user.linkedinUrl : `https://${user.linkedinUrl}`, "_blank") } : null,
+                ].filter(Boolean).map((item) => (
+                  <button key={item.label} onClick={item.action} aria-label={item.label} title={item.label} style={{
+                    flex: 1, minWidth: 0, padding: "8px 0", borderRadius: 8, border: "none", background: "none",
+                    cursor: "pointer", color: "#9B9A97", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
+                    transition: "all 0.1s", fontSize: 10, fontWeight: 500, fontFamily: font, whiteSpace: "nowrap",
                   }}
                   onMouseOver={(e) => { e.currentTarget.style.background = "#F0EFED"; e.currentTarget.style.color = "#37352F"; }}
                   onMouseOut={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#9B9A97"; }}
                   >
-                    {item.icon({ size: 20 })}
-                    {item.hasNotif ? <span style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
-                {[
-                  { icon: Icons.file, tab: "posts", label: "Posts" },
-                  { icon: Icons.image, tab: "photos", label: "Gallery" },
-                ].map((item, i) => (
-                  <button key={i} onClick={() => { setView("profile"); setProfileTab(item.tab); }} style={{
-                    padding: 10, borderRadius: 8, border: "none", background: "none",
-                    cursor: "pointer", color: "#9B9A97", display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "all 0.1s",
-                  }}
-                  onMouseOver={(e) => { e.currentTarget.style.background = "#F0EFED"; e.currentTarget.style.color = "#37352F"; }}
-                  onMouseOut={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#9B9A97"; }}
-                  >
-                    {item.icon({ size: 20 })}
+                    <span style={{ position: "relative", display: "flex" }}>
+                      {item.icon({ size: 20 })}
+                      {item.hasNotif ? <span style={{ position: "absolute", top: -2, right: -3, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
+                    </span>
+                    {item.label}
                   </button>
                 ))}
               </div>
@@ -3975,19 +3986,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {/* Complete your profile (desktop; on mobile it sits at the top of the feed) */}
             <ProfileChecklist className="profile-checklist-side" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} style={{ marginTop: 16 }} />
-
-            {/* Sign Out link */}
-            <div style={{ textAlign: "center", marginTop: 16 }}>
-              <button onClick={onLogout} style={{
-                background: "none", border: "none", cursor: "pointer", color: "#9B9A97",
-                fontSize: 12, fontFamily: font, display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 500,
-              }}
-              onMouseOver={(e) => (e.currentTarget.style.color = "#E25555")}
-              onMouseOut={(e) => (e.currentTarget.style.color = "#9B9A97")}
-              >
-                {Icons.logout({ size: 14 })} Sign Out
-              </button>
-            </div>
           </aside>
         )}
 
@@ -3996,7 +3994,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         {view !== "profile" && view !== "trending" && (
           <aside className="sidebar-right" style={{ position: "sticky", top: 80, alignSelf: "start" }}>
             <div style={{ marginBottom: 28 }}>
-              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>Communities</h4>
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>Groups</h4>
               {groups.slice(0, 3).map((g, i) => {
                 // Generate a color-coded thumbnail
                 const thumbColors = ["#C4B5A0", "#8B9E82", "#A0B0C4"];
@@ -4042,8 +4040,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             {user.location && (
               <div style={{ marginTop: 28 }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>People in {(user.location || "").split(",")[0]}</h4>
-                {networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).length > 0 ? (
-                  networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).slice(0, 4).map(u => (
+                {!networkReady ? null : networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).length > 0 ? (<>
+                  {networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).slice(0, 4).map(u => (
                     <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
                       <Avatar name={u.name} size={32} url={u.avatar_url} />
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -4060,11 +4058,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         {acceptedConnections.has(u.id) ? "Following" : sentNamaste.has(u.id) ? "Sent" : "Namaste"}
                       </button>
                     </div>
-                  ))
-                ) : (
-                  <p style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>No users found in your city yet. <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#37352F", cursor: "pointer", textDecoration: "underline", fontSize: 11, fontFamily: font }}>Find people</button></p>
+                  ))}
+                  <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#5B9CFF", cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: font, marginTop: 8, padding: 0 }}>See all →</button>
+                </>) : (
+                  <p style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>No users found in your city yet. <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#37352F", cursor: "pointer", textDecoration: "underline", fontSize: 11, fontFamily: font }}>Find people →</button></p>
                 )}
-                <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#5B9CFF", cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: font, marginTop: 8, padding: 0 }}>See all →</button>
               </div>
             )}
           </aside>
@@ -4076,17 +4074,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         {[
           { v: "home", icon: Icons.home, label: "Home" },
           { v: "network", icon: Icons.search, label: "Find" },
-          { v: "messages", icon: Icons.message, label: "Chat", notif: hasUnreadMessages },
+          { v: "messages", icon: Icons.message, label: "Messages", notif: hasUnreadMessages },
           { v: "groups", icon: Icons.users, label: "Groups" },
-          { v: "profile", icon: Icons.user, label: "Me" },
+          { v: "profile", icon: Icons.user, label: "Profile" },
         ].map((item) => (
           <button
             key={item.v}
             onClick={() => { setView(item.v); if (item.v === "groups") setSelectedGroup(null); if (item.v === "messages") setHasUnreadMessages(false); }}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: view === item.v ? "#37352F" : "#9B9A97", fontSize: 9, fontWeight: 500, fontFamily: font, position: "relative" }}
+            style={{ flex: 1, minHeight: 48, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: view === item.v ? "#37352F" : "#9B9A97", fontSize: 11, fontWeight: 500, fontFamily: font }}
           >
-            {item.icon({ size: 20 })}
-            {item.notif ? <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
+            <span style={{ position: "relative", display: "flex" }}>
+              {item.icon({ size: 20 })}
+              {item.notif ? <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
+            </span>
             {item.label}
           </button>
         ))}
@@ -4493,7 +4493,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy Settings</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy & Safety</h3>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
@@ -4519,6 +4519,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   )}
                 </div>
               ))}
+              {/* Blocked members (opens the Blocked members window) */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "16px 0 0", borderTop: "1px solid #F0EFED" }}>
+                <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>Blocked members ({blockedIds.size})</h4>
+                <button onClick={() => setSettingsModal("blocked")} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, flexShrink: 0 }}>Manage</button>
+              </div>
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
@@ -4543,7 +4548,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Notification Preferences</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Email Notifications</h3>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
@@ -4667,7 +4672,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Help & Support</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Support</h3>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
@@ -4860,7 +4865,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Blocked Users Modal */}
       {settingsModal === "blocked" && (
-        <BlockedUsersModal onClose={() => setSettingsModal(null)} font={font} />
+        <BlockedUsersModal onClose={() => setSettingsModal("privacy")} font={font}
+          onUnblocked={(id) => setBlockedIds(prev => { const s = new Set(prev); s.delete(id); return s; })} />
       )}
 
       {/* Block User Modal */}
@@ -4876,7 +4882,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             <div style={{ padding: 24 }}>
               <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 28, fontFamily: font }}>
-                Are you sure you want to block this user? They will no longer be able to message you or see your profile. This action is reversible in settings.
+                Are you sure you want to block this user? They will no longer be able to message you or see your profile. You can unblock them in Settings → Privacy & Safety.
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setBlockModalOpen(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
@@ -4887,7 +4893,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   setBlockedIds(prev => { const s = new Set(prev); s.add(userIdToBlock); return s; });
                   setBlockModalOpen(false);
                   setSelectedConvo(null);
-                  alert("User blocked. You can unblock them in Settings → Blocked Users.");
+                  alert("User blocked. You can unblock them in Settings → Privacy & Safety.");
                 }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, background: "#DC2626", color: "#fff", cursor: "pointer", fontFamily: font }}>Confirm Block</button>
               </div>
             </div>
@@ -5076,7 +5082,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setGroupRequestModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Request New Community</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Request a new group</h3>
               <button onClick={() => setGroupRequestModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
@@ -5345,8 +5351,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           .main-grid { grid-template-columns: minmax(0,1fr) !important; padding: 16px 12px 80px !important; }
           .sidebar-left, .sidebar-right { display: none !important; }
           .desktop-nav { display: none !important; }
-          .mobile-menu-btn { display: block !important; }
+          .mobile-menu-btn { display: flex !important; }
           .mobile-nav { display: flex !important; }
+          .nav-messages-btn { display: none !important; }
           .docs-grid, .market-grid, .network-grid, .groups-grid { grid-template-columns: 1fr !important; }
         }
 

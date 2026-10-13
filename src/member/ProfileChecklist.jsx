@@ -32,10 +32,14 @@ export function missingProfileItems(user, groups = []) {
 }
 
 // onItem(item): "photo" opens the avatar upload, profile fields open Edit
-// Profile, "group" joins the city group.
-export default function ProfileChecklist({ items, onItem, onDismiss, className, style }) {
+// Profile, "group" joins the city group. With collapseAfter, only that many
+// items show at first, then a "Show N more" row that opens the rest.
+export default function ProfileChecklist({ items, onItem, onDismiss, className, style, collapseAfter }) {
+  const [expanded, setExpanded] = useState(false);
   if (!items.length) return null;
   const titleId = `${className || "profile"}-checklist-title`;
+  const hidden = collapseAfter && !expanded ? Math.max(items.length - collapseAfter, 0) : 0;
+  const shown = hidden ? items.slice(0, collapseAfter) : items;
   return (
     <section className={className} aria-labelledby={titleId} style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "14px 12px 8px", fontFamily: font, ...style }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "0 6px", marginBottom: 4 }}>
@@ -45,7 +49,7 @@ export default function ProfileChecklist({ items, onItem, onDismiss, className, 
         </button>
       </div>
       <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-        {items.map((item) => (
+        {shown.map((item) => (
           <li key={item.key}>
             <button
               type="button"
@@ -66,6 +70,17 @@ export default function ProfileChecklist({ items, onItem, onDismiss, className, 
             </button>
           </li>
         ))}
+        {hidden > 0 && (
+          <li>
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              style={{ width: "100%", padding: "7px 6px", border: "none", background: "none", borderRadius: 8, cursor: "pointer", textAlign: "left", fontFamily: font, fontSize: 13, fontWeight: 500, color: "#6B6A67" }}
+            >
+              Show {hidden} more
+            </button>
+          </li>
+        )}
       </ul>
     </section>
   );
