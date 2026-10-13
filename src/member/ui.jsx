@@ -1,3 +1,4 @@
+import FlagIcon from "../FlagIcon";
 // Small shared building blocks for the member screens (signup, login code
 // entry, Get verified), in the app's existing Notion-like style.
 
@@ -102,15 +103,8 @@ export function ErrorBox({ children, id, boxRef, style }) {
   );
 }
 
-// The globe tile used at the top of the signup screens.
-export const GlobeTile = () => (
-  <svg width="28" height="28" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-    <rect width="40" height="40" rx="10" fill="#F0EFED" />
-    <circle cx="20" cy="20" r="8" stroke="#37352F" strokeWidth="1.5" fill="none" />
-    <ellipse cx="20" cy="20" rx="4" ry="8" stroke="#37352F" strokeWidth="1.2" fill="none" />
-    <line x1="12" y1="20" x2="28" y2="20" stroke="#37352F" strokeWidth="1.2" />
-  </svg>
-);
+// The NRIClub flag used at the top of the signup screens.
+export const GlobeTile = () => <FlagIcon size={36} />;
 
 export const ArrowRight = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
