@@ -1278,14 +1278,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [networkSearch, setNetworkSearch] = useState("");
   const [networkCityFilter, setNetworkCityFilter] = useState("All");
   const [networkHometownFilter, setNetworkHometownFilter] = useState("All");
-  const [networkNearby, setNetworkNearby] = useState(false);
+  const [networkShowCount, setNetworkShowCount] = useState(30); // Find lists 30 members, then "Show more"
   const [sentNamaste, setSentNamaste] = useState(new Set());
 
   // Network users loaded from DB
   const [networkUsers, setNetworkUsers] = useState([]);
   const [networkLoaded, setNetworkLoaded] = useState(false);
+  const [networkReady, setNetworkReady] = useState(false); // the members list has finished loading
 
-  const isNetworkFilterActive = networkSearch.trim() !== "" || networkCityFilter !== "All" || networkHometownFilter !== "All" || networkNearby;
+  const isNetworkFilterActive = networkSearch.trim() !== "" || networkCityFilter !== "All" || networkHometownFilter !== "All";
 
   const filteredNetworkUsers = networkUsers.filter((u) => {
     if (u.id === user.id) return false;
@@ -1295,15 +1296,18 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       u.profession.toLowerCase().includes(networkSearch.toLowerCase());
     const matchesCity = networkCityFilter === "All" || u.location.includes(networkCityFilter);
     const matchesHometown = networkHometownFilter === "All" || u.hometown.includes(networkHometownFilter);
-    const matchesNearby = !networkNearby || u.location.split(",")[0] === (user.location || "").split(",")[0];
-    return matchesSearch && matchesCity && matchesHometown && matchesNearby;
+    return matchesSearch && matchesCity && matchesHometown;
   });
+  // With no filter, Find lists members in your current city first, then
+  // those from your hometown, then everyone else.
+  const networkCityKey = (s) => (s || "").split(",")[0].trim().toLowerCase();
+  const networkNearRank = (u) => (networkCityKey(user.location) && networkCityKey(u.location) === networkCityKey(user.location) ? 0 : networkCityKey(user.hometown) && networkCityKey(u.hometown) === networkCityKey(user.hometown) ? 1 : 2);
+  const networkList = isNetworkFilterActive ? filteredNetworkUsers : [...filteredNetworkUsers].sort((a, b) => networkNearRank(a) - networkNearRank(b));
 
   const clearNetworkFilters = () => {
     setNetworkSearch("");
     setNetworkCityFilter("All");
     setNetworkHometownFilter("All");
-    setNetworkNearby(false);
   };
 
   const handleSendNamaste = async (userId) => {
@@ -1566,7 +1570,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   useEffect(() => {
     if (canBrowse) return;
     setPosts([]); setGroups([]); setEvents([]); setHelpRequests([]); setDocs([]); setMarketItems([]);
-    setMyFollowers([]); setMyFollowing([]); setNetworkUsers([]); setNetworkLoaded(false);
+    setMyFollowers([]); setMyFollowing([]); setNetworkUsers([]); setNetworkLoaded(false); setNetworkReady(false);
     setConvos([]); setConvosLoaded(false); setChatMessages({}); setSelectedConvo(null);
   }, [canBrowse]);
 
@@ -2045,6 +2049,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 })));
               }
             } catch (e) {}
+            setNetworkReady(true);
           })();
         }
         return (
@@ -2114,21 +2119,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </div>
                 </div>
 
-                {/* Nearby button */}
-                <button
-                  onClick={() => setNetworkNearby(!networkNearby)}
-                  style={{
-                    padding: "7px 14px", fontSize: 12, borderRadius: 6, cursor: "pointer",
-                    fontFamily: font, display: "flex", alignItems: "center", gap: 5, fontWeight: 500,
-                    border: networkNearby ? "1px solid #37352F" : "1px solid #E0E0DE",
-                    background: networkNearby ? "#37352F" : "#fff",
-                    color: networkNearby ? "#fff" : "#5F5E5B",
-                    transition: "all 0.15s",
-                  }}
-                >
-                  {Icons.mapPin({ size: 12 })} Nearby
-                </button>
-
                 {/* Clear All */}
                 {isNetworkFilterActive && (
                   <button
@@ -2144,19 +2134,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             </div>
 
-            {/* Results */}
-            {isNetworkFilterActive ? (
-              filteredNetworkUsers.length > 0 ? (
+            {/* Results (everyone until a filter is picked) */}
+            {canBrowse && !networkReady ? (
+              <p style={{ fontSize: 13, color: "#9B9A97", textAlign: "center", padding: "24px 0", fontFamily: font }}>Loading members…</p>
+            ) : networkList.length > 0 ? (
+              <>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }} className="network-grid">
-                  {filteredNetworkUsers.map((u) => (
+                  {networkList.slice(0, networkShowCount).map((u) => (
                     <div key={u.id} style={{
                       background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4",
                       padding: "28px 24px 20px", textAlign: "center", display: "flex", flexDirection: "column",
-                      alignItems: "center", transition: "box-shadow 0.15s",
+                      alignItems: "center", transition: "box-shadow 0.15s", position: "relative",
                     }}
                     onMouseOver={(e) => (e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)")}
                     onMouseOut={(e) => (e.currentTarget.style.boxShadow = "none")}
                     >
+                      {/* Report (small grey flag, top-right) */}
+                      <button onClick={() => setReportConfirm({ type: "user", id: u.id })} aria-label="Report" style={{ position: "absolute", top: 12, right: 12, padding: 8, background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", display: "flex" }}>
+                        {Icons.flag({ size: 14 })}
+                      </button>
+
                       {/* Avatar */}
                       <Avatar name={u.name} size={76} url={u.avatar_url} />
 
@@ -2209,13 +2206,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         fontSize: 13, fontFamily: font, padding: "14px 0", borderTop: "1px solid #F0EFED",
                         width: "100%", marginBottom: 16,
                       }}>
-                        <span><b style={{ color: "#37352F" }}>{u.followers}</b> <span style={{ color: "#9B9A97" }}>followers</span></span>
+                        <span><b style={{ color: "#37352F" }}>{u.followers}</b> <span style={{ color: "#9B9A97" }}>{u.followers === 1 ? "follower" : "followers"}</span></span>
                         <span style={{ color: "#D4D4D2" }}>·</span>
                         <span><b style={{ color: "#37352F" }}>{u.following}</b> <span style={{ color: "#9B9A97" }}>following</span></span>
                       </div>
 
                       {/* Action buttons - Namaste + Message */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+                      <div style={{ display: "flex", alignItems: "stretch", gap: 10, width: "100%" }}>
                         <button
                           onClick={() => { 
                             if (acceptedConnections.has(u.id)) { if (confirm(`Unfollow ${u.name}?`)) handleUnfollow(u.id); }
@@ -2224,7 +2221,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           disabled={sentNamaste.has(u.id)}
                           style={{
                             flex: 1, padding: "10px 0", borderRadius: 8,
-                            border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "none",
+                            border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "1px solid transparent",
                             fontSize: 13, fontWeight: 600, fontFamily: font, cursor: sentNamaste.has(u.id) ? "default" : "pointer",
                             background: acceptedConnections.has(u.id) ? "#E3FCEF" : sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
                             color: acceptedConnections.has(u.id) ? "#22A06B" : sentNamaste.has(u.id) ? "#9B9A97" : "#fff",
@@ -2235,83 +2232,53 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           {acceptedConnections.has(u.id) ? (
                             <>{Icons.check({ size: 14 })} Following</>
                           ) : sentNamaste.has(u.id) ? (
-                            <>{Icons.check({ size: 14 })} Sent</>
+                            <>{Icons.check({ size: 14 })} Request sent</>
                           ) : (
                             <>{Icons.users({ size: 14 })} Namaste</>
                           )}
                         </button>
                         <button onClick={() => openChatWith(u)} style={{
-                          padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE",
+                          flex: 1, padding: "10px 0", borderRadius: 8, border: "1px solid #E0E0DE",
                           background: "#fff", cursor: "pointer", color: "#5F5E5B", display: "flex",
-                          alignItems: "center", justifyContent: "center",
+                          alignItems: "center", justifyContent: "center", gap: 7,
+                          fontSize: 13, fontWeight: 600, fontFamily: font,
                           transition: "all 0.1s",
                         }}
                         onMouseOver={(e) => { e.currentTarget.style.background = "#F7F7F5"; e.currentTarget.style.color = "#37352F"; }}
                         onMouseOut={(e) => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#5F5E5B"; }}
                         >
-                          {Icons.message({ size: 16 })}
-                        </button>
-                        <button onClick={async () => { setReportConfirm({ type: "user", id: u.id }); }} style={{ padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2", display: "flex", alignItems: "center" }}>
-                          {Icons.flag({ size: 14 })}
+                          {Icons.message({ size: 14 })} Message
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
-              ) : (
-                /* No results state */
-                <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4" }}>
-                  <p style={{ fontSize: 14, fontFamily: font }}>No users found matching your criteria.</p>
-                  <button
-                    onClick={clearNetworkFilters}
-                    style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", fontSize: 13, cursor: "pointer", marginTop: 8, fontFamily: font }}
-                  >
-                    Clear Filters
-                  </button>
-                </div>
-              )
-            ) : (
-              /* Empty / Initial State - matching screenshot 2 */
-              <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "48px 32px", textAlign: "center" }}>
-                {/* Blue search icon circle */}
-                <div style={{
-                  width: 72, height: 72, borderRadius: "50%", background: "#EDF4FF",
-                  display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20,
-                }}>
-                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#5B9CFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="11" cy="11" r="8"/>
-                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                  </svg>
-                </div>
-
-                <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 10, fontFamily: font }}>Find your community</h3>
-                <p style={{ fontSize: 14, color: "#9B9A97", maxWidth: 440, margin: "0 auto 28px", lineHeight: 1.6, fontFamily: font }}>
-                  Search for people by name, profession, or location. Use the filters to find people from your hometown or current city.
-                </p>
-
-                {/* Search Tips box */}
-                <div style={{
-                  background: "#F7F7F5", borderRadius: 10, padding: "18px 22px", maxWidth: 360, margin: "0 auto",
-                  textAlign: "left", border: "1px solid #EDEDEB",
-                }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                    <div style={{ flexShrink: 0, marginTop: 1, color: "#9B9A97" }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"/>
-                        <line x1="12" y1="16" x2="12" y2="12"/>
-                        <line x1="12" y1="8" x2="12.01" y2="8"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <p style={{ fontSize: 12, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Search Tips:</p>
-                      <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#5F5E5B", lineHeight: 1.8, fontFamily: font }}>
-                        <li>Type "Engineer" to find professionals</li>
-                        <li>Select "Mumbai" in Hometown filter</li>
-                        <li>Use "Nearby" to find locals</li>
-                      </ul>
-                    </div>
+                {networkList.length > networkShowCount && (
+                  <div style={{ textAlign: "center", marginTop: 16 }}>
+                    <button
+                      onClick={() => setNetworkShowCount(networkShowCount + 30)}
+                      style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", fontSize: 13, cursor: "pointer", padding: "12px 16px", fontFamily: font }}
+                    >
+                      Show more
+                    </button>
                   </div>
-                </div>
+                )}
+              </>
+            ) : isNetworkFilterActive ? (
+              /* No results state */
+              <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4" }}>
+                <p style={{ fontSize: 14, fontFamily: font }}>No users found matching your criteria.</p>
+                <button
+                  onClick={clearNetworkFilters}
+                  style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", fontSize: 13, cursor: "pointer", marginTop: 8, fontFamily: font }}
+                >
+                  Clear Filters
+                </button>
+              </div>
+            ) : (
+              /* Nobody else to show yet */
+              <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4" }}>
+                <p style={{ fontSize: 14, fontFamily: font }}>No members to show yet.</p>
               </div>
             )}
           </div>
@@ -4738,7 +4705,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               ) : (
                 (followModal === "followers" ? myFollowers : myFollowing).map((u, i) => (
-                  <div key={u.id || i} onClick={() => { setFollowModal(null); setProfilePreview(u); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED", cursor: "pointer" }}>
+                  <div key={u.id || i} onClick={() => { setFollowModal(null); setProfilePreview(networkUsers.find(x => x.id === u.id) || u); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED", cursor: "pointer" }}>
                     <Avatar name={u.name || "User"} size={40} url={u.avatar_url} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name || "User"}</div>
@@ -4758,16 +4725,21 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfilePreview(null)}>
           <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 380, padding: "32px 28px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", position: "relative" }} onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setProfilePreview(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
-            
-            {/* NRI Badge */}
-            <span style={{ position: "absolute", top: 14, left: 14, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 4, letterSpacing: "0.05em",
-              background: isUserNRI(profilePreview) ? "#E3FCEF" : "#FFF3E0",
-              color: isUserNRI(profilePreview) ? "#22A06B" : "#E65100",
-              border: `1px solid ${isUserNRI(profilePreview) ? "#B5E4CA" : "#FFE0B2"}`,
-            }}>{isUserNRI(profilePreview) ? "NRI" : "IN"}</span>
 
-            <Avatar name={profilePreview.name || "User"} size={80} />
-            <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginTop: 14, fontFamily: font }}>{profilePreview.name}</h3>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <Avatar name={profilePreview.name || "User"} size={80} url={profilePreview.avatar_url} />
+            </div>
+            {/* Name + NRI badge (as on Find cards; left out when residency is unknown) */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 14, flexWrap: "wrap" }}>
+              <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", fontFamily: font }}>{profilePreview.name}</h3>
+              {(profilePreview.countryCode || profilePreview.location) && (
+                <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em",
+                  background: isUserNRI(profilePreview) ? "#E3FCEF" : "#FFF3E0",
+                  color: isUserNRI(profilePreview) ? "#22A06B" : "#E65100",
+                  border: `1px solid ${isUserNRI(profilePreview) ? "#B5E4CA" : "#FFE0B2"}`,
+                }}>{isUserNRI(profilePreview) ? "NRI" : "IN"}</span>
+              )}
+            </div>
             <p style={{ fontSize: 14, color: "#5F5E5B", marginTop: 4, fontFamily: font }}>{profilePreview.profession || ""}</p>
             
             <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
@@ -4784,7 +4756,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "16px 0", fontSize: 13, fontFamily: font }}>
-              <span><b style={{ color: "#37352F" }}>{profilePreview.followers || 0}</b> <span style={{ color: "#9B9A97" }}>followers</span></span>
+              <span><b style={{ color: "#37352F" }}>{profilePreview.followers || 0}</b> <span style={{ color: "#9B9A97" }}>{profilePreview.followers === 1 ? "follower" : "followers"}</span></span>
               <span style={{ color: "#D4D4D2" }}>·</span>
               <span><b style={{ color: "#37352F" }}>{profilePreview.following || 0}</b> <span style={{ color: "#9B9A97" }}>following</span></span>
             </div>
