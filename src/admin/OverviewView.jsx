@@ -62,10 +62,13 @@ function SignupsChart({ users }) {
   );
 }
 
-export default function OverviewView({ users, counts, openReports, pendingGroups, onNavigate }) {
-  const blocked = users.filter((u) => u.status === "blocked").length;
+// users: the newest members loaded (at most 1,000); membersTotal and
+// blockedTotal count all of them.
+export default function OverviewView({ users, membersTotal = users.length, blockedTotal = null, counts, openReports, pendingGroups, onNavigate }) {
+  const blocked = blockedTotal ?? users.filter((u) => u.status === "blocked").length;
+  const cut = users.length < membersTotal;
   const stats = [
-    { label: "Members", value: users.length, page: "members" },
+    { label: "Members", value: membersTotal, page: "members" },
     { label: "Pending verification", value: counts.pending || 0, page: "verification", warn: (counts.pending || 0) > 0 },
     { label: "Verified", value: counts.approved || 0, page: "verification" },
     { label: "Blocked", value: blocked, page: "members" },
@@ -99,6 +102,11 @@ export default function OverviewView({ users, counts, openReports, pendingGroups
           <span key={a.label}>{a.dot && <span className="adm-online-dot" aria-hidden="true" />}{a.label} <b>{a.value}</b></span>
         ))}
       </div>
+      {cut && (
+        <p className="adm-faint adm-small" style={{ marginTop: 8 }}>
+          Activity and signups per month count the newest {users.length.toLocaleString("en-GB")} of {membersTotal.toLocaleString("en-GB")} members.
+        </p>
+      )}
 
       <div style={{ marginTop: 40 }}>
         <SectionTitle>Signups per month</SectionTitle>

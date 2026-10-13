@@ -17,9 +17,11 @@ SELECT b.id, LEFT(COALESCE(b.name, ''), 200), COALESCE(b.avatar_url, ''), COALES
 FROM phase1_backup.profiles b
 JOIN auth.users u ON u.id = b.id;
 
--- Profiles (private part), keeping the original consent dates. Members an
--- admin already approved stay verified; members who gave a LinkedIn link
--- wait for review; anyone else is asked for their details.
+-- Profiles (private part), keeping the original consent dates. Members with
+-- the old "LinkedIn verified" flag become approved (any member could set that
+-- flag on themselves, so the README's "Approval audit" re-checks them);
+-- members who gave a LinkedIn link wait for review; anyone else is asked for
+-- their details.
 ALTER TABLE public.profile_private DISABLE TRIGGER stamp_gdpr_consent;
 INSERT INTO public.profile_private (id, email, gdpr_consent, gdpr_consent_date, marketing_consent,
   verification_status, status, submitted_at, reviewed_at, created_at)

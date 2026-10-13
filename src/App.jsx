@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { Fragment, useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import * as api from "./supabaseApi";
 import "./member/base.css";
 import SignUpFlow from "./member/SignUpFlow";
@@ -6,7 +6,9 @@ import GetVerified from "./member/GetVerified";
 import CodeEntry from "./member/CodeEntry";
 import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner";
 import ProfileChecklist, { missingProfileItems, useProfileCardDismissed } from "./member/ProfileChecklist";
-import { TermsContent } from "./member/LegalModals";
+import TermsGate from "./member/TermsGate";
+import { TermsContent, PrivacyContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
+import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
 
@@ -84,6 +86,55 @@ const eventDate = (e) => {
   return new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 };
 const eventTime = (e) => (e.date || "").split("•")[1]?.trim() || e.time || "TBD";
+// The day an event happens, as a time to sort by, or null if its date can't be read.
+const eventDay = (e) => {
+  const t = new Date(eventDate(e)).getTime();
+  return Number.isNaN(t) ? null : t;
+};
+const isPastEvent = (e) => {
+  const t = eventDay(e);
+  return t !== null && t < new Date().setHours(0, 0, 0, 0);
+};
+// Events from today on, soonest first (any whose date can't be read last),
+// then past events, most recent first.
+const orderEvents = (list) => {
+  const byDay = (a, b) => {
+    const x = eventDay(a), y = eventDay(b);
+    if (x === null || y === null) return (x === null) - (y === null);
+    return x - y;
+  };
+  return [...list.filter(e => !isPastEvent(e)).sort(byDay), ...list.filter(isPastEvent).sort((a, b) => byDay(b, a))];
+};
+
+// A listing's photos are stored as a JSON list of image links (older ones as
+// a single link). Anything else gives no photos instead of breaking the page.
+const listingPhotos = (value) => {
+  if (!value || typeof value !== "string") return [];
+  let parsed;
+  try { parsed = JSON.parse(value); } catch (e) { parsed = [value]; }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(p => typeof p === "string" && /^https?:\/\//i.test(p));
+};
+
+// The tags stored with a post: its hashtags, each once, plus the
+// "__external__" marker for posts with a link. Kept within the database's
+// limits (30 tags, 1,500 characters in all) so a post can always be published.
+const EXTERNAL_TAG = "__external__";
+const postTags = (content, hasLink) => {
+  const tags = [];
+  let room = 30 - (hasLink ? 1 : 0);
+  let chars = 1500 - (hasLink ? EXTERNAL_TAG.length : 0);
+  for (const h of content.match(/#(\w+)/g) || []) {
+    const tag = h.slice(1);
+    if (!room) break;
+    if (tags.includes(tag) || tag.length > chars) continue;
+    tags.push(tag);
+    room -= 1;
+    chars -= tag.length;
+  }
+  if (hasLink) tags.push(EXTERNAL_TAG);
+  return tags;
+};
 
 const isUserNRI = (userOrLocation) => {
   // The country chosen when getting verified decides when it's known.
@@ -239,6 +290,16 @@ const InfoBanner = ({ text }) => (
   </div>
 );
 
+// Comments, chat messages, doc comments and help responses can be up to
+// 5,000 characters (the database's limit). The count shows once a text gets
+// close to it.
+const TEXT_LIMIT = 5000;
+const CharCount = ({ value, max = TEXT_LIMIT, style }) => (value || "").length < max - 500 ? null : (
+  <div style={{ fontSize: 11, color: value.length >= max ? "#DC2626" : "#9B9A97", textAlign: "right", marginTop: 4, fontFamily: "'DM Sans', sans-serif", ...style }}>
+    {value.length.toLocaleString("en-US")} / {max.toLocaleString("en-US")}
+  </div>
+);
+
 // ============================================================================
 // LANDING PAGE
 // ============================================================================
@@ -286,7 +347,10 @@ const LandingIcons = {
   ),
 };
 
-const LandingPage = ({ onJoin, onLogin }) => (
+const LandingPage = ({ onJoin, onLogin }) => {
+  const [legal, setLegal] = useState(null); // "terms" | "privacy"
+  const footerLink = { background: "none", border: "none", padding: 4, cursor: "pointer", color: "#6B6A67", fontSize: 12, fontFamily: "inherit", textDecoration: "underline" };
+  return (
   <div style={{
     minHeight: "100vh",
     display: "flex",
@@ -320,9 +384,10 @@ const LandingPage = ({ onJoin, onLogin }) => (
         style={{
           fontSize: 14,
           fontWeight: 500,
-          padding: "8px 4px",
-          border: "none",
-          background: "transparent",
+          padding: "8px 16px",
+          border: "1px solid #E0E0DE",
+          borderRadius: 8,
+          background: "#fff",
           cursor: "pointer",
           color: "#37352F",
           letterSpacing: "-0.01em",
@@ -511,13 +576,25 @@ const LandingPage = ({ onJoin, onLogin }) => (
         </p>
       </div>
     </div>
+
+    {/* Footer: the Terms and the Privacy Policy, readable before signing up */}
+    <footer style={{ width: "100%", maxWidth: 900, padding: "0 1rem 32px", textAlign: "center", fontSize: 12, color: "#6B6A67" }}>
+      <button type="button" onClick={() => setLegal("terms")} style={footerLink}>Terms of Use</button>
+      <span aria-hidden="true"> · </span>
+      <button type="button" onClick={() => setLegal("privacy")} style={footerLink}>Privacy Policy</button>
+    </footer>
+    {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
+    {legal === "privacy" && <PrivacyModal onClose={() => setLegal(null)} />}
   </div>
-);
+  );
+};
 
 // ============================================================================
 // LOGIN PAGE
 // ============================================================================
-const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
+// notice: a confirmation to show above the form (e.g. after a new password).
+// onBack: back to the landing page.
+const LoginPage = ({ onComplete, onSignUp, onBack, initialEmail = "", notice = "" }) => {
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -639,10 +716,6 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
   const labelStyle = { display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font };
   const errorStyle = { padding: "12px 16px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, marginBottom: 16, fontSize: 13, lineHeight: 1.5, color: "#B91C1C", fontFamily: font };
 
-  // Eye icon SVGs
-  const EyeIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#787774" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
-  const EyeOffIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#787774" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
-
   if (codeMode) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
@@ -669,23 +742,22 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
             <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
               {Icons.shield({ size: 24, stroke: "#37352F" })}
             </div>
-            <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Reset Password</h2>
-            <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Enter your email and we'll send you a reset link</p>
+            <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Reset your password</h2>
+            {!resetSent && <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Enter your email and we'll send you a reset link</p>}
           </div>
           {error && <div role="alert" style={errorStyle}>{error}</div>}
           {resetSent ? (
             <div style={{ padding: "20px", background: "#E3FCEF", borderRadius: 10, textAlign: "center", marginBottom: 20 }}>
-              <p style={{ fontSize: 14, color: "#126B45", fontWeight: 600, fontFamily: font, marginBottom: 8 }}>Reset email sent!</p>
-              <p style={{ fontSize: 13, color: "#5F5E5B", fontFamily: font }}>Check your inbox for a password reset link. It may take a few minutes.</p>
+              <p style={{ fontSize: 14, lineHeight: 1.5, color: "#126B45", fontFamily: font, margin: 0, overflowWrap: "anywhere" }}>We sent a reset link to <strong>{cleanEmail}</strong>. It can take a few minutes. Can't find it? Check your spam folder.</p>
             </div>
           ) : (
-            <>
+            <form onSubmit={(e) => { e.preventDefault(); handleResetPassword(); }} noValidate>
               <div style={{ marginBottom: 20 }}>
                 <label htmlFor="reset-email" style={labelStyle}>Email</label>
-                <input id="reset-email" style={inputStyle} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus />
+                <input id="reset-email" style={inputStyle} type="email" autoComplete="email" inputMode="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" autoFocus />
               </div>
-              <button onClick={handleResetPassword} disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600, background: "#37352F", color: "#fff", cursor: "pointer", fontFamily: font }}>{loading ? "Sending..." : "Send Reset Link"}</button>
-            </>
+              <button type="submit" disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", fontSize: 15, fontWeight: 600, background: "#37352F", color: "#fff", cursor: "pointer", fontFamily: font }}>{loading ? "Sending..." : "Send reset link"}</button>
+            </form>
           )}
           <p style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "#6B6A67", fontFamily: font }}>
             <button onClick={() => { setResetMode(false); setResetSent(false); setError(""); }} style={{ background: "none", border: "none", color: "#37352F", fontWeight: 600, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Back to login</button>
@@ -698,6 +770,9 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8" }}>
       <div style={{ maxWidth: 360, width: "100%" }}>
+        <button type="button" onClick={onBack} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: font, fontSize: 13, fontWeight: 500, color: "#6B6A67", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
+          <span aria-hidden="true">←</span> Back
+        </button>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
           <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
             {Icons.globe({ size: 24, stroke: "#37352F" })}
@@ -706,6 +781,9 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
           <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Log in to NRIClub</p>
         </div>
 
+        {notice && !error && (
+          <div role="status" style={{ padding: "12px 16px", background: "#E3FCEF", border: "1px solid #ABF5D1", borderRadius: 8, marginBottom: 16, fontSize: 13, lineHeight: 1.5, color: "#126B45", fontFamily: font }}>{notice}</div>
+        )}
         {error && (
           unconfirmed ? (
             <div role="alert" style={{ ...errorStyle, background: "#FFF8E6", border: "1px solid #FCE7B2", color: "#7A4D00" }}>
@@ -727,14 +805,14 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
           <div style={{ marginBottom: 10 }}>
             <label htmlFor="login-password" style={labelStyle}>Password</label>
             <div style={{ position: "relative" }}>
-              <input id="login-password" style={{ ...inputStyle, paddingRight: 44 }} type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoFocus={!!initialEmail} />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"} aria-controls="login-password" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex", borderRadius: 6 }}>
-                {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+              <input id="login-password" style={{ ...inputStyle, paddingRight: 72 }} type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus={!!initialEmail} />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"} aria-controls="login-password" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#5F5E5B", fontSize: 13, fontWeight: 600, padding: "8px 10px", borderRadius: 6, fontFamily: font }}>
+                {showPassword ? "Hide" : "Show"}
               </button>
             </div>
           </div>
           <div style={{ textAlign: "right", marginBottom: 20 }}>
-            <button type="button" onClick={() => { setResetMode(true); setError(""); }} style={{ background: "none", border: "none", color: "#2F6FD6", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, padding: 4 }}>Forgot password?</button>
+            <button type="button" onClick={() => { setResetMode(true); setError(""); }} style={{ background: "none", border: "none", color: "#2F6FD6", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, padding: "8px 4px" }}>Forgot password?</button>
           </div>
           <button
             type="submit" disabled={loading}
@@ -743,7 +821,7 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
               background: "#37352F", color: "#fff", cursor: loading ? "default" : "pointer", opacity: loading ? 0.75 : 1, fontFamily: font,
             }}
           >
-            {loading ? "Logging in..." : "Continue"}
+            {loading ? "Logging in..." : "Log in"}
           </button>
         </form>
 
@@ -758,10 +836,21 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
   );
 };
 
+// The dashed card shown in place of a list that came up empty, with one way
+// back to everything when filters or a search hid it.
+const EmptyCard = ({ text, action, onAction }) => (
+  <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: "'DM Sans', sans-serif" }}>
+    <p>{text}</p>
+    {action && (
+      <button onClick={onAction} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", fontSize: 13, fontWeight: 600, cursor: "pointer", marginTop: 6, padding: "6px 8px", fontFamily: "inherit" }}>{action}</button>
+    )}
+  </div>
+);
+
 // ============================================================================
 // POST CARD
 // ============================================================================
-const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked }) => {
+const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup }) => {
   const [liked, setLiked] = useState(initialLiked || false);
   const [likeCount, setLikeCount] = useState(post.likes || 0);
   const [showComments, setShowComments] = useState(false);
@@ -769,7 +858,23 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
   const [commentsLoaded, setCommentsLoaded] = useState(false);
   const [newComment, setNewComment] = useState("");
   const [showMenu, setShowMenu] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const isOwner = user && post.userId === user.id;
+
+  // Copies a link that opens this post (see the shared-link check in the
+  // Dashboard). Without clipboard access the link is shown to copy by hand.
+  const copyLink = async () => {
+    const url = `${window.location.origin}${window.location.pathname}#post=${post.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch (e) {
+      setShowMenu(false);
+      prompt("Copy this link:", url);
+      return;
+    }
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
 
   const toggleComments = async () => {
     const newShow = !showComments;
@@ -779,7 +884,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
       try {
         const dbComments = await api.getComments(post.id);
         if (dbComments && dbComments.length) {
-          setComments(dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).getTime() })));
+          setComments(dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", avatar: c.profiles?.avatar_url || "", text: c.content, time: new Date(c.created_at).getTime() })));
         }
       } catch(e) {}
     }
@@ -800,17 +905,23 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
 
   const addComment = async () => {
     if (!newComment.trim()) return;
-    const c = { id: Date.now(), user: user?.name || "You", text: newComment, time: Date.now() };
-    setComments([c, ...comments]);
+    const c = { id: Date.now(), user: user?.name || "You", avatar: user?.avatar_url || "", text: newComment, time: Date.now() };
+    setComments([...comments, c]);
     const commentText = newComment;
     setNewComment("");
     try {
       await api.addComment(post.id, commentText);
-      if (post.userId && post.userId !== user?.id) {
-        const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
-        try { await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
-      }
-    } catch (e) {}
+    } catch (e) {
+      // Take the comment back out and give the text back.
+      setComments(prev => prev.filter(x => x.id !== c.id));
+      setNewComment(prev => prev || commentText);
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your comment couldn't be posted. Please try again.");
+      return;
+    }
+    if (post.userId && post.userId !== user?.id) {
+      const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
+      try { await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
+    }
   };
 
   const author = post.author || {};
@@ -832,7 +943,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
               {author.profession} • {author.location}
             </div>
             <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 1 }}>From: {author.hometown}</div>
-            {post.groupName && (
+            {post.groupName && !hideGroup && (
               <div style={{ fontSize: 10, color: "#5B9CFF", marginTop: 3, display: "flex", alignItems: "center", gap: 3, fontWeight: 600 }}>
                 {Icons.users({ size: 10, stroke: "#5B9CFF" })} Posted in {post.groupName}
               </div>
@@ -840,13 +951,16 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
           </div>
         </div>
         <div style={{ position: "relative" }}>
-          <button onClick={() => setShowMenu(!showMenu)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "#9B9A97" }}>
+          <button onClick={() => setShowMenu(!showMenu)} style={{ background: "none", border: "none", cursor: "pointer", padding: 10, margin: -6, color: "#5F5E5B" }}>
             {Icons.dots({ size: 16 })}
           </button>
           {showMenu && (
             <>
               <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={() => setShowMenu(false)} />
-              <div style={{ position: "absolute", right: 0, top: "100%", background: "#fff", border: "1px solid #E8E7E4", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", zIndex: 20, minWidth: 120, overflow: "hidden" }}>
+              <div style={{ position: "absolute", right: 0, top: "100%", background: "#fff", border: "1px solid #E8E7E4", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", zIndex: 20, minWidth: 140, overflow: "hidden" }}>
+                <button onClick={copyLink} disabled={String(post.id).startsWith("p_")} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, whiteSpace: "nowrap" }}>
+                  {linkCopied ? <>{Icons.check({ size: 14 })} Link copied</> : <>{Icons.link({ size: 14 })} Copy link</>}
+                </button>
                 {isOwner && onDelete ? (
                   <button onClick={() => { onDelete(post.id); setShowMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#E00", fontSize: 13 }}>
                     {Icons.trash({ size: 14 })} Delete
@@ -862,7 +976,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
         </div>
       </div>
 
-      <p style={{ fontSize: 14, lineHeight: 1.65, color: "#37352F", marginBottom: 12, whiteSpace: "pre-wrap" }}>{post.externalUrl ? post.content.replace(post.externalUrl, "").trim() : post.content}</p>
+      <p style={{ fontSize: 14, lineHeight: 1.65, color: "#37352F", marginBottom: 12, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{post.externalUrl ? post.content.replace(post.externalUrl, "").trim() : post.content}</p>
 
       {/* External Link Preview Card */}
       {post.externalUrl && (() => {
@@ -882,11 +996,11 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
         };
         const p = getPlatform(url);
         return (
-          <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ display: "block", marginBottom: 12, borderRadius: 12, overflow: "hidden", border: "1px solid #E8E7E4", textDecoration: "none", cursor: "pointer", transition: "box-shadow 0.15s" }} onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)"} onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
+          <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ display: "block", maxWidth: "100%", marginBottom: 12, borderRadius: 12, overflow: "hidden", border: "1px solid #E8E7E4", textDecoration: "none", cursor: "pointer", transition: "box-shadow 0.15s" }} onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)"} onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
             <div style={{ height: 110, background: p.gradient, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 44 }}>
               <span>{p.emoji}</span>
             </div>
-            <div style={{ padding: "12px 14px", background: "#fff" }}>
+            <div style={{ padding: "12px 14px", background: "#fff", minWidth: 0 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: p.color, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{p.name}</div>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", wordBreak: "break-all", lineHeight: 1.4 }}>Tap to open →</div>
               <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{url}</div>
@@ -902,43 +1016,24 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
         </div>
       )}
 
-      {post.tags?.filter(t => t !== "__external__").length > 0 && (
-        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
-          {post.tags.filter(t => t !== "__external__").map((t) => (
-            <span key={t} style={{ fontSize: 11, background: "#F0EFED", color: "#5F5E5B", padding: "3px 8px", borderRadius: 4, fontWeight: 500 }}>
-              #{t}
-            </span>
-          ))}
-        </div>
-      )}
-
       <div style={{ fontSize: 11, color: "#9B9A97", marginBottom: 12 }}>{timeAgo(post.timestamp)}</div>
 
+      {/* Like and comment get larger tap areas; the margins take back the extra
+          padding (buttons start with 1px 6px), so the row looks the same. */}
       <div style={{ display: "flex", gap: 20, paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
-        <button onClick={handleLike} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: liked ? "#E25555" : "#9B9A97", fontSize: 13, fontWeight: 500 }}>
+        <button onClick={handleLike} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: liked ? "#E25555" : "#9B9A97", fontSize: 13, fontWeight: 500, padding: "10px 8px", margin: "-9px -2px" }}>
           {Icons.heart({ size: 16, fill: liked ? "#E25555" : "none", stroke: liked ? "#E25555" : "currentColor" })} {likeCount}
         </button>
-        <button onClick={toggleComments} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500 }}>
+        <button onClick={toggleComments} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500, padding: "10px 8px", margin: "-9px -2px" }}>
           {Icons.message({ size: 16 })} {comments.length || post.commentsCount || 0}
         </button>
       </div>
 
       {showComments && (
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            <input
-              value={newComment} onChange={(e) => setNewComment(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addComment()}
-              placeholder="Write a comment..."
-              style={{ flex: 1, padding: "8px 14px", borderRadius: 20, border: "1px solid #E8E7E4", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: "'DM Sans', sans-serif" }}
-            />
-            <button onClick={addComment} disabled={!newComment.trim()} style={{ padding: "8px", borderRadius: "50%", background: newComment.trim() ? "#37352F" : "#E8E7E4", border: "none", cursor: newComment.trim() ? "pointer" : "default", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {Icons.send({ size: 14 })}
-            </button>
-          </div>
           {comments.map((c) => (
             <div key={c.id} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <Avatar name={c.user} size={28} />
+              <Avatar name={c.user} size={28} url={c.avatar} />
               <div style={{ flex: 1, background: "#F7F7F5", padding: "8px 12px", borderRadius: "0 10px 10px 10px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>{c.user}</span>
@@ -948,6 +1043,18 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
               </div>
             </div>
           ))}
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={newComment} onChange={(e) => setNewComment(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addComment()}
+              placeholder="Write a comment..." maxLength={TEXT_LIMIT}
+              style={{ flex: 1, padding: "8px 14px", borderRadius: 20, border: "1px solid #E8E7E4", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: "'DM Sans', sans-serif" }}
+            />
+            <button onClick={addComment} disabled={!newComment.trim()} style={{ padding: "8px", borderRadius: "50%", background: newComment.trim() ? "#37352F" : "#E8E7E4", border: "none", cursor: newComment.trim() ? "pointer" : "default", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {Icons.send({ size: 14 })}
+            </button>
+          </div>
+          <CharCount value={newComment} />
         </div>
       )}
     </div>
@@ -958,7 +1065,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
 // DASHBOARD
 // ============================================================================
 // Blocked Users Modal Component
-const BlockedUsersModal = ({ onClose, font }) => {
+const BlockedUsersModal = ({ onClose, onUnblocked, font }) => {
   const [blockedList, setBlockedList] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -976,7 +1083,7 @@ const BlockedUsersModal = ({ onClose, font }) => {
     <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={onClose}>
       <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, maxHeight: "80vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-          <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Blocked Users</h3>
+          <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Blocked members</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
         </div>
         <div style={{ padding: 24 }}>
@@ -992,6 +1099,7 @@ const BlockedUsersModal = ({ onClose, font }) => {
               <button onClick={async () => {
                 try { await api.unblockUser(b.blocked_id); } catch(e) {}
                 setBlockedList(prev => prev.filter(x => x.blocked_id !== b.blocked_id));
+                onUnblocked?.(b.blocked_id);
               }} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Unblock</button>
             </div>
           ))}
@@ -1000,6 +1108,40 @@ const BlockedUsersModal = ({ onClose, font }) => {
     </div>
   );
 };
+
+// Full-screen card for blocked members. Settings can't be reached from here,
+// so the card also lets them download their data or delete their account.
+const BlockedOverlay = ({ onSignOut, font }) => {
+  const { busy, error, download, deleteAccount } = useAccountActions(onSignOut);
+  const link = { background: "none", border: "none", padding: 4, cursor: busy ? "default" : "pointer", color: "#5F5E5B", fontSize: 13, fontWeight: 500, textDecoration: "underline", fontFamily: font };
+  return (
+    <div data-lock-overlay style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div role="alertdialog" aria-modal="true" aria-label="Profile blocked" style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
+        <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
+        </div>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Profile Blocked</h2>
+        <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 20, fontFamily: font }}>
+          Your profile has been blocked by our admin team.
+        </p>
+        <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>
+          If you believe this is an error, please contact <a href="mailto:support@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>support@nriclub.app</a>.
+        </p>
+        <button onClick={onSignOut} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Sign Out</button>
+        <p style={{ margin: "16px 0 0", fontSize: 13, color: "#6B6A67", fontFamily: font }}>
+          <button type="button" onClick={download} aria-disabled={!!busy} style={link}>{busy === "download" ? "Preparing your data..." : "Download my data"}</button>
+          <span aria-hidden="true"> · </span>
+          <button type="button" onClick={deleteAccount} aria-disabled={!!busy} style={link}>{busy === "delete" ? "Deleting..." : "Delete my account"}</button>
+        </p>
+        {error && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", margin: "12px 0 0", lineHeight: 1.5, fontFamily: font }}>{error}</p>}
+      </div>
+    </div>
+  );
+};
+
+// The fields of the user object (mapProfile) that decide what the member may
+// do: the ones api.refreshMyStatus reads.
+const STATUS_FIELDS = ["verificationStatus", "status", "reviewFlag", "termsVersion", "ageConfirmedAt", "termsAcceptedAt"];
 
 const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [view, setView] = useState("home");
@@ -1014,23 +1156,24 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [profilePreview, setProfilePreview] = useState(null);
   const [acceptedConnections, setAcceptedConnections] = useState(new Set());
   const [newPost, setNewPost] = useState("");
-  const [createPostDropdown, setCreatePostDropdown] = useState(false);
-  const [createPostModal, setCreatePostModal] = useState(null); // "text" | "photo" | "link"
+  const [createPostModal, setCreatePostModal] = useState(null); // "text" while "Create a post" is open
   const [postImage, setPostImage] = useState(null);
+  const [postPhotoOpen, setPostPhotoOpen] = useState(false); // the composer's photo block is shown
+  const [postPhotoUploading, setPostPhotoUploading] = useState(false);
+  const postPhotoUploadRef = useRef(0); // counts uploads, so one cancelled with Cancel is dropped
   const [mobileMenu, setMobileMenu] = useState(false);
   const [rsvps, setRsvps] = useState(new Set());
   const [profileTab, setProfileTab] = useState("posts");
   const [chatTab, setChatTab] = useState("personal"); // 'personal' | 'marketplace'
   const [expandedEvent, setExpandedEvent] = useState(null);
-  const [eventLikes, setEventLikes] = useState({}); // {eventId: boolean}
-  const [eventComment, setEventComment] = useState("");
-  const [eventComments, setEventComments] = useState({}); // {eventId: [{user, text, time}]}
   const [eventModal, setEventModal] = useState(false);
   const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
   const [eventPhoto, setEventPhoto] = useState(null); // { url, preview }
   const [helpRequests, setHelpRequests] = useState([]);
   // "Update details" (an admin asked for more information) opens Get verified.
   const [verifyOpen, setVerifyOpen] = useState(false);
+  // Only while the admin's question is still open: a later decision closes it.
+  useEffect(() => { if (user.verificationStatus !== "needs_info") setVerifyOpen(false); }, [user.verificationStatus]);
   const [profileCardDismissed, dismissProfileCard] = useProfileCardDismissed(user.id);
   const [helpModal, setHelpModal] = useState(false);
   const [selectedHelp, setSelectedHelp] = useState(null);
@@ -1043,12 +1186,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileErrors, setProfileErrors] = useState({});
   const [selectedGroup, setSelectedGroup] = useState(null);
-  const [feedSort, setFeedSort] = useState("new");
+  const [feedSort, setFeedSort] = useState("new"); // "new" | "popular" (most liked)
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
   const [groupTab, setGroupTab] = useState("all");
   const [groupMembers, setGroupMembers] = useState([]);
   const [groupRequestModal, setGroupRequestModal] = useState(false);
   const [newGroupCity, setNewGroupCity] = useState("");
+  const [groupRequestSent, setGroupRequestSent] = useState(false);
+  const [groupRequestError, setGroupRequestError] = useState("");
+  const [guidelinesOpen, setGuidelinesOpen] = useState({}); // {groupId: boolean}, unset = open only for visitors
   const [communityTab, setCommunityTab] = useState("feed");
   const [eventViewMode, setEventViewMode] = useState("all");
   const [eventSearch, setEventSearch] = useState("");
@@ -1062,10 +1208,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
   const lastSeenMsgRef = useRef(null); // Track last seen conversation state
   const lastVerificationNotifRef = useRef(null); // Newest unread verification decision seen
+  const pollCountRef = useRef(0);
   const dashboardRef = useRef(null);
   // Rejected and blocked members only see a full-screen card: make
   // everything behind it unreachable (Tab, screen readers) and focus the card.
   const locked = user?.status === "blocked" || user?.verificationStatus === "rejected";
+  // Whether the database lets this member see other members and what they
+  // post (private.can_browse()): not while locked, and not while a member
+  // flagged for review waits for approval. Nothing is loaded until then.
+  const canBrowse = !locked && (!user?.reviewFlag || user?.verificationStatus === "approved");
   useEffect(() => {
     const root = dashboardRef.current;
     if (!locked || !root) return;
@@ -1079,24 +1230,53 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [blockTargetId, setBlockTargetId] = useState(null);
   const [blockedIds, setBlockedIds] = useState(new Set());
-  const [reportModalOpen, setReportModalOpen] = useState(false);
-  const [reportReason, setReportReason] = useState("");
   // Notification & Settings state
   const [notifOpen, setNotifOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModal, setSettingsModal] = useState(null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
   const [notifications, setNotifications] = useState([]);
+  const [acceptedNotifs, setAcceptedNotifs] = useState([]); // Namaste requests just accepted, shown as "✓ Accepted" for a moment
   const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
   const [privSettingsLoaded, setPrivSettingsLoaded] = useState(false);
-  const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: false });
+  // marketing mirrors the member's marketing consent (profile_private), the
+  // one place it is kept; email and push live in user_settings.
+  const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: !!user.marketingConsent });
+  const [dataDownload, setDataDownload] = useState({ busy: false, error: "" });
+  const [legalTab, setLegalTab] = useState("terms"); // Settings > Terms & Policies: "terms" | "privacy"
+  // Opening a settings window shows what is stored now: the marketing
+  // choice, and the Terms first.
+  useEffect(() => {
+    if (settingsModal === "notifications") setNotifSettings(prev => ({ ...prev, marketing: !!user.marketingConsent }));
+    if (settingsModal === "terms") setLegalTab("terms");
+    if (settingsModal === "account") setDataDownload({ busy: false, error: "" });
+  }, [settingsModal]);
   const [accountName, setAccountName] = useState(user.name);
+  const [accountPassword, setAccountPassword] = useState("");
+  const [accountSave, setAccountSave] = useState({ busy: false, error: "" });
+  const [deleteAccountText, setDeleteAccountText] = useState(null); // null = closed; otherwise what was typed
+  const [settingsSaveError, setSettingsSaveError] = useState("");
+  const [openFaq, setOpenFaq] = useState(null);
+  const [bugError, setBugError] = useState("");
+  // Privacy and email settings are saved the moment they change; a failed
+  // save puts the row back.
+  const saveSetting = async (setState, key, value, save) => {
+    let before;
+    setState(p => { before = p[key]; return { ...p, [key]: value }; });
+    setSettingsSaveError("");
+    try { await save(); } catch (e) {
+      setState(p => ({ ...p, [key]: before }));
+      setSettingsSaveError(isNetworkError(e) ? NETWORK_MESSAGE : "Couldn't save. Please try again.");
+    }
+  };
   // Filter modal state
   const [filterModalOpen, setFilterModalOpen] = useState(false);
-  const [feedFilters, setFeedFilters] = useState({ hometown: "", occupation: "All", yearsAbroad: "All", community: "All" });
+  // hometown: a city the author is from or lives in; occupation: their
+  // occupation status from Edit Profile; livesIn: "Abroad" | "India";
+  // tag: a hashtag picked on Trending.
+  const noFeedFilters = { hometown: "", occupation: "All", livesIn: "All", community: "All", tag: "" };
+  const [feedFilters, setFeedFilters] = useState(noFeedFilters);
+  const feedFiltered = !!feedFilters.hometown || feedFilters.occupation !== "All" || feedFilters.livesIn !== "All" || feedFilters.community !== "All" || !!feedFilters.tag;
   const [feedPostType, setFeedPostType] = useState("all"); // 'all' | 'posts' | 'links'
-  const [linkModal, setLinkModal] = useState(false);
-  const [externalLinkInput, setExternalLinkInput] = useState("");
-  const [externalLinkNote, setExternalLinkNote] = useState("");
   // Docs state
   const [docModal, setDocModal] = useState(false);
   const [newDoc, setNewDoc] = useState({ title: "", city: "", category: "General", excerpt: "" });
@@ -1135,6 +1315,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [newMarket, setNewMarket] = useState({ title: "", price: "", category: "Items", city: "", description: "" });
   const [marketPhotos, setMarketPhotos] = useState([]);
   const [marketItems, setMarketItems] = useState([]);
+  // Host Event, Create Doc and Post Item start at the member's own city (they can still change it).
+  const myCity = GLOBAL_CITIES.find(c => c.toLowerCase() === (user.location || "").split(",")[0].trim().toLowerCase()) || "";
+  useEffect(() => { if (eventModal && myCity) setNewEvent(prev => prev.city ? prev : { ...prev, city: myCity }); }, [eventModal, myCity]);
+  useEffect(() => { if (docModal && myCity) setNewDoc(prev => prev.city ? prev : { ...prev, city: myCity }); }, [docModal, myCity]);
+  useEffect(() => { if (marketModal && myCity) setNewMarket(prev => prev.city ? prev : { ...prev, city: myCity }); }, [marketModal, myCity]);
   // Help state with pre-populated data
 
   // Initialize help requests on mount
@@ -1142,14 +1327,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [networkSearch, setNetworkSearch] = useState("");
   const [networkCityFilter, setNetworkCityFilter] = useState("All");
   const [networkHometownFilter, setNetworkHometownFilter] = useState("All");
-  const [networkNearby, setNetworkNearby] = useState(false);
+  const [networkShowCount, setNetworkShowCount] = useState(30); // Find lists 30 members, then "Show more"
   const [sentNamaste, setSentNamaste] = useState(new Set());
 
   // Network users loaded from DB
   const [networkUsers, setNetworkUsers] = useState([]);
   const [networkLoaded, setNetworkLoaded] = useState(false);
+  const [networkReady, setNetworkReady] = useState(false); // the members list has finished loading
 
-  const isNetworkFilterActive = networkSearch.trim() !== "" || networkCityFilter !== "All" || networkHometownFilter !== "All" || networkNearby;
+  const isNetworkFilterActive = networkSearch.trim() !== "" || networkCityFilter !== "All" || networkHometownFilter !== "All";
 
   const filteredNetworkUsers = networkUsers.filter((u) => {
     if (u.id === user.id) return false;
@@ -1159,16 +1345,53 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       u.profession.toLowerCase().includes(networkSearch.toLowerCase());
     const matchesCity = networkCityFilter === "All" || u.location.includes(networkCityFilter);
     const matchesHometown = networkHometownFilter === "All" || u.hometown.includes(networkHometownFilter);
-    const matchesNearby = !networkNearby || u.location.split(",")[0] === (user.location || "").split(",")[0];
-    return matchesSearch && matchesCity && matchesHometown && matchesNearby;
+    return matchesSearch && matchesCity && matchesHometown;
   });
+  // With no filter, Find lists members in your current city first, then
+  // those from your hometown, then everyone else.
+  const networkCityKey = (s) => (s || "").split(",")[0].trim().toLowerCase();
+  const networkNearRank = (u) => (networkCityKey(user.location) && networkCityKey(u.location) === networkCityKey(user.location) ? 0 : networkCityKey(user.hometown) && networkCityKey(u.hometown) === networkCityKey(user.hometown) ? 1 : 2);
+  const networkList = isNetworkFilterActive ? filteredNetworkUsers : [...filteredNetworkUsers].sort((a, b) => networkNearRank(a) - networkNearRank(b));
 
   const clearNetworkFilters = () => {
     setNetworkSearch("");
     setNetworkCityFilter("All");
     setNetworkHometownFilter("All");
-    setNetworkNearby(false);
   };
+
+  // Members for Find, the right sidebar and profile previews: loaded once
+  // when the dashboard opens (again if the member may browse after all).
+  const loadNetworkUsers = async () => {
+    if (networkLoaded || !canBrowse) return;
+    setNetworkLoaded(true);
+    try {
+      const dbUsers = await api.searchProfiles();
+      if (dbUsers && dbUsers.length) {
+        // Fetch all connections to count followers/following
+        let connCounts = {};
+        try {
+          const allConns = await api.getAllConnections();
+          if (allConns) {
+            allConns.forEach(c => {
+              if (!connCounts[c.recipient_id]) connCounts[c.recipient_id] = { followers: 0, following: 0 };
+              if (!connCounts[c.requester_id]) connCounts[c.requester_id] = { followers: 0, following: 0 };
+              connCounts[c.recipient_id].followers++;
+              connCounts[c.requester_id].following++;
+            });
+          }
+        } catch(ce) {}
+        setNetworkUsers(dbUsers.map(u => ({
+          id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
+          hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
+          linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "",
+          avatar_url: u.avatar_url || "",
+          followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
+        })));
+      }
+    } catch (e) {}
+    setNetworkReady(true);
+  };
+  useEffect(() => { if (canBrowse) loadNetworkUsers(); }, [canBrowse]);
 
   const handleSendNamaste = async (userId) => {
     // Block self-requests
@@ -1199,12 +1422,82 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     try {
       await api.unfollowUser(userId);
       setAcceptedConnections(prev => { const s = new Set(prev); s.delete(userId); return s; });
-      setMyFollowing(prev => prev.filter(id => id !== userId));
+      setMyFollowing(prev => prev.filter(p => (p.id || p) !== userId));
     } catch(e) { console.error("Unfollow failed:", e); }
   };
 
-  // Load data on mount
+  // Why another member can't get a message from this one, in plain words, or
+  // null. Only what can't change behind this page's back is checked here:
+  // the member's own blocks and a "Nobody" setting. "Connections only" is
+  // left to the database, which knows about a Namaste accepted since the
+  // page loaded; messageErrorText explains its refusal.
+  const messageBlockedReason = async (otherUserId) => {
+    if (blockedIds.has(otherUserId)) return "You've blocked this member. You can unblock them in Settings → Privacy & Safety.";
+    try {
+      const targetSettings = await api.getOtherUserSettings(otherUserId);
+      if (targetSettings?.receive_messages === "Nobody") return "This user is not accepting messages.";
+    } catch (e) {}
+    return null;
+  };
+
+  // A message or new conversation the database refused, in plain words. A
+  // refusal (42501) from a member who takes messages from connections only
+  // means the two aren't connected (yet).
+  const messageErrorText = async (e, otherUserId) => {
+    if (isNetworkError(e)) return NETWORK_MESSAGE;
+    if (!/42501/.test(e?.message || "")) return "Your message couldn't be sent. Please try again.";
+    try {
+      const targetSettings = otherUserId ? await api.getOtherUserSettings(otherUserId) : null;
+      if (targetSettings?.receive_messages === "Connections Only") {
+        return "This user only accepts messages from connections. Send a Namaste request first.";
+      }
+    } catch (x) {}
+    return "You can't send messages to this member right now.";
+  };
+
+  // Opens the conversation with another member (starting one if needed) in
+  // Messages. Says why instead when they don't take messages from this member.
+  const openChatWith = async (other) => {
+    const reason = await messageBlockedReason(other.id);
+    if (reason) { alert(reason); return false; }
+    try {
+      const convo = await api.getOrCreateConversation(other.id);
+      if (!convo) throw new Error("No conversation");
+      setConvos(prev => {
+        if (prev.find(c => c.id === convo.id)) return prev;
+        return [{ id: convo.id, name: other.name, otherUserId: other.id, avatar_url: other.avatar_url || "", lastMsg: "", time: "", unread: false }, ...prev];
+      });
+      setSelectedConvo(convo.id);
+      setView("messages");
+      return true;
+    } catch (e) {
+      alert(await messageErrorText(e, other.id));
+      return false;
+    }
+  };
+
+  // A posts row (with its author's profile) as the feed shows it.
+  const toPost = (p, groupList) => {
+    const urlMatch = (p.content || "").match(/https?:\/\/[^\s]+/i);
+    return {
+      id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
+      tags: p.tags || [], likes: p.likes_count || 0, commentsCount: p.comments_count || 0, comments: [],
+      timestamp: new Date(p.created_at).getTime(),
+      groupName: p.group_id ? (groupList.find(g => g.id === p.group_id)?.name || null) : null,
+      groupId: p.group_id || null,
+      author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, occupation_status: p.profiles.occupation_status || "", location: p.profiles.location, hometown: p.profiles.hometown, avatar_url: p.profiles.avatar_url || "" } : { name: "User" },
+      externalUrl: urlMatch ? urlMatch[0] : null,
+    };
+  };
+
+  // Set once everything below has loaded, so an empty list can say so
+  // instead of looking blank while it loads.
+  const [listsLoaded, setListsLoaded] = useState(false);
+
+  // Load data on mount, and again if the member may browse after all (e.g.
+  // a rejection was undone). Locked members load nothing.
   useEffect(() => {
+    if (!canBrowse) return;
     (async () => {
       try {
         const dbPosts = await api.getPosts().catch(e => { console.error("Failed to load posts:", e.message); return []; });
@@ -1216,18 +1509,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           setGroups(loadedGroups);
         } else { setGroups([]); }
         if (dbPosts && dbPosts.length) {
-          setPosts(dbPosts.map(p => {
-            const urlMatch = (p.content || "").match(/https?:\/\/[^\s]+/i);
-            return {
-              id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
-              tags: p.tags || [], likes: p.likes_count || 0, commentsCount: p.comments_count || 0, comments: [],
-              timestamp: new Date(p.created_at).getTime(),
-              groupName: p.group_id ? (loadedGroups.find(g => g.id === p.group_id)?.name || null) : null,
-              groupId: p.group_id || null,
-              author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown, avatar_url: p.profiles.avatar_url || "" } : { name: "User" },
-              externalUrl: urlMatch ? urlMatch[0] : null,
-            };
-          }));
+          setPosts(dbPosts.map(p => toPost(p, loadedGroups)));
         } else { setPosts([]); }
         // Load which posts this user has liked
         try {
@@ -1293,7 +1575,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               }
             });
             setAcceptedConnections(iFollowThem);
-            setMyFollowing(Array.from(iFollowThem));
+            setMyFollowing(acceptedData.filter(c => c.requester_id === user.id).map(c => c.recipient).filter(Boolean));
           }
         } catch (e) {}
 
@@ -1313,33 +1595,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           }
         } catch(e) {}
 
-        // Load user settings from DB
-        try {
-          const dbSettings = await api.getUserSettings();
-          if (dbSettings) {
-            setPrivSettings({
-              visibility: dbSettings.profile_visibility || "Everyone",
-              onlineStatus: dbSettings.online_status !== false,
-              namasteRequests: dbSettings.namaste_requests || "Everyone",
-              receiveMessages: dbSettings.receive_messages || "Everyone",
-            });
-            setNotifSettings({
-              email: dbSettings.email_notifications !== false,
-              push: dbSettings.push_notifications !== false,
-              marketing: dbSettings.marketing_emails === true,
-            });
-            setPrivSettingsLoaded(true);
-          }
-        } catch (e) {}
-
         // Load notifications
         try {
           const dbNotifs = await api.getNotifications();
           if (dbNotifs && dbNotifs.length) {
-            lastVerificationNotifRef.current = dbNotifs.find(n => n.type === "verification" && !n.read)?.id || null;
+            // A decision made while the dashboard was loading: reload the status.
+            const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
+            if (decision && decision.id !== lastVerificationNotifRef.current) {
+              lastVerificationNotifRef.current = decision.id;
+              refreshMyProfile();
+            }
             setNotifications(dbNotifs.map(n => ({
               id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
-              text: n.text, time: new Date(n.created_at).toLocaleString(),
+              text: n.text, created_at: n.created_at,
               read: n.read, reference_id: n.reference_id,
             })));
           }
@@ -1350,8 +1618,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           const dbMarket = await api.getMarketItems();
           if (dbMarket && dbMarket.length) {
             setMarketItems(dbMarket.map(m => {
-              let photos = [];
-              try { photos = JSON.parse(m.image_url || "[]"); } catch(e) { if (m.image_url) photos = [m.image_url]; }
+              const photos = listingPhotos(m.image_url);
               return { id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
             }));
           }
@@ -1360,8 +1627,92 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         console.log("Falling back to defaults:", err.message);
         setPosts([]); setGroups([]); setEvents([]);
       }
+      setListsLoaded(true);
     })();
+  }, [canBrowse]);
+
+  // Scrolls to a post on Home and outlines it for two seconds.
+  const highlightPost = (id) => setTimeout(() => {
+    const el = document.querySelector(`[data-post-id="${id}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.style.boxShadow = "0 0 0 3px #5B9CFF";
+    setTimeout(() => { el.style.boxShadow = ""; }, 2000);
+  }, 300);
+
+  // A shared link (#post=<id> from a post's "Copy link", #event=<id> from an
+  // event's Share) opens that post or event once the lists have loaded.
+  // Until then it stays in the address bar, so it still works after logging in.
+  const readSharedLink = () => {
+    const m = /^#(post|event)=([\w-]+)$/.exec(window.location.hash);
+    return m ? { kind: m[1], id: m[2] } : null;
+  };
+  const [sharedLink, setSharedLink] = useState(readSharedLink);
+  useEffect(() => {
+    const onHashChange = () => setSharedLink(readSharedLink());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
+  useEffect(() => {
+    if (!sharedLink || !canBrowse) return;
+    const { kind, id } = sharedLink;
+    const post = kind === "post" && posts.find(p => String(p.id) === id && !blockedIds.has(p.userId));
+    const event = kind === "event" && events.find(e => String(e.id) === id);
+    if (!post && !event && !listsLoaded) return;
+    setSharedLink(null);
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
+    if (kind === "event") {
+      if (event) { setView("events"); setExpandedEvent(event); }
+      else alert("This event isn't available any more.");
+      return;
+    }
+    setView("home");
+    setFeedFilters(noFeedFilters);
+    setFeedPostType("all");
+    if (post) { highlightPost(id); return; }
+    // Older than the posts the feed loads: fetch it on its own.
+    (async () => {
+      let row = null;
+      try { row = await api.getPost(id); } catch (e) {}
+      if (!row || blockedIds.has(row.user_id)) { alert("This post isn't available any more."); return; }
+      setPosts(prev => prev.some(p => p.id === row.id) ? prev : [...prev, toPost(row, groups)]);
+      highlightPost(id);
+    })();
+  }, [sharedLink, canBrowse, posts, events, listsLoaded]);
+
+  // Load the member's own settings (also while a member flagged for review
+  // waits for approval, so saving them never overwrites them with defaults).
+  useEffect(() => {
+    if (locked) return;
+    (async () => {
+      try {
+        const dbSettings = await api.getUserSettings();
+        if (dbSettings) {
+          setPrivSettings({
+            visibility: dbSettings.profile_visibility || "Everyone",
+            onlineStatus: dbSettings.online_status !== false,
+            namasteRequests: dbSettings.namaste_requests || "Everyone",
+            receiveMessages: dbSettings.receive_messages || "Everyone",
+          });
+          setNotifSettings(prev => ({
+            ...prev,
+            email: dbSettings.email_notifications !== false,
+            push: dbSettings.push_notifications !== false,
+          }));
+          setPrivSettingsLoaded(true);
+        }
+      } catch (e) {}
+    })();
+  }, [locked]);
+
+  // Locked while the dashboard is open: drop what other members posted, and
+  // load it again if the member may browse later.
+  useEffect(() => {
+    if (canBrowse) return;
+    setPosts([]); setGroups([]); setEvents([]); setHelpRequests([]); setDocs([]); setMarketItems([]);
+    setMyFollowers([]); setMyFollowing([]); setNetworkUsers([]); setNetworkLoaded(false); setNetworkReady(false);
+    setConvos([]); setConvosLoaded(false); setChatMessages({}); setSelectedConvo(null);
+  }, [canBrowse]);
 
   const refreshMyProfile = async () => {
     try {
@@ -1373,19 +1724,38 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     } catch (e) { return null; }
   };
 
+  // The user as shown now, for the timers below (their effects don't re-run
+  // when the profile changes).
+  const userRef = useRef(user);
+  userRef.current = user;
+
+  // The regular status check: reads only the fields that decide what the
+  // member may do (api.refreshMyStatus, which doesn't count as activity) and
+  // reloads the whole profile only if one of them changed.
+  const checkMyStatus = async () => {
+    try {
+      const row = await api.refreshMyStatus();
+      if (!row) return;
+      const latest = mapProfile(row);
+      if (STATUS_FIELDS.some(k => latest[k] !== userRef.current[k])) refreshMyProfile();
+    } catch (e) {}
+  };
+
   // Live polling for messages and notifications (every 5 seconds)
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
         // Poll for new conversations/messages
-        const dbConvos = await api.getConversations();
+        const dbConvos = canBrowse ? await api.getConversations() : [];
         if (dbConvos && dbConvos.length) {
           const newConvos = dbConvos.map(c => ({
             id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
+            avatar_url: c.otherUser?.avatar_url || "",
             lastMsg: c.last_message_text || "", time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
             unread: false,
           }));
           setConvos(prev => {
+            newConvos.forEach(nc => { nc.isMarketplace = prev.find(p => p.id === nc.id)?.isMarketplace || nc.lastMsg.includes("[MARKETPLACE:"); });
             // Only flag unread if this is NOT the first load and a message actually changed
             if (lastSeenMsgRef.current !== null) {
               const changed = newConvos.some(nc => {
@@ -1406,25 +1776,34 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             return newConvos;
           });
         }
+      } catch (e) {}
+      try {
         // Poll for new notifications
+        let reloaded = false;
         const dbNotifs = await api.getNotifications();
         if (dbNotifs && dbNotifs.length) {
           setNotifications(dbNotifs.map(n => ({
             id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
-            text: n.text, time: new Date(n.created_at).toLocaleString(),
+            text: n.text, created_at: n.created_at,
             read: n.read, reference_id: n.reference_id,
           })));
-          // An admin decided on this member's verification: reload their status.
+          // An admin decided on this member's verification (including moving
+          // them back to pending): reload their status.
           const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
           if (decision && decision.id !== lastVerificationNotifRef.current) {
             lastVerificationNotifRef.current = decision.id;
             refreshMyProfile();
+            reloaded = true;
           }
         }
+        // A block or unblock leaves no notification: check the member's own
+        // status about once a minute as well.
+        pollCountRef.current += 1;
+        if (!reloaded && pollCountRef.current % 12 === 0) checkMyStatus();
       } catch (e) {}
     }, 5000);
     return () => clearInterval(interval);
-  }, [view]);
+  }, [view, canBrowse]);
 
   // Realtime messages via WebSocket + fast fallback polling
   useEffect(() => {
@@ -1470,19 +1849,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const createPost = async () => {
     if (!newPost.trim() && !postImage) return;
     const cleanContent = validateInput(newPost, 5000);
-    const tags = [];
-    const hashtags = cleanContent.match(/#(\w+)/g);
-    if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
     // Detect external URLs (TikTok, Instagram, YouTube, etc.)
     const urlMatch = newPost.match(/https?:\/\/[^\s]+/i);
     const externalUrl = urlMatch ? urlMatch[0] : null;
-    if (externalUrl) tags.push("__external__");
+    const tags = postTags(cleanContent, !!externalUrl);
     const groupName = selectedGroup ? selectedGroup.name : null;
     const groupId = selectedGroup ? selectedGroup.id : null;
     const imageUrl = postImage?.url || null;
     const post = {
       id: "p_" + Date.now(), userId: user.id, content: newPost,
-      author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
+      author: { name: user.name, profession: user.profession, occupation_status: user.occupationStatus || "", location: user.location, hometown: user.hometown },
       likes: 0, comments: [], tags, timestamp: Date.now(), groupName, groupId,
       image: imageUrl, externalUrl,
     };
@@ -1503,8 +1879,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   const deletePost = async (id) => {
-    setPosts(posts.filter((p) => p.id !== id));
-    try { await api.deletePost(id); } catch (e) {}
+    if (!confirm("Delete this post? This can't be undone.")) return;
+    const at = posts.findIndex((p) => p.id === id);
+    const removed = posts[at];
+    setPosts(prev => prev.filter((p) => p.id !== id));
+    try { await api.deletePost(id); } catch (e) {
+      // Put the post back where it was.
+      if (removed) setPosts(prev => prev.some(p => p.id === id) ? prev : [...prev.slice(0, at), removed, ...prev.slice(at)]);
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Couldn't delete the post. Please try again.");
+    }
   };
 
   const createEvent = async () => {
@@ -1560,7 +1943,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       timestamp: Date.now(), responses: 0, status: "Open",
     };
     setHelpRequests([h, ...helpRequests]);
-    setNewHelp({ title: "", description: "", category: "General", urgency: "Low", city: "" });
+    setNewHelp({ title: "", description: "", category: "General", urgency: "Low" });
     setHelpModal(false);
     try {
       const r = await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgency });
@@ -1569,6 +1952,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     } catch (e) {
       setHelpRequests(prev => prev.filter(x => x.id !== h.id));
       alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your request couldn't be posted. Please try again.");
+    }
+  };
+
+  // Opens a help request and loads its responses the first time.
+  const openHelp = async (h) => {
+    setSelectedHelp(h.id);
+    if (!helpResponses[h.id]) {
+      try {
+        const resp = await api.getHelpResponses(h.id);
+        if (resp) setHelpResponses(prev => ({ ...prev, [h.id]: resp.map(r => ({ id: r.id, text: r.content, user: r.profiles?.name || "User", time: new Date(r.created_at).getTime() })) }));
+      } catch(e) {}
     }
   };
 
@@ -1653,50 +2047,49 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const renderContent = () => {
     switch (view) {
       case "home":
+        const feedPosts = posts.filter(p => {
+          // Hide blocked users' posts
+          if (blockedIds.has(p.userId)) return false;
+          const a = p.author || {};
+          if (feedFilters.hometown && !(a.hometown || "").toLowerCase().includes(feedFilters.hometown.toLowerCase()) && !(a.location || "").toLowerCase().includes(feedFilters.hometown.toLowerCase())) return false;
+          if (feedFilters.occupation !== "All" && a.occupation_status !== feedFilters.occupation) return false;
+          // Where the author lives: abroad (an NRI) or in India
+          if (feedFilters.livesIn === "Abroad" && !isUserNRI(a)) return false;
+          if (feedFilters.livesIn === "India" && isUserNRI(a)) return false;
+          if (feedFilters.community !== "All" && p.groupName !== feedFilters.community) return false;
+          // A hashtag from Trending: in the post's tags or its text
+          if (feedFilters.tag && !(p.tags || []).includes(feedFilters.tag) && !((p.content || "").match(/#\w+/g) || []).includes(`#${feedFilters.tag}`)) return false;
+          // Post type filter
+          if (feedPostType === "links" && !p.externalUrl) return false;
+          if (feedPostType === "posts" && p.externalUrl) return false;
+          return true;
+        }).sort((a, b) => feedSort === "popular" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0));
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
             {/* Complete your profile (mobile; the left column has it on desktop) */}
             <div className="nc-mobile-only">
-              <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} style={{ marginBottom: 20 }} />
+              <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} collapseAfter={2} style={{ marginBottom: 20 }} />
             </div>
             {/* Header with Filters + Add Post button */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 2, fontFamily: font }}>Home Feed</h2>
-                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Updates from the global community</p>
+                <p className="feed-subtitle" style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Updates from the global community</p>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <div style={{ position: "relative" }}>
-                  <button onClick={() => setCreatePostDropdown(!createPostDropdown)} style={{
-                    display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
-                    borderRadius: 6, border: "none", background: "#37352F",
-                    fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font,
-                  }}>
-                    {Icons.plus({ size: 14 })} Add Post
-                  </button>
-                  {createPostDropdown && (
-                    <>
-                      <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setCreatePostDropdown(false)} />
-                      <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 6, width: 180, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "4px 0" }}>
-                        {[
-                          { key: "text", icon: Icons.file, label: "Write a Post" },
-                          { key: "photo", icon: Icons.image, label: "Share a Photo" },
-                          { key: "link", icon: Icons.link, label: "Share a Link" },
-                        ].map(item => (
-                          <button key={item.key} onClick={() => { setCreatePostModal(item.key); setCreatePostDropdown(false); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
-                            onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
-                            onMouseOut={(e) => e.currentTarget.style.background = "none"}>
-                            {item.icon({ size: 15, stroke: "#9B9A97" })} {item.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
+                <button onClick={() => setCreatePostModal("text")} style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
+                  borderRadius: 6, border: "none", background: "#37352F",
+                  fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font,
+                  whiteSpace: "nowrap", flexShrink: 0,
+                }}>
+                  {Icons.plus({ size: 14 })} Add Post
+                </button>
                 <button onClick={() => setFilterModalOpen(true)} style={{
                   display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
                   borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff",
                   fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
+                  whiteSpace: "nowrap", flexShrink: 0,
                 }}>
                   {Icons.filter({ size: 14 })} Filters
                 </button>
@@ -1704,107 +2097,51 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
 
             {/* Active Filters Status */}
-            {(feedFilters.hometown || feedFilters.occupation !== "All" || feedFilters.yearsAbroad !== "All" || feedFilters.community !== "All") && (
+            {feedFiltered && (
               <div style={{ background: "#E3FCEF", border: "1px solid #B5E4CA", borderRadius: 8, padding: "8px 14px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: "#22A06B", textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: font }}>{Icons.filter({ size: 12, stroke: "#22A06B" })} Filters:</span>
+                  {feedFilters.tag && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>#{feedFilters.tag}</span>}
                   {feedFilters.hometown && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>City: {feedFilters.hometown}</span>}
-                  {feedFilters.occupation !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Profession: {feedFilters.occupation}</span>}
-                  {feedFilters.yearsAbroad !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Status: {feedFilters.yearsAbroad}</span>}
+                  {feedFilters.occupation !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Occupation: {feedFilters.occupation}</span>}
+                  {feedFilters.livesIn !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Lives in: {feedFilters.livesIn}</span>}
                   {feedFilters.community !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Community: {feedFilters.community}</span>}
                 </div>
-                <button onClick={() => setFeedFilters({ hometown: "", occupation: "All", yearsAbroad: "All", community: "All" })} style={{ background: "none", border: "none", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap" }}>Clear All</button>
+                <button onClick={() => setFeedFilters(noFeedFilters)} style={{ background: "none", border: "none", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap" }}>Clear All</button>
               </div>
             )}
 
-            {/* Post Type Filter + Viral/New Toggle - same row */}
+            {/* Post Type Filter + Newest/Popular - same row */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
               <div style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8 }}>
                 {[{ k: "all", l: "All" }, { k: "posts", l: "Posts" }, { k: "links", l: "Links" }].map(tab => (
                   <button key={tab.k} onClick={() => setFeedPostType(tab.k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: feedPostType === tab.k ? "#fff" : "transparent", color: feedPostType === tab.k ? "#37352F" : "#9B9A97", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: feedPostType === tab.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{tab.l}</button>
                 ))}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "viral" ? "#37352F" : "#9B9A97", fontFamily: font }}>Viral</span>
-                <button
-                  onClick={() => setFeedSort(feedSort === "new" ? "viral" : "new")}
-                  style={{
-                    width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
-                    background: "#D4D4D2", position: "relative", padding: 0, transition: "background 0.2s",
-                  }}
-                >
-                  <div style={{
-                    width: 18, height: 18, borderRadius: "50%", background: "#37352F",
-                    position: "absolute", top: 3,
-                    left: feedSort === "new" ? 23 : 3,
-                    transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
-                  }} />
-                </button>
-                <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "new" ? "#37352F" : "#9B9A97", fontFamily: font }}>New</span>
+              <div style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8 }}>
+                {[{ k: "new", l: "Newest" }, { k: "popular", l: "Popular" }].map(s => (
+                  <button key={s.k} onClick={() => setFeedSort(s.k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: feedSort === s.k ? "#fff" : "transparent", color: feedSort === s.k ? "#37352F" : "#9B9A97", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: feedSort === s.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{s.l}</button>
+                ))}
               </div>
             </div>
 
             {/* Feed List */}
-            {[...posts].filter(p => {
-              // Hide blocked users' posts
-              if (blockedIds.has(p.userId)) return false;
-              const a = p.author || {};
-              if (feedFilters.hometown && !(a.hometown || "").toLowerCase().includes(feedFilters.hometown.toLowerCase()) && !(a.location || "").toLowerCase().includes(feedFilters.hometown.toLowerCase())) return false;
-              if (feedFilters.occupation !== "All" && !(a.profession || "").toLowerCase().includes(feedFilters.occupation.toLowerCase())) return false;
-              if (feedFilters.yearsAbroad !== "All") {
-                // Filter by NRI vs non-NRI based on author location
-                if (feedFilters.yearsAbroad === "NRI" && !isUserNRI(a)) return false;
-                if (feedFilters.yearsAbroad === "Based in India" && isUserNRI(a)) return false;
-              }
-              if (feedFilters.community !== "All" && p.groupName !== feedFilters.community) return false;
-              // Post type filter
-              if (feedPostType === "links" && !p.externalUrl) return false;
-              if (feedPostType === "posts" && p.externalUrl) return false;
-              return true;
-            }).sort((a, b) => feedSort === "viral" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0)).map((p) => (
+            {feedPosts.length > 0 ? feedPosts.map((p) => (
               <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />
-            ))}
+            )) : (feedFiltered || feedPostType !== "all") ? (
+              <EmptyCard text="No posts match these filters." action="Clear filters" onAction={() => { setFeedFilters(noFeedFilters); setFeedPostType("all"); }} />
+            ) : listsLoaded && (
+              <EmptyCard text="No posts yet. Be the first to share something." />
+            )}
           </div>
         );
 
       case "network":
-        // Load users from DB on first visit
-        if (!networkLoaded) {
-          setNetworkLoaded(true);
-          (async () => {
-            try {
-              const dbUsers = await api.searchProfiles();
-              if (dbUsers && dbUsers.length) {
-                // Fetch all connections to count followers/following
-                let connCounts = {};
-                try {
-                  const allConns = await api.getAllConnections();
-                  if (allConns) {
-                    allConns.forEach(c => {
-                      if (!connCounts[c.recipient_id]) connCounts[c.recipient_id] = { followers: 0, following: 0 };
-                      if (!connCounts[c.requester_id]) connCounts[c.requester_id] = { followers: 0, following: 0 };
-                      connCounts[c.recipient_id].followers++;
-                      connCounts[c.requester_id].following++;
-                    });
-                  }
-                } catch(ce) {}
-                setNetworkUsers(dbUsers.map(u => ({
-                  id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
-                  hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
-                  linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "",
-                  avatar_url: u.avatar_url || "",
-                  followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
-                })));
-              }
-            } catch (e) {}
-          })();
-        }
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
             {/* Header */}
-            <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 4, fontFamily: font }}>Find Indians Abroad</h2>
-            <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 20, fontFamily: font }}>Connect with people from your community.</p>
-            <InfoBanner text="Search and connect with Indians in your city. Send a Namaste request to start a conversation." />
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 20, fontFamily: font }}>Find Indians Abroad</h2>
+            <InfoBanner text="Tap Namaste to follow someone. They get a request to accept. You can also send them a message." />
 
             {/* Search & Filters Card */}
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "20px 20px 16px", marginBottom: 24 }}>
@@ -1866,21 +2203,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </div>
                 </div>
 
-                {/* Nearby button */}
-                <button
-                  onClick={() => setNetworkNearby(!networkNearby)}
-                  style={{
-                    padding: "7px 14px", fontSize: 12, borderRadius: 6, cursor: "pointer",
-                    fontFamily: font, display: "flex", alignItems: "center", gap: 5, fontWeight: 500,
-                    border: networkNearby ? "1px solid #37352F" : "1px solid #E0E0DE",
-                    background: networkNearby ? "#37352F" : "#fff",
-                    color: networkNearby ? "#fff" : "#5F5E5B",
-                    transition: "all 0.15s",
-                  }}
-                >
-                  {Icons.mapPin({ size: 12 })} Nearby
-                </button>
-
                 {/* Clear All */}
                 {isNetworkFilterActive && (
                   <button
@@ -1896,19 +2218,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             </div>
 
-            {/* Results */}
-            {isNetworkFilterActive ? (
-              filteredNetworkUsers.length > 0 ? (
+            {/* Results (everyone until a filter is picked) */}
+            {canBrowse && !networkReady ? (
+              <p style={{ fontSize: 13, color: "#9B9A97", textAlign: "center", padding: "24px 0", fontFamily: font }}>Loading members…</p>
+            ) : networkList.length > 0 ? (
+              <>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }} className="network-grid">
-                  {filteredNetworkUsers.map((u) => (
+                  {networkList.slice(0, networkShowCount).map((u) => (
                     <div key={u.id} style={{
                       background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4",
                       padding: "28px 24px 20px", textAlign: "center", display: "flex", flexDirection: "column",
-                      alignItems: "center", transition: "box-shadow 0.15s",
+                      alignItems: "center", transition: "box-shadow 0.15s", position: "relative",
                     }}
                     onMouseOver={(e) => (e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)")}
                     onMouseOut={(e) => (e.currentTarget.style.boxShadow = "none")}
                     >
+                      {/* Report (small grey flag, top-right) */}
+                      <button onClick={() => setReportConfirm({ type: "user", id: u.id })} aria-label="Report" style={{ position: "absolute", top: 12, right: 12, padding: 8, background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", display: "flex" }}>
+                        {Icons.flag({ size: 14 })}
+                      </button>
+
                       {/* Avatar */}
                       <Avatar name={u.name} size={76} url={u.avatar_url} />
 
@@ -1961,13 +2290,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         fontSize: 13, fontFamily: font, padding: "14px 0", borderTop: "1px solid #F0EFED",
                         width: "100%", marginBottom: 16,
                       }}>
-                        <span><b style={{ color: "#37352F" }}>{u.followers}</b> <span style={{ color: "#9B9A97" }}>followers</span></span>
+                        <span><b style={{ color: "#37352F" }}>{u.followers}</b> <span style={{ color: "#9B9A97" }}>{u.followers === 1 ? "follower" : "followers"}</span></span>
                         <span style={{ color: "#D4D4D2" }}>·</span>
                         <span><b style={{ color: "#37352F" }}>{u.following}</b> <span style={{ color: "#9B9A97" }}>following</span></span>
                       </div>
 
                       {/* Action buttons - Namaste + Message */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+                      <div style={{ display: "flex", alignItems: "stretch", gap: 10, width: "100%" }}>
                         <button
                           onClick={() => { 
                             if (acceptedConnections.has(u.id)) { if (confirm(`Unfollow ${u.name}?`)) handleUnfollow(u.id); }
@@ -1976,7 +2305,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           disabled={sentNamaste.has(u.id)}
                           style={{
                             flex: 1, padding: "10px 0", borderRadius: 8,
-                            border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "none",
+                            border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "1px solid transparent",
                             fontSize: 13, fontWeight: 600, fontFamily: font, cursor: sentNamaste.has(u.id) ? "default" : "pointer",
                             background: acceptedConnections.has(u.id) ? "#E3FCEF" : sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
                             color: acceptedConnections.has(u.id) ? "#22A06B" : sentNamaste.has(u.id) ? "#9B9A97" : "#fff",
@@ -1987,95 +2316,53 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           {acceptedConnections.has(u.id) ? (
                             <>{Icons.check({ size: 14 })} Following</>
                           ) : sentNamaste.has(u.id) ? (
-                            <>{Icons.check({ size: 14 })} Sent</>
+                            <>{Icons.check({ size: 14 })} Request sent</>
                           ) : (
                             <>{Icons.users({ size: 14 })} Namaste</>
                           )}
                         </button>
-                        <button onClick={async () => {
-                          try {
-                            const convo = await api.getOrCreateConversation(u.id);
-                            if (convo) {
-                              setConvos(prev => {
-                                if (prev.find(c => c.id === convo.id)) return prev;
-                                return [{ id: convo.id, name: u.name, otherUserId: u.id, lastMsg: "", time: "", unread: false }, ...prev];
-                              });
-                              setSelectedConvo(convo.id);
-                              setView("messages");
-                            }
-                          } catch(e) { setView("messages"); }
-                        }} style={{
-                          padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE",
+                        <button onClick={() => openChatWith(u)} style={{
+                          flex: 1, padding: "10px 0", borderRadius: 8, border: "1px solid #E0E0DE",
                           background: "#fff", cursor: "pointer", color: "#5F5E5B", display: "flex",
-                          alignItems: "center", justifyContent: "center",
+                          alignItems: "center", justifyContent: "center", gap: 7,
+                          fontSize: 13, fontWeight: 600, fontFamily: font,
                           transition: "all 0.1s",
                         }}
                         onMouseOver={(e) => { e.currentTarget.style.background = "#F7F7F5"; e.currentTarget.style.color = "#37352F"; }}
                         onMouseOut={(e) => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#5F5E5B"; }}
                         >
-                          {Icons.message({ size: 16 })}
-                        </button>
-                        <button onClick={async () => { setReportConfirm({ type: "user", id: u.id }); }} style={{ padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2", display: "flex", alignItems: "center" }}>
-                          {Icons.flag({ size: 14 })}
+                          {Icons.message({ size: 14 })} Message
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
-              ) : (
-                /* No results state */
-                <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4" }}>
-                  <p style={{ fontSize: 14, fontFamily: font }}>No users found matching your criteria.</p>
-                  <button
-                    onClick={clearNetworkFilters}
-                    style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", fontSize: 13, cursor: "pointer", marginTop: 8, fontFamily: font }}
-                  >
-                    Clear Filters
-                  </button>
-                </div>
-              )
-            ) : (
-              /* Empty / Initial State - matching screenshot 2 */
-              <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "48px 32px", textAlign: "center" }}>
-                {/* Blue search icon circle */}
-                <div style={{
-                  width: 72, height: 72, borderRadius: "50%", background: "#EDF4FF",
-                  display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20,
-                }}>
-                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#5B9CFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="11" cy="11" r="8"/>
-                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                  </svg>
-                </div>
-
-                <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 10, fontFamily: font }}>Find your community</h3>
-                <p style={{ fontSize: 14, color: "#9B9A97", maxWidth: 440, margin: "0 auto 28px", lineHeight: 1.6, fontFamily: font }}>
-                  Search for people by name, profession, or location. Use the filters to find people from your hometown or current city.
-                </p>
-
-                {/* Search Tips box */}
-                <div style={{
-                  background: "#F7F7F5", borderRadius: 10, padding: "18px 22px", maxWidth: 360, margin: "0 auto",
-                  textAlign: "left", border: "1px solid #EDEDEB",
-                }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                    <div style={{ flexShrink: 0, marginTop: 1, color: "#9B9A97" }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"/>
-                        <line x1="12" y1="16" x2="12" y2="12"/>
-                        <line x1="12" y1="8" x2="12.01" y2="8"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <p style={{ fontSize: 12, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Search Tips:</p>
-                      <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#5F5E5B", lineHeight: 1.8, fontFamily: font }}>
-                        <li>Type "Engineer" to find professionals</li>
-                        <li>Select "Mumbai" in Hometown filter</li>
-                        <li>Use "Nearby" to find locals</li>
-                      </ul>
-                    </div>
+                {networkList.length > networkShowCount && (
+                  <div style={{ textAlign: "center", marginTop: 16 }}>
+                    <button
+                      onClick={() => setNetworkShowCount(networkShowCount + 30)}
+                      style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", fontSize: 13, cursor: "pointer", padding: "12px 16px", fontFamily: font }}
+                    >
+                      Show more
+                    </button>
                   </div>
-                </div>
+                )}
+              </>
+            ) : isNetworkFilterActive ? (
+              /* No results state */
+              <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4" }}>
+                <p style={{ fontSize: 14, fontFamily: font }}>No users found matching your criteria.</p>
+                <button
+                  onClick={clearNetworkFilters}
+                  style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", fontSize: 13, cursor: "pointer", marginTop: 8, fontFamily: font }}
+                >
+                  Clear Filters
+                </button>
+              </div>
+            ) : (
+              /* Nobody else to show yet */
+              <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4" }}>
+                <p style={{ fontSize: 14, fontFamily: font }}>No members to show yet.</p>
               </div>
             )}
           </div>
@@ -2086,12 +2373,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           const groupPosts = posts.filter((p) => p.groupId === selectedGroup.id);
           const thumbColors = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
           const sgColor = thumbColors[groups.findIndex((g) => g.id === selectedGroup.id) % thumbColors.length];
+          const guidelinesShown = guidelinesOpen[selectedGroup.id] ?? !selectedGroup.joined;
 
           return (
             <div style={{ maxWidth: 700, margin: "0 auto" }}>
               {/* Back link */}
               <button onClick={() => { setSelectedGroup(null); setCommunityTab("feed"); }} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#9B9A97", background: "none", border: "none", cursor: "pointer", marginBottom: 16, fontFamily: font, fontWeight: 500 }}>
-                {Icons.chevronLeft({ size: 16 })} Back to Communities
+                {Icons.chevronLeft({ size: 16 })} Back to Groups
               </button>
 
               {/* Hero Banner */}
@@ -2111,7 +2399,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
                     <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.55, fontFamily: font, flex: 1 }}>{selectedGroup.description}</p>
                     <button
-                      onClick={() => toggleGroup(selectedGroup.id)}
+                      onClick={() => { if (!selectedGroup.joined || confirm(`Leave ${selectedGroup.name}? You'll stop seeing its posts.`)) toggleGroup(selectedGroup.id); }}
                       style={{
                         padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer", flexShrink: 0,
                         border: selectedGroup.joined ? "1px solid #E0E0DE" : "none",
@@ -2119,19 +2407,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         color: selectedGroup.joined ? "#5F5E5B" : "#fff",
                       }}
                     >
-                      {selectedGroup.joined ? "Joined" : "Join Community"}
+                      {selectedGroup.joined ? "✓ Joined" : "Join"}
                     </button>
                   </div>
                   <div style={{ display: "flex", gap: 16, marginTop: 14, fontSize: 12, color: "#9B9A97" }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.users({ size: 14 })} {selectedGroup.joined ? (groups.filter(g => g.joined).length > 0 ? "You + others" : "1") : "0"} joined</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.users({ size: 14 })} {(selectedGroup.members || 0).toLocaleString()} members</span>
                     <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.shield({ size: 14 })} Admin Moderated</span>
                   </div>
 
-                  {/* Community Guidelines */}
-                  <div style={{ marginTop: 20, padding: "16px 18px", background: "#F7F7F5", borderRadius: 10, border: "1px solid #EDEDEB" }}>
-                    <h4 style={{ fontSize: 11, fontWeight: 800, color: "#37352F", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, display: "flex", alignItems: "center", gap: 6, fontFamily: font }}>
-                      {Icons.shield({ size: 13 })} Community Guidelines
-                    </h4>
+                  {/* Community Guidelines: one quiet line, open by default only for visitors */}
+                  <button onClick={() => setGuidelinesOpen(prev => ({ ...prev, [selectedGroup.id]: !guidelinesShown }))} aria-expanded={guidelinesShown}
+                    style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 14, background: "none", border: "none", padding: "8px 0", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#5F5E5B", fontFamily: font }}>
+                    {Icons.shield({ size: 13 })} Community guidelines <span style={{ display: "inline-block", transform: guidelinesShown ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>›</span>
+                  </button>
+                  {guidelinesShown && <div style={{ marginTop: 6, padding: "16px 18px", background: "#F7F7F5", borderRadius: 10, border: "1px solid #EDEDEB" }}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 20px" }}>
                       {[
                         "Be respectful and kind to all members. Harassment is not tolerated.",
@@ -2145,7 +2434,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </div>}
                 </div>
               </div>
 
@@ -2169,7 +2458,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
               {communityTab === "feed" ? (
                 <>
-                  {/* Community post box */}
+                  {/* Community post box (members only) */}
+                  {!selectedGroup.joined ? (
+                    <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                      <span style={{ fontSize: 14, color: "#5F5E5B", fontFamily: font }}>Join this group to post</span>
+                      <button onClick={() => toggleGroup(selectedGroup.id)} style={{ padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer", flexShrink: 0, border: "none", background: "#37352F", color: "#fff" }}>
+                        Join
+                      </button>
+                    </div>
+                  ) : (
                   <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "16px 20px", marginBottom: 20 }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                       <Avatar name={user.name} size={36} url={user.avatar_url} />
@@ -2180,10 +2477,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         onKeyDown={(e) => e.key === "Enter" && createPost()}
                       />
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
-                      <button style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>
-                        {Icons.image({ size: 14 })} Add Photo
-                      </button>
+                    <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
                       <button onClick={createPost} disabled={!newPost.trim()} style={{
                         padding: "7px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, fontFamily: font,
                         background: newPost.trim() ? "#37352F" : "#fff", color: newPost.trim() ? "#fff" : "#9B9A97", cursor: newPost.trim() ? "pointer" : "default",
@@ -2192,9 +2486,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       </button>
                     </div>
                   </div>
+                  )}
 
                   {groupPosts.length > 0 ? (
-                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />)
+                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} hideGroup />)
                   ) : (
                     <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                       No posts in this community yet. Be the first to say hello!
@@ -2233,13 +2528,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     outsideByCities[city].push(u);
                   });
                   const outsideCityNames = Object.keys(outsideByCities).sort();
-                  const MemberCard = ({ u, isLocal }) => (
+                  const MemberCard = ({ u }) => (
                     <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
                       <Avatar name={u.name} size={44} url={u.avatar_url} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name}</h4>
-                          {isLocal && <span style={{ fontSize: 9, fontWeight: 600, padding: "2px 6px", borderRadius: 4, background: "#E3FCEF", color: "#22A06B", border: "1px solid #B5E4CA" }}>LOCAL</span>}
                           <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 3,
                             background: isUserNRI(u) ? "#E3FCEF" : "#FFF3E0",
                             color: isUserNRI(u) ? "#22A06B" : "#E65100",
@@ -2251,10 +2545,33 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           {Icons.mapPin({ size: 10 })} {(u.location || "").split(",")[0] || "—"}
                         </div>
                       </div>
-                      <button onClick={() => handleSendNamaste(u.id)} disabled={sentNamaste.has(u.id) || u.id === user.id}
-                        style={{ padding: 8, borderRadius: "50%", border: "none", cursor: (sentNamaste.has(u.id) || u.id === user.id) ? "default" : "pointer", flexShrink: 0, background: (sentNamaste.has(u.id) || u.id === user.id) ? "#F0EFED" : "#37352F", color: (sentNamaste.has(u.id) || u.id === user.id) ? "#9B9A97" : "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {(sentNamaste.has(u.id) || u.id === user.id) ? Icons.check({ size: 16 }) : Icons.users({ size: 16 })}
-                      </button>
+                      {u.id === user.id ? (
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "#9B9A97", padding: "4px 10px", borderRadius: 6, background: "#F0EFED", flexShrink: 0, fontFamily: font }}>You</span>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            if (acceptedConnections.has(u.id)) { if (confirm(`Unfollow ${u.name}?`)) handleUnfollow(u.id); }
+                            else if (!sentNamaste.has(u.id)) handleSendNamaste(u.id);
+                          }}
+                          disabled={sentNamaste.has(u.id) && !acceptedConnections.has(u.id)}
+                          style={{
+                            padding: "7px 12px", borderRadius: 8, flexShrink: 0, whiteSpace: "nowrap",
+                            border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "none",
+                            fontSize: 12, fontWeight: 600, fontFamily: font, cursor: (sentNamaste.has(u.id) && !acceptedConnections.has(u.id)) ? "default" : "pointer",
+                            background: acceptedConnections.has(u.id) ? "#E3FCEF" : sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
+                            color: acceptedConnections.has(u.id) ? "#22A06B" : sentNamaste.has(u.id) ? "#9B9A97" : "#fff",
+                            display: "flex", alignItems: "center", gap: 5,
+                          }}
+                        >
+                          {acceptedConnections.has(u.id) ? (
+                            <>{Icons.check({ size: 13 })} Following</>
+                          ) : sentNamaste.has(u.id) ? (
+                            <>{Icons.check({ size: 13 })} Request sent</>
+                          ) : (
+                            <>{Icons.users({ size: 13 })} Namaste</>
+                          )}
+                        </button>
+                      )}
                     </div>
                   );
                   return (
@@ -2262,16 +2579,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       {localMembers.length > 0 && (
                         <>
                           <h4 style={{ fontSize: 13, fontWeight: 700, color: "#22A06B", marginBottom: 10, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.mapPin({ size: 14, stroke: "#22A06B" })} Living in {cityName} ({localMembers.length})</h4>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-                            {localMembers.map(u => <MemberCard key={u.id} u={u} isLocal={true} />)}
+                          <div className="members-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+                            {localMembers.map(u => <MemberCard key={u.id} u={u} />)}
                           </div>
                         </>
                       )}
                       {outsideCityNames.map(city => (
                         <div key={city} style={{ marginBottom: 16 }}>
                           <h4 style={{ fontSize: 13, fontWeight: 700, color: "#9B9A97", marginBottom: 10, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.mapPin({ size: 14, stroke: "#9B9A97" })} {city} ({outsideByCities[city].length})</h4>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                            {outsideByCities[city].map(u => <MemberCard key={u.id} u={u} isLocal={false} />)}
+                          <div className="members-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                            {outsideByCities[city].map(u => <MemberCard key={u.id} u={u} />)}
                           </div>
                         </div>
                       ))}
@@ -2289,43 +2606,37 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         // Groups List View
         const myGroups = groups.filter(g => g.joined);
         const groupTabList = groupTab === "my" ? myGroups.filter(g => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase())) : groups.filter((g) => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()));
+        // On All groups, the member's own city comes first.
+        const myCityGroupName = `indians in ${(user.location || "").split(",")[0].trim().toLowerCase()}`;
+        if (groupTab !== "my") groupTabList.sort((a, b) => (b.name.toLowerCase() === myCityGroupName) - (a.name.toLowerCase() === myCityGroupName));
+        // A search with no match can turn into a request for that city.
+        const searchedCity = groupSearchQuery.trim().replace(/^indians in\s+/i, "");
+        const openGroupRequest = (city) => { setNewGroupCity(city); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true); };
         const thumbColorsAll = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
 
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            {/* Header with Request New + Search */}
+            {/* Header with Search */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Communities</h2>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <button
-                  onClick={() => setGroupRequestModal(true)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 6,
-                    border: "1px solid #E0E0DE", background: "#fff", fontSize: 12, fontWeight: 600, color: "#37352F",
-                    cursor: "pointer", fontFamily: font,
-                  }}
-                >
-                  {Icons.plus({ size: 13 })} Request New
-                </button>
-                <div style={{ position: "relative" }}>
-                  <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>
-                    {Icons.search({ size: 14 })}
-                  </div>
-                  <input
-                    value={groupSearchQuery} onChange={(e) => setGroupSearchQuery(e.target.value)}
-                    placeholder="Search..."
-                    style={{
-                      padding: "7px 12px 7px 30px", fontSize: 12, border: "1px solid #E0E0DE",
-                      borderRadius: 6, background: "#fff", outline: "none", width: 160, fontFamily: font, color: "#37352F",
-                    }}
-                  />
+              <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Groups</h2>
+              <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+                <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>
+                  {Icons.search({ size: 14 })}
                 </div>
+                <input
+                  value={groupSearchQuery} onChange={(e) => setGroupSearchQuery(e.target.value)}
+                  placeholder="Search groups or cities…"
+                  style={{
+                    padding: "7px 12px 7px 30px", fontSize: 12, border: "1px solid #E0E0DE",
+                    borderRadius: 6, background: "#fff", outline: "none", width: "100%", fontFamily: font, color: "#37352F",
+                  }}
+                />
               </div>
             </div>
 
             {/* My Groups / All Groups tabs */}
             <div style={{ display: "flex", gap: 0, marginBottom: 20, background: "#fff", borderRadius: 8, border: "1px solid #E0E0DE", overflow: "hidden", width: "fit-content" }}>
-              {[{ key: "all", label: "All Communities" }, { key: "my", label: `My Groups (${myGroups.length})` }].map(t => (
+              {[{ key: "all", label: "All groups" }, { key: "my", label: `My groups (${myGroups.length})` }].map(t => (
                 <button key={t.key} onClick={() => setGroupTab(t.key)}
                   style={{ padding: "8px 18px", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", fontFamily: font,
                     background: groupTab === t.key ? "#37352F" : "#fff", color: groupTab === t.key ? "#fff" : "#5F5E5B" }}>
@@ -2362,14 +2673,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <h3 style={{ fontSize: 15, fontWeight: 600, color: "#37352F", fontFamily: font, marginBottom: 3 }}>{g.name}</h3>
-                        <span style={{ fontSize: 9, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", border: "1px solid #EDEDEB", padding: "2px 6px", borderRadius: 3 }}>
+                        {g.category !== "City" && <span style={{ fontSize: 9, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", border: "1px solid #EDEDEB", padding: "2px 6px", borderRadius: 3 }}>
                           {g.category}
-                        </span>
+                        </span>}
                       </div>
                     </div>
-                    <p style={{ fontSize: 12, color: "#9B9A97", lineHeight: 1.4, fontFamily: font, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                    {/* The default "Community for Indians living in X." only repeats the name */}
+                    {g.description && g.description !== `Community for Indians living in ${g.name.replace(/^Indians in /, "")}.` && <p style={{ fontSize: 12, color: "#9B9A97", lineHeight: 1.4, fontFamily: font, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                       {g.description}
-                    </p>
+                    </p>}
                     <div style={{ fontSize: 12, color: "#9B9A97", display: "flex", alignItems: "center", gap: 4 }}>
                       {Icons.users({ size: 13 })} {g.members.toLocaleString()} members
                     </div>
@@ -2378,7 +2690,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   {/* Join button - full width at bottom */}
                   <div style={{ padding: "0 18px 16px" }}>
                     <button
-                      onClick={(e) => { e.stopPropagation(); toggleGroup(g.id); }}
+                      onClick={(e) => { e.stopPropagation(); if (g.joined) { setGroupMembers([]); setSelectedGroup(g); } else toggleGroup(g.id); }}
                       style={{
                         width: "100%", padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer",
                         border: g.joined ? "1px solid #E0E0DE" : "none",
@@ -2387,7 +2699,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         transition: "all 0.15s",
                       }}
                     >
-                      {g.joined ? "Joined" : "Join Community"}
+                      {g.joined ? "✓ Joined" : "Join"}
                     </button>
                   </div>
                 </div>
@@ -2396,10 +2708,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {groupTabList.length === 0 && (
               <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", color: "#9B9A97", fontSize: 14, fontFamily: font }}>
-                No communities found.
+                No groups found.
                 <br />
                 <button onClick={() => setGroupSearchQuery("")} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", cursor: "pointer", marginTop: 8, fontSize: 13, fontFamily: font }}>
                   Clear Search
+                </button>
+                {searchedCity && (
+                  <>
+                    <br />
+                    <button onClick={() => openGroupRequest(searchedCity)} style={{ ...btnPrimary, marginTop: 14, maxWidth: "100%", overflowWrap: "anywhere" }}>
+                      {Icons.plus({ size: 14 })} Request "Indians in {searchedCity}"
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            {groupTabList.length > 0 && (
+              <div style={{ textAlign: "center", marginTop: 20, fontSize: 13, color: "#9B9A97", fontFamily: font }}>
+                Can't find your city?{" "}
+                <button onClick={() => openGroupRequest(newGroupCity)} style={{ background: "none", border: "none", padding: "8px 0", color: "#37352F", textDecoration: "underline", cursor: "pointer", fontSize: 13, fontFamily: font }}>
+                  Request a group
                 </button>
               </div>
             )}
@@ -2408,27 +2736,27 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       case "events":
         const evtColors = ["#3D6B5A", "#5A4A3D", "#3D5A80", "#6B5B4E", "#4A6741"];
-        const filteredEvents = events.filter((e) => {
+        const filteredEvents = orderEvents(events.filter((e) => {
           const matchesView = eventViewMode === "all" || rsvps.has(e.id);
-          const matchesCity = eventCityFilter === "All" || (e.location || "").includes(eventCityFilter);
+          const matchesCity = eventCityFilter === "All" || (e.city || "").split(",")[0].trim() === eventCityFilter || (e.location || "").includes(eventCityFilter);
           const q = eventSearch.trim().toLowerCase();
           const matchesSearch = !q || (e.title || "").toLowerCase().includes(q) || (e.description || "").toLowerCase().includes(q) || (e.location || "").toLowerCase().includes(q) || (e.organizer || "").toLowerCase().includes(q);
           return matchesView && matchesCity && matchesSearch;
-        });
+        }));
+        const firstPastEvent = filteredEvents.find(isPastEvent);
 
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
             {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Events</h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Discover festivals, meetups, and networking events.</p>
               </div>
-              <button onClick={() => setEventModal(true)} style={btnPrimary}>
+              <button onClick={() => setEventModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>
                 {Icons.plus({ size: 14 })} Host Event
               </button>
             </div>
-            <InfoBanner text="Browse and RSVP to events in your city. Host your own to bring the community together." />
 
             {/* Search Bar */}
             <div style={{ position: "relative", marginBottom: 12 }}>
@@ -2448,7 +2776,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button
                   onClick={() => setEventViewMode("all")}
                   style={{
-                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font,
+                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap", flexShrink: 0,
                     background: eventViewMode === "all" ? "#fff" : "transparent",
                     color: eventViewMode === "all" ? "#37352F" : "#9B9A97",
                     boxShadow: eventViewMode === "all" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
@@ -2459,7 +2787,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button
                   onClick={() => setEventViewMode("rsvped")}
                   style={{
-                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font,
+                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap", flexShrink: 0,
                     background: eventViewMode === "rsvped" ? "#fff" : "transparent",
                     color: eventViewMode === "rsvped" ? "#37352F" : "#9B9A97",
                     boxShadow: eventViewMode === "rsvped" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
@@ -2478,7 +2806,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     color: "#37352F", fontWeight: 500, cursor: "pointer", fontFamily: font, appearance: "none", outline: "none",
                   }}
                 >
-                  <option value="All">All</option>
+                  <option value="All">All cities</option>
                   {GLOBAL_CITIES.map((c) => <option key={c} value={c.split(",")[0]}>{c}</option>)}
                 </select>
                 <div style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
@@ -2498,7 +2826,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               const evtColor = evtColors[idx % evtColors.length];
 
               return (
-                <div key={e.id} className="event-card" style={{
+                <Fragment key={e.id}>
+                {e === firstPastEvent && <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", margin: "28px 0 14px", fontFamily: font }}>Past events</h4>}
+                <div className={e.image ? "event-card" : "event-card event-card-plain"} style={{
                   background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden",
                   display: "flex", flexDirection: "row", marginBottom: 16, transition: "box-shadow 0.15s",
                 }}
@@ -2565,7 +2895,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{e.organizer}</div>
                       </div>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <button
+                        {!isPastEvent(e) && <button
                           onClick={() => toggleRsvp(e.id)}
                           disabled={String(e.id).startsWith("e_")}
                           style={{
@@ -2576,16 +2906,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             color: "#22A06B", transition: "all 0.15s",
                           }}
                         >
-                          Going
-                        </button>
-                        {e.organizerId === user.id && <button onClick={async () => { if (confirm("Delete this event?")) { try { await api.deleteEvent(e.id); } catch(e2) {} setEvents(prev => prev.filter(x => x.id !== e.id)); } }} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", cursor: "pointer", color: "#DC2626" }}>{Icons.trash({ size: 14 })}</button>}
-                        <button onClick={() => setReportConfirm({ type: "event", id: e.id, name: e.title })} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 14 })}</button>
+                          {rsvps.has(e.id) ? "✓ Going" : "RSVP"}
+                        </button>}
                       </div>
                     </div>
-                    {/* Like / Comment / Share */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 16, paddingTop: 12, borderTop: "1px solid #F0EFED", marginTop: 12 }}>
-                      <button onClick={() => setEventLikes(prev => ({ ...prev, [e.id]: !prev[e.id] }))} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: eventLikes[e.id] ? "#DC2626" : "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.heart({ size: 15, fill: eventLikes[e.id] ? "#DC2626" : "none", stroke: eventLikes[e.id] ? "#DC2626" : "currentColor" })} {eventLikes[e.id] ? "Liked" : "Like"}</button>
-                      <button onClick={() => setExpandedEvent(e)} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.message({ size: 15 })} Comment {eventComments[e.id]?.length ? `(${eventComments[e.id].length})` : ""}</button>
+                    {/* Report (and Delete for the host) / Share */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, paddingTop: 8, borderTop: "1px solid #F0EFED", marginTop: 12 }}>
+                      <button onClick={() => setReportConfirm({ type: "event", id: e.id, name: e.title })} aria-label="Report" title="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 8, display: "flex" }}>{Icons.flag({ size: 14 })}</button>
+                      {e.organizerId === user.id && <button onClick={async () => { if (confirm("Delete this event?")) { try { await api.deleteEvent(e.id); } catch(e2) {} setEvents(prev => prev.filter(x => x.id !== e.id)); } }} aria-label="Delete event" title="Delete event" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 8, display: "flex" }}>{Icons.trash({ size: 14 })}</button>}
                       <button onClick={() => {
                         const shareUrl = `${window.location.origin}${window.location.pathname}#event=${e.id}`;
                         const shareText = `${e.title}\n${eventDate(e)} at ${eventTime(e)}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
@@ -2595,6 +2923,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     </div>
                   </div>
                 </div>
+                </Fragment>
               );
             }) : (
               <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", color: "#9B9A97", fontSize: 14, fontFamily: font }}>
@@ -2607,7 +2936,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       case "trending":
         // Compute trending hashtags from actual posts
         const tagCounts = {};
-        const tagCategories = {};
         const extractHashtags = (text) => {
           const matches = (text || "").match(/#(\w+)/g) || [];
           return matches.map(h => h.replace("#", ""));
@@ -2618,20 +2946,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           const all = [...new Set([...inline, ...fromTags])];
           all.forEach(tag => {
             tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-            if (!tagCategories[tag]) {
-              // Guess category based on post author profession
-              tagCategories[tag] = p.author?.profession || "Community";
-            }
           });
         });
         const trendingTags = Object.entries(tagCounts)
-          .map(([tag, count]) => ({ tag, count, category: tagCategories[tag] || "Community" }))
+          .map(([tag, count]) => ({ tag, count }))
           .sort((a, b) => b.count - a.count)
           .slice(0, 10);
         return (
           <div style={{ maxWidth: 560, margin: "0 auto" }}>
             <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 20, fontFamily: font }}>Trending Topics</h2>
-            <InfoBanner text="Top 10 trending hashtags in the community. Post with #hashtags to start a trend." />
+            <InfoBanner text="The 10 most-used #hashtags. Tap one to see its posts." />
             {trendingTags.length === 0 ? (
               <div style={{ textAlign: "center", padding: 48, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                 {Icons.trending({ size: 32, stroke: "#D4D4D2" })}
@@ -2640,15 +2964,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             ) : (
               <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
                 {trendingTags.map((t, i) => (
-                  <div key={t.tag} onClick={() => { setFeedFilters(prev => ({ ...prev })); setView("home"); }} style={{ padding: "16px 20px", borderBottom: i < trendingTags.length - 1 ? "1px solid #F0EFED" : "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}
+                  <div key={t.tag} onClick={() => { setFeedFilters(prev => ({ ...prev, tag: t.tag })); setView("home"); }} style={{ padding: "16px 20px", borderBottom: i < trendingTags.length - 1 ? "1px solid #F0EFED" : "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}
                     onMouseOver={(e) => (e.currentTarget.style.background = "#FAFAF8")} onMouseOut={(e) => (e.currentTarget.style.background = "#fff")}>
                     <div style={{ width: 32, height: 32, borderRadius: "50%", background: i < 3 ? "#FFF3E0" : "#F0EFED", color: i < 3 ? "#E65100" : "#5F5E5B", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontFamily: font, flexShrink: 0 }}>#{i + 1}</div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 11, color: "#9B9A97", marginBottom: 2, fontFamily: font, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>{t.category}</div>
                       <div style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>#{t.tag}</div>
                       <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{t.count} {t.count === 1 ? "post" : "posts"}</div>
                     </div>
-                    {Icons.trending({ size: 18, stroke: "#22A06B" })}
                   </div>
                 ))}
               </div>
@@ -2659,16 +2981,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       case "help":
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font, display: "flex", alignItems: "center", gap: 8 }}>
                   {Icons.help({ size: 22, stroke: "#E25555" })} Community Help
                 </h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Ask questions, share advice, and help fellow Indians.</p>
               </div>
-              <button onClick={() => setHelpModal(true)} style={btnPrimary}>Ask for Help</button>
+              <button onClick={() => setHelpModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>Ask for Help</button>
             </div>
-            <InfoBanner text="Need advice on housing, visas, or daily life? Ask the community. Your city members will see it first." />
             {helpRequests.map((h) => (
               <div key={h.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px", marginBottom: 14 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -2683,26 +3004,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <button onClick={async () => { setReportConfirm({ type: "help", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
                   </div>
                 </div>
-                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>{h.title}</h3>
-                <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical" }}>{h.description}</p>
-                {h.description && h.description.length > 100 && selectedHelp !== h.id && (
-                  <button onClick={() => setSelectedHelp(h.id)} style={{ background: "none", border: "none", color: "#5B9CFF", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 10, fontFamily: font }}>Read more</button>
-                )}
+                <h3 onClick={() => openHelp(h)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font, cursor: "pointer" }}>{h.title}</h3>
+                <p onClick={() => openHelp(h)} style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical", cursor: "pointer" }}>{h.description}</p>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Avatar name={h.user} size={24} />
                     <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{h.user} · {timeAgo(h.timestamp)}</span>
                   </div>
-                  <button onClick={async () => {
-                    const newId = selectedHelp === h.id ? null : h.id;
-                    setSelectedHelp(newId);
-                    if (newId && !helpResponses[newId]) {
-                      try {
-                        const resp = await api.getHelpResponses(newId);
-                        if (resp) setHelpResponses(prev => ({ ...prev, [newId]: resp.map(r => ({ id: r.id, text: r.content, user: r.profiles?.name || "User", time: new Date(r.created_at).toLocaleString() })) }));
-                      } catch(e) {}
-                    }
-                  }} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>{Icons.message({ size: 14 })} {h.responses} responses</button>
+                  <button onClick={() => { if (selectedHelp === h.id) setSelectedHelp(null); else openHelp(h); }} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>{Icons.message({ size: 14 })} {!h.responses ? "Reply" : h.responses === 1 ? "1 response" : `${h.responses} responses`}</button>
                 </div>
                 {selectedHelp === h.id && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
@@ -2713,7 +3022,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         <div style={{ flex: 1 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{r.user}</span>
-                            <span style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{r.time}</span>
+                            <span style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{timeAgo(r.time)}</span>
                           </div>
                           <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 4, lineHeight: 1.5, fontFamily: font }}>{r.text}</p>
                         </div>
@@ -2723,13 +3032,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                       <Avatar name={user.name} size={28} url={user.avatar_url} />
                       <div style={{ flex: 1 }}>
-                        <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder="Write a response to help..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 60, resize: "none", boxSizing: "border-box" }} />
+                        <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder="Write a response to help..." maxLength={TEXT_LIMIT} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 60, resize: "none", boxSizing: "border-box" }} />
+                        <CharCount value={helpResponse} />
                         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                           <button disabled={!helpResponse.trim()} onClick={async () => {
                             const text = helpResponse;
-                            try { await api.addHelpResponse(h.id, text); } catch(e) {}
+                            try { await api.addHelpResponse(h.id, text); } catch(e) {
+                              alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your response couldn't be posted. Please try again.");
+                              return;
+                            }
                             setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, responses: (x.responses || 0) + 1 } : x));
-                            setHelpResponses(prev => ({ ...prev, [h.id]: [...(prev[h.id] || []), { id: Date.now(), text, user: user.name, time: "Just now" }] }));
+                            setHelpResponses(prev => ({ ...prev, [h.id]: [...(prev[h.id] || []), { id: Date.now(), text, user: user.name, time: Date.now() }] }));
                             setHelpResponse("");
                           }} style={{ ...btnPrimary, padding: "7px 16px", fontSize: 12, opacity: helpResponse.trim() ? 1 : 0.4 }}>Post Response</button>
                         </div>
@@ -2739,21 +3052,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 )}
               </div>
             ))}
+            {listsLoaded && helpRequests.length === 0 && <EmptyCard text="No requests yet. Ask the first question." />}
           </div>
         );
 
       case "docs":
         if (selectedDoc) {
           return (
-            <div className="doc-article" style={{ maxWidth: 700, margin: "0 auto", background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden" }}>
-              {/* Header bar */}
-              <div style={{ padding: "14px 20px", borderBottom: "1px solid #F0EFED", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 56, background: "#fff", zIndex: 5 }}>
-                <button onClick={() => setSelectedDoc(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.chevronLeft({ size: 18 })}</button>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <h3 style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedDoc.title}</h3>
-                  <p style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>By {selectedDoc.author}</p>
-                </div>
-                <button style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.dots({ size: 18 })}</button>
+            <div className="doc-article" style={{ maxWidth: 700, minWidth: 0, margin: "0 auto", background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden" }}>
+              {/* Back to the list */}
+              <div style={{ padding: "14px 20px", borderBottom: "1px solid #F0EFED" }}>
+                <button onClick={() => setSelectedDoc(null)} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#9B9A97", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: font, fontWeight: 500 }}>
+                  {Icons.chevronLeft({ size: 16 })} All docs
+                </button>
               </div>
               {/* Article content */}
               <div className="doc-body" style={{ padding: "32px 28px" }}>
@@ -2781,16 +3092,25 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
                   <Avatar name={user.name} size={32} url={user.avatar_url || user.avatarUrl} />
                   <div style={{ flex: 1 }}>
-                    <textarea value={docComment} onChange={(e) => setDocComment(e.target.value)} placeholder="Add a comment..." style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 70, resize: "none", boxSizing: "border-box" }} />
+                    <textarea value={docComment} onChange={(e) => setDocComment(e.target.value)} placeholder="Add a comment..." maxLength={TEXT_LIMIT} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 70, resize: "none", boxSizing: "border-box" }} />
+                    <CharCount value={docComment} />
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                       <button disabled={!docComment.trim()} onClick={async () => {
                         const text = docComment;
-                        const newComment = { id: "c_" + Date.now(), user: user.name, text, time: "Just now" };
-                        const updated = docs.map(d => d.id === selectedDoc.id ? { ...d, comments: [...(d.comments || []), newComment] } : d);
+                        const docId = selectedDoc.id;
+                        const newComment = { id: "c_" + Date.now(), user: user.name, text, time: Date.now() };
+                        const updated = docs.map(d => d.id === docId ? { ...d, comments: [...(d.comments || []), newComment] } : d);
                         setDocs(updated);
-                        setSelectedDoc(updated.find(d => d.id === selectedDoc.id));
+                        setSelectedDoc(updated.find(d => d.id === docId));
                         setDocComment("");
-                        try { await api.addDocComment(selectedDoc.id, text); } catch(e) {}
+                        try { await api.addDocComment(docId, text); } catch(e) {
+                          // Take the comment back out and give the text back.
+                          const without = (d) => d.id === docId ? { ...d, comments: (d.comments || []).filter(c => c.id !== newComment.id) } : d;
+                          setDocs(prev => prev.map(without));
+                          setSelectedDoc(prev => prev && without(prev));
+                          setDocComment(prev => prev || text);
+                          alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your comment couldn't be posted. Please try again.");
+                        }
                       }} style={{ ...btnPrimary, padding: "8px 18px", opacity: docComment.trim() ? 1 : 0.4 }}>Post Comment</button>
                     </div>
                   </div>
@@ -2801,7 +3121,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{c.user}</span>
-                        <span style={{ fontSize: 11, color: "#9B9A97" }}>· {c.time}</span>
+                        <span style={{ fontSize: 11, color: "#9B9A97" }}>· {timeAgo(c.time)}</span>
                       </div>
                       <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, fontFamily: font }}>{c.text}</p>
                     </div>
@@ -2821,32 +3141,28 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         });
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Community Docs</h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Essential guides and tips for your city.</p>
               </div>
-              <button onClick={() => setDocModal(true)} style={btnPrimary}>{Icons.plus({ size: 14 })} Create Doc</button>
+              <button onClick={() => setDocModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Create Doc</button>
             </div>
-            <InfoBanner text="Share guides, tips, and local knowledge. Help newcomers settle in your city." />
             {/* Search Bar */}
-            <div style={{ position: "relative", marginBottom: 12 }}>
-              <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 16 })}</div>
-              <input value={docSearch} onChange={(e) => setDocSearch(e.target.value)} placeholder="Search docs by title, content, category, or author..." style={{ width: "100%", padding: "12px 14px 12px 40px", borderRadius: 10, border: "1px solid #E8E7E4", background: "#fff", fontSize: 13, fontFamily: font, boxSizing: "border-box", outline: "none" }} />
-              {docSearch && (
-                <button onClick={() => setDocSearch("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 14 })}</button>
-              )}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, background: "#fff", padding: "10px 16px", borderRadius: 10, border: "1px solid #E8E7E4" }}>
-              <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Filter by City:</span>
-              <div style={{ position: "relative" }}>
-                <select value={docCityFilter} onChange={(e) => setDocCityFilter(e.target.value)} style={{ padding: "4px 24px 4px 8px", fontSize: 13, border: "none", background: "transparent", fontWeight: 600, color: "#37352F", cursor: "pointer", fontFamily: font, appearance: "none", outline: "none" }}>
-                  <option value="All">All</option>
+            <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+              <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 15 })}</div>
+                <input value={docSearch} onChange={(e) => setDocSearch(e.target.value)} placeholder="Search docs by title, content, category, or author..." style={{ ...inputStyle, paddingLeft: 36, paddingRight: docSearch ? 32 : 14 }} />
+                {docSearch && (
+                  <button onClick={() => setDocSearch("")} aria-label="Clear search" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 14 })}</button>
+                )}
+              </div>
+              <div style={{ position: "relative", width: 160 }}>
+                <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.mapPin({ size: 14 })}</div>
+                <select value={docCityFilter} onChange={(e) => setDocCityFilter(e.target.value)} style={{ ...inputStyle, paddingLeft: 34, appearance: "none", cursor: "pointer" }}>
+                  <option value="All">All cities</option>
                   {GLOBAL_CITIES.map(c => <option key={c} value={c.split(",")[0]}>{c}</option>)}
                 </select>
-                <div style={{ position: "absolute", right: 2, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="docs-grid">
@@ -2856,7 +3172,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   try {
                     const dbComments = await api.getDocComments(d.id);
                     if (dbComments && dbComments.length) {
-                      const withComments = { ...d, comments: dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).toLocaleString() })) };
+                      const withComments = { ...d, comments: dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).getTime() })) };
                       setSelectedDoc(withComments);
                     }
                   } catch(e) {}
@@ -2889,6 +3205,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               ))}
             </div>
+            {filteredDocs.length === 0 && (docSearch.trim() || docCityFilter !== "All"
+              ? <EmptyCard text="No docs match." action="Clear search" onAction={() => { setDocSearch(""); setDocCityFilter("All"); }} />
+              : listsLoaded && <EmptyCard text="No docs yet." />)}
           </div>
         );
 
@@ -2901,14 +3220,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         });
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Marketplace</h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Buy, sell, rent, and find services within the community.</p>
               </div>
-              <button onClick={() => setMarketModal(true)} style={btnPrimary}>{Icons.plus({ size: 14 })} Post Item</button>
+              <button onClick={() => setMarketModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Post Item</button>
             </div>
-            <InfoBanner text="List housing, jobs, items, or services. Posts are visible to users in your city first." />
             {/* Search + city */}
             <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
               <div style={{ position: "relative", flex: 1 }}>
@@ -2918,7 +3236,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <div style={{ position: "relative", width: 160 }}>
                 <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.mapPin({ size: 14 })}</div>
                 <select value={marketCityFilter} onChange={(e) => setMarketCityFilter(e.target.value)} style={{ ...inputStyle, paddingLeft: 34, appearance: "none", cursor: "pointer" }}>
-                  <option value="All">All</option>
+                  <option value="All">All cities</option>
                   {GLOBAL_CITIES.map(c => <option key={c} value={c.split(",")[0]}>{c}</option>)}
                 </select>
               </div>
@@ -2957,22 +3275,30 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         <Avatar name={item.seller} size={22} />
                         <span style={{ fontSize: 12, fontWeight: 500, color: "#37352F", fontFamily: font }}>{item.seller}</span>
                       </div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        {item.user_id === user.id && <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); } }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font }}>{Icons.trash({ size: 11 })}</button>}
-                        <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
-                        <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "marketplace", id: item.id, name: item.title }); }} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 12 })}</button>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        {item.user_id === user.id ? (
+                          <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); } }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>{Icons.trash({ size: 11 })} Delete</button>
+                        ) : (
+                          <>
+                            <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
+                            <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "marketplace", id: item.id, name: item.title }); }} aria-label="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 8, display: "flex" }}>{Icons.flag({ size: 12 })}</button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
                 </div>
               ))}
             </div>
+            {filteredMarket.length === 0 && (marketSearch.trim() || marketCityFilter !== "All" || marketCategory !== "All"
+              ? <EmptyCard text="No listings match." action="Clear filters" onAction={() => { setMarketSearch(""); setMarketCityFilter("All"); setMarketCategory("All"); }} />
+              : listsLoaded && <EmptyCard text="No listings yet." />)}
           </div>
         );
 
       case "messages":
         // Load conversations from DB on first visit
-        if (!convosLoaded) {
+        if (!convosLoaded && canBrowse) {
           setConvosLoaded(true);
           (async () => {
             try {
@@ -3017,31 +3343,30 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           // Check if recipient allows messages
           const otherUser = activeConvo ? convos.find(c => c.id === selectedConvo) : null;
           if (otherUser?.otherUserId) {
-            try {
-              const targetSettings = await api.getOtherUserSettings(otherUser.otherUserId);
-              if (targetSettings?.receive_messages === "Nobody") {
-                alert("This user is not accepting messages.");
-                return;
-              }
-              if (targetSettings?.receive_messages === "Connections Only" && !acceptedConnections.has(otherUser.otherUserId)) {
-                alert("This user only accepts messages from connections. Send a Namaste request first.");
-                return;
-              }
-            } catch(e) {}
+            const reason = await messageBlockedReason(otherUser.otherUserId);
+            if (reason) { alert(reason); return; }
           }
+          const convoId = selectedConvo;
           const msg = { id: Date.now().toString(), text: chatInput, sender: "me", time: "Just now" };
-          setChatMessages(p => ({ ...p, [selectedConvo]: [...(p[selectedConvo] || []), msg] }));
+          setChatMessages(p => ({ ...p, [convoId]: [...(p[convoId] || []), msg] }));
           const text = chatInput;
           setChatInput("");
-          try { await api.sendMessage(selectedConvo, text); } catch (e) {}
+          try {
+            await api.sendMessage(convoId, text);
+          } catch (e) {
+            // Take the message back out and give the text back.
+            setChatMessages(p => ({ ...p, [convoId]: (p[convoId] || []).filter(m => m.id !== msg.id) }));
+            setChatInput(prev => prev || text);
+            alert(await messageErrorText(e, otherUser?.otherUserId));
+            return;
+          }
           // Update convo list
-          setConvos(p => p.map(c => c.id === selectedConvo ? { ...c, lastMsg: text, time: "Just now" } : c));
+          setConvos(p => p.map(c => c.id === convoId ? { ...c, lastMsg: text, time: "Just now" } : c));
         };
 
         return (
           <div>
-          <InfoBanner text="Send direct messages to your connections. Start a conversation after sending a Namaste request." />
-          <div className="msg-layout" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: "calc(100vh - 220px)", minHeight: 500, maxHeight: 800, display: "flex" }}>
+          <div className={selectedConvo ? "msg-layout has-convo" : "msg-layout"} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: "calc(100vh - 220px)", minHeight: 500, maxHeight: 800, display: "flex" }}>
             {/* Conversation List */}
             <div className="msg-sidebar" style={{ width: 240, borderRight: "1px solid #E8E7E4", background: "#FAFAF8", display: "flex", flexDirection: "column", flexShrink: 0 }}>
               <div style={{ padding: "16px 18px", borderBottom: "1px solid #E8E7E4" }}>
@@ -3082,22 +3407,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             </div>
             {/* Chat Area */}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            <div className="msg-chat" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
               {selectedConvo && activeConvo ? (
                 <>
                   <div style={{ padding: "12px 18px", borderBottom: "1px solid #E8E7E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ position: "relative" }}>
-                        <Avatar name={activeConvo.name} size={32} url={activeConvo.avatar_url} />
-                        <span style={{ position: "absolute", bottom: 0, right: 0, width: 8, height: 8, background: "#22C55E", borderRadius: "50%", border: "2px solid #fff" }} />
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font }}>{activeConvo.name}</div>
-                        <div style={{ fontSize: 11, color: "#22C55E", fontWeight: 500 }}>Online</div>
-                      </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <button className="msg-back" onClick={() => setSelectedConvo(null)} aria-label="Back to conversations" style={{ background: "none", border: "none", cursor: "pointer", color: "#5F5E5B", padding: 8, margin: "-8px 0 -8px -8px", fontSize: 22, lineHeight: 1 }}>‹</button>
+                      <Avatar name={activeConvo.name} size={32} url={activeConvo.avatar_url} />
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeConvo.name}</div>
                     </div>
                     <div style={{ position: "relative" }}>
-                      <button onClick={() => setChatSettings(!chatSettings)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.settings({ size: 16 })}</button>
+                      <button onClick={() => setChatSettings(!chatSettings)} aria-label="Chat options" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.dots({ size: 18 })}</button>
                       {chatSettings && (
                         <>
                           <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={() => setChatSettings(false)} />
@@ -3105,11 +3425,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             <button onClick={() => { const _bid = convos.find(c => c.id === selectedConvo)?.otherUserId; setBlockTargetId(_bid); setBlockModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg> Block User
                             </button>
-                            <button onClick={() => { setReportModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
+                            <button onClick={() => { setReportConfirm({ type: "user", id: activeConvo.otherUserId, name: activeConvo.name }); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
                               {Icons.flag({ size: 14 })} Report User
-                            </button>
-                            <button onClick={() => { setChatMessages(p => ({ ...p, [selectedConvo]: [] })); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontFamily: font }}>
-                              {Icons.trash({ size: 14 })} Clear Chat
                             </button>
                           </div>
                         </>
@@ -3119,8 +3436,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ flex: 1, padding: 18, overflow: "auto", background: "#FAFAF8", display: "flex", flexDirection: "column", gap: 12 }}>
                     {currentMsgs.map(m => (
                       <div key={m.id} style={{ maxWidth: "75%", alignSelf: m.sender === "me" ? "flex-end" : "flex-start" }}>
-                        <div style={{ padding: "10px 14px", borderRadius: m.sender === "me" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.sender === "me" ? "#37352F" : "#fff", color: m.sender === "me" ? "#fff" : "#37352F", border: m.sender === "me" ? "none" : "1px solid #E8E7E4", fontSize: 14, lineHeight: 1.5, fontFamily: font }}>
-                          {m.text}
+                        <div style={{ padding: "10px 14px", borderRadius: m.sender === "me" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.sender === "me" ? "#37352F" : "#fff", color: m.sender === "me" ? "#fff" : "#37352F", border: m.sender === "me" ? "none" : "1px solid #E8E7E4", fontSize: 14, lineHeight: 1.5, fontFamily: font, overflowWrap: "anywhere" }}>
+                          {(() => {
+                            const tag = (m.text || "").match(/^\[MARKETPLACE: ([^\]]+)\]\s*/);
+                            if (!tag) return m.text;
+                            return (<>
+                              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🛒 {tag[1]}</div>
+                              {m.text.slice(tag[0].length)}
+                            </>);
+                          })()}
                         </div>
                         <div style={{ fontSize: 10, color: "#9B9A97", marginTop: 4, textAlign: m.sender === "me" ? "right" : "left" }}>{m.time}</div>
                       </div>
@@ -3130,11 +3454,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ display: "flex", gap: 8 }}>
                       <input value={chatInput} onChange={(e) => setChatInput(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") sendChatMessage(); }}
-                        placeholder="Type a message..." style={{ flex: 1, padding: "10px 16px", borderRadius: 20, border: "1px solid #E0E0DE", fontSize: 13, outline: "none", fontFamily: font, background: "#FAFAF8" }} />
+                        placeholder="Type a message..." maxLength={TEXT_LIMIT} style={{ flex: 1, padding: "10px 16px", borderRadius: 20, border: "1px solid #E0E0DE", fontSize: 13, outline: "none", fontFamily: font, background: "#FAFAF8" }} />
                       <button onClick={sendChatMessage} style={{ padding: "8px 12px", borderRadius: "50%", background: chatInput.trim() ? "#37352F" : "#E8E7E4", border: "none", cursor: chatInput.trim() ? "pointer" : "default", color: "#fff", display: "flex", alignItems: "center" }}>
                         {Icons.send({ size: 16 })}
                       </button>
                     </div>
+                    <CharCount value={chatInput} />
                   </div>
                 </>
               ) : (
@@ -3165,7 +3490,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
                       localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
                       window.location.reload();
-                    } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
+                    } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB.")); }
                   }}
                 />
                 <label htmlFor="profile-avatar-upload" style={{
@@ -3272,7 +3597,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div data-lock-overlay><RejectedScreen user={user} onSignOut={onLogout} /></div>
       )}
       {/* Get verified again, when an admin asked for more information */}
-      {verifyOpen && (
+      {verifyOpen && user.verificationStatus === "needs_info" && !locked && (
         <GetVerified
           user={user}
           mode="update"
@@ -3292,12 +3617,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
           {/* Desktop Nav - aligned with center content column */}
           <div style={{ display: "flex", alignItems: "center", background: "#F5F5F3", borderRadius: 24, padding: "3px 4px", gap: 2, justifyContent: "center" }} className="desktop-nav">
-            <button style={navBtn("home")} onClick={() => setView("home")}>Feed</button>
+            <button style={navBtn("home")} onClick={() => setView("home")}>Home</button>
             <button style={navBtn("network")} onClick={() => setView("network")}>Find</button>
             <button style={navBtn("groups")} onClick={() => { setView("groups"); setSelectedGroup(null); }}>Groups</button>
             <button style={navBtn("events")} onClick={() => setView("events")}>Events</button>
             <button style={navBtn("trending")} onClick={() => setView("trending")}>Trending</button>
-            <button style={navBtn("docs")} onClick={() => setView("docs")}>Doc</button>
+            <button style={navBtn("docs")} onClick={() => setView("docs")}>Docs</button>
             <button style={navBtn("market")} onClick={() => setView("market")}>Market</button>
             <button style={navBtn("help")} onClick={() => setView("help")}>Help</button>
           </div>
@@ -3322,7 +3647,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <button onClick={async () => { setNotifications(p => p.map(n => ({...n, read: true}))); try { await api.markNotificationsRead(); } catch(e) {} }} style={{ background: "none", border: "none", fontSize: 12, color: "#9B9A97", cursor: "pointer", fontFamily: font }}>Mark all read</button>
                     </div>
                     <div style={{ overflow: "auto", maxHeight: 380 }}>
-                      {notifications.map(n => (
+                      {(acceptedNotifs.length ? [...notifications.filter(n => !acceptedNotifs.some(a => a.id === n.id)), ...acceptedNotifs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : notifications).map(n => (
                         <div key={n.id} onClick={() => {
                           // Navigate based on notification type
                           if (n.type === "like" || n.type === "comment") {
@@ -3377,26 +3702,46 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           </div>
                           <div style={{ flex: 1 }}>
                             <p style={{ fontSize: 13, color: "#37352F", lineHeight: 1.4, fontFamily: font, margin: 0 }}>
-                              {n.actor && <strong>{n.actor} </strong>}{n.text}
+                              {n.actor && (n.text || "").startsWith(n.actor)
+                                ? <><strong>{n.actor}</strong>{n.text.slice(n.actor.length)}</>
+                                : <>{n.actor && <strong>{n.actor} </strong>}{n.text}</>}
                             </p>
-                            <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 3, fontFamily: font }}>{n.time}</p>
-                            {n.type === "request" && (
+                            <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 3, fontFamily: font }}>{timeAgo(new Date(n.created_at).getTime())}</p>
+                            {n.type === "request" && acceptedNotifs.some(a => a.id === n.id) ? (
+                              <p role="status" style={{ fontSize: 13, fontWeight: 600, color: "#22A06B", marginTop: 8, fontFamily: font }}>
+                                ✓ Accepted.{n.actor ? ` ${n.actor.split(" ")[0]} can now follow you.` : ""}
+                              </p>
+                            ) : n.type === "request" && (
                               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                                 <button onClick={async () => {
-                                  // Accept the connection request
+                                  // Accept the connection request. If that doesn't work, the request
+                                  // stays here: the database refuses (42501) members who can't take
+                                  // part yet, such as members held for review.
                                   if (n.reference_id) {
-                                    try { await api.respondToNamaste(n.reference_id, true); } catch(e) {}
+                                    try { await api.respondToNamaste(n.reference_id, true); }
+                                    catch (e) {
+                                      alert(isNetworkError(e) ? NETWORK_MESSAGE
+                                        : /42501/.test(e.message || "") ? "You can accept this once your membership is confirmed."
+                                        : "This request couldn't be accepted. Please try again.");
+                                      return;
+                                    }
                                   }
-                                  // Add to followers
-                                  if (n.actor) {
-                                    setMyFollowers(prev => [...prev, { name: n.actor }]);
-                                    setAcceptedConnections(prev => { const s = new Set(prev); if (n.actor_id) s.add(n.actor_id); return s; });
-                                  }
-                                  // Remove from local state
+                                  // Say it worked in place of the buttons for a few seconds,
+                                  // then remove the row
+                                  setAcceptedNotifs(prev => [...prev, n]);
                                   setNotifications(p => p.filter(x => x.id !== n.id));
+                                  setTimeout(() => setAcceptedNotifs(prev => prev.filter(x => x.id !== n.id)), 3000);
                                   // Mark as handled in DB so it never comes back
                                   try { await api.markNotificationHandled(n.id); } catch(e) {}
-                                }} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Accept</button>
+                                  // They sent the Namaste, so they now follow this member: reload
+                                  // the followers (with their photos)
+                                  try {
+                                    const conns = await api.getMyConnections();
+                                    setMyFollowers((conns || []).filter(c => c.recipient_id === user.id).map(c => c.requester).filter(Boolean));
+                                  } catch (e) {
+                                    if (n.actor) setMyFollowers(prev => [...prev, { id: n.actor_id, name: n.actor }]);
+                                  }
+                                }} style={{ padding: "8px 18px", borderRadius: 6, border: "none", background: "#37352F", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Accept</button>
                                 <button onClick={async () => {
                                   if (n.reference_id) {
                                     try { await api.respondToNamaste(n.reference_id, false); } catch(e) {}
@@ -3404,7 +3749,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                                   setNotifications(p => p.filter(x => x.id !== n.id));
                                   // Mark as handled in DB
                                   try { await api.markNotificationHandled(n.id); } catch(e) {}
-                                }} style={{ padding: "5px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Ignore</button>
+                                }} style={{ padding: "8px 18px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Ignore</button>
                               </div>
                             )}
                           </div>
@@ -3416,6 +3761,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </>
               )}
             </div>
+            {/* Messages (desktop; phones have it in the bottom bar) */}
+            <button className="nav-messages-btn" aria-label="Messages" title="Messages"
+              onClick={() => { setView("messages"); setHasUnreadMessages(false); setNotifOpen(false); setSettingsOpen(false); }}
+              style={{ background: view === "messages" ? "#F0EFED" : "none", border: "none", cursor: "pointer", padding: 6, color: "#9B9A97", position: "relative", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
+              onMouseOver={(e) => (e.currentTarget.style.background = "#F0EFED")}
+              onMouseOut={(e) => (e.currentTarget.style.background = view === "messages" ? "#F0EFED" : "none")}>
+              {Icons.message({ size: 20 })}
+              {hasUnreadMessages ? <span style={{ position: "absolute", top: 5, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
+            </button>
             {/* Settings gear */}
             <div style={{ position: "relative" }}>
               <button onClick={() => { setSettingsOpen(!settingsOpen); setNotifOpen(false); }}
@@ -3431,8 +3785,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     {[
                       { key: "account", icon: Icons.user, label: "Account Settings" },
                       { key: "privacy", icon: Icons.shield, label: "Privacy & Safety" },
-                      { key: "blocked", icon: Icons.x, label: "Blocked Users" },
-                      { key: "notifications", icon: Icons.bell, label: "Notifications" },
+                      { key: "notifications", icon: Icons.bell, label: "Email Notifications" },
                       { key: "activity", icon: Icons.trending, label: "Activity Log" },
                     ].map(item => (
                       <button key={item.key} onClick={() => { setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
@@ -3443,9 +3796,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     ))}
                     <div style={{ height: 1, background: "#F0EFED", margin: "4px 0" }} />
                     {[
-                      { key: "helpCenter", icon: Icons.help, label: "Help Center" },
-                      { key: "reportBug", icon: Icons.flag, label: "Report a Bug" },
-                      { key: "terms", icon: Icons.file, label: "Terms & Policy" },
+                      { key: "helpCenter", icon: Icons.help, label: "Support" },
+                      { key: "terms", icon: Icons.file, label: "Terms & Policies" },
                     ].map(item => (
                       <button key={item.key} onClick={() => { setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
                         onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
@@ -3453,6 +3805,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         {item.icon({ size: 16, stroke: "#9B9A97" })} {item.label}
                       </button>
                     ))}
+                    <div style={{ height: 1, background: "#F0EFED", margin: "4px 0" }} />
+                    <button onClick={() => { setSettingsOpen(false); onLogout(); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#E25555", fontSize: 13, fontFamily: font }}
+                      onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
+                      onMouseOut={(e) => e.currentTarget.style.background = "none"}>
+                      {Icons.logout({ size: 16 })} Sign Out
+                    </button>
                   </div>
                 </>
               )}
@@ -3461,7 +3819,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <button onClick={() => setView("profile")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
               <Avatar name={user.name} size={32} url={user.avatar_url || user.avatarUrl} />
             </button>
-            <button onClick={() => setMobileMenu(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#37352F", display: "none" }} className="mobile-menu-btn">
+            <button onClick={() => setMobileMenu(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#37352F", display: "none", padding: 11, margin: "0 -5px" }} className="mobile-menu-btn">
               {Icons.menu({ size: 22 })}
             </button>
           </div>
@@ -3477,13 +3835,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button onClick={() => setMobileMenu(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 20 })}</button>
             </div>
             {[
-              { v: "home", icon: Icons.home, label: "Feed" },
+              { v: "home", icon: Icons.home, label: "Home" },
               { v: "network", icon: Icons.search, label: "Find" },
-              { v: "groups", icon: Icons.users, label: "Communities" },
+              { v: "groups", icon: Icons.users, label: "Groups" },
               { v: "events", icon: Icons.calendar, label: "Events" },
               { v: "trending", icon: Icons.trending, label: "Trending" },
               { v: "docs", icon: Icons.file, label: "Docs" },
-              { v: "market", icon: Icons.shop, label: "Marketplace" },
+              { v: "market", icon: Icons.shop, label: "Market" },
               { v: "help", icon: Icons.help, label: "Help" },
               { v: "messages", icon: Icons.message, label: "Messages" },
               { v: "profile", icon: Icons.user, label: "Profile" },
@@ -3508,15 +3866,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       {/* Verification status: pending (blue) or needs_info (amber, with Update details) */}
       <VerificationBanner user={user} onUpdateDetails={() => setVerifyOpen(true)} />
 
-      {/* Create Post Modal */}
+      {/* Create Post Modal: closing it keeps what was written; Cancel clears it. */}
       {createPostModal && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); }}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setCreatePostModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 500, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>
-                {createPostModal === "text" ? "Write a Post" : createPostModal === "photo" ? "Share a Photo" : "Share a Link"}
-              </h3>
-              <button onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Create a post</h3>
+              <button onClick={() => setCreatePostModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               {/* User info */}
@@ -3528,32 +3884,41 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
 
-              {/* Text area - always shown */}
               <textarea
                 value={newPost} onChange={(e) => setNewPost(e.target.value)}
-                placeholder={createPostModal === "link" ? "Paste a link and add your thoughts..." : createPostModal === "photo" ? "Add a caption for your photo..." : `What's on your mind, ${user.name.split(" ")[0]}?`}
-                style={{ width: "100%", padding: "14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F", fontFamily: font, boxSizing: "border-box", minHeight: createPostModal === "text" ? 140 : 80, resize: "vertical" }}
+                placeholder={`What's on your mind, ${user.name.split(" ")[0]}? You can paste a link too.`}
+                style={{ width: "100%", padding: "14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F", fontFamily: font, boxSizing: "border-box", minHeight: 140, resize: "vertical" }}
                 autoFocus
               />
 
-              {/* Photo upload - for photo mode */}
-              {createPostModal === "photo" && (
+              {/* Photo, once "Photo" is pressed (or one is attached) */}
+              {(postPhotoOpen || postImage) && (
                 <div style={{ marginTop: 14 }}>
                   <input type="file" accept="image/*" id="modal-photo-upload" style={{ display: "none" }}
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
+                      const upload = ++postPhotoUploadRef.current;
+                      setPostPhotoUploading(true);
                       try {
                         const preview = URL.createObjectURL(file);
                         const url = await api.uploadPostImage(file);
-                        setPostImage({ url, preview });
-                      } catch (err) { alert("Upload failed: " + err.message); }
+                        if (upload === postPhotoUploadRef.current) setPostImage({ url, preview });
+                      } catch (err) {
+                        if (upload === postPhotoUploadRef.current) alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB."));
+                      }
+                      if (upload === postPhotoUploadRef.current) setPostPhotoUploading(false);
                     }}
                   />
                   {postImage ? (
                     <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
                       <img src={postImage.preview} alt="" style={{ width: "100%", maxHeight: 300, objectFit: "cover", borderRadius: 10 }} />
                       <button onClick={() => setPostImage(null)} style={{ position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 14 })}</button>
+                    </div>
+                  ) : postPhotoUploading ? (
+                    <div role="status" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "32px 20px", borderRadius: 10, border: "2px dashed #E0E0DE", background: "#FAFAF8" }}>
+                      {Icons.image({ size: 28, stroke: "#9B9A97" })}
+                      <span style={{ fontSize: 13, color: "#9B9A97", fontWeight: 500, fontFamily: font }}>Uploading photo...</span>
                     </div>
                   ) : (
                     <label htmlFor="modal-photo-upload" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "32px 20px", borderRadius: 10, border: "2px dashed #E0E0DE", background: "#FAFAF8", cursor: "pointer" }}>
@@ -3564,19 +3929,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   )}
                 </div>
               )}
-
-              {/* Link hint for link mode */}
-              {createPostModal === "link" && (
-                <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 6, fontFamily: font }}>Paste any URL — YouTube, Instagram, TikTok, articles, etc. A preview will be shown automatically.</p>
-              )}
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 12, background: "#FAFAF8", borderRadius: "0 0 16px 16px" }}>
-              <button onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={() => { createPost(); setCreatePostModal(null); }} disabled={!newPost.trim() && !postImage} style={{
+              {!postPhotoOpen && !postImage && (
+                <button onClick={() => setPostPhotoOpen(true)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 6, marginRight: "auto" }}>{Icons.image({ size: 16 })} Photo</button>
+              )}
+              <button onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); setPostPhotoOpen(false); setPostPhotoUploading(false); postPhotoUploadRef.current += 1; }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button onClick={() => { createPost(); setCreatePostModal(null); setPostPhotoOpen(false); }} disabled={(!newPost.trim() && !postImage) || postPhotoUploading} style={{
                 padding: "10px 24px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600,
-                background: (newPost.trim() || postImage) ? "#37352F" : "#E8E7E4",
-                color: (newPost.trim() || postImage) ? "#fff" : "#9B9A97",
-                cursor: (newPost.trim() || postImage) ? "pointer" : "default", fontFamily: font,
+                background: (newPost.trim() || postImage) && !postPhotoUploading ? "#37352F" : "#E8E7E4",
+                color: (newPost.trim() || postImage) && !postPhotoUploading ? "#fff" : "#9B9A97",
+                cursor: (newPost.trim() || postImage) && !postPhotoUploading ? "pointer" : "default", fontFamily: font,
               }}>Publish</button>
             </div>
           </div>
@@ -3584,26 +3947,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       )}
 
       {/* Blocked user overlay */}
-      {user?.status === "blocked" && (
-        <div data-lock-overlay style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div role="alertdialog" aria-modal="true" aria-label="Profile blocked" style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
-            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
-            </div>
-            <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Profile Blocked</h2>
-            <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 20, fontFamily: font }}>
-              Your profile has been blocked by our admin team.
-            </p>
-            <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>
-              If you believe this is an error, please contact <a href="mailto:support@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>support@nriclub.app</a>.
-            </p>
-            <button onClick={onLogout} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Sign Out</button>
-          </div>
-        </div>
-      )}
+      {user?.status === "blocked" && <BlockedOverlay onSignOut={onLogout} font={font} />}
 
       {/* MAIN */}
-      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 100px", display: "grid", gridTemplateColumns: (view === "profile" || view === "trending") ? "1fr" : "240px 1fr 210px", gap: 28 }} className="main-grid">
+      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 100px", display: "grid", gridTemplateColumns: (view === "profile" || view === "trending") ? "minmax(0,1fr)" : "240px minmax(0,1fr) 210px", gap: 28 }} className="main-grid">
         {view !== "profile" && view !== "trending" && (
           <aside className="sidebar-left" style={{ position: "sticky", top: 80, alignSelf: "start" }}>
             <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "24px 20px", textAlign: "center", position: "relative" }}>
@@ -3636,7 +3983,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
                       localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
                       window.location.reload();
-                    } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
+                    } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB.")); }
                   }}
                 />
                 <label htmlFor="avatar-upload" style={{
@@ -3702,41 +4049,27 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* Divider */}
               <div style={{ borderTop: "1px solid #F0EFED", margin: "0 0 16px" }} />
 
-              {/* Icon Grid - 4 across, 2 rows matching screenshot */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}>
+              {/* Shortcuts, labelled (LinkedIn only when a link is saved) */}
+              <div style={{ display: "flex", gap: 0 }}>
                 {[
-                  { icon: Icons.message, view: "messages", label: "Messages", hasNotif: hasUnreadMessages },
-                  { icon: Icons.calendar, view: "events", label: "Events" },
-                  { icon: Icons.users, view: "groups", label: "Groups" },
-                  { icon: Icons.linkedin, view: null, label: "LinkedIn", action: () => { if (user.linkedinUrl) window.open(user.linkedinUrl.startsWith("http") ? user.linkedinUrl : `https://${user.linkedinUrl}`, "_blank"); } },
-                ].map((item, i) => (
-                  <button key={i} onClick={() => { if (item.action) item.action(); else if (item.view) { setView(item.view); if (item.view === "messages") setHasUnreadMessages(false); } }} style={{
-                    padding: 10, borderRadius: 8, border: "none", background: "none",
-                    cursor: "pointer", color: "#9B9A97", display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "all 0.1s", position: "relative",
+                  { icon: Icons.message, label: "Messages", hasNotif: hasUnreadMessages, action: () => { setView("messages"); setHasUnreadMessages(false); } },
+                  { icon: Icons.file, label: "My Posts", action: () => { setView("profile"); setProfileTab("posts"); } },
+                  { icon: Icons.image, label: "My Photos", action: () => { setView("profile"); setProfileTab("photos"); } },
+                  user.linkedinUrl ? { icon: Icons.linkedin, label: "LinkedIn", action: () => window.open(user.linkedinUrl.startsWith("http") ? user.linkedinUrl : `https://${user.linkedinUrl}`, "_blank") } : null,
+                ].filter(Boolean).map((item) => (
+                  <button key={item.label} onClick={item.action} aria-label={item.label} title={item.label} style={{
+                    flex: 1, minWidth: 0, padding: "8px 0", borderRadius: 8, border: "none", background: "none",
+                    cursor: "pointer", color: "#9B9A97", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
+                    transition: "all 0.1s", fontSize: 10, fontWeight: 500, fontFamily: font, whiteSpace: "nowrap",
                   }}
                   onMouseOver={(e) => { e.currentTarget.style.background = "#F0EFED"; e.currentTarget.style.color = "#37352F"; }}
                   onMouseOut={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#9B9A97"; }}
                   >
-                    {item.icon({ size: 20 })}
-                    {item.hasNotif ? <span style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
-                {[
-                  { icon: Icons.file, tab: "posts", label: "Posts" },
-                  { icon: Icons.image, tab: "photos", label: "Gallery" },
-                ].map((item, i) => (
-                  <button key={i} onClick={() => { setView("profile"); setProfileTab(item.tab); }} style={{
-                    padding: 10, borderRadius: 8, border: "none", background: "none",
-                    cursor: "pointer", color: "#9B9A97", display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "all 0.1s",
-                  }}
-                  onMouseOver={(e) => { e.currentTarget.style.background = "#F0EFED"; e.currentTarget.style.color = "#37352F"; }}
-                  onMouseOut={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#9B9A97"; }}
-                  >
-                    {item.icon({ size: 20 })}
+                    <span style={{ position: "relative", display: "flex" }}>
+                      {item.icon({ size: 20 })}
+                      {item.hasNotif ? <span style={{ position: "absolute", top: -2, right: -3, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
+                    </span>
+                    {item.label}
                   </button>
                 ))}
               </div>
@@ -3744,19 +4077,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {/* Complete your profile (desktop; on mobile it sits at the top of the feed) */}
             <ProfileChecklist className="profile-checklist-side" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} style={{ marginTop: 16 }} />
-
-            {/* Sign Out link */}
-            <div style={{ textAlign: "center", marginTop: 16 }}>
-              <button onClick={onLogout} style={{
-                background: "none", border: "none", cursor: "pointer", color: "#9B9A97",
-                fontSize: 12, fontFamily: font, display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 500,
-              }}
-              onMouseOver={(e) => (e.currentTarget.style.color = "#E25555")}
-              onMouseOut={(e) => (e.currentTarget.style.color = "#9B9A97")}
-              >
-                {Icons.logout({ size: 14 })} Sign Out
-              </button>
-            </div>
           </aside>
         )}
 
@@ -3765,7 +4085,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         {view !== "profile" && view !== "trending" && (
           <aside className="sidebar-right" style={{ position: "sticky", top: 80, alignSelf: "start" }}>
             <div style={{ marginBottom: 28 }}>
-              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>Communities</h4>
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>Groups</h4>
               {groups.slice(0, 3).map((g, i) => {
                 // Generate a color-coded thumbnail
                 const thumbColors = ["#C4B5A0", "#8B9E82", "#A0B0C4"];
@@ -3796,7 +4116,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             {/* EVENTS section */}
             <div>
               <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>Events</h4>
-              {events.slice(0, 2).map((e) => (
+              {orderEvents(events.filter(e => !isPastEvent(e))).slice(0, 2).map((e) => (
                 <div key={e.id} onClick={() => setView("events")} style={{ marginBottom: 14, cursor: "pointer" }}
                   onMouseOver={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "underline"}
                   onMouseOut={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "none"}
@@ -3811,8 +4131,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             {user.location && (
               <div style={{ marginTop: 28 }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>People in {(user.location || "").split(",")[0]}</h4>
-                {networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).length > 0 ? (
-                  networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).slice(0, 4).map(u => (
+                {!networkReady ? null : networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).length > 0 ? (<>
+                  {networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).slice(0, 4).map(u => (
                     <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
                       <Avatar name={u.name} size={32} url={u.avatar_url} />
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -3829,11 +4149,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         {acceptedConnections.has(u.id) ? "Following" : sentNamaste.has(u.id) ? "Sent" : "Namaste"}
                       </button>
                     </div>
-                  ))
-                ) : (
-                  <p style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>No users found in your city yet. <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#37352F", cursor: "pointer", textDecoration: "underline", fontSize: 11, fontFamily: font }}>Find people</button></p>
+                  ))}
+                  <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#5B9CFF", cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: font, marginTop: 8, padding: 0 }}>See all →</button>
+                </>) : (
+                  <p style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>No users found in your city yet. <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#37352F", cursor: "pointer", textDecoration: "underline", fontSize: 11, fontFamily: font }}>Find people →</button></p>
                 )}
-                <button onClick={() => setView("network")} style={{ background: "none", border: "none", color: "#5B9CFF", cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: font, marginTop: 8, padding: 0 }}>See all →</button>
               </div>
             )}
           </aside>
@@ -3845,17 +4165,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         {[
           { v: "home", icon: Icons.home, label: "Home" },
           { v: "network", icon: Icons.search, label: "Find" },
-          { v: "messages", icon: Icons.message, label: "Chat", notif: hasUnreadMessages },
+          { v: "messages", icon: Icons.message, label: "Messages", notif: hasUnreadMessages },
           { v: "groups", icon: Icons.users, label: "Groups" },
-          { v: "profile", icon: Icons.user, label: "Me" },
+          { v: "profile", icon: Icons.user, label: "Profile" },
         ].map((item) => (
           <button
             key={item.v}
             onClick={() => { setView(item.v); if (item.v === "groups") setSelectedGroup(null); if (item.v === "messages") setHasUnreadMessages(false); }}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: view === item.v ? "#37352F" : "#9B9A97", fontSize: 9, fontWeight: 500, fontFamily: font, position: "relative" }}
+            style={{ flex: 1, minHeight: 48, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: view === item.v ? "#37352F" : "#9B9A97", fontSize: 11, fontWeight: 500, fontFamily: font }}
           >
-            {item.icon({ size: 20 })}
-            {item.notif ? <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
+            <span style={{ position: "relative", display: "flex" }}>
+              {item.icon({ size: 20 })}
+              {item.notif ? <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
+            </span>
             {item.label}
           </button>
         ))}
@@ -3871,7 +4193,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={(e) => e.stopPropagation()}>
             {/* Photo Gallery with Touch Swipe */}
             <div
-              style={{ height: 280, position: "relative", borderRadius: "18px 18px 0 0", overflow: "hidden", touchAction: "pan-y",
+              style={{ height: hasPhotos ? 280 : 120, position: "relative", borderRadius: "18px 18px 0 0", overflow: "hidden", touchAction: "pan-y",
                 background: hasPhotos ? "#F0EFED" : `linear-gradient(160deg, ${expandedMarketItem.color}EE, ${expandedMarketItem.color}AA)`,
               }}
               onTouchStart={(e) => { marketTouchRef.current.startX = e.touches[0].clientX; marketTouchRef.current.startY = e.touches[0].clientY; }}
@@ -3911,25 +4233,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               )}
 
-              {/* Thumbnail strip */}
-              {hasPhotos && photos.length > 1 && (
-                <div style={{ position: "absolute", bottom: 28, right: 14, display: "flex", gap: 4 }}>
-                  {photos.map((p, i) => (
-                    <button key={i} onClick={(e) => { e.stopPropagation(); setMarketPhotoIdx(i); }} style={{ width: 36, height: 36, borderRadius: 6, border: i === marketPhotoIdx ? "2px solid #fff" : "2px solid transparent", overflow: "hidden", cursor: "pointer", padding: 0, opacity: i === marketPhotoIdx ? 1 : 0.6, transition: "all 0.2s" }}>
-                      <img src={p} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    </button>
-                  ))}
-                </div>
-              )}
-
               <button onClick={() => { setExpandedMarketItem(null); setMarketPhotoIdx(0); }} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {Icons.x({ size: 16 })}
               </button>
-              <div style={{ position: "absolute", top: 14, left: 14, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(4px)", padding: "6px 14px", borderRadius: 6, fontSize: 14, fontWeight: 700, color: "#37352F" }}>{expandedMarketItem.price}</div>
-              <div style={{ position: "absolute", bottom: hasPhotos && photos.length > 1 ? 70 : 14, left: 14, background: "rgba(0,0,0,0.6)", padding: "4px 10px", borderRadius: 4, fontSize: 10, fontWeight: 600, color: "#fff", textTransform: "uppercase", letterSpacing: "0.06em" }}>{expandedMarketItem.category}</div>
-              {hasPhotos && photos.length > 1 && (
-                <div style={{ position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.5)", padding: "3px 10px", borderRadius: 10, fontSize: 11, color: "#fff", fontWeight: 600 }}>{marketPhotoIdx + 1} / {photos.length}</div>
-              )}
             </div>
 
             {/* Content */}
@@ -3938,7 +4244,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               
               {/* Price highlight */}
               <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "#F0EFED", borderRadius: 8, marginBottom: 20 }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
                 <span style={{ fontSize: 18, fontWeight: 700, color: "#37352F", fontFamily: font }}>{expandedMarketItem.price}</span>
               </div>
 
@@ -3965,14 +4270,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
 
-              {/* Action buttons */}
-              <div style={{ display: "flex", gap: 12 }}>
-                <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(`Hi ${expandedMarketItem.seller.split(" ")[0]}, is this still available?`); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
-                  {Icons.send({ size: 15 })} Contact Seller
-                </button>
-                <button onClick={() => setExpandedMarketItem(null)} style={{ padding: "12px 20px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: font }}>
-                  Close
-                </button>
+              {/* Action row, kept in view at the bottom (no Contact Seller on your own listing) */}
+              <div style={{ display: "flex", gap: 12, justifyContent: "space-between", alignItems: "center", position: "sticky", bottom: 0, background: "#fff", padding: "12px 0", borderTop: "1px solid #F0EFED" }}>
+                {expandedMarketItem.user_id !== user.id ? (
+                  <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(`Hi ${expandedMarketItem.seller.split(" ")[0]}, is this still available?`); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
+                    {Icons.send({ size: 15 })} Contact Seller
+                  </button>
+                ) : (
+                  <>
+                    <span style={{ fontSize: 13, color: "#9B9A97", fontFamily: font }}>This is your listing</span>
+                    <button onClick={async () => { const item = expandedMarketItem; if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); setExpandedMarketItem(null); setMarketPhotoIdx(0); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontWeight: 600, padding: "10px 0", fontFamily: font }}>
+                      Delete listing
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -3982,11 +4293,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Expanded Event Modal */}
       {expandedEvent && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setExpandedEvent(null); setEventComment(""); }}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setExpandedEvent(null)}>
           <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 560, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={(ev) => ev.stopPropagation()}>
-            {/* Hero */}
-            <div style={{ height: 180, background: "linear-gradient(135deg, #7BA88A, #5A8070)", position: "relative", borderRadius: "18px 18px 0 0", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <button onClick={() => { setExpandedEvent(null); setEventComment(""); }} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {/* Hero: the event photo when there is one */}
+            <div style={{ height: 180, background: expandedEvent.image ? "#F0EFED" : "linear-gradient(135deg, #7BA88A, #5A8070)", position: "relative", borderRadius: "18px 18px 0 0", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {expandedEvent.image && <img src={expandedEvent.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0 }} />}
+              <button onClick={() => setExpandedEvent(null)} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {Icons.x({ size: 16 })}
               </button>
               <div style={{ position: "absolute", bottom: 16, left: 16, background: "rgba(255,255,255,0.95)", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font }}>{eventDate(expandedEvent)}</div>
@@ -3998,85 +4310,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.clock({ size: 14 })} {eventTime(expandedEvent)}</span>
                 <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.mapPin({ size: 14 })} {expandedEvent.location}</span>
               </div>
+              {!isPastEvent(expandedEvent) && <button onClick={() => { toggleRsvp(expandedEvent.id); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px", marginBottom: 20, background: rsvps.has(expandedEvent.id) ? "#E3FCEF" : "#37352F", color: rsvps.has(expandedEvent.id) ? "#22A06B" : "#fff", border: rsvps.has(expandedEvent.id) ? "1px solid #B5E4CA" : "none" }}>
+                {rsvps.has(expandedEvent.id) ? "✓ Going" : "RSVP"}
+              </button>}
               <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, marginBottom: 20, fontFamily: font, whiteSpace: "pre-wrap" }}>{expandedEvent.description}</p>
               {expandedEvent.link && (
-                <a href={expandedEvent.link.startsWith("http") ? expandedEvent.link : `https://${expandedEvent.link}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 14, color: "#fff", padding: "12px", background: "#5B9CFF", borderRadius: 8, textDecoration: "none", fontWeight: 600, marginBottom: 16, fontFamily: font }}>
+                <a href={expandedEvent.link.startsWith("http") ? expandedEvent.link : `https://${expandedEvent.link}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 14, color: "#37352F", padding: "12px", background: "#fff", border: "1px solid #E0E0DE", borderRadius: 8, textDecoration: "none", fontWeight: 600, marginBottom: 16, fontFamily: font }}>
                   {Icons.link({ size: 15 })} Get Tickets / More Info
                 </a>
               )}
-              <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED", marginBottom: 14 }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>
-              <button onClick={() => { toggleRsvp(expandedEvent.id); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px", background: rsvps.has(expandedEvent.id) ? "#E3FCEF" : "#37352F", color: rsvps.has(expandedEvent.id) ? "#22A06B" : "#fff", border: rsvps.has(expandedEvent.id) ? "1px solid #B5E4CA" : "none" }}>
-                {rsvps.has(expandedEvent.id) ? "✓ Going" : "RSVP to Event"}
-              </button>
-              
-              {/* Comments section */}
-              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #F0EFED" }}>
-                <h4 style={{ fontSize: 14, fontWeight: 700, color: "#37352F", marginBottom: 14, fontFamily: font }}>Comments ({(eventComments[expandedEvent.id] || []).length})</h4>
-                {(eventComments[expandedEvent.id] || []).map((c, i) => (
-                  <div key={i} style={{ display: "flex", gap: 10, marginBottom: 12, padding: "10px 12px", background: "#FAFAF8", borderRadius: 8 }}>
-                    <Avatar name={c.user} size={28} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{c.user}</span>
-                        <span style={{ fontSize: 10, color: "#9B9A97" }}>{c.time}</span>
-                      </div>
-                      <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 3, fontFamily: font, lineHeight: 1.5 }}>{c.text}</p>
-                    </div>
-                  </div>
-                ))}
-                <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                  <Avatar name={user.name} size={28} url={user.avatar_url} />
-                  <div style={{ flex: 1 }}>
-                    <textarea value={eventComment} onChange={(ev) => setEventComment(ev.target.value)} placeholder="Write a comment..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 50, resize: "none", boxSizing: "border-box" }} />
-                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
-                      <button disabled={!eventComment.trim()} onClick={() => {
-                        const newC = { user: user.name, text: eventComment, time: "Just now" };
-                        setEventComments(prev => ({ ...prev, [expandedEvent.id]: [...(prev[expandedEvent.id] || []), newC] }));
-                        setEventComment("");
-                      }} style={{ ...btnPrimary, padding: "6px 14px", fontSize: 12, opacity: eventComment.trim() ? 1 : 0.4 }}>Post</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Share External Link Modal */}
-      {linkModal && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setLinkModal(false); setExternalLinkInput(""); setExternalLinkNote(""); }}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "18px 24px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Share an External Link</h3>
-              <button onClick={() => { setLinkModal(false); setExternalLinkInput(""); setExternalLinkNote(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
-            </div>
-            <div style={{ padding: 24 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#5F5E5B", fontFamily: font, display: "block", marginBottom: 6 }}>Paste a link (TikTok, Instagram, YouTube, X, etc.)</label>
-              <input value={externalLinkInput} onChange={(e) => setExternalLinkInput(e.target.value)} placeholder="https://..." style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", marginBottom: 14 }} />
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#5F5E5B", fontFamily: font, display: "block", marginBottom: 6 }}>Add a caption (optional)</label>
-              <textarea value={externalLinkNote} onChange={(e) => setExternalLinkNote(e.target.value)} placeholder="What's this about?" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", minHeight: 70, resize: "none" }} />
-            </div>
-            <div style={{ padding: "14px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
-              <button onClick={() => { setLinkModal(false); setExternalLinkInput(""); setExternalLinkNote(""); }} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button disabled={!externalLinkInput.trim() || !externalLinkInput.match(/^https?:\/\//i)} onClick={async () => {
-                const url = externalLinkInput.trim();
-                const content = externalLinkNote.trim() ? `${externalLinkNote.trim()}\n\n${url}` : url;
-                const tags = ["__external__"];
-                const hashtags = content.match(/#(\w+)/g);
-                if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
-                const post = {
-                  id: "p_" + Date.now(), userId: user.id, content,
-                  author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
-                  likes: 0, comments: [], tags, timestamp: Date.now(), groupName: null,
-                  image: null, externalUrl: url,
-                };
-                setPosts([post, ...posts]);
-                setLinkModal(false);
-                setExternalLinkInput("");
-                setExternalLinkNote("");
-                try { const r = await api.createPost(content, tags, null); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch(e) {}
-              }} style={{ ...btnPrimary, padding: "10px 20px", opacity: (externalLinkInput.trim() && externalLinkInput.match(/^https?:\/\//i)) ? 1 : 0.4 }}>Share Link</button>
+              <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED" }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>
             </div>
           </div>
         </div>
@@ -4102,18 +4345,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Message</label>
-                <textarea value={contactMsg} onChange={(e) => setContactMsg(e.target.value)} style={{ ...inputStyle, minHeight: 90, resize: "none" }} />
+                {/* The message carries the listing's title in front of it. */}
+                <textarea value={contactMsg} onChange={(e) => setContactMsg(e.target.value)} maxLength={TEXT_LIMIT - `[MARKETPLACE: ${selectedMarketItem.title}] `.length} style={{ ...inputStyle, minHeight: 90, resize: "none" }} />
+                <CharCount value={contactMsg} max={TEXT_LIMIT - `[MARKETPLACE: ${selectedMarketItem.title}] `.length} />
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setSelectedMarketItem(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
                 <button onClick={async () => {
                   if (!contactMsg.trim()) return;
+                  const sellerId = selectedMarketItem.user_id;
                   try {
-                    const sellerId = selectedMarketItem.user_id;
-                    if (!sellerId) {
-                      alert("Could not find seller's user ID. Please try again.");
+                    if (!sellerId || sellerId === user.id) {
+                      alert("You can't contact the seller of this listing.");
                       return;
                     }
+                    const reason = await messageBlockedReason(sellerId);
+                    if (reason) { alert(reason); return; }
                     // Tag message as marketplace with item title for filtering
                     const taggedMsg = `[MARKETPLACE: ${selectedMarketItem.title}] ${contactMsg}`;
                     const convo = await api.getOrCreateConversation(sellerId);
@@ -4143,13 +4390,44 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       setView("messages");
                       return;
                     } else {
-                      alert("Could not create conversation. Please try again.");
+                      alert("Your message couldn't be sent. Please try again.");
+                      return;
                     }
-                  } catch (e) { alert("Failed to send: " + (e.message || "")); }
-                  setSelectedMarketItem(null);
-                  setContactMsg("");
+                  } catch (e) {
+                    // Keep the message so it can be sent again.
+                    alert(await messageErrorText(e, sellerId));
+                    return;
+                  }
                 }} style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6 }}>{Icons.send({ size: 14 })} Send Message</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete account: one in-app confirmation */}
+      {deleteAccountText !== null && (
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setDeleteAccountText(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 400, padding: 24, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#DC2626" }}>{Icons.trash({ size: 20 })}</div>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>Delete your account?</h3>
+            <p style={{ fontSize: 13, color: "#5F5E5B", marginBottom: 20, lineHeight: 1.5, fontFamily: font }}>Your posts, messages, connections and photos will be removed. This can't be undone.</p>
+            <label htmlFor="delete-account-confirm" style={{ display: "block", textAlign: "left", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Type DELETE to confirm</label>
+            <input id="delete-account-confirm" value={deleteAccountText} onChange={(e) => setDeleteAccountText(e.target.value)} autoComplete="off" style={{ ...inputStyle, marginBottom: 20 }} />
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <button onClick={() => setDeleteAccountText(null)} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 13, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button disabled={deleteAccountText.trim().toUpperCase() !== "DELETE"} onClick={async () => {
+                try {
+                  await api.deleteAccount();
+                } catch(e) {
+                  alert("Your account could not be deleted. Please try again, or contact support if it keeps failing.");
+                  return;
+                }
+                localStorage.clear();
+                setDeleteAccountText(null);
+                setSettingsModal(null);
+                onLogout();
+              }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: deleteAccountText.trim().toUpperCase() === "DELETE" ? "#DC2626" : "#FECACA", fontSize: 13, fontWeight: 600, color: "#fff", cursor: deleteAccountText.trim().toUpperCase() === "DELETE" ? "pointer" : "default", fontFamily: font }}>Delete account</button>
             </div>
           </div>
         </div>
@@ -4164,33 +4442,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
-              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Personal Information</h4>
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Personal Information</h4>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Full Name</label>
                 <input style={inputStyle} value={accountName} onChange={(e) => setAccountName(e.target.value)} />
               </div>
               <div style={{ marginBottom: 6 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Email Address</label>
-                <div style={{ position: "relative" }}>
-                  <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.message({ size: 14 })}</div>
-                  <input style={{ ...inputStyle, paddingLeft: 36, background: "#F0EFED", color: "#9B9A97" }} value={user.email || ""} readOnly disabled />
-                </div>
+                <input style={{ ...inputStyle, background: "#F0EFED", color: "#9B9A97" }} value={user.email || ""} readOnly disabled />
                 <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 4, fontFamily: font }}>Contact support to change email.</p>
               </div>
               <div style={{ borderTop: "1px solid #F0EFED", marginTop: 20, paddingTop: 20 }}>
-                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Security</h4>
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Current Password</label>
-                  <div style={{ position: "relative" }}>
-                    <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
-                    <input type="password" style={{ ...inputStyle, paddingLeft: 36 }} placeholder="••••••••" />
-                  </div>
-                </div>
+                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Security</h4>
                 <div style={{ marginBottom: 20 }}>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>New Password</label>
                   <div style={{ position: "relative" }}>
                     <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
-                    <input type="password" style={{ ...inputStyle, paddingLeft: 36 }} placeholder="••••••••" />
+                    <input type="password" autoComplete="new-password" value={accountPassword} onChange={(e) => setAccountPassword(e.target.value)} style={{ ...inputStyle, paddingLeft: 36 }} placeholder="Leave blank to keep your current password" />
                   </div>
                 </div>
               </div>
@@ -4198,20 +4466,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>
                   {Icons.shield({ size: 13 })} Data & Privacy (GDPR)
                 </h4>
-                <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 14, lineHeight: 1.5, fontFamily: font }}>Under EU GDPR, you have the right to access, export, and delete your personal data.</p>
-                <button onClick={() => {
-                  const data = {
-                    profile: { name: user.name, email: user.email, location: user.location, hometown: user.hometown, profession: user.profession, linkedinUrl: user.linkedinUrl, yearsAbroad: user.yearsAbroad, createdAt: user.createdAt || user.created_at },
-                    exportDate: new Date().toISOString(),
-                    note: "This file contains all personal data stored by NRIClub. Posts, comments, and messages are stored separately in the database."
-                  };
-                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a"); a.href = url; a.download = "nriclub-my-data.json"; a.click();
-                  URL.revokeObjectURL(url);
-                }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
-                  {Icons.share({ size: 14 })} Download My Data
+                <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 14, lineHeight: 1.5, fontFamily: font }}>Under EU GDPR, you have the right to access, export, and delete your personal data. Your download is a file with your account, profile, settings and verification history, and the posts, comments, messages and other activity in your account (photos as links).</p>
+                <button onClick={async () => {
+                  if (dataDownload.busy) return;
+                  setDataDownload({ busy: true, error: "" });
+                  try {
+                    await downloadMyData();
+                    setDataDownload({ busy: false, error: "" });
+                  } catch (e) {
+                    setDataDownload({ busy: false, error: apiErrorMessage(e, "We couldn't download your data. Please try again, or contact support@nriclub.app.") });
+                  }
+                }} aria-disabled={dataDownload.busy} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: dataDownload.busy ? "default" : "pointer", opacity: dataDownload.busy ? 0.7 : 1, fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
+                  {Icons.share({ size: 14 })} {dataDownload.busy ? "Preparing your data..." : "Download My Data"}
                 </button>
+                {dataDownload.error && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginBottom: 10, lineHeight: 1.5, fontFamily: font }}>{dataDownload.error}</p>}
               </div>
               <div style={{ borderTop: "1px solid #F0EFED", paddingTop: 20, marginTop: 10 }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>
@@ -4219,28 +4487,35 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   Danger Zone
                 </h4>
                 <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 10, lineHeight: 1.5, fontFamily: font }}>Permanently delete your account and all associated data. This action cannot be undone.</p>
-                <button onClick={async () => { 
-                  if (confirm("Are you absolutely sure you want to delete your account? ALL your data — posts, likes, comments, messages, connections, photos — will be permanently removed. This cannot be undone.")) {
-                    if (confirm("This is your final warning. Type OK in the next prompt to confirm.") && prompt("Type DELETE to confirm account deletion:") === "DELETE") {
-                      try {
-                        await api.deleteAccount();
-                      } catch(e) {
-                        alert("Your account could not be deleted. Please try again, or contact support if it keeps failing.");
-                        return;
-                      }
-                      localStorage.clear();
-                      setSettingsModal(null);
-                      onLogout();
-                    }
-                  }
-                }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <button onClick={() => setDeleteAccountText("")} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                   {Icons.trash({ size: 14 })} Delete My Account
                 </button>
               </div>
             </div>
-            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 12, background: "#FAFAF8" }}>
-              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={() => setSettingsModal(null)} style={btnPrimary}>Save Changes</button>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", background: "#FAFAF8", position: "sticky", bottom: 0 }}>
+              {accountSave.error && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "8px 12px", marginBottom: 12, lineHeight: 1.5, fontFamily: font }}>{accountSave.error}</p>}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                <button onClick={() => { setSettingsModal(null); setAccountName(user.name); setAccountPassword(""); setAccountSave({ busy: false, error: "" }); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+                <button disabled={accountSave.busy} onClick={async () => {
+                  const name = accountName.trim();
+                  if (!name) { setAccountSave({ busy: false, error: "Please enter your name." }); return; }
+                  if (accountPassword && accountPassword.length < 8) { setAccountSave({ busy: false, error: "Use at least 8 characters." }); return; }
+                  setAccountSave({ busy: true, error: "" });
+                  try {
+                    if (name !== user.name) {
+                      await api.updateProfile({ name });
+                      onUserUpdate({ ...user, name });
+                    }
+                    if (accountPassword) await api.updatePassword(accountPassword);
+                  } catch (e) {
+                    setAccountSave({ busy: false, error: authErrorMessage(e) || apiErrorMessage(e, "Your changes couldn't be saved. Please try again.") });
+                    return;
+                  }
+                  setAccountPassword("");
+                  setAccountSave({ busy: false, error: "" });
+                  setSettingsModal(null);
+                }} style={{ ...btnPrimary, opacity: accountSave.busy ? 0.7 : 1 }}>{accountSave.busy ? "Saving..." : "Save Changes"}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -4251,88 +4526,80 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy Settings</h3>
+              <div>
+                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy & Safety</h3>
+                {settingsSaveError && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 2, fontFamily: font }}>{settingsSaveError}</p>}
+              </div>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               {[
-                { label: "Profile Visibility", desc: "Control who can see your profile details.", key: "visibility", type: "select", options: ["Everyone", "Connections Only", "Only Me"] },
-                { label: "Online Status", desc: "Show when you are active.", key: "onlineStatus", type: "toggle" },
-                { label: "Namaste Requests", desc: "Who can send you connection requests.", key: "namasteRequests", type: "select", options: ["Everyone", "Nobody"] },
-                { label: "Receive Messages", desc: "Who can send you direct messages.", key: "receiveMessages", type: "select", options: ["Everyone", "Connections Only", "Nobody"] },
+                { label: "Namaste Requests", desc: "Who can send you connection requests.", key: "namasteRequests", dbKey: "namaste_requests", type: "select", options: ["Everyone", "Nobody"] },
+                { label: "Receive Messages", desc: "Who can send you direct messages.", key: "receiveMessages", dbKey: "receive_messages", type: "select", options: ["Everyone", "Connections Only", "Nobody"] },
               ].map((item, i) => (
-                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 3 ? "1px solid #F0EFED" : "none" }}>
+                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 1 ? "1px solid #F0EFED" : "none" }}>
                   <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
                     <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{item.label}</h4>
                     <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{item.desc}</p>
                   </div>
                   {item.type === "toggle" ? (
-                    <button onClick={() => setPrivSettings(p => ({...p, [item.key]: !p[item.key]}))} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: privSettings[item.key] ? "#22C55E" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
+                    <button onClick={() => saveSetting(setPrivSettings, item.key, !privSettings[item.key], () => api.saveUserSettings({ [item.dbKey]: !privSettings[item.key] }))} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: privSettings[item.key] ? "#22C55E" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
                       <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: privSettings[item.key] ? 23 : 3, transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
                     </button>
                   ) : (
-                    <select value={privSettings[item.key]} onChange={(e) => setPrivSettings(p => ({...p, [item.key]: e.target.value}))} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", fontSize: 12, background: "#F0EFED", color: "#37352F", fontFamily: font, cursor: "pointer", flexShrink: 0 }}>
+                    <select value={privSettings[item.key]} onChange={(e) => { const v = e.target.value; saveSetting(setPrivSettings, item.key, v, () => api.saveUserSettings({ [item.dbKey]: v })); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", fontSize: 12, background: "#F0EFED", color: "#37352F", fontFamily: font, cursor: "pointer", flexShrink: 0 }}>
                       {item.options.map(o => <option key={o}>{o}</option>)}
                     </select>
                   )}
                 </div>
               ))}
+              {/* Blocked members (opens the Blocked members window) */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "16px 0 0", borderTop: "1px solid #F0EFED" }}>
+                <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>Blocked members ({blockedIds.size})</h4>
+                <button onClick={() => setSettingsModal("blocked")} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, flexShrink: 0 }}>Manage</button>
+              </div>
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
-              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={async () => {
-                try {
-                  await api.saveUserSettings({
-                    profile_visibility: privSettings.visibility,
-                    online_status: privSettings.onlineStatus,
-                    namaste_requests: privSettings.namasteRequests,
-                    receive_messages: privSettings.receiveMessages,
-                  });
-                } catch(e) {}
-                setSettingsModal(null);
-              }} style={{ ...btnPrimary, padding: "10px 20px" }}>Save Settings</button>
+              <button onClick={() => { setSettingsModal(null); setSettingsSaveError(""); }} style={{ ...btnPrimary, padding: "10px 20px" }}>Done</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Notification Preferences Modal */}
+      {/* Notification Preferences Modal (Marketing Emails is the member's marketing consent) */}
       {settingsModal === "notifications" && (
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Notification Preferences</h3>
+              <div>
+                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Email Notifications</h3>
+                {settingsSaveError && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 2, fontFamily: font }}>{settingsSaveError}</p>}
+              </div>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               {[
                 { label: "Email Notifications", desc: "Receive updates via email.", key: "email" },
-                { label: "Push Notifications", desc: "Receive push notifications on your device.", key: "push" },
                 { label: "Marketing Emails", desc: "Receive news and special offers.", key: "marketing" },
               ].map((item, i) => (
-                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 2 ? "1px solid #F0EFED" : "none" }}>
+                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 1 ? "1px solid #F0EFED" : "none" }}>
                   <div>
                     <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{item.label}</h4>
                     <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{item.desc}</p>
                   </div>
-                  <button onClick={() => setNotifSettings(p => ({...p, [item.key]: !p[item.key]}))} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: notifSettings[item.key] ? "#37352F" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
+                  <button onClick={() => {
+                    const v = !notifSettings[item.key];
+                    saveSetting(setNotifSettings, item.key, v, item.key === "marketing"
+                      ? async () => { await api.updateProfile({ marketing_consent: v }); onUserUpdate({ ...user, marketingConsent: v }); }
+                      : () => api.saveUserSettings({ email_notifications: v }));
+                  }} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: notifSettings[item.key] ? "#37352F" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
                     <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: notifSettings[item.key] ? 23 : 3, transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
                   </button>
                 </div>
               ))}
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
-              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={async () => {
-                try {
-                  await api.saveUserSettings({
-                    email_notifications: notifSettings.email,
-                    push_notifications: notifSettings.push,
-                    marketing_emails: notifSettings.marketing,
-                  });
-                } catch(e) {}
-                setSettingsModal(null);
-              }} style={{ ...btnPrimary, padding: "10px 20px" }}>Save Settings</button>
+              <button onClick={() => { setSettingsModal(null); setSettingsSaveError(""); }} style={{ ...btnPrimary, padding: "10px 20px" }}>Done</button>
             </div>
           </div>
         </div>
@@ -4349,9 +4616,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ maxHeight: 400, overflow: "auto" }}>
               {(() => {
                 const activities = [];
-                posts.filter(p => p.userId === user.id).forEach(p => activities.push({ action: "Posted", target: p.content.substring(0, 40) + (p.content.length > 40 ? "..." : ""), time: new Date(p.timestamp).toLocaleString() }));
-                groups.filter(g => g.joined).forEach(g => activities.push({ action: "Joined group", target: g.name, time: "Recently" }));
-                helpRequests.filter(h => h.user === user.name).forEach(h => activities.push({ action: "Asked for help", target: h.title, time: new Date(h.timestamp).toLocaleString() }));
+                posts.filter(p => p.userId === user.id).forEach(p => activities.push({ action: "Posted", target: p.content.substring(0, 40) + (p.content.length > 40 ? "..." : ""), time: timeAgo(p.timestamp) }));
+                groups.filter(g => g.joined).forEach(g => activities.push({ action: "Joined group", target: g.name, time: "" }));
+                helpRequests.filter(h => h.user === user.name).forEach(h => activities.push({ action: "Asked for help", target: h.title, time: timeAgo(h.timestamp) }));
                 if (activities.length === 0) activities.push({ action: "No activity yet", target: "Start posting or joining communities!", time: "" });
                 return activities.slice(0, 10).map((log, i) => (
                   <div key={i} style={{ padding: "16px 24px", borderBottom: "1px solid #F0EFED" }}>
@@ -4373,36 +4640,33 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Report a Bug</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Report a problem</h3>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 16, fontFamily: font }}>Found something broken? Let us know and we'll fix it.</p>
               <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Bug Title</label>
-                <input id="bug-title" placeholder="Brief description of the issue" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }} />
+                <label htmlFor="bug-desc" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>What went wrong?</label>
+                <textarea id="bug-desc" placeholder="Tell us what you tried and what happened" onChange={() => bugError && setBugError("")} style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", minHeight: 100, resize: "vertical" }} />
+                {bugError && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 4, fontFamily: font }}>{bugError}</p>}
               </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Page / Feature</label>
-                <select id="bug-page" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }}>
+              <div style={{ marginBottom: 20 }}>
+                <label htmlFor="bug-page" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Where?</label>
+                <select id="bug-page" defaultValue={({ home: "Feed", network: "Find", groups: "Groups", events: "Events", messages: "Messages", market: "Marketplace", docs: "Docs", help: "Help", profile: "Profile" })[view] || "Other"} style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }}>
                   <option value="Feed">Feed</option><option value="Find">Find / Search</option><option value="Groups">Groups</option><option value="Events">Events</option><option value="Messages">Messages</option><option value="Marketplace">Marketplace</option><option value="Docs">Docs</option><option value="Help">Help</option><option value="Profile">Profile</option><option value="Settings">Settings</option><option value="Other">Other</option>
                 </select>
               </div>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Steps to Reproduce</label>
-                <textarea id="bug-desc" placeholder="Describe what happened and what you expected..." style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", minHeight: 100, resize: "vertical" }} />
-              </div>
               <button onClick={async () => {
-                const title = document.getElementById("bug-title")?.value;
                 const page = document.getElementById("bug-page")?.value;
-                const desc = document.getElementById("bug-desc")?.value;
-                if (!title?.trim()) { alert("Please enter a bug title."); return; }
+                const desc = (document.getElementById("bug-desc")?.value || "").trim();
+                if (!desc) { setBugError("Please tell us what went wrong."); return; }
                 try {
-                  await api.reportPost(user.id, `[BUG] ${page}: ${title} — ${desc || "No details"}`);
-                  alert("Bug reported! Thank you for helping us improve NRIClub.");
+                  await api.reportPost(user.id, `[BUG] ${page}: ${desc.slice(0, 60)} — ${desc}`);
+                  alert("Thanks! Your report was sent.");
+                  setBugError("");
                   setSettingsModal(null);
-                } catch(e) { alert("Failed to submit: " + (e.message || "Please try again.")); }
-              }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Submit Bug Report</button>
+                } catch(e) { alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your report couldn't be sent. Please try again."); }
+              }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Send report</button>
             </div>
           </div>
         </div>
@@ -4413,22 +4677,30 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Help & Support</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Support</h3>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               <div style={{ background: "#EDF4FF", borderRadius: 10, padding: "18px 20px", marginBottom: 24, border: "1px solid #DBEAFE" }}>
                 <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.help({ size: 16 })} Need assistance?</h4>
                 <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, marginBottom: 14, fontFamily: font }}>Our support team is here to help you with any issues or questions you might have.</p>
-                <button style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#3B5EDB", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Contact Support</button>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <a href="mailto:support@nriclub.app" style={{ ...btnPrimary, textDecoration: "none" }}>Contact support</a>
+                  <button onClick={() => { setBugError(""); setSettingsModal("reportBug"); }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Report a problem</button>
+                </div>
               </div>
               <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font }}>FAQs</h4>
               <div style={{ border: "1px solid #E8E7E4", borderRadius: 10, overflow: "hidden" }}>
-                {["How do I verify my account?", "Can I change my username?", "How to report a user?"].map((q, i) => (
-                  <div key={i} style={{ padding: "14px 18px", borderBottom: i < 2 ? "1px solid #F0EFED" : "none", cursor: "pointer", fontSize: 14, color: "#37352F", fontFamily: font }}
-                    onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
-                    onMouseOut={(e) => e.currentTarget.style.background = "#fff"}>
-                    {q}
+                {[
+                  { q: "How do I get verified?", a: "An admin checks your LinkedIn or short note. Your status shows at the top of Home." },
+                  { q: "How do I change my name or password?", a: "Gear → Account Settings." },
+                  { q: "How do I report someone?", a: "Use '…' on a post or in a chat, or the flag on a member's card." },
+                ].map((f, i) => (
+                  <div key={i} style={{ borderBottom: i < 2 ? "1px solid #F0EFED" : "none" }}>
+                    <button onClick={() => setOpenFaq(openFaq === i ? null : i)} aria-expanded={openFaq === i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "14px 18px", border: "none", background: "#fff", cursor: "pointer", fontSize: 14, color: "#37352F", fontFamily: font, textAlign: "left" }}>
+                      {f.q} <span style={{ color: "#9B9A97", transform: openFaq === i ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>›</span>
+                    </button>
+                    {openFaq === i && <p style={{ padding: "0 18px 14px", fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, fontFamily: font }}>{f.a}</p>}
                   </div>
                 ))}
               </div>
@@ -4449,7 +4721,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24, overflow: "auto", flex: 1, fontSize: 13, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
-              <TermsContent />
+              <div role="tablist" aria-label="Terms and policies" style={{ display: "flex", gap: 4, background: "#F0EFED", padding: 3, borderRadius: 8, marginBottom: 20 }}>
+                {[{ k: "terms", l: "Terms of Use" }, { k: "privacy", l: "Privacy Policy" }].map(tab => (
+                  <button key={tab.k} type="button" role="tab" aria-selected={legalTab === tab.k} onClick={() => setLegalTab(tab.k)} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "none", background: legalTab === tab.k ? "#fff" : "transparent", color: legalTab === tab.k ? "#37352F" : "#6B6A67", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: legalTab === tab.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{tab.l}</button>
+                ))}
+              </div>
+              {legalTab === "terms" ? <TermsContent /> : <PrivacyContent />}
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8", flexShrink: 0 }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
@@ -4479,13 +4756,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               ) : (
                 (followModal === "followers" ? myFollowers : myFollowing).map((u, i) => (
-                  <div key={u.id || i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED" }}>
+                  <div key={u.id || i} onClick={() => { setFollowModal(null); setProfilePreview(networkUsers.find(x => x.id === u.id) || u); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED", cursor: "pointer" }}>
                     <Avatar name={u.name || "User"} size={40} url={u.avatar_url} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name || "User"}</div>
                       <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{u.profession || ""}</div>
                     </div>
-                    <button onClick={() => { setFollowModal(null); setProfilePreview(u); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", fontSize: 11, fontWeight: 600, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>View</button>
+                    <button style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", fontSize: 11, fontWeight: 600, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>View</button>
                   </div>
                 ))
               )}
@@ -4499,16 +4776,21 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfilePreview(null)}>
           <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 380, padding: "32px 28px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", position: "relative" }} onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setProfilePreview(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
-            
-            {/* NRI Badge */}
-            <span style={{ position: "absolute", top: 14, left: 14, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 4, letterSpacing: "0.05em",
-              background: isUserNRI(profilePreview) ? "#E3FCEF" : "#FFF3E0",
-              color: isUserNRI(profilePreview) ? "#22A06B" : "#E65100",
-              border: `1px solid ${isUserNRI(profilePreview) ? "#B5E4CA" : "#FFE0B2"}`,
-            }}>{isUserNRI(profilePreview) ? "NRI" : "IN"}</span>
 
-            <Avatar name={profilePreview.name || "User"} size={80} />
-            <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginTop: 14, fontFamily: font }}>{profilePreview.name}</h3>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <Avatar name={profilePreview.name || "User"} size={80} url={profilePreview.avatar_url} />
+            </div>
+            {/* Name + NRI badge (as on Find cards; left out when residency is unknown) */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 14, flexWrap: "wrap" }}>
+              <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", fontFamily: font }}>{profilePreview.name}</h3>
+              {(profilePreview.countryCode || profilePreview.location) && (
+                <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em",
+                  background: isUserNRI(profilePreview) ? "#E3FCEF" : "#FFF3E0",
+                  color: isUserNRI(profilePreview) ? "#22A06B" : "#E65100",
+                  border: `1px solid ${isUserNRI(profilePreview) ? "#B5E4CA" : "#FFE0B2"}`,
+                }}>{isUserNRI(profilePreview) ? "NRI" : "IN"}</span>
+              )}
+            </div>
             <p style={{ fontSize: 14, color: "#5F5E5B", marginTop: 4, fontFamily: font }}>{profilePreview.profession || ""}</p>
             
             <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
@@ -4525,7 +4807,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "16px 0", fontSize: 13, fontFamily: font }}>
-              <span><b style={{ color: "#37352F" }}>{profilePreview.followers || 0}</b> <span style={{ color: "#9B9A97" }}>followers</span></span>
+              <span><b style={{ color: "#37352F" }}>{profilePreview.followers || 0}</b> <span style={{ color: "#9B9A97" }}>{profilePreview.followers === 1 ? "follower" : "followers"}</span></span>
               <span style={{ color: "#D4D4D2" }}>·</span>
               <span><b style={{ color: "#37352F" }}>{profilePreview.following || 0}</b> <span style={{ color: "#9B9A97" }}>following</span></span>
             </div>
@@ -4547,11 +4829,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {acceptedConnections.has(profilePreview.id) ? "Following" : sentNamaste.has(profilePreview.id) ? "Sent" : "Namaste"}
               </button>
               <button onClick={async () => {
-                try {
-                  const convo = await api.getOrCreateConversation(profilePreview.id);
-                  if (convo) { setConvos(prev => { if (prev.find(c => c.id === convo.id)) return prev; return [{ id: convo.id, name: profilePreview.name, otherUserId: profilePreview.id, lastMsg: "", time: "", unread: false }, ...prev]; }); setSelectedConvo(convo.id); }
-                } catch(e) {}
-                setProfilePreview(null); setView("messages");
+                if (await openChatWith(profilePreview)) setProfilePreview(null);
               }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>
                 {Icons.message({ size: 14 })} Message
               </button>
@@ -4570,10 +4848,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>Report this {reportConfirm.type}?</h3>
             {reportConfirm.name && <p style={{ fontSize: 12, color: "#5F5E5B", marginBottom: 8, fontFamily: font }}>"{reportConfirm.name}"</p>}
             <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 20, lineHeight: 1.5, fontFamily: font }}>This will be reviewed by our moderation team.</p>
+            {reportConfirm.type === "user" && (
+              <div style={{ textAlign: "left", marginBottom: 20 }}>
+                <label htmlFor="report-reason" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Reason</label>
+                <select id="report-reason" value={reportConfirm.reason || ""} onChange={(e) => setReportConfirm({ ...reportConfirm, reason: e.target.value })} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="" disabled>Choose a reason</option>
+                  {["Spam or misleading", "Harassment or hate speech", "Inappropriate content", "Violence or physical harm", "Impersonation", "Other"].map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
               <button onClick={() => setReportConfirm(null)} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 13, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={async () => {
-                const reason = `[${reportConfirm.type.toUpperCase()}] ${reportConfirm.name ? reportConfirm.name + " — " : ""}Reported as inappropriate`;
+              <button disabled={reportConfirm.type === "user" && !reportConfirm.reason} onClick={async () => {
+                const reason = `[${reportConfirm.type.toUpperCase()}] ${reportConfirm.name ? reportConfirm.name + " — " : ""}${reportConfirm.reason || "Reported as inappropriate"}`;
                 try {
                   if (reportConfirm.type === "user") {
                     await api.reportUser(reportConfirm.id, reason);
@@ -4585,10 +4872,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   alert("Reported successfully. Our team will review this content.");
                 } catch(e) {
                   console.error("Report failed:", e);
-                  alert("Report failed: " + (e.message || "Please try again."));
+                  alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your report couldn't be sent. Please try again.");
                   setReportConfirm(null);
                 }
-              }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Report</button>
+              }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: reportConfirm.type === "user" && !reportConfirm.reason ? "#FECACA" : "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: reportConfirm.type === "user" && !reportConfirm.reason ? "default" : "pointer", fontFamily: font }}>Report</button>
             </div>
           </div>
         </div>
@@ -4596,7 +4883,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Blocked Users Modal */}
       {settingsModal === "blocked" && (
-        <BlockedUsersModal onClose={() => setSettingsModal(null)} font={font} />
+        <BlockedUsersModal onClose={() => setSettingsModal("privacy")} font={font}
+          onUnblocked={(id) => setBlockedIds(prev => { const s = new Set(prev); s.delete(id); return s; })} />
       )}
 
       {/* Block User Modal */}
@@ -4612,7 +4900,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             <div style={{ padding: 24 }}>
               <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 28, fontFamily: font }}>
-                Are you sure you want to block this user? They will no longer be able to message you or see your profile. This action is reversible in settings.
+                Block {convos.find(c => c.otherUserId === blockTargetId)?.name || networkUsers.find(u => u.id === blockTargetId)?.name || "this member"}? They won't be able to message you or see your profile. You can undo this in Settings → Privacy & Safety.
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setBlockModalOpen(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
@@ -4623,40 +4911,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   setBlockedIds(prev => { const s = new Set(prev); s.add(userIdToBlock); return s; });
                   setBlockModalOpen(false);
                   setSelectedConvo(null);
-                  alert("User blocked. You can unblock them in Settings → Blocked Users.");
+                  alert("User blocked. You can unblock them in Settings → Privacy & Safety.");
                 }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, background: "#DC2626", color: "#fff", cursor: "pointer", fontFamily: font }}>Confirm Block</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Report User Modal */}
-      {reportModalOpen && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportModalOpen(false)}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FEF2F2" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#DC2626" }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                <h3 style={{ fontSize: 16, fontWeight: 700, fontFamily: font }}>Report User</h3>
-              </div>
-              <button onClick={() => setReportModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 4 }}>{Icons.x({ size: 18 })}</button>
-            </div>
-            <div style={{ padding: 24 }}>
-              <p style={{ fontSize: 14, color: "#5F5E5B", marginBottom: 20, fontFamily: font }}>Please select a reason for reporting this user:</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
-                {["Spam or misleading", "Harassment or hate speech", "Inappropriate content", "Violence or physical harm", "Impersonation", "Other"].map(reason => (
-                  <label key={reason} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 8, cursor: "pointer", border: reportReason === reason ? "1px solid #37352F" : "1px solid transparent", background: reportReason === reason ? "#FAFAF8" : "transparent", transition: "all 0.1s" }}
-                    onMouseOver={(e) => { if (reportReason !== reason) e.currentTarget.style.background = "#FAFAF8"; }}
-                    onMouseOut={(e) => { if (reportReason !== reason) e.currentTarget.style.background = "transparent"; }}>
-                    <input type="radio" name="reportReason" value={reason} checked={reportReason === reason} onChange={() => setReportReason(reason)} style={{ accentColor: "#37352F", width: 16, height: 16 }} />
-                    <span style={{ fontSize: 14, color: "#37352F", fontFamily: font }}>{reason}</span>
-                  </label>
-                ))}
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-                <button onClick={() => { setReportModalOpen(false); setReportReason(""); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button onClick={async () => { try { if (activeConvo) await api.reportUser(activeConvo.id, reportReason); } catch(e) {} setReportModalOpen(false); setReportReason(""); }} disabled={!reportReason} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, background: reportReason ? "#DC2626" : "#FECACA", color: "#fff", cursor: reportReason ? "pointer" : "default", fontFamily: font, transition: "background 0.15s" }}>Submit Report</button>
               </div>
             </div>
           </div>
@@ -4673,10 +4929,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             <div style={{ padding: "0 20px 20px" }}>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.mapPin({ size: 12 })} Hometown</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.mapPin({ size: 12 })} City</label>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 14 })}</div>
-                  <input value={feedFilters.hometown} onChange={(e) => setFeedFilters({...feedFilters, hometown: e.target.value})} placeholder="Search city..." style={{ ...inputStyle, paddingLeft: 34 }} />
+                  <input value={feedFilters.hometown} onChange={(e) => setFeedFilters({...feedFilters, hometown: e.target.value})} placeholder="Hometown or current city" style={{ ...inputStyle, paddingLeft: 34 }} />
                 </div>
               </div>
               <div style={{ marginBottom: 20 }}>
@@ -4686,19 +4942,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </select>
               </div>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.globe({ size: 12 })} NRI / Based in India</label>
-                <select value={feedFilters.yearsAbroad} onChange={(e) => setFeedFilters({...feedFilters, yearsAbroad: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
-                  {["All", "NRI", "Based in India"].map(y => <option key={y}>{y}</option>)}
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.globe({ size: 12 })} Lives in</label>
+                <select value={feedFilters.livesIn} onChange={(e) => setFeedFilters({...feedFilters, livesIn: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                  {["All", "Abroad", "India"].map(y => <option key={y}>{y}</option>)}
                 </select>
               </div>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.users({ size: 12 })} Specific Community</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.users({ size: 12 })} Community</label>
                 <select value={feedFilters.community} onChange={(e) => setFeedFilters({...feedFilters, community: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
                   <option value="All">All Communities</option>
                   {groups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
                 </select>
               </div>
-              <button onClick={() => setFilterModalOpen(false)} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px" }}>Apply Filters</button>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button onClick={() => setFeedFilters(noFeedFilters)} style={{ background: "none", border: "none", color: "#5F5E5B", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, padding: "12px 8px" }}>Clear</button>
+                <button onClick={() => setFilterModalOpen(false)} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px" }}>Done</button>
+              </div>
             </div>
           </div>
         </div>
@@ -4733,8 +4992,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
               <div style={{ marginBottom: 24 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Excerpt / Summary</label>
-                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newDoc.excerpt} onChange={(e) => setNewDoc({...newDoc, excerpt: e.target.value})} placeholder="Brief summary of your doc..." />
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Your guide</label>
+                <textarea className="doc-guide" style={{ ...inputStyle, minHeight: 200, resize: "none" }} value={newDoc.excerpt} onChange={(e) => setNewDoc({...newDoc, excerpt: e.target.value})} placeholder="Write the steps, tips and useful links…" />
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => setDocModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
@@ -4844,27 +5103,29 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setGroupRequestModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Request New Community</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Request a new group</h3>
               <button onClick={() => setGroupRequestModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 18 })}</button>
             </div>
-            <div style={{ padding: 24 }}>
-              {/* Yellow info box */}
-              <div style={{
-                background: "#FFFDE7", border: "1px solid #FFF9C4", borderRadius: 8, padding: "16px 18px", marginBottom: 24,
-              }}>
-                <p style={{ fontSize: 14, fontWeight: 700, color: "#8D6E00", marginBottom: 6, fontFamily: font }}>Standard Naming Convention</p>
-                <p style={{ fontSize: 13, color: "#8D6E00", lineHeight: 1.55, fontFamily: font }}>
-                  All community groups follow the format: <b>"Indians in [City Name]"</b>. This helps everyone find their local community easily.
-                </p>
+            {groupRequestSent ? (
+              <div style={{ padding: 24 }}>
+                <p style={{ fontSize: 14, color: "#37352F", lineHeight: 1.55, marginBottom: 20, fontFamily: font }}>Thanks, an admin will review this.</p>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button onClick={() => { setGroupRequestModal(false); setGroupRequestSent(false); }} style={btnPrimary}>Done</button>
+                </div>
               </div>
-
+            ) : (() => {
+              const requestCity = newGroupCity.trim();
+              const existingGroup = requestCity ? groups.find(g => g.name.toLowerCase() === `indians in ${requestCity.toLowerCase()}`) : null;
+              const canSubmit = !!requestCity && !existingGroup;
+              return (
+            <div style={{ padding: 24 }}>
               {/* City Name input */}
-              <div style={{ marginBottom: 20 }}>
+              <div style={{ marginBottom: 24 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>
                   City Name
                 </label>
                 <input
-                  value={newGroupCity} onChange={(e) => setNewGroupCity(e.target.value)}
+                  value={newGroupCity} onChange={(e) => { setNewGroupCity(e.target.value); setGroupRequestError(""); }}
                   placeholder="e.g. Paris"
                   style={{
                     width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE",
@@ -4872,18 +5133,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   }}
                   autoFocus
                 />
-              </div>
-
-              {/* Preview */}
-              <div style={{ marginBottom: 24 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>
-                  Preview
-                </label>
-                <div style={{
-                  padding: "12px 14px", borderRadius: 8, background: "#F0EFED", fontSize: 14, color: "#9B9A97", fontWeight: 500, fontFamily: font,
-                }}>
-                  Indians in {newGroupCity || "..."}
-                </div>
+                {existingGroup ? (
+                  <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 8, fontFamily: font }}>
+                    {existingGroup.name} already exists.{" "}
+                    <button onClick={() => { setGroupRequestModal(false); setNewGroupCity(""); setGroupMembers([]); setCommunityTab("feed"); setSelectedGroup(existingGroup); }} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontSize: 13, fontFamily: font }}>
+                      Open it
+                    </button>
+                  </p>
+                ) : (
+                  <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 8, fontFamily: font, overflowWrap: "anywhere" }}>Your group will be called Indians in {requestCity || "…"}</p>
+                )}
+                {groupRequestError && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", marginTop: 8, fontFamily: font }}>{groupRequestError}</p>}
               </div>
 
               {/* Buttons */}
@@ -4893,27 +5153,31 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </button>
                 <button
                   onClick={async () => {
-                    if (!newGroupCity.trim()) return;
+                    if (!canSubmit) return;
+                    setGroupRequestError("");
                     try {
-                      await api.requestNewGroup(newGroupCity.trim());
-                      alert(`Your request to create "Indians in ${newGroupCity}" has been sent to the admin for approval.`);
+                      await api.requestNewGroup(requestCity);
+                      setGroupRequestSent(true);
+                      setNewGroupCity("");
                     } catch(e) {
-                      alert("Failed to submit request: " + (e.message || "Please try again."));
+                      setGroupRequestError(isNetworkError(e) ? NETWORK_MESSAGE
+                        : /23505/.test(e.message || "") ? `There's already a community or a request for ${requestCity}.`
+                        : "Your request couldn't be sent. Please try again.");
                     }
-                    setNewGroupCity("");
-                    setGroupRequestModal(false);
                   }}
-                  disabled={!newGroupCity.trim()}
+                  disabled={!canSubmit}
                   style={{
                     padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600,
-                    background: newGroupCity.trim() ? "#37352F" : "#E8E7E4", color: newGroupCity.trim() ? "#fff" : "#9B9A97",
-                    cursor: newGroupCity.trim() ? "pointer" : "default", fontFamily: font,
+                    background: canSubmit ? "#37352F" : "#E8E7E4", color: canSubmit ? "#fff" : "#9B9A97",
+                    cursor: canSubmit ? "pointer" : "default", fontFamily: font,
                   }}
                 >
                   Submit Request
                 </button>
               </div>
             </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -4929,7 +5193,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ padding: 24 }}>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Event Title</label>
-                <input style={inputStyle} value={newEvent.title} onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="e.g. Diwali Night 2024" />
+                <input style={inputStyle} value={newEvent.title} onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="e.g. Diwali Night 2026" />
               </div>
               <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
                 <div>
@@ -4945,7 +5209,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Location / Venue</label>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.mapPin({ size: 14 })}</div>
-                  <input style={{ ...inputStyle, paddingLeft: 36 }} value={newEvent.location} onChange={(e) => setNewEvent({ ...newEvent, location: e.target.value })} placeholder="e.g. Central Park, NY" />
+                  <input style={{ ...inputStyle, paddingLeft: 36 }} value={newEvent.location} onChange={(e) => setNewEvent({ ...newEvent, location: e.target.value })} placeholder="e.g. Kulturbrauerei, Berlin" />
                 </div>
               </div>
               <div style={{ marginBottom: 20 }}>
@@ -4956,13 +5220,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </select>
               </div>
               <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
+                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newEvent.description} onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })} placeholder="Tell people what your event is about..." />
+              </div>
+              <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Ticket / Info Link (Optional)</label>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.link({ size: 14 })}</div>
                   <input style={{ ...inputStyle, paddingLeft: 36 }} value={newEvent.link} onChange={(e) => setNewEvent({ ...newEvent, link: e.target.value })} placeholder="https://eventbrite.com/..." />
                 </div>
               </div>
-              <div style={{ marginBottom: 20 }}>
+              <div style={{ marginBottom: 24 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Event Photo (Optional)</label>
                 {eventPhoto ? (
                   <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: "1px solid #E0E0DE" }}>
@@ -4982,13 +5250,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </label>
                 )}
               </div>
-              <div style={{ marginBottom: 24 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
-                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newEvent.description} onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })} placeholder="Tell people what your event is about..." />
-              </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => setEventModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button onClick={createEvent} disabled={!newEvent.title || !newEvent.date} style={{ ...btnPrimary, opacity: newEvent.title && newEvent.date ? 1 : 0.4 }}>Share Event</button>
+                <button onClick={createEvent} disabled={!newEvent.title || !newEvent.date} style={{ ...btnPrimary, opacity: newEvent.title && newEvent.date ? 1 : 0.4 }}>Host Event</button>
               </div>
             </div>
           </div>
@@ -4997,40 +5261,33 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Help Modal */}
       {helpModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setHelpModal(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setHelpModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "16px 20px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
-              <h3 style={{ fontSize: 15, fontWeight: 600 }}>Ask for Help</h3>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Ask for Help</h3>
               <button onClick={() => setHelpModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Title</label>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
                 <input style={inputStyle} value={newHelp.title} onChange={(e) => setNewHelp({ ...newHelp, title: e.target.value })} placeholder="Summarize your need..." />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Category</label>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
                   <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.category} onChange={(e) => setNewHelp({ ...newHelp, category: e.target.value })}>
                     {["General", "Housing", "Health", "Legal/Visa", "Education", "Jobs", "Travel"].map((c) => <option key={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Urgency</label>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Priority</label>
                   <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.urgency} onChange={(e) => setNewHelp({ ...newHelp, urgency: e.target.value })}>
                     {["Low", "Medium", "High"].map((u) => <option key={u}>{u}</option>)}
                   </select>
                 </div>
               </div>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>City</label>
-                <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.city || ""} onChange={(e) => setNewHelp({ ...newHelp, city: e.target.value })}>
-                  <option value="">Select a city...</option>
-                  {GLOBAL_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Description</label>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
                 <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newHelp.description} onChange={(e) => setNewHelp({ ...newHelp, description: e.target.value })} placeholder="Provide details..." />
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
@@ -5097,38 +5354,45 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Responsive CSS */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=DM+Sans:wght@400;500;600;700;800&display=swap');
         * { box-sizing: border-box; margin: 0; }
         body { font-family: 'DM Sans', sans-serif; background: #FAFAF8; color: #37352F; }
         input:focus, select:focus, textarea:focus { border-color: #37352F !important; background: #fff !important; }
         button:hover { opacity: 0.92; }
         .sidebar-left, .sidebar-right { display: block; }
+        .msg-back { display: none; }
         .desktop-nav { display: flex !important; }
         .mobile-menu-btn { display: none !important; }
         .mobile-nav { display: none !important; }
 
         @media (max-width: 900px) {
           .nav-grid { display: flex !important; justify-content: space-between !important; }
-          .main-grid { grid-template-columns: 1fr !important; padding: 16px 12px 80px !important; }
+          .main-grid { grid-template-columns: minmax(0,1fr) !important; padding: 16px 12px 80px !important; }
           .sidebar-left, .sidebar-right { display: none !important; }
           .desktop-nav { display: none !important; }
-          .mobile-menu-btn { display: block !important; }
+          .mobile-menu-btn { display: flex !important; }
           .mobile-nav { display: flex !important; }
+          .nav-messages-btn { display: none !important; }
           .docs-grid, .market-grid, .network-grid, .groups-grid { grid-template-columns: 1fr !important; }
+          .members-grid { grid-template-columns: 1fr !important; }
         }
 
         @media (max-width: 600px) {
           /* Messages */
           .msg-layout { flex-direction: column !important; height: auto !important; min-height: 500px !important; }
-          .msg-sidebar { width: 100% !important; max-height: 45vh !important; border-right: none !important; border-bottom: 1px solid #E8E7E4 !important; overflow-y: auto !important; }
+          .msg-sidebar { width: 100% !important; border-right: none !important; overflow-y: auto !important; }
+          .msg-layout:not(.has-convo) .msg-chat { display: none !important; }
+          .msg-layout.has-convo .msg-sidebar { display: none !important; }
+          .msg-layout.has-convo { height: calc(100dvh - 210px) !important; min-height: 0 !important; }
+          .msg-back { display: block !important; }
           .msg-chat { min-height: 320px !important; }
 
           /* Event cards */
           .event-card { flex-direction: column !important; }
-          .event-card > div:first-child { height: 160px !important; width: 100% !important; min-width: unset !important; border-radius: 12px 12px 0 0 !important; }
+          .event-card > div:first-child { height: 160px !important; min-height: 0 !important; width: 100% !important; min-width: unset !important; border-radius: 12px 12px 0 0 !important; }
+          .event-card-plain > div:first-child { height: 56px !important; }
 
           /* Notification dropdown */
-          .notif-dropdown { width: calc(100vw - 24px) !important; right: -80px !important; max-height: 70vh !important; overflow-y: auto !important; }
+          .notif-dropdown { position: fixed !important; top: 64px !important; left: 12px !important; right: 12px !important; width: auto !important; max-height: 70vh !important; overflow-y: auto !important; }
 
           /* Signup form grids */
           .form-grid-2, .form-grid-3 { grid-template-columns: 1fr !important; }
@@ -5143,10 +5407,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           .filter-row { flex-wrap: wrap !important; gap: 8px !important; }
 
           /* Settings dropdown */
-          .settings-dropdown { width: calc(100vw - 32px) !important; right: -40px !important; }
+          .settings-dropdown { position: fixed !important; top: 64px !important; left: 12px !important; right: 12px !important; width: auto !important; }
+          .settings-dropdown button { padding: 13px 18px !important; font-size: 14px !important; }
 
           /* Post composer */
           .post-actions { flex-wrap: wrap !important; }
+
+          /* Home feed: posts start higher */
+          .feed-subtitle { display: none !important; }
 
           /* Profile page */
           .profile-full { padding: 20px 16px !important; }
@@ -5163,6 +5431,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           .doc-article { border-radius: 0 !important; border-left: none !important; border-right: none !important; }
           .doc-body { padding: 20px 16px !important; }
           .doc-title { font-size: 20px !important; line-height: 1.35 !important; }
+          .doc-guide { min-height: 160px !important; }
           .doc-body textarea { min-height: 50px !important; }
         }
 
@@ -5170,7 +5439,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           .form-grid-2, .form-grid-3 { grid-template-columns: 1fr !important; }
           .admin-stats { grid-template-columns: 1fr !important; }
           .admin-user-card .user-fields { grid-template-columns: 1fr !important; }
-          .notif-dropdown { right: -100px !important; }
         }
       `}</style>
     </div>
@@ -5184,7 +5452,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 const CookieConsent = () => {
   const [visible, setVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const [analyticsConsent, setAnalyticsConsent] = useState(false);
+  const [legal, setLegal] = useState(null); // "terms" | "privacy"
   const bannerRef = useRef(null);
 
   useEffect(() => {
@@ -5215,7 +5483,7 @@ const CookieConsent = () => {
     setVisible(false);
   };
   const acceptEssential = async () => {
-    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: analyticsConsent, date: new Date().toISOString() })); } catch (e) {}
+    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: false, date: new Date().toISOString() })); } catch (e) {}
     setVisible(false);
   };
 
@@ -5245,6 +5513,10 @@ const CookieConsent = () => {
               <button onClick={() => setShowDetails(!showDetails)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
                 {showDetails ? "Hide details" : "Learn more"}
               </button>
+              {" · "}
+              <button type="button" onClick={() => setLegal("privacy")} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: "inherit", padding: 0 }}>Privacy Policy</button>
+              {" · "}
+              <button type="button" onClick={() => setLegal("terms")} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: "inherit", padding: 0 }}>Terms of Use</button>
             </p>
 
             {showDetails && (
@@ -5261,20 +5533,7 @@ const CookieConsent = () => {
                     <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>Analytics Cookies</span>
                     <p style={{ fontSize: 11, color: "#9B9A97", margin: "2px 0 0" }}>Help us understand how you use NRIClub to improve the experience.</p>
                   </div>
-                  <button
-                    onClick={() => setAnalyticsConsent(!analyticsConsent)}
-                    style={{
-                      width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer",
-                      background: analyticsConsent ? "#37352F" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0,
-                    }}
-                  >
-                    <div style={{
-                      width: 14, height: 14, borderRadius: "50%", background: "#fff",
-                      position: "absolute", top: 3,
-                      left: analyticsConsent ? 19 : 3,
-                      transition: "left 0.2s",
-                    }} />
-                  </button>
+                  <span style={{ fontSize: 11, color: "#6B6A67", fontWeight: 600, background: "#F0EFED", padding: "3px 8px", borderRadius: 4 }}>Optional</span>
                 </div>
               </div>
             )}
@@ -5296,43 +5555,119 @@ const CookieConsent = () => {
           </div>
         </div>
       </div>
+      {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
+      {legal === "privacy" && <PrivacyModal onClose={() => setLegal(null)} />}
     </div>
   );
 };
 
-// Shown after following a password-reset email link.
-const ResetPasswordPage = ({ onDone }) => {
+// "a***@example.com": enough to recognise an email address without showing it.
+const maskEmail = (email) => {
+  const [local, domain] = String(email || "").split("@");
+  if (!domain) return email || "";
+  return `${local.slice(0, 1)}***@${domain}`;
+};
+
+// Shown after following a password-reset email link. The link's session is
+// kept in memory only (supabaseApi), so the page says which account the new
+// password is for, warns when this browser is signed in to a different
+// account, and afterwards sends the member to log in. onDone(email) after the
+// password is set; onCancel to leave it; onExpired when the link no longer works.
+const ResetPasswordPage = ({ onDone, onCancel, onExpired }) => {
+  const [account, setAccount] = useState(null); // { email, signedInAsSomeoneElse }
+  const [checkError, setCheckError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
+  useEffect(() => {
+    let active = true;
+    setCheckError("");
+    api.getRecoveryUser().then((a) => { if (active) setAccount(a); }).catch((err) => {
+      if (!active) return;
+      if (err.expired) onExpired();
+      else setCheckError(isNetworkError(err) ? NETWORK_MESSAGE : "We couldn't check your reset link. Please try again.");
+    });
+    return () => { active = false; };
+  }, [attempt]);
+
   const save = async (e) => {
     e.preventDefault();
+    if (saving || !account) return;
     if (password.length < 8) { setError("Use at least 8 characters."); return; }
     setSaving(true);
     setError("");
     try {
-      await api.updatePassword(password);
-      onDone();
+      const result = await api.updatePassword(password);
+      onDone(result?.email || account.email);
     } catch (err) {
-      setError(err.message || "Couldn't update your password. The link may have expired; request a new one.");
+      if (err.expired) { onExpired(); return; }
+      setError(authErrorMessage(err) || err.message || "Couldn't update your password. Please try again.");
       setSaving(false);
     }
   };
+  const cancel = () => {
+    api.cancelRecovery();
+    onCancel();
+  };
+
+  const linkButton = { background: "none", border: "none", color: "#5F5E5B", fontSize: 13, fontWeight: 500, cursor: "pointer", textDecoration: "underline", fontFamily: font, padding: 4 };
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
-      <form onSubmit={save} style={{ maxWidth: 380, width: "100%", background: "#fff", borderRadius: 16, padding: 32, border: "1px solid #EDEDEB" }}>
+      <form onSubmit={save} noValidate style={{ maxWidth: 380, width: "100%", background: "#fff", borderRadius: 16, padding: 32, border: "1px solid #EDEDEB" }}>
         <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 6 }}>Set a new password</h2>
-        <p style={{ fontSize: 13, color: "#787774", marginBottom: 20 }}>Choose a password with at least 8 characters.</p>
-        {error && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{error}</div>}
-        <label htmlFor="new-password" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>New password</label>
-        <div style={{ position: "relative", marginBottom: 20 }}>
-          <input id="new-password" type={show ? "text" : "password"} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", padding: "12px 64px 12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 15, boxSizing: "border-box", outline: "none", fontFamily: font }} />
-          <button type="button" onClick={() => setShow(!show)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#787774", fontSize: 12, cursor: "pointer" }}>{show ? "Hide" : "Show"}</button>
-        </div>
-        <button type="submit" disabled={saving} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1 }}>{saving ? "Saving..." : "Save password"}</button>
+        {!account ? (
+          checkError ? (
+            <>
+              <div role="alert" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, margin: "14px 0 16px" }}>{checkError}</div>
+              <button type="button" onClick={() => setAttempt(a => a + 1)} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Try again</button>
+            </>
+          ) : (
+            <p role="status" style={{ fontSize: 13, color: "#787774", marginBottom: 20 }}>Checking your link...</p>
+          )
+        ) : (
+          <>
+            <p style={{ fontSize: 13, color: "#787774", marginBottom: 20, lineHeight: 1.5 }}>
+              Set a new password for <strong style={{ color: "#37352F" }}>{maskEmail(account.email)}</strong>. Use at least 8 characters.
+            </p>
+            {account.signedInAsSomeoneElse && (
+              <div role="note" style={{ background: "#FFF8E6", border: "1px solid #FCE7B2", color: "#7A4D00", padding: "10px 12px", borderRadius: 8, fontSize: 12, lineHeight: 1.5, marginBottom: 16 }}>
+                This browser is signed in to a different NRIClub account. This link changes the password of {maskEmail(account.email)} only. If you didn't ask for it, cancel.
+              </div>
+            )}
+            {error && <div role="alert" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{error}</div>}
+            <label htmlFor="new-password" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>New password</label>
+            <div style={{ position: "relative", marginBottom: 20 }}>
+              <input id="new-password" type={show ? "text" : "password"} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", padding: "12px 64px 12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 15, boxSizing: "border-box", outline: "none", fontFamily: font }} />
+              <button type="button" onClick={() => setShow(!show)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#787774", fontSize: 12, cursor: "pointer" }}>{show ? "Hide" : "Show"}</button>
+            </div>
+            <button type="submit" disabled={saving} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1 }}>{saving ? "Saving..." : "Save password"}</button>
+          </>
+        )}
+        <p style={{ textAlign: "center", marginTop: 16, marginBottom: 0 }}>
+          <button type="button" onClick={cancel} disabled={saving} style={linkButton}>Cancel</button>
+        </p>
       </form>
+    </div>
+  );
+};
+
+// Shown for a link from one of our emails that has expired, was already used
+// or isn't valid.
+const ExpiredLinkPage = ({ onContinue }) => {
+  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
+      <div role="alert" style={{ maxWidth: 380, width: "100%", background: "#fff", borderRadius: 16, padding: 32, border: "1px solid #EDEDEB" }}>
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 6 }}>This link has expired</h2>
+        <p style={{ fontSize: 13, color: "#787774", marginBottom: 20, lineHeight: 1.6 }}>
+          Links in our emails work only once and only for a limited time. To reset your password, ask for a new link: choose “Forgot password?” on the login page.
+        </p>
+        <button type="button" onClick={onContinue} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Go to log in</button>
+      </div>
     </div>
   );
 };
@@ -5340,7 +5675,8 @@ const ResetPasswordPage = ({ onDone }) => {
 export default function App() {
   const [authState, setAuthState] = useState("loading");
   const [user, setUser] = useState(null);
-  const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead"
+  const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead" or a reset this browser asked for
+  const [loginNotice, setLoginNotice] = useState(""); // e.g. after a new password
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPass, setAdminPass] = useState("");
@@ -5397,63 +5733,103 @@ export default function App() {
     }
   };
 
-  const handleAdminLogout = async () => {
-    try { await api.signOut(); } catch (e) {}
+  // Signs out at once; the server is told in the background.
+  const handleAdminLogout = () => {
+    api.signOut().catch(() => {});
     setIsAdmin(false);
     setAuthState("admin-login");
   };
 
   // Leave the signed-in screens if the session ends by itself (revoked,
-  // expired, or another tab signed in as someone else).
+  // expired, or another tab signed out or signed in as someone else).
   useEffect(() => { api.onSessionEnded(() => window.location.reload()); }, []);
 
+  const isAdminRoute = () => {
+    const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
+    return isAdminDomain || window.location.hash === "#admin";
+  };
+
+  // Restores this browser's session, or shows `fallback` when nobody is
+  // signed in. If the session is fine but the profile can't be read, the
+  // member gets a retry: they are never shown as signed out or unverified
+  // because of one failed request.
+  const restoreSession = async (fallback = "landing") => {
+    setAuthState("loading");
+    if (isAdminRoute()) {
+      try {
+        const session = await api.getSession();
+        if (session?.user && await api.isAdmin()) {
+          setIsAdmin(true);
+          setAuthState("admin");
+          return;
+        }
+      } catch (e) {}
+      setAuthState("admin-login");
+      return;
+    }
+    let session = null;
+    try { session = await api.getSession(); } catch (e) {}
+    if (session?.user) {
+      try {
+        const dbProfile = await api.getMyProfile();
+        if (dbProfile) {
+          setUser(mapProfile(dbProfile));
+          setAuthState("authenticated");
+          return;
+        }
+      } catch (e) {
+        setAuthState("profile-error");
+        return;
+      }
+    }
+    // No valid session: never treat cached profile data as a login.
+    try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
+    setAuthState(fallback);
+  };
+
   useEffect(() => {
-    // Password-reset links land here with a one-time session in the URL.
-    if (api.takeRecoverySession()) {
+    // Links from our emails: the API took the auth data out of the address
+    // bar as the site loaded. A password-reset link opens the reset page; an
+    // expired or used link says so.
+    const link = api.takeAuthRedirect();
+    if (link.kind === "recovery" && api.takeRecoverySession()) {
       setAuthState("reset-password");
       return;
     }
-    // Check for admin route
-    const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
-    if (isAdminDomain || window.location.hash === "#admin") {
-      (async () => {
-        try {
-          const session = await api.getSession();
-          if (session?.user && await api.isAdmin()) {
-            setIsAdmin(true);
-            setAuthState("admin");
-            return;
-          }
-        } catch (e) {}
-        setAuthState("admin-login");
-      })();
+    if (link.kind === "expired") {
+      setAuthState("link-expired");
       return;
     }
-    (async () => {
-      try {
-        const session = await api.getSession();
-        if (session && session.user) {
-          const dbProfile = await api.getMyProfile();
-          if (dbProfile) {
-            setUser(mapProfile(dbProfile));
-            setAuthState("authenticated");
-            return;
-          }
-        }
-      } catch (e) {}
-      // No valid session: never treat cached profile data as a login.
-      try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
-      setAuthState("landing");
-    })();
+    restoreSession();
   }, []);
 
+  // After a new password: log in with it. The email is filled in only if this
+  // browser asked for the reset link: someone else may have made the link,
+  // for their own account, so their address must not be offered.
+  const handlePasswordReset = (email) => {
+    const notice = "Your password has been changed. Log in with your new password.";
+    const knownEmail = email && api.resetWasRequestedFor(email) ? email : "";
+    if (isAdminRoute()) {
+      setAdminEmail(knownEmail);
+      setAdminErr("");
+      setAdminNotice(notice);
+      setAuthState("admin-login");
+      return;
+    }
+    setLoginEmail(knownEmail);
+    setLoginNotice(notice);
+    setAuthState("login");
+  };
+
   const handleAuthComplete = (userData) => {
+    setLoginNotice("");
     setUser(userData);
     setAuthState("authenticated");
   };
 
-  const handleLogout = async () => {
-    try { await api.signOut(); } catch (e) {}
+  // Shows the signed-out screen at once; the server is told in the background.
+  const handleLogout = () => {
+    api.signOut().catch(() => {});
     try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
     setUser(null);
     setAuthState("landing");
@@ -5467,6 +5843,25 @@ export default function App() {
             {Icons.globe({ size: 24 })}
           </div>
           <p style={{ color: "#9B9A97", fontSize: 14 }}>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Signed in, but the profile couldn't be read (e.g. a network hiccup).
+  if (authState === "profile-error") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
+        <div role="alert" style={{ textAlign: "center", maxWidth: 360 }}>
+          <div style={{ width: 48, height: 48, background: "#37352F", borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16, color: "#fff" }}>
+            {Icons.globe({ size: 24 })}
+          </div>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>We couldn't load your profile</h2>
+          <p style={{ color: "#6B6A67", fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>Please check your connection and try again.</p>
+          <button type="button" onClick={() => restoreSession()} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Try again</button>
+          <p style={{ marginTop: 12 }}>
+            <button type="button" onClick={handleLogout} style={{ background: "none", border: "none", color: "#5F5E5B", fontSize: 13, fontWeight: 500, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit", padding: 4 }}>Sign out</button>
+          </p>
         </div>
       </div>
     );
@@ -5492,14 +5887,30 @@ export default function App() {
         </div>
       );
     }
-    if (authState === "reset-password") return <ResetPasswordPage onDone={() => window.location.reload()} />;
+    if (authState === "reset-password") {
+      return <ResetPasswordPage onDone={handlePasswordReset} onCancel={() => restoreSession()} onExpired={() => setAuthState("link-expired")} />;
+    }
+    if (authState === "link-expired") return <ExpiredLinkPage onContinue={() => restoreSession("login")} />;
     if (authState === "admin" && isAdmin) return <AdminPanel onLogout={handleAdminLogout} />;
     if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
-    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onLogin={(email) => { setLoginEmail(email || ""); setAuthState("login"); }} />;
-    if (authState === "login") return <LoginPage initialEmail={loginEmail} onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
-    // Members who haven't given their verification details yet do that first.
-    if (authState === "authenticated" && user && user.verificationStatus === "incomplete") return <GetVerified user={user} onDone={setUser} onSignOut={handleLogout} />;
-    if (authState === "authenticated" && user) return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
+    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
+    if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
+    if (authState === "authenticated" && user) {
+      // In this order: blocked members only see the blocked card (whatever
+      // their verification status); members who haven't given their
+      // verification details do that first; then anyone who hasn't confirmed
+      // they're 18+ and accepted the current Terms (TERMS_VERSION: the
+      // database doesn't count them as active members until they have).
+      // Rejected members see the rejected card in the dashboard (a Terms
+      // screen would be pointless). The dashboard loads nothing behind a
+      // blocked or rejected card.
+      if (user.status === "blocked") return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
+      if (user.verificationStatus === "incomplete") return <GetVerified user={user} onDone={setUser} onSignOut={handleLogout} />;
+      if (user.verificationStatus !== "rejected" && (!user.ageConfirmedAt || !user.termsAcceptedAt || user.termsVersion !== TERMS_VERSION)) {
+        return <TermsGate user={user} onDone={setUser} onSignOut={handleLogout} />;
+      }
+      return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
+    }
     return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
   })();
 

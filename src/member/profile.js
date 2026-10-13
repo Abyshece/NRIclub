@@ -31,9 +31,17 @@ export function mapProfile(p) {
     // Private (owner and admins only), used to prefill "Update details".
     verificationNote: p.verification_note || "",
     voucher: p.voucher || "",
-    // "18 or older" and Terms acceptance; older accounts give them in Get verified.
+    // "18 or older" and Terms acceptance, and which version of the Terms was
+    // accepted. Accounts without them, or with another version than
+    // TERMS_VERSION (LegalModals), confirm them in Get verified or on the
+    // Terms screen (TermsGate) before the dashboard.
     ageConfirmedAt: p.age_confirmed_at || null,
     termsAcceptedAt: p.terms_accepted_at || null,
+    termsVersion: p.terms_version || "",
+    // "held" (set by the server) while an admin checks the member before
+    // they can take part; "" otherwise. It says nothing about why, and the
+    // screens say no more than that either.
+    reviewFlag: p.review_flag || "",
     marketingConsent: !!p.marketing_consent,
     status: p.status || "active",
     createdAt: p.created_at || null,
@@ -95,16 +103,23 @@ export function cityFromGroupName(name) {
 
 // Same rule as private.normalize_linkedin() in the database: a personal
 // profile link, with or without https://, www., a country subdomain, a
-// trailing slash or a query string.
+// trailing slash or a query string. The name can't hold an escape of a
+// control character, a space, / ? # or % itself, nor a % that doesn't start
+// an escape (LINKEDIN_BAD_ESCAPE).
 const LINKEDIN_PROFILE = /^(?:https?:\/\/)?(?:[a-z]{2,3}\.)?(?:www\.)?linkedin\.com\/in\/([a-z0-9%_.-]{3,100})\/?(?:[?#].*)?$/i;
+const LINKEDIN_BAD_ESCAPE = /%(?![0-9a-f]{2})|%(?:[01][0-9a-f]|2[035f]|3f|7f)/i;
+const matchesLinkedinProfile = (v) => {
+  const m = LINKEDIN_PROFILE.exec(v);
+  return !!m && !LINKEDIN_BAD_ESCAPE.test(m[1]);
+};
 
-export const isLinkedinProfile = (value) => LINKEDIN_PROFILE.test((value || "").trim());
+export const isLinkedinProfile = (value) => matchesLinkedinProfile((value || "").trim());
 
 // A sentence for the member, or null when the link is a valid profile link.
 export function linkedinProblem(value) {
   const v = (value || "").trim();
   if (!v) return "Add your LinkedIn profile link, or choose “I don't have LinkedIn” below.";
-  if (LINKEDIN_PROFILE.test(v)) return null;
+  if (matchesLinkedinProfile(v)) return null;
   if (/lnkd\.in/i.test(v)) {
     return "Short lnkd.in links don't work. Open your profile on LinkedIn and copy the full link (linkedin.com/in/…).";
   }
@@ -147,6 +162,12 @@ export function authErrorMessage(err) {
   if (wait) return `For security, please wait ${wait[1]} seconds and try again.`;
   if (msg.includes("rate limit") || msg.includes("too many")) {
     return "Too many attempts. Please wait a few minutes and try again.";
+  }
+  // Supabase refuses a "new" password that is the current one ("New password
+  // should be different from the old password.", same_password); checked
+  // before the general password rule below, which it would also match.
+  if (msg.includes("same_password") || msg.includes("different from the old password")) {
+    return "That's already your password. Choose a different one.";
   }
   if (msg.includes("weak") || msg.includes("pwned") || msg.includes("easy to guess")) {
     return "That password is too easy to guess. Please choose a different one.";

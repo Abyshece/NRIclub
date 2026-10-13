@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
-import { TermsModal, PrivacyModal } from "./LegalModals";
+import { TermsModal, PrivacyModal, TERMS_VERSION } from "./LegalModals";
+import { AccountFooter } from "./AccountActions";
+import { VERIFICATION_BANNER_ID } from "./VerificationBanner";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, helperStyle, fieldErrorStyle } from "./ui";
 import {
   mapProfile, countryName, getCountryOptions, MAJOR_INDIAN_CITIES,
@@ -8,21 +10,27 @@ import {
 } from "./profile";
 
 const NOTE_MIN = 20;
+// Shown first in the Country list, above the full A-Z list.
+const COMMON_COUNTRIES = ["IN", "US", "GB", "CA", "AU", "DE", "AE", "SG"];
 const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
 // "Get verified": city, country and LinkedIn (or a short note on how the
 // member is connected to the community). Required for members whose
-// verification_status is 'incomplete' (mode "required": they can only sign
-// out from here); also opened from the dashboard to answer an admin's
-// request for more information (mode "update", prefilled, can be cancelled).
+// verification_status is 'incomplete' (mode "required": besides the form they
+// can sign out, download their data or delete their account); also opened
+// from the dashboard to answer an admin's request for more information (mode
+// "update", prefilled, can be cancelled).
 // Calls onDone(updatedUser) after a successful submit.
 export default function GetVerified({ user, mode = "required", onDone, onCancel, onSignOut }) {
   const isUpdate = mode === "update";
   // In India: country 'IN', or no country yet and never lived abroad.
   const isIndia = user.countryCode === "IN" || (!user.countryCode && user.isNRI === false);
   const hasNoteOnly = !user.linkedinUrl && !!user.verificationNote;
-  // Accounts from before signup asked for 18+ and the Terms confirm them here.
-  const needsTerms = !user.ageConfirmedAt || !user.termsAcceptedAt;
+  // Accounts with no 18+ and Terms record (from before signup asked for them,
+  // or whose signup stopped before they were recorded, e.g. one finished
+  // with "Forgot password?"), or that accepted an earlier version of the
+  // Terms, confirm them here.
+  const needsTerms = !user.ageConfirmedAt || !user.termsAcceptedAt || user.termsVersion !== TERMS_VERSION;
 
   const [country, setCountry] = useState(isIndia ? "IN" : user.countryCode || "");
   const [city, setCity] = useState(user.city || (user.location || "").split(",")[0].trim());
@@ -65,7 +73,9 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
 
   useEffect(() => { if (submitError) submitErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }, [submitError]);
   // Opened over the dashboard: focus moves into it and Tab stays inside,
-  // Escape closes it, and focus goes back to where it was afterwards.
+  // Escape closes it, and focus goes back to where it was afterwards. After a
+  // submit the "Update details" button is gone (the banner now says the
+  // profile is in review), so focus goes to that banner instead.
   const cancelRef = useRef(onCancel);
   cancelRef.current = onCancel;
   const modalOpen = useRef(false);
@@ -90,7 +100,8 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      if (previous && previous.focus) previous.focus();
+      const target = previous && previous.isConnected ? previous : document.getElementById(VERIFICATION_BANNER_ID);
+      if (target && target.focus) target.focus();
     };
   }, [mode]);
   useEffect(() => {
@@ -155,7 +166,11 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
       ...user, city: details.city, countryCode: country, location: details.location, linkedinUrl: details.linkedinUrl,
       verificationNote: details.note, voucher: details.voucher, profession: details.profession,
       verificationStatus: "pending", verificationMessage: "", isNRI: country !== "IN",
-      ageConfirmedAt: user.ageConfirmedAt || now, termsAcceptedAt: user.termsAcceptedAt || now,
+      ...(needsTerms && {
+        ageConfirmedAt: user.ageConfirmedAt || now,
+        termsAcceptedAt: (user.termsVersion === TERMS_VERSION && user.termsAcceptedAt) || now,
+        termsVersion: TERMS_VERSION,
+      }),
     });
   };
 
@@ -175,16 +190,30 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
       aria-labelledby="gv-title"
     >
       <div style={{ maxWidth: 460, margin: "0 auto", padding: "40px 16px 60px" }}>
+        {isUpdate && (
+          <button type="button" onClick={onCancel} style={{ ...linkButtonStyle, textDecoration: "none", fontWeight: 500, color: COLORS.helper, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
+            <span aria-hidden="true">←</span> Back
+          </button>
+        )}
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <div style={{ width: 56, height: 56, borderRadius: 16, background: "#E3FCEF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px" }}>
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M9 12l2 2 4-4" />
             </svg>
           </div>
-          <h2 id="gv-title" ref={titleRef} tabIndex={-1} style={{ fontSize: 28, fontWeight: 700, color: COLORS.text, letterSpacing: "-0.03em", margin: "0 0 8px", outline: "none" }}>Get verified</h2>
-          <p style={{ color: COLORS.helper, fontSize: 15, lineHeight: 1.55, margin: 0 }}>
-            NRIClub is for real people only, so our team checks every new member. It takes a minute, and you can use NRIClub while we review.
-          </p>
+          <h2 id="gv-title" ref={titleRef} tabIndex={-1} style={{ fontSize: 28, fontWeight: 700, color: COLORS.text, letterSpacing: "-0.03em", margin: "0 0 8px", outline: "none" }}>{isUpdate ? "Update your details" : "Get verified"}</h2>
+          {/* Updating answers the team's request (the "Our team asked" box
+              below says why), so the first-time intro isn't repeated. */}
+          {!isUpdate && (
+            <p style={{ color: COLORS.helper, fontSize: 15, lineHeight: 1.55, margin: 0 }}>
+              NRIClub is for real people only, so our team checks every new member.{" "}
+              {/* A member held for review (user.reviewFlag) waits for approval;
+                  they're told no more than that. */}
+              {user.reviewFlag
+                ? "It takes a minute to fill in. Our team will check your membership before you can take part. This usually takes a day."
+                : "It takes a minute, and you can use NRIClub while we review."}
+            </p>
+          )}
         </div>
 
         {isUpdate && user.verificationMessage && (
@@ -202,7 +231,12 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
               style={{ ...inputStyle(!!errors.country), cursor: "pointer", color: country ? COLORS.text : COLORS.helper }}
             >
               <option value="">Choose your country</option>
-              {countries.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+              <optgroup label="Common">
+                {COMMON_COUNTRIES.map((code) => <option key={code} value={code}>{countryName(code)}</option>)}
+              </optgroup>
+              <optgroup label="All countries">
+                {countries.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+              </optgroup>
             </select>
           </Field>
 
@@ -259,7 +293,7 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
           <Field id="gv-profession" label="What do you do?" optional>
             <input
               id="gv-profession" type="text" value={profession} maxLength={200} autoComplete="organization-title"
-              onChange={(e) => setProfession(e.target.value)} placeholder="e.g. Software Engineer at SAP or MSc, TU Munich"
+              onChange={(e) => setProfession(e.target.value)} placeholder="e.g. Software Engineer at SAP"
               style={inputStyle(false)}
             />
           </Field>
@@ -285,22 +319,21 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
             </div>
           )}
 
-          <button type="submit" disabled={submitting} style={{ ...primaryButtonStyle(submitting), marginTop: 6 }}>
-            {submitting ? "Sending..." : "Submit for review"}
+          {/* Not disabled while sending: a disabled button loses keyboard focus. */}
+          <button type="submit" aria-disabled={submitting} aria-describedby={submitError ? "gv-submit-error" : undefined} style={{ ...primaryButtonStyle(submitting), marginTop: 6 }}>
+            {submitting ? "Sending..." : isUpdate ? "Send update" : "Submit for review"}
           </button>
-          {submitError && <ErrorBox boxRef={submitErrorRef} style={{ marginTop: 12 }}>{submitError}</ErrorBox>}
+          {submitError && <ErrorBox id="gv-submit-error" boxRef={submitErrorRef} style={{ marginTop: 12 }}>{submitError}</ErrorBox>}
         </form>
 
-        <p style={{ textAlign: "center", marginTop: 28, fontSize: 13, color: COLORS.helper, lineHeight: 1.6 }}>
-          {isUpdate ? (
+        {isUpdate ? (
+          <p style={{ textAlign: "center", marginTop: 28, fontSize: 13, color: COLORS.helper, lineHeight: 1.6 }}>
             <button type="button" onClick={onCancel} style={{ ...linkButtonStyle, fontWeight: 500, color: COLORS.label }}>Cancel</button>
-          ) : (
-            <>
-              {user.email && <>Signed in as {user.email}. </>}
-              <button type="button" onClick={onSignOut} style={{ ...linkButtonStyle, fontWeight: 500, color: COLORS.label }}>Sign out</button>
-            </>
-          )}
-        </p>
+          </p>
+        ) : (
+          // Settings can't be reached from here, so the account actions are too.
+          <AccountFooter email={user.email} onSignOut={onSignOut} />
+        )}
       </div>
       {modal === "terms" && <TermsModal onClose={() => setModal(null)} />}
       {modal === "privacy" && <PrivacyModal onClose={() => setModal(null)} />}

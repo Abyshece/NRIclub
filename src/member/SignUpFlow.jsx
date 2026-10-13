@@ -3,35 +3,63 @@ import * as api from "../supabaseApi";
 import CodeEntry from "./CodeEntry";
 import { TermsModal, PrivacyModal, TERMS_VERSION } from "./LegalModals";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, GlobeTile, ArrowRight, helperStyle, fieldErrorStyle } from "./ui";
-import { mapProfile, authErrorMessage, isExistingAccountResponse, isExistingAccountError, NETWORK_MESSAGE, isNetworkError } from "./profile";
+import { mapProfile, authErrorMessage, isExistingAccountResponse, isExistingAccountError } from "./profile";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const RESEND_MS = 60 * 1000;
+// Supabase refuses to "change" a password to the one it already has.
+const SAME_PASSWORD_RE = /different from the old password|same_password/i;
+// Profile details a signup can carry in its metadata. An unfinished signup
+// from an earlier visit may have been made by someone else with this email,
+// so these start empty when it is resumed.
+const RESUMED_CLEAR = ["location", "country_code", "hometown", "profession", "occupation_status", "years_abroad", "linkedin_url"];
 
-const withUserMessage = (userMessage) => Object.assign(new Error(userMessage), { userMessage });
+// The answers from the signup form, as the profile stores them.
+const answersFrom = (form) => ({
+  name: form.name,
+  marketing_consent: form.marketing,
+});
 
-// Signup: where do you live -> name, email, password -> 6-digit email code.
-// Calls onComplete(user) once the code is verified and the member is signed
-// in; the app then asks for verification details (Get verified).
-export default function SignUpFlow({ onComplete, onLogin }) {
-  const [step, setStep] = useState("residency"); // residency | account | code
-  const [residency, setResidency] = useState(null); // abroad | india
+// Runs step, and once more after a short pause if it fails (the first
+// failure may be a dropped connection or a request that got no answer).
+// Resolves to step's result, or rejects with the second failure.
+const tryTwice = async (step) => {
+  try {
+    return await step();
+  } catch {
+    await new Promise((r) => setTimeout(r, 800));
+    return step();
+  }
+};
+
+// Signup: name, email, password -> 6-digit email code.
+// Calls onComplete(user) once the code is verified, the account is set up
+// and the member is signed in; the app then asks for verification details
+// (Get verified), including the country. onBack goes back to the landing page.
+export default function SignUpFlow({ onComplete, onLogin, onBack }) {
+  const [step, setStep] = useState("account"); // account | code | stopped
+  const [stopMessage, setStopMessage] = useState(""); // why signup stopped (step "stopped")
   const [form, setForm] = useState({ name: "", email: "", password: "", agree: false, marketing: false });
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null); // { text, existing }
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [modal, setModal] = useState(null); // "terms" | "privacy"
-  // The account created during this visit ({ email }), so going back to fix
-  // something doesn't create a second account for the same address.
+  // The account created during this visit ({ email, password, resumed,
+  // answers }: the password and answers it was created with), so going back
+  // to fix something doesn't create a second account for the same address.
   const [account, setAccount] = useState(null);
   const [resendAt, setResendAt] = useState(0);
 
   const fieldRefs = { name: useRef(null), email: useRef(null), password: useRef(null), agree: useRef(null) };
   const submitErrorRef = useRef(null);
-  const focusOnAccountStep = useRef(null);
+  const focusOnAccountStep = useRef("name");
+  const stopTitleRef = useRef(null);
 
-  useEffect(() => { window.scrollTo(0, 0); }, [step]);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    if (step === "stopped") stopTitleRef.current?.focus();
+  }, [step]);
   useEffect(() => {
     if (submitError) submitErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [submitError]);
@@ -88,14 +116,10 @@ export default function SignUpFlow({ onComplete, onLogin }) {
 
     setSubmitting(true);
     try {
-      const metadata = {
-        full_name: v.name,
-        age_confirmed: true,
-        terms_version: TERMS_VERSION,
-        gdpr_consent: true,
-        marketing_consent: v.marketing,
-      };
-      if (residency === "india") metadata.country_code = "IN";
+      // Only the name: the signup step ignores anything else, as anyone can
+      // sign up any address through the API. The marketing choice and the
+      // 18+/Terms tick are recorded once the code is confirmed (verifyCode).
+      const metadata = { full_name: v.name };
       const result = await api.signUp(v.email, v.password, metadata);
       if (isExistingAccountResponse(result)) throw new Error("already exists");
       // An unfinished signup from an earlier visit comes back with its old
@@ -103,7 +127,8 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       const u = result?.user ?? result;
       const lastSent = Math.max(Date.parse(u?.confirmation_sent_at) || 0, Date.parse(u?.updated_at) || 0);
       const resumed = !!u?.created_at && lastSent - Date.parse(u.created_at) > 30000;
-      setAccount({ email: v.email, password: v.password, resumed });
+      // A new account starts with marketing off.
+      setAccount({ email: v.email, password: v.password, resumed, answers: { ...answersFrom(v), marketing_consent: false } });
       setResendAt(Date.now() + RESEND_MS);
       setStep("code");
     } catch (err) {
@@ -116,43 +141,111 @@ export default function SignUpFlow({ onComplete, onLogin }) {
     setSubmitting(false);
   };
 
+  // Sets the password typed in this visit, trying twice. Supabase saying
+  // it's already that password counts as done (also when the first attempt
+  // went through but its answer never came).
+  const replacePassword = () => tryTwice(async () => {
+    try {
+      await api.updatePassword(form.password);
+    } catch (err) {
+      if (!SAME_PASSWORD_RE.test(err?.message || "")) throw err;
+    }
+  });
+
+  // Ends signup on a screen that explains why and sends the member to log in.
+  const stop = (message) => {
+    setStopMessage(message);
+    setStep("stopped");
+  };
+
+  // The profile changes that bring the account in line with this visit's
+  // answers. A resumed signup gets all of them, and the earlier visit's
+  // details are cleared; otherwise only the answers changed (by going back)
+  // since this visit created the account.
+  const profilePatch = () => {
+    const want = answersFrom(form);
+    if (account.resumed) {
+      RESUMED_CLEAR.forEach((k) => { want[k] = ""; });
+      return want;
+    }
+    const patch = {};
+    for (const [k, v] of Object.entries(want)) {
+      if (account.answers[k] !== v) patch[k] = v;
+    }
+    return patch;
+  };
+
+  // Puts this visit's answers in place (profilePatch) and records the 18+ and
+  // Terms tick, with the session the code gave. Both can be sent again.
+  const setUpAccount = async () => {
+    const patch = profilePatch();
+    if (Object.keys(patch).length) await api.updateProfile(patch);
+    await api.acceptTerms(TERMS_VERSION);
+  };
+
   const verifyCode = async (code) => {
     const email = account.email;
-    // Wrong or expired codes throw here and CodeEntry says so.
-    let session = await api.verifyOtp(email, code);
+    // Wrong or expired codes throw here and CodeEntry says so. The session is
+    // kept in this tab's memory only until the account is set up below: if a
+    // step fails, or the tab is reloaded or closed half-way, nobody is left
+    // signed in to an account that may still have an earlier visit's
+    // password or details.
+    let session = await api.verifyOtp(email, code, { persist: false });
+    // The code is used up now, so every way out below ends signed out, on
+    // the "please log in" screen, unless all the steps work.
+    const giveUp = async (message) => {
+      await api.discardSession().catch(() => {});
+      stop(message);
+    };
     try {
-      if (!session?.access_token) session = await api.signIn(email, form.password).catch(() => null);
+      if (!session?.access_token) session = await api.signIn(email, form.password, { persist: false }).catch(() => null);
       if (!session?.access_token) {
-        throw withUserMessage("Your email is confirmed, but we couldn't sign you in. Please log in with your email and password.");
+        stop("We couldn't sign you in. Please log in with your email and password. If your password doesn't work, choose “Forgot password?” to set a new one.");
+        return;
       }
-      let db = await api.getMyProfile();
-      if (!db) {
-        await new Promise((r) => setTimeout(r, 800));
-        db = await api.getMyProfile();
-      }
-      if (!db) throw withUserMessage("Your email is confirmed, but we couldn't load your profile. Please log in.");
 
       // An unfinished signup from an earlier visit keeps that visit's
-      // password (as does going back and changing it here); set the one
-      // typed now so logging in later works.
+      // password (as does going back and changing it here), and that visit
+      // may not have been this person. Set the one typed now before anything
+      // else. A resumed signup gets this visit's answers first as well (and
+      // again below): if the tab is closed once the new password is saved
+      // but before its answer arrives, the account mustn't keep the earlier
+      // visit's details.
+      if (account.resumed) await tryTwice(setUpAccount).catch(() => {});
       if (account.resumed || account.password !== form.password) {
-        await api.updatePassword(form.password).catch(() => {});
+        if (!(await replacePassword().then(() => true, () => false))) {
+          // Still put this visit's answers and the 18+/Terms tick in place,
+          // so the account doesn't keep the earlier visit's details after a
+          // password reset.
+          await setUpAccount().catch(() => {});
+          await giveUp("We couldn't save your password, so we've signed you out to keep your account safe. On the login page, choose “Forgot password?” to set a new one.");
+          return;
+        }
       }
 
-      // Bring the profile in line with this visit's answers (they differ if
-      // the member went back and edited them, or signed up before).
-      const patch = {};
-      if (db.name !== form.name) patch.name = form.name;
-      if (!!db.marketing_consent !== form.marketing) patch.marketing_consent = form.marketing;
-      if (residency === "india" && db.country_code !== "IN") patch.country_code = "IN";
-      if (residency === "abroad" && db.country_code === "IN") patch.country_code = "";
-      if (Object.keys(patch).length) {
-        try { await api.updateProfile(patch); } catch { Object.keys(patch).forEach((k) => delete patch[k]); }
+      // Then this visit's answers replace what an earlier visit left in the
+      // profile, and the 18+/Terms tick is recorded, before anything reads it.
+      if (!(await tryTwice(setUpAccount).then(() => true, () => false))) {
+        await giveUp("We couldn't finish setting up your account, so we've signed you out to keep it safe. Please log in with your email and the password you just chose, then check your details.");
+        return;
       }
-      onComplete(mapProfile({ ...db, ...patch }));
-    } catch (err) {
-      if (err.userMessage) throw err;
-      throw withUserMessage(isNetworkError(err) ? NETWORK_MESSAGE : "Your email is confirmed, but something went wrong signing you in. Please log in.");
+
+      const db = await tryTwice(async () => {
+        const profile = await api.getMyProfile();
+        if (!profile) throw new Error("Profile not found");
+        return profile;
+      }).catch(() => null);
+      if (!db) {
+        await giveUp("Your account is ready, but we couldn't load your profile, so we've signed you out. Please log in with your email and the password you just chose.");
+        return;
+      }
+
+      // Only now is the session saved, so it lasts across reloads and tabs.
+      await api.adoptSession();
+      onComplete(mapProfile(db));
+    } catch {
+      // E.g. the session ended meanwhile (adoptSession).
+      await giveUp("Something went wrong signing you in, so we've signed you out. Please log in with your email and the password you just chose.");
     }
   };
 
@@ -169,46 +262,15 @@ export default function SignUpFlow({ onComplete, onLogin }) {
     </div>
   );
 
-  // ---- WHERE DO YOU LIVE ----
-  if (step === "residency") {
-    const choose = (r) => { setResidency(r); setStep("account"); focusOnAccountStep.current = "name"; };
-    const optionStyle = { padding: "18px 24px", borderRadius: 12, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all 0.15s", fontFamily: FONT };
-    const hoverOn = (e) => { e.currentTarget.style.borderColor = "#37352F"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; };
-    const hoverOff = (e) => { e.currentTarget.style.borderColor = "#E0E0DE"; e.currentTarget.style.boxShadow = "none"; };
+  // ---- SIGNUP STOPPED (email confirmed, but the member must log in) ----
+  if (step === "stopped") {
     return page(
-      <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
-        <div style={{ width: 56, height: 56, borderRadius: 16, background: "#37352F", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", color: "#fff" }}>
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" /></svg>
-        </div>
-        <h2 style={{ fontSize: 24, fontWeight: 700, color: COLORS.text, margin: "0 0 8px" }}>Where do you live?</h2>
-        <p style={{ fontSize: 14, color: COLORS.helper, margin: "0 0 32px" }}>This helps us personalize your experience on NRIClub.</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 320, margin: "0 auto" }}>
-          <button type="button" onClick={() => choose("abroad")} style={optionStyle} onMouseOver={hoverOn} onMouseOut={hoverOff}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 42, height: 42, borderRadius: 10, background: "#E3FCEF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2" aria-hidden="true"><path d="M22 2L11 13" /><path d="M22 2l-7 20-4-9-9-4z" /></svg>
-              </div>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: COLORS.text }}>I live outside India</div>
-                <div style={{ fontSize: 12, color: COLORS.helper, marginTop: 2 }}>NRI, student abroad, or recently moved</div>
-              </div>
-            </div>
-          </button>
-          <button type="button" onClick={() => choose("india")} style={optionStyle} onMouseOver={hoverOn} onMouseOut={hoverOff}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 42, height: 42, borderRadius: 10, background: "#FFF3E0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E65100" strokeWidth="2" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M9 22V12h6v10" /></svg>
-              </div>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: COLORS.text }}>I live in India</div>
-                <div style={{ fontSize: 12, color: COLORS.helper, marginTop: 2 }}>Connect with NRIs for advice & support</div>
-              </div>
-            </div>
-          </button>
-        </div>
-        <p style={{ fontSize: 13, color: COLORS.helper, marginTop: 24 }}>
-          Already have an account? <button type="button" onClick={() => onLogin()} style={linkButtonStyle}>Log in</button>
-        </p>
+      <div style={{ maxWidth: 400, width: "100%", textAlign: "center" }}>
+        <h2 ref={stopTitleRef} tabIndex={-1} style={{ fontSize: 24, fontWeight: 700, color: COLORS.text, margin: "0 0 16px", outline: "none" }}>Your email is confirmed</h2>
+        <ErrorBox style={{ textAlign: "left", marginBottom: 20 }}>{stopMessage}</ErrorBox>
+        <button type="button" onClick={() => onLogin(account?.email)} style={primaryButtonStyle()}>
+          Go to log in <ArrowRight />
+        </button>
       </div>
     );
   }
@@ -233,7 +295,7 @@ export default function SignUpFlow({ onComplete, onLogin }) {
   const inlineLink = { ...linkButtonStyle, fontWeight: 500, color: "#3D5A9F" };
   return page(
     <div style={{ maxWidth: 460, width: "100%" }}>
-      <button type="button" onClick={() => setStep("residency")} style={{ ...linkButtonStyle, textDecoration: "none", fontWeight: 500, color: COLORS.helper, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
+      <button type="button" onClick={onBack} style={{ ...linkButtonStyle, textDecoration: "none", fontWeight: 500, color: COLORS.helper, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
         <span aria-hidden="true">←</span> Back
       </button>
       <div style={{ textAlign: "center", marginBottom: 32 }}>

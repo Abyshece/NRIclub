@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Avatar, Button, ConfirmDialog, ErrorNote, Icon, Kbd, Pill } from "./ui";
 import {
-  VERIFICATION_LABELS, VERIFICATION_TONES, ago, firstName, formatDate, friendlyError,
-  linkedinHref, placeLabel, verificationChecks,
+  VERIFICATION_LABELS, VERIFICATION_TONES, ago, firstName, formatDate, friendlyError, holdNote, holdSummary,
+  holdText, linkedinHref, placeLabel, reviewFlagLabel, verificationChecks,
 } from "./format";
 
 const TEMPLATES = {
@@ -80,11 +80,21 @@ export default function MemberPeek({
 
   const status = member.verification_status || "incomplete";
   const blocked = member.status === "blocked";
+  // Matches review_member: approve or ask for more only while the member is
+  // waiting for review (so someone who never sent their details can only be
+  // rejected); reopen approved members, and rejected ones who sent details.
+  // A rejected member who never sent them goes back to unfinished instead.
+  // Both wait for the member's full details (submitted_at), which the
+  // Members page loads after opening the peek.
+  const waiting = status === "pending" || status === "needs_info";
+  const detailsLoaded = member.submitted_at !== undefined;
+  const sentDetails = detailsLoaded && member.submitted_at !== null;
   const can = {
-    approve: status !== "approved",
-    info: true,
+    approve: waiting,
+    info: waiting,
     reject: status !== "rejected",
-    reopen: status === "approved" || status === "rejected",
+    reopen: detailsLoaded && (status === "approved" || (status === "rejected" && sentDetails)),
+    unfinish: detailsLoaded && status === "rejected" && !sentDetails,
   };
 
   const run = async (kind, fn) => {
@@ -106,6 +116,7 @@ export default function MemberPeek({
 
   const approve = () => run("approved", () => onDecision(member, "approved", "", ""));
   const reopen = () => run("pending", () => onDecision(member, "pending", "", ""));
+  const unfinish = () => run("incomplete", () => onDecision(member, "incomplete", "", ""));
   const submitComposer = () => {
     if (!composer) return;
     if (!message.trim()) { setError("Add a message for the member. They'll see it in their notifications."); textRef.current?.focus(); return; }
@@ -142,6 +153,11 @@ export default function MemberPeek({
   keyHandler.current = (e) => {
     // Holding a key down mustn't act on member after member.
     if (e.repeat) return;
+    if (composer && e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.defaultPrevented && !confirmBlock) {
+      e.preventDefault();
+      submitComposer();
+      return;
+    }
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || confirmBlock) return;
     const t = e.target;
     const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
@@ -150,13 +166,17 @@ export default function MemberPeek({
       if (composer) closeComposer(); else onClose();
       return;
     }
+    // While a message is open only Escape and Ctrl/⌘+Enter act, wherever the
+    // focus is, so typing that lands outside the box can't approve the member,
+    // switch the message or wipe it.
+    if (composer) return;
     if (typing || busy) return;
     const k = e.key.toLowerCase();
     if (k === "a" && can.approve) { e.preventDefault(); approve(); }
     else if (k === "i" && can.info) { e.preventDefault(); openComposer("needs_info"); }
     else if (k === "r" && can.reject) { e.preventDefault(); openComposer("rejected"); }
-    else if (k === "j" && onNext && !composer) { e.preventDefault(); onNext(); }
-    else if (k === "k" && onPrev && !composer) { e.preventDefault(); onPrev(); }
+    else if (k === "j" && onNext) { e.preventDefault(); onNext(); }
+    else if (k === "k" && onPrev) { e.preventDefault(); onPrev(); }
   };
   useEffect(() => {
     const h = (e) => keyHandler.current(e);
@@ -169,6 +189,8 @@ export default function MemberPeek({
   const noteText = String(member.verification_note || "").trim();
   const voucher = String(member.voucher || "").trim();
   const first = firstName(member.name);
+  const hold = holdText(member);
+  const heldNote = holdNote(member);
 
   return (
     <aside className="adm-peek" role="dialog" aria-label={`Member: ${member.name || "Unnamed"}`} ref={peekRef} tabIndex={-1}>
@@ -185,7 +207,15 @@ export default function MemberPeek({
         <div className="adm-peek-pills">
           <Pill tone={VERIFICATION_TONES[status]}>{VERIFICATION_LABELS[status] || status}</Pill>
           {blocked ? <Pill tone="red">Blocked</Pill> : null}
+          {member.review_flag ? <Pill tone="red" title={holdSummary(member)}>{reviewFlagLabel(member.review_flag)}</Pill> : null}
         </div>
+        {/* Why they're held: the rejection or block they matched. */}
+        {hold && (
+          <div className="adm-hold" role="note">
+            <div>{hold}</div>
+            {heldNote && <div className="adm-hold-note">Note: {heldNote}</div>}
+          </div>
+        )}
 
         <div className="adm-props">
           <Prop icon="mail" label="Email">
@@ -220,6 +250,7 @@ export default function MemberPeek({
                 <span className="adm-linkedin-url">{member.linkedin_url}</span>
               </div>
               {noteText && <blockquote className="adm-quote" style={{ marginTop: 14 }}>{noteText}</blockquote>}
+              {member.verification_note === undefined && !loadingDetails && <p className="adm-faint" style={{ marginTop: 14 }}>Their details didn't load. Close and reopen to try again.</p>}
             </>
           ) : member.verification_note === undefined ? (
             <p className="adm-faint">{loadingDetails ? "Loading…" : "Their details didn't load. Close and reopen to try again."}</p>
@@ -301,6 +332,12 @@ export default function MemberPeek({
               {can.info && <Button variant="secondary" onClick={() => openComposer("needs_info")} disabled={!!busy} kbd="I">Ask for more info</Button>}
               {can.reject && <Button variant="danger" onClick={() => openComposer("rejected")} disabled={!!busy} kbd="R">Reject</Button>}
               {can.reopen && <Button variant="secondary" icon="undo" onClick={reopen} disabled={!!busy}>{busy === "pending" ? "Moving…" : "Move to pending"}</Button>}
+              {can.unfinish && (
+                <Button variant="secondary" icon="undo" onClick={unfinish} disabled={!!busy}
+                  title={`${first} never sent their details. They go back to finishing their signup and aren't notified.`}>
+                  {busy === "incomplete" ? "Moving…" : "Move back to unfinished"}
+                </Button>
+              )}
             </div>
             <div className="adm-peek-util">
               {blocked

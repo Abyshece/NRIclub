@@ -4,11 +4,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import MemberPeek from "./MemberPeek";
 import { Avatar, Button, ConfirmDialog, EmptyState, Icon, PageHeader, Pill } from "./ui";
-import { VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, placeLabel, shortName } from "./format";
+import {
+  NO_HOLD, VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, holdSummary, identityChanged,
+  memberFields, placeLabel, refusedDecisionError, reviewFlagLabel, shortName,
+} from "./format";
 
 const PAGE = 100;
 
-export default function MembersView({ users, onMemberChange, showToast }) {
+const fmt = (n) => n.toLocaleString("en-GB");
+
+// users holds the newest members (at most 1,000); total and blockedTotal are
+// the server's counts of all of them.
+export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, showToast }) {
   const [query, setQuery] = useState("");
   const [show, setShow] = useState("all"); // all | blocked
   const [limit, setLimit] = useState(PAGE);
@@ -20,8 +27,11 @@ export default function MembersView({ users, onMemberChange, showToast }) {
   const [confirmError, setConfirmError] = useState("");
   const listRef = useRef(null);
   const fetchedStatuses = useRef(new Set());
+  const detailsRef = useRef(details);
+  detailsRef.current = details;
 
-  const blockedCount = users.filter((u) => u.status === "blocked").length;
+  const blockedCount = blockedTotal ?? users.filter((u) => u.status === "blocked").length;
+  const cut = users.length < total;
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return users.filter((u) => {
@@ -37,27 +47,90 @@ export default function MembersView({ users, onMemberChange, showToast }) {
   const openIndex = openId ? filtered.findIndex((u) => u.id === openId) : -1;
   const openUser = openIndex >= 0 ? filtered[openIndex] : (openId ? users.find((u) => u.id === openId) : null);
 
+  // Counts the changes made here to each member, so a refresh that started
+  // before one can't bring back what the member looked like before it.
+  const changes = useRef({});
+  const touch = (id) => { changes.current[id] = (changes.current[id] || 0) + 1; };
+
   // The members list has the public profile; the review queue has the rest
-  // (consents, explanation, duplicates). Load it for the member's status.
+  // (consents, explanation, duplicates, submission, hold). Load it for the
+  // member's status. Resolves with the rows when done (null on failure;
+  // never rejects).
+  const loadingRef = useRef({}); // status -> the load in progress
+  const loadDetails = (status) => {
+    fetchedStatuses.current.add(status);
+    setLoadingDetails((l) => ({ ...l, [status]: true }));
+    const marks = { ...changes.current };
+    // Rows are keyed by id, so keep them even if the admin has moved on, but
+    // not over members decided on here while they loaded. On failure, forget
+    // the status so the next open tries again.
+    const load = api.adminVerificationQueue([status])
+      .then((rows) => {
+        setDetails((d) => {
+          const next = { ...d };
+          (rows || []).forEach((r) => {
+            if ((changes.current[r.id] || 0) === (marks[r.id] || 0)) next[r.id] = r;
+          });
+          return next;
+        });
+        return rows || [];
+      })
+      .catch(() => { fetchedStatuses.current.delete(status); return null; })
+      .finally(() => {
+        if (loadingRef.current[status] !== load) return;
+        delete loadingRef.current[status];
+        setLoadingDetails((l) => ({ ...l, [status]: false }));
+      });
+    loadingRef.current[status] = load;
+    return load;
+  };
+
   useEffect(() => {
     if (!openUser) return;
     const status = openUser.verification_status;
     if (details[openUser.id] || fetchedStatuses.current.has(status)) return;
-    fetchedStatuses.current.add(status);
-    setLoadingDetails((l) => ({ ...l, [status]: true }));
-    // Rows are keyed by id, so keep them even if the admin has moved on.
-    // On failure, forget the status so the next open tries again.
-    api.adminVerificationQueue([status])
-      .then((rows) => {
-        setDetails((d) => {
-          const next = { ...d };
-          (rows || []).forEach((r) => { next[r.id] = r; });
-          return next;
-        });
-      })
-      .catch(() => { fetchedStatuses.current.delete(status); })
-      .finally(() => { setLoadingDetails((l) => ({ ...l, [status]: false })); });
+    loadDetails(status);
   }, [openUser?.id, openUser?.verification_status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load the member again each time the peek opens on them, so the admin
+  // decides on their details as they are now. If the name, LinkedIn link,
+  // status or hold changed, load their review details again too (until
+  // they're back the peek shows only what the members list has); full:
+  // load them again anyway (after a refused decision or an Undo). With no
+  // details yet, wait for those loading for their status (since this
+  // refresh started), and load them again if the member isn't among them
+  // (their status changed after that list was loaded, e.g. in another tab,
+  // or the load failed).
+  const refreshMember = async (id, { full = false } = {}) => {
+    const mark = changes.current[id] || 0;
+    const loading = { ...loadingRef.current };
+    let fresh = null;
+    try { fresh = await api.adminGetReportedItem("profile", id); } catch { return; }
+    if (!fresh || (changes.current[id] || 0) !== mark) return;
+    const d = detailsRef.current[id];
+    const status = fresh.verification_status;
+    onMemberChange(id, fresh);
+    const stale = !!d && (identityChanged(d, fresh) || d.verification_status !== status
+      || (d.review_flag || "") !== (fresh.review_flag || ""));
+    if (stale) setDetails((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    if (stale || full) await loadDetails(status);
+    else if (d) patchDetails(id, memberFields(fresh));
+    else {
+      const rows = await (loading[status] || loadingRef.current[status]);
+      if (!rows?.some((r) => r.id === id)) await loadDetails(status);
+    }
+  };
+
+  // After the database refused a decision (or an Undo): show the member as
+  // they are now, then the reason.
+  const refused = async (id, e) => {
+    await refreshMember(id, { full: true });
+    return refusedDecisionError(e);
+  };
+
+  useEffect(() => {
+    if (openId) refreshMember(openId);
+  }, [openId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const peekMember = useMemo(() => {
     if (!openUser) return null;
@@ -69,7 +142,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
         : 0;
       return { ...openUser, same_linkedin_count: sameLinkedin };
     }
-    return { ...openUser, ...d, verification_status: openUser.verification_status, status: openUser.status, name: openUser.name };
+    return { ...openUser, ...d, verification_status: openUser.verification_status, status: openUser.status, name: openUser.name, review_flag: openUser.review_flag ?? d.review_flag };
   }, [openUser, details, users]);
 
   const patchDetails = (id, patch) => setDetails((d) => (d[id] ? { ...d, [id]: { ...d[id], ...patch } } : d));
@@ -79,33 +152,89 @@ export default function MembersView({ users, onMemberChange, showToast }) {
     if (el) el.focus();
   });
 
+  // Approve / ask for info / reject / move to pending / move back to
+  // unfinished. Throws on failure so the peek can show the database's message.
   const decide = async (m, decision, message = "", note = "") => {
-    await api.adminReviewMember(m.id, decision, message, note);
-    const counted = decision !== "pending";
-    const before = { verification_message: m.verification_message, reviewed_at: m.reviewed_at, previous_decisions: m.previous_decisions };
-    patchDetails(m.id, {
+    const before = m.verification_status;
+    // What the admin is looking at: the database refuses the decision if the
+    // member's status has changed since, or (for a decision on their
+    // details) their name or LinkedIn link.
+    const reopening = decision === "pending" || decision === "incomplete";
+    const expected = reopening
+      ? { status: before }
+      : { status: before, name: m.name ?? null, linkedinUrl: m.linkedin_url ?? null };
+    try {
+      await api.adminReviewMember(m.id, decision, message, note, expected);
+    } catch (e) {
+      throw await refused(m.id, e);
+    }
+    touch(m.id);
+    const counted = !reopening;
+    // Approving, or moving back to unfinished, ends a hold for review.
+    const endsHold = decision === "approved" || decision === "incomplete";
+    const previous = {
+      verification_message: m.verification_message,
+      reviewed_at: m.reviewed_at,
+      review_flag: m.review_flag,
+      flag_decision: m.flag_decision,
+      flag_matched_on: m.flag_matched_on,
+      flag_note: m.flag_note,
+      flag_date: m.flag_date,
+    };
+    const decided = {
       verification_message: decision === "needs_info" || decision === "rejected" ? message : "",
-      reviewed_at: decision === "pending" ? null : new Date().toISOString(),
+      reviewed_at: reopening ? null : new Date().toISOString(),
       previous_decisions: (Number(m.previous_decisions) || 0) + (counted ? 1 : 0),
       verification_status: decision,
-    });
-    onMemberChange(m.id, { verification_status: decision, linkedin_verified: decision === "approved" });
+      ...(endsHold ? NO_HOLD : {}),
+    };
+    patchDetails(m.id, decided);
+    onMemberChange(m.id, { verification_status: decision, linkedin_verified: decision === "approved", ...(endsHold ? { review_flag: "" } : {}) });
+    // Back in review, the member is checked against rejected and blocked
+    // accounts again (and gets a submission date): load what the database
+    // decided.
+    if (decision === "pending") refreshMember(m.id, { full: true });
     const who = shortName(m.name);
+    // Undo puts the member back where they were, if one step can: back in
+    // the queue, or back to unfinished for someone rejected before sending
+    // their details. It's refused if someone else has decided since.
+    const undoable = counted && (before === "pending" || (before === "incomplete" && decision === "rejected"));
     showToast({
-      text: { approved: `Approved ${who}`, needs_info: `Asked ${who} for more info`, rejected: `Rejected ${who}`, pending: `Moved ${who} back to pending` }[decision],
+      text: {
+        approved: `Approved ${who}`,
+        needs_info: `Asked ${who} for more info`,
+        rejected: `Rejected ${who}`,
+        pending: `Moved ${who} back to pending`,
+        incomplete: `Moved ${who} back to unfinished`,
+      }[decision],
       icon: decision === "approved" ? "check" : undefined,
-      // Undo moves the member back to pending, so only offer it if that's where they were.
-      undo: counted && m.verification_status === "pending" ? async () => {
-        await api.adminReviewMember(m.id, "pending", "", "Undo");
-        patchDetails(m.id, { ...before, verification_message: "", reviewed_at: null, verification_status: "pending" });
-        onMemberChange(m.id, { verification_status: "pending", linkedin_verified: false });
-        return `Undone. ${who} is now pending.`;
+      undo: undoable ? async () => {
+        try {
+          await api.adminReviewMember(m.id, before, "", "Undo", { status: decision });
+        } catch (e) {
+          throw await refused(m.id, e);
+        }
+        touch(m.id);
+        // As before the decision, hold included (the database checks it
+        // again; loaded below). Moving back to unfinished ends a hold.
+        const restored = {
+          ...previous,
+          verification_message: "",
+          reviewed_at: null,
+          verification_status: before,
+          ...(before === "incomplete" ? NO_HOLD : {}),
+        };
+        patchDetails(m.id, restored);
+        onMemberChange(m.id, { verification_status: before, linkedin_verified: false, review_flag: restored.review_flag || "" });
+        refreshMember(m.id, { full: true });
+        return before === "pending" ? `Undone. ${who} is now pending.` : `Undone. ${who} is back to unfinished.`;
       } : undefined,
     });
   };
 
   const setStatus = async (m, status) => {
     await api.adminSetMemberStatus(m.id, status);
+    touch(m.id);
     onMemberChange(m.id, { status });
     const who = shortName(m.name);
     showToast(status === "blocked"
@@ -113,6 +242,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
         text: `Blocked ${who}`,
         undo: async () => {
           await api.adminSetMemberStatus(m.id, "active");
+          touch(m.id);
           onMemberChange(m.id, { status: "active" });
           return `Unblocked ${who}`;
         },
@@ -147,14 +277,20 @@ export default function MembersView({ users, onMemberChange, showToast }) {
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, email or city" aria-label="Search members" />
         </label>
         <div className="adm-filters" role="group" aria-label="Show">
-          <button type="button" className="adm-filter" aria-pressed={show === "all"} onClick={() => setShow("all")}>All <span className="adm-filter-count">{users.length}</span></button>
-          <button type="button" className="adm-filter" aria-pressed={show === "blocked"} onClick={() => setShow("blocked")}>Blocked <span className="adm-filter-count">{blockedCount}</span></button>
+          <button type="button" className="adm-filter" aria-pressed={show === "all"} onClick={() => setShow("all")}>All <span className="adm-filter-count">{fmt(total)}</span></button>
+          <button type="button" className="adm-filter" aria-pressed={show === "blocked"} onClick={() => setShow("blocked")}>Blocked <span className="adm-filter-count">{fmt(blockedCount)}</span></button>
         </div>
       </div>
 
+      {cut && (
+        <p className="adm-muted adm-small" style={{ margin: "0 0 10px" }}>
+          Showing the newest {fmt(users.length)} of {fmt(total)} members. Search and the Blocked filter only cover these.
+        </p>
+      )}
+
       {filtered.length === 0 ? (
-        <EmptyState icon={query ? "search" : "users"} title={query ? "No members match" : show === "blocked" ? "No blocked accounts" : "No members yet"}>
-          {query ? "Try a different name, email or city." : show === "blocked" ? "Accounts you block appear here." : null}
+        <EmptyState icon={query ? "search" : "users"} title={query ? "No members match" : show === "blocked" ? (blockedCount > 0 ? "No blocked accounts among these members" : "No blocked accounts") : "No members yet"}>
+          {query ? "Try a different name, email or city." : show === "blocked" ? (blockedCount > 0 ? "Blocked accounts that joined earlier aren't loaded here." : "Accounts you block appear here.") : null}
         </EmptyState>
       ) : (
         <div className="adm-list" ref={listRef} role="table" aria-label="Members">
@@ -169,6 +305,8 @@ export default function MembersView({ users, onMemberChange, showToast }) {
           {visible.map((u) => {
             const vs = u.verification_status || "incomplete";
             const blocked = u.status === "blocked";
+            // Held for review: the details of the hold are in the peek.
+            const held = !!u.review_flag;
             return (
               <div key={u.id} data-id={u.id} role="row" tabIndex={0}
                 className={`adm-row adm-mrow${u.id === openId ? " is-selected" : ""}`}
@@ -177,7 +315,10 @@ export default function MembersView({ users, onMemberChange, showToast }) {
                 <div className="adm-mcell-name" role="cell" style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                   <Avatar name={u.name} url={u.avatar_url} size={26} />
                   <div style={{ minWidth: 0 }}>
-                    <div className="adm-ellipsis" style={{ fontWeight: 500 }}>{u.name || "Unnamed member"}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", columnGap: 8, rowGap: 2, minWidth: 0 }}>
+                      <span className="adm-ellipsis" style={{ fontWeight: 500 }}>{u.name || "Unnamed member"}</span>
+                      {held && <span className="adm-mrow-held"><Pill tone="red" title={holdSummary(u)}>{reviewFlagLabel(u.review_flag)}</Pill></span>}
+                    </div>
                     <div className="adm-mrow-email">{u.email || "—"}</div>
                   </div>
                 </div>
@@ -188,6 +329,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
                 <div className="adm-mcell-meta" style={{ display: "none" }}>
                   <Pill tone={VERIFICATION_TONES[vs]}>{VERIFICATION_LABELS[vs] || vs}</Pill>
                   {blocked && <Pill tone="red">Blocked</Pill>}
+                  {held && <Pill tone="red" title={holdSummary(u)}>{reviewFlagLabel(u.review_flag)}</Pill>}
                   <span className="adm-faint adm-small adm-ellipsis">{placeLabel(u)}</span>
                 </div>
                 <div className="adm-mrow-actions" role="cell">

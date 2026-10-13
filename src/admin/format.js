@@ -97,6 +97,47 @@ export function friendlyError(e) {
   return raw || "Something went wrong. Please try again.";
 }
 
+// review_member refuses a decision when the member's name or LinkedIn link is
+// no longer what the admin saw.
+export const isChangedDetailsError = (e) => /changed their details/i.test(friendlyError(e));
+export const CHANGED_DETAILS_TEXT = "This member changed their details while you were looking. Their latest details are shown now, so check them again before you decide.";
+
+// ...or when their verification status is no longer the one the admin saw
+// (another admin decided first).
+export const isChangedStatusError = (e) => /status changed/i.test(friendlyError(e));
+export const CHANGED_STATUS_TEXT = "This member's status changed while you were looking, so nothing was changed. Their latest status is shown now.";
+
+// The message to show for a refused decision, once the member has been
+// loaded again: the panel already shows their latest details, so it doesn't
+// ask the admin to reload.
+export function refusedDecisionError(e) {
+  if (isChangedDetailsError(e)) return new Error(CHANGED_DETAILS_TEXT);
+  if (isChangedStatusError(e)) return new Error(CHANGED_STATUS_TEXT);
+  return e;
+}
+
+// An admin write that matched no row ("Nothing was changed. It may already
+// have been handled…").
+export const isNothingChangedError = (e) => /^nothing was changed/i.test(friendlyError(e));
+
+// The identity an admin approves: name and LinkedIn link, as shown.
+export function identityChanged(a, b) {
+  return ["name", "linkedin_url"].some((k) => String(a?.[k] ?? "") !== String(b?.[k] ?? ""));
+}
+
+// Fields of a fresh member (profile plus private status) that also appear in
+// review queue rows.
+const MEMBER_FIELDS = [
+  "name", "avatar_url", "email", "email_verified", "city", "country_code", "location", "hometown",
+  "profession", "years_abroad", "linkedin_url", "verification_status", "status", "review_flag",
+];
+
+export function memberFields(fresh) {
+  const out = {};
+  MEMBER_FIELDS.forEach((k) => { if (fresh && fresh[k] !== undefined) out[k] = fresh[k]; });
+  return out;
+}
+
 // Same pattern as private.normalize_linkedin() in the database.
 const LINKEDIN_RE = /^(?:https?:\/\/)?(?:[a-z]{2,3}\.)?(?:www\.)?linkedin\.com\/in\/([a-z0-9%_.-]{3,100})\/?(?:[?#].*)?$/i;
 
@@ -131,6 +172,46 @@ export function nameMatchesSlug(name, slug) {
   return candidates.some((p) => p.length >= 2 && s.includes(p));
 }
 
+// A member whose email address or LinkedIn link matched a rejected or blocked
+// account waits for an admin before they can take part (review_flag
+// "held"). The review queue says what they matched: flag_decision
+// ("rejected" | "blocked"), flag_date, flag_note and flag_matched_on
+// ("email" | "linkedin" | "both"); all empty if that decision was reversed
+// since, and undefined until the queue row has loaded.
+export function reviewFlagLabel(flag) {
+  return String(flag || "").trim() ? "Held for review" : "";
+}
+
+const MATCHED_ON = { email: "same email", linkedin: "same LinkedIn", both: "same email and LinkedIn" };
+
+// "Matches a member who was rejected on 3 Oct 2026 (same email)."
+export function holdText(m) {
+  if (!m?.review_flag) return "";
+  const matched = MATCHED_ON[m.flag_matched_on];
+  if (m.flag_decision) {
+    const when = m.flag_date ? ` on ${formatDate(m.flag_date)}` : "";
+    return `Matches a member who was ${m.flag_decision}${when}${matched ? ` (${matched})` : ""}.`;
+  }
+  if (m.flag_decision === undefined) return "Their email or LinkedIn matches a member who was rejected or blocked.";
+  if (matched) return `Matched a member who was rejected or blocked (${matched}), but that decision has been reversed since.`;
+  return "Matches a member who was rejected or blocked. No details are on record.";
+}
+
+// The admin's note on the decision they matched, if any.
+export function holdNote(m) {
+  return m?.review_flag && m.flag_decision ? String(m.flag_note || "").trim() : "";
+}
+
+// Both, for a pill's tooltip.
+export function holdSummary(m) {
+  const note = holdNote(m);
+  return `${holdText(m)}${note ? ` Note: ${note}` : ""}`;
+}
+
+// Queue fields that go with the hold, emptied (approving a member, or moving
+// them back to unfinished, ends it).
+export const NO_HOLD = { review_flag: "", flag_decision: null, flag_matched_on: null, flag_note: null, flag_date: null };
+
 // ok: true = ✓, false = ⚠, null = neutral note. Unknown values (undefined,
 // when the full record hasn't loaded) are left out.
 export function verificationChecks(m) {
@@ -139,6 +220,10 @@ export function verificationChecks(m) {
   const hasLinkedin = !!String(m.linkedin_url || "").trim();
   const slug = linkedinSlug(m.linkedin_url);
   const note = String(m.verification_note || "").trim();
+
+  if (m.review_flag) {
+    checks.push({ key: "flag", ok: false, label: "Held for review", detail: "no access until approved" });
+  }
 
   if (hasLinkedin) {
     checks.push(slug

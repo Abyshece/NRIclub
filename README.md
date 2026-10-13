@@ -13,5 +13,9 @@ npm install
 npm run dev            # http://localhost:3000
 ```
 
-Set-up, deployment, admin accounts and testing: see [LAUNCH-GUIDE.md](LAUNCH-GUIDE.md).
+Set-up, deployment, admin accounts, testing and the tasks to finish before
+inviting the public: see [LAUNCH-GUIDE.md](LAUNCH-GUIDE.md).
+Database changes for the live project are applied by hand from
+[supabase/oneoff/](supabase/oneoff/); each folder's README says how and in
+which order.
 Known issues planned for later phases: [docs/BACKLOG.md](docs/BACKLOG.md).
