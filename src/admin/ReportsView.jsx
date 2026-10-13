@@ -1,5 +1,6 @@
-// Reports (flagged content and profiles) and Bug reports. Both live in the
-// reports table; the kind is the "[TYPE]" prefix of the reason. Handling a
+// Reports (flagged content and profiles) and Feedback (bug reports and
+// ideas from members). All live in the reports table; the kind is the
+// "[TYPE]" prefix of the reason ("[BUG]", "[IDEA]"). Handling a
 // report changes its status ("reviewed" when dismissed, "resolved" when acted
 // on), so it stays on record under Handled. The panel has every open report
 // but only the newest handled ones.
@@ -9,9 +10,13 @@ import { Button, ConfirmDialog, EmptyState, PageHeader, Pill, SectionTitle } fro
 import { ago, formatDate, friendlyError, isNothingChangedError } from "./format";
 
 export const isBugReport = (r) => (r.reason || "").startsWith("[BUG]");
+export const isIdea = (r) => (r.reason || "").startsWith("[IDEA]");
+// Feedback from members, not a report about someone or something.
+export const isFeedback = (r) => isBugReport(r) || isIdea(r);
 const isPending = (r) => r.status === "pending" || !r.status;
-export const isOpenReport = (r) => !isBugReport(r) && isPending(r);
+export const isOpenReport = (r) => !isFeedback(r) && isPending(r);
 export const isOpenBug = (r) => isBugReport(r) && isPending(r);
+export const isOpenIdea = (r) => isIdea(r) && isPending(r);
 
 const CATEGORIES = ["Feed posts", "Marketplace", "Docs", "Events", "Help requests", "Profiles"];
 
@@ -68,7 +73,7 @@ const isProfileReport = (r) => !r.reported_post_id && !!r.reported_user_id;
 // finding other reports about it.
 export const targetKey = (r) => (isProfileReport(r) ? `profile:${r.reported_user_id}` : `${kindOf(r)}:${r.reported_post_id}`);
 
-const sameTarget = (a, b) => !isBugReport(b) && targetKey(a) === targetKey(b);
+const sameTarget = (a, b) => !isFeedback(b) && targetKey(a) === targetKey(b);
 
 export const personOf = (u) => (u ? { name: u.name, email: u.email, linkedin_url: u.linkedin_url || "" } : null);
 
@@ -151,7 +156,7 @@ export function ReportsView({ reports, setReports, handledTotal = 0, usersById, 
   const failed = useRef(new Set()); // target keys whose fetch failed (retried by hand)
 
   const open = reports.filter(isOpenReport);
-  const handled = reports.filter((r) => !isBugReport(r) && !isOpenReport(r));
+  const handled = reports.filter((r) => !isFeedback(r) && !isOpenReport(r));
   const handledCount = Math.max(handledTotal + handledHere(handled), handled.length);
   const grouped = {};
   open.forEach((r) => { const c = categoryOf(r); (grouped[c] = grouped[c] || []).push(r); });
@@ -173,7 +178,7 @@ export function ReportsView({ reports, setReports, handledTotal = 0, usersById, 
         const preview = contentPreview(kindOf(r), row);
         patch = { reportedContent: preview, contentAuthor: personOf(usersById[preview.authorId]) };
       }
-      setReports((prev) => prev.map((x) => (!isBugReport(x) && targetKey(x) === key ? { ...x, ...patch } : x)));
+      setReports((prev) => prev.map((x) => (!isFeedback(x) && targetKey(x) === key ? { ...x, ...patch } : x)));
       setLookups((l) => { const next = { ...l }; delete next[key]; return next; });
     } catch {
       failed.current.add(key);
@@ -370,6 +375,13 @@ export function ReportsView({ reports, setReports, handledTotal = 0, usersById, 
   );
 }
 
+// The title is the message's first line (cut at 60 characters): don't show
+// that line twice.
+const withoutTitle = (title, desc) => {
+  const [first, ...more] = (desc || "").split("\n");
+  return first.trim() === title.trim() ? more.join("\n").trim() : desc;
+};
+
 function parseBug(r) {
   const text = (r.reason || "").replace(/^\[BUG\]\s*/, "");
   const parts = text.split(": ");
@@ -378,29 +390,44 @@ function parseBug(r) {
   const cut = rest.indexOf(" — ");
   const title = cut > -1 ? rest.slice(0, cut) : rest;
   const desc = cut > -1 ? rest.slice(cut + 3) : "";
-  return { page, title: title || "Untitled bug", desc: desc && desc !== "No details" ? desc : "" };
+  return { page, title: title || "Untitled bug", desc: desc && desc !== "No details" ? withoutTitle(title, desc) : "" };
 }
 
-// handledTotal: how many resolved bug reports there are in all (only the
-// newest are loaded). onReload and onReportsChange: as for ReportsView.
-export function BugReportsView({ reports, setReports, handledTotal = 0, onReportsChange, showToast, onReload }) {
-  const [busyId, setBusyId] = useState(null);
-  const [resolvedLimit, setResolvedLimit] = useState(HANDLED_PAGE);
-  const open = reports.filter(isOpenBug);
-  const resolved = reports.filter((r) => isBugReport(r) && !isOpenBug(r));
-  const resolvedCount = Math.max(handledTotal + handledHere(resolved), resolved.length);
+function parseIdea(r) {
+  const text = (r.reason || "").replace(/^\[IDEA\]\s*/, "");
+  const cut = text.indexOf(" — ");
+  const title = (cut > -1 ? text.slice(0, cut) : text) || "Untitled idea";
+  return { title, desc: cut > -1 ? withoutTitle(title, text.slice(cut + 3)) : "" };
+}
 
-  const resolve = async (r) => {
+// Feedback: problems members report and ideas they send (Settings → Send
+// feedback). Problems are resolved once fixed; ideas are marked done once
+// built, or closed. handledTotal: how many handled ones there are in all
+// (only the newest are loaded). onReload and onReportsChange: as for
+// ReportsView.
+export function FeedbackView({ reports, setReports, handledTotal = 0, onReportsChange, showToast, onReload }) {
+  const [busyId, setBusyId] = useState(null);
+  const [tab, setTab] = useState("bugs"); // bugs | ideas
+  const [handledLimit, setHandledLimit] = useState(HANDLED_PAGE);
+  const isKind = tab === "bugs" ? isBugReport : isIdea;
+  const open = reports.filter((r) => isKind(r) && isPending(r));
+  const handled = reports.filter((r) => isKind(r) && !isPending(r));
+  const allHandled = reports.filter((r) => isFeedback(r) && !isPending(r));
+  const handledCount = Math.max(handledTotal + handledHere(allHandled), allHandled.length);
+  const openBugs = reports.filter(isOpenBug).length;
+  const openIdeas = reports.filter(isOpenIdea).length;
+
+  const setStatus = async (r, status, text) => {
     if (busyId) return;
     setBusyId(r.id);
     try {
-      const changed = await api.adminSetReportStatus([r.id], "resolved");
+      const changed = await api.adminSetReportStatus([r.id], status);
       if (changed.length) {
         onReportsChange?.(changed.map((x) => x.id));
         setReports((prev) => markHandled(prev, changed));
-        showToast({ text: "Bug report resolved", icon: "check" });
+        showToast({ text, icon: "check" });
       } else {
-        // Someone else resolved it first: show the list as it is now.
+        // Someone else handled it first: show the list as it is now.
         showToast({ text: ALREADY_HANDLED });
         onReload?.();
       }
@@ -410,12 +437,17 @@ export function BugReportsView({ reports, setReports, handledTotal = 0, onReport
     setBusyId(null);
   };
 
-  const renderBug = (r, actionable) => {
-    const b = parseBug(r);
+  const renderItem = (r, actionable) => {
+    const bug = isBugReport(r);
+    const b = bug ? parseBug(r) : parseIdea(r);
+    const done = r.status === "resolved";
     return (
       <div key={r.id} className="adm-item">
         <div className="adm-item-main">
-          <div className="adm-item-title"><Pill tone="blue" dot={false}>{b.page}</Pill>{b.title}</div>
+          <div className="adm-item-title">
+            {bug ? <Pill tone="blue" dot={false}>{b.page}</Pill> : !actionable && <Pill tone={done ? "green" : "gray"} dot={false}>{done ? "Done" : "Closed"}</Pill>}
+            {b.title}
+          </div>
           {b.desc && <div className="adm-item-text" style={{ whiteSpace: "pre-wrap" }}>{b.desc}</div>}
           <div className="adm-item-meta">
             {r.reporter ? `${r.reporter.name}${r.reporter.email ? ` (${r.reporter.email})` : ""} · ` : ""}
@@ -424,7 +456,14 @@ export function BugReportsView({ reports, setReports, handledTotal = 0, onReport
         </div>
         {actionable && (
           <div className="adm-item-actions">
-            <Button variant="secondary" size="sm" icon="check" disabled={busyId === r.id} onClick={() => resolve(r)}>{busyId === r.id ? "Resolving…" : "Resolve"}</Button>
+            {bug ? (
+              <Button variant="secondary" size="sm" icon="check" disabled={busyId === r.id} onClick={() => setStatus(r, "resolved", "Bug report resolved")}>{busyId === r.id ? "Resolving…" : "Resolve"}</Button>
+            ) : (
+              <>
+                <Button variant="secondary" size="sm" icon="check" disabled={busyId === r.id} onClick={() => setStatus(r, "resolved", "Idea marked as done")}>Done</Button>
+                <Button variant="ghost" size="sm" disabled={busyId === r.id} onClick={() => setStatus(r, "reviewed", "Idea closed")}>Close</Button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -433,18 +472,25 @@ export function BugReportsView({ reports, setReports, handledTotal = 0, onReport
 
   return (
     <>
-      <PageHeader title="Bug reports" description="Problems members reported from the app. Resolve them once they're fixed or no longer relevant." />
+      <PageHeader title="Feedback" description="Problems members report and ideas they send from Settings → Send feedback. Resolve problems once they're fixed; mark ideas done once built, or close them." />
+      <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+        {[["bugs", `Problems${openBugs ? ` (${openBugs})` : ""}`], ["ideas", `Ideas${openIdeas ? ` (${openIdeas})` : ""}`]].map(([k, l]) => (
+          <Button key={k} role="tab" aria-selected={tab === k} variant={tab === k ? "primary" : "secondary"} size="sm" onClick={() => { setTab(k); setHandledLimit(HANDLED_PAGE); }}>{l}</Button>
+        ))}
+      </div>
       {open.length === 0 ? (
-        <EmptyState icon="bug" title={resolved.length ? "No open bug reports" : "No bug reports"}>Reports members send from Settings → Report a bug appear here.</EmptyState>
-      ) : open.map((r) => renderBug(r, true))}
-      {resolved.length > 0 && (
+        <EmptyState icon={tab === "bugs" ? "bug" : "message"} title={tab === "bugs" ? "No open problems" : "No new ideas"}>
+          {tab === "bugs" ? "Problems members report from Settings → Send feedback appear here." : "Ideas members send from Settings → Send feedback appear here."}
+        </EmptyState>
+      ) : open.map((r) => renderItem(r, true))}
+      {handled.length > 0 && (
         <section>
-          <SectionTitle count={resolvedCount}>Resolved</SectionTitle>
-          <HandledNote shown={resolved.length} total={resolvedCount} />
-          {resolved.slice(0, resolvedLimit).map((r) => renderBug(r, false))}
-          {resolved.length > resolvedLimit && (
+          <SectionTitle count={handled.length}>{tab === "bugs" ? "Resolved" : "Done or closed"}</SectionTitle>
+          <HandledNote shown={allHandled.length} total={handledCount} />
+          {handled.slice(0, handledLimit).map((r) => renderItem(r, false))}
+          {handled.length > handledLimit && (
             <div className="adm-more">
-              <Button variant="secondary" size="sm" onClick={() => setResolvedLimit((l) => l + HANDLED_PAGE)}>Show {Math.min(HANDLED_PAGE, resolved.length - resolvedLimit)} more</Button>
+              <Button variant="secondary" size="sm" onClick={() => setHandledLimit((l) => l + HANDLED_PAGE)}>Show {Math.min(HANDLED_PAGE, handled.length - handledLimit)} more</Button>
             </div>
           )}
         </section>

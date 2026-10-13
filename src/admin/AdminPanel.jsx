@@ -1,12 +1,12 @@
 // NRIClub Admin: a minimal, Notion-like admin panel.
-// Sections: Verification, Members, Communities, Reports, Bug reports, Overview.
+// Sections: Verification, Members, Communities, Reports, Feedback, Overview.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import VerificationView from "./VerificationView";
 import MembersView from "./MembersView";
 import CommunitiesView from "./CommunitiesView";
 import OverviewView from "./OverviewView";
-import { BugReportsView, ReportsView, contentPreview, isOpenBug, isOpenReport, personOf, targetKey } from "./ReportsView";
+import { FeedbackView, ReportsView, contentPreview, isOpenBug, isOpenIdea, isOpenReport, personOf, targetKey } from "./ReportsView";
 import { ADMIN_CSS, ErrorNote, Icon, SkeletonRows, Toast } from "./ui";
 import { friendlyError } from "./format";
 
@@ -210,7 +210,7 @@ export default function AdminPanel({ onLogout }) {
   const membersTotal = Math.max(memberCounts?.total ?? usersTotal, users.length);
   const blockedTotal = memberCounts ? memberCounts.blocked : users.filter((u) => u.status === "blocked").length;
   const openReports = reports.filter(isOpenReport).length;
-  const bugCount = reports.filter(isOpenBug).length;
+  const feedbackCount = reports.filter((r) => isOpenBug(r) || isOpenIdea(r)).length;
   const pendingGroups = groups.filter((g) => !g.is_approved).length;
 
   const nav = [
@@ -218,7 +218,7 @@ export default function AdminPanel({ onLogout }) {
     { key: "members", label: "Members", icon: "users", count: membersTotal },
     { key: "communities", label: "Communities", icon: "globe", count: pendingGroups },
     { key: "reports", label: "Reports", icon: "flag", count: openReports },
-    { key: "bugs", label: "Bug reports", icon: "bug", count: bugCount },
+    { key: "bugs", label: "Feedback", icon: "bug", count: feedbackCount },
     { key: "overview", label: "Overview", icon: "chart" },
   ];
 
@@ -252,7 +252,7 @@ export default function AdminPanel({ onLogout }) {
   } else if (page === "reports") {
     content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
   } else if (page === "bugs") {
-    content = <BugReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
+    content = <FeedbackView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
   } else {
     content = <OverviewView users={users} membersTotal={membersTotal} blockedTotal={blockedTotal} counts={counts} openReports={openReports} pendingGroups={pendingGroups} onNavigate={go} />;
   }
