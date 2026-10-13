@@ -1299,6 +1299,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [newMarket, setNewMarket] = useState({ title: "", price: "", category: "Items", city: "", description: "" });
   const [marketPhotos, setMarketPhotos] = useState([]);
   const [marketItems, setMarketItems] = useState([]);
+  // Host Event, Create Doc and Post Item start at the member's own city (they can still change it).
+  const myCity = GLOBAL_CITIES.find(c => c.toLowerCase() === (user.location || "").split(",")[0].trim().toLowerCase()) || "";
+  useEffect(() => { if (eventModal && myCity) setNewEvent(prev => prev.city ? prev : { ...prev, city: myCity }); }, [eventModal, myCity]);
+  useEffect(() => { if (docModal && myCity) setNewDoc(prev => prev.city ? prev : { ...prev, city: myCity }); }, [docModal, myCity]);
+  useEffect(() => { if (marketModal && myCity) setNewMarket(prev => prev.city ? prev : { ...prev, city: myCity }); }, [marketModal, myCity]);
   // Help state with pre-populated data
 
   // Initialize help requests on mount
@@ -1920,7 +1925,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       timestamp: Date.now(), responses: 0, status: "Open",
     };
     setHelpRequests([h, ...helpRequests]);
-    setNewHelp({ title: "", description: "", category: "General", urgency: "Low", city: "" });
+    setNewHelp({ title: "", description: "", category: "General", urgency: "Low" });
     setHelpModal(false);
     try {
       const r = await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgency });
@@ -1938,7 +1943,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!helpResponses[h.id]) {
       try {
         const resp = await api.getHelpResponses(h.id);
-        if (resp) setHelpResponses(prev => ({ ...prev, [h.id]: resp.map(r => ({ id: r.id, text: r.content, user: r.profiles?.name || "User", time: new Date(r.created_at).toLocaleString() })) }));
+        if (resp) setHelpResponses(prev => ({ ...prev, [h.id]: resp.map(r => ({ id: r.id, text: r.content, user: r.profiles?.name || "User", time: new Date(r.created_at).getTime() })) }));
       } catch(e) {}
     }
   };
@@ -2999,7 +3004,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         <div style={{ flex: 1 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{r.user}</span>
-                            <span style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{r.time}</span>
+                            <span style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{timeAgo(r.time)}</span>
                           </div>
                           <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 4, lineHeight: 1.5, fontFamily: font }}>{r.text}</p>
                         </div>
@@ -3019,7 +3024,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                               return;
                             }
                             setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, responses: (x.responses || 0) + 1 } : x));
-                            setHelpResponses(prev => ({ ...prev, [h.id]: [...(prev[h.id] || []), { id: Date.now(), text, user: user.name, time: "Just now" }] }));
+                            setHelpResponses(prev => ({ ...prev, [h.id]: [...(prev[h.id] || []), { id: Date.now(), text, user: user.name, time: Date.now() }] }));
                             setHelpResponse("");
                           }} style={{ ...btnPrimary, padding: "7px 16px", fontSize: 12, opacity: helpResponse.trim() ? 1 : 0.4 }}>Post Response</button>
                         </div>
@@ -3075,7 +3080,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <button disabled={!docComment.trim()} onClick={async () => {
                         const text = docComment;
                         const docId = selectedDoc.id;
-                        const newComment = { id: "c_" + Date.now(), user: user.name, text, time: "Just now" };
+                        const newComment = { id: "c_" + Date.now(), user: user.name, text, time: Date.now() };
                         const updated = docs.map(d => d.id === docId ? { ...d, comments: [...(d.comments || []), newComment] } : d);
                         setDocs(updated);
                         setSelectedDoc(updated.find(d => d.id === docId));
@@ -3098,7 +3103,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{c.user}</span>
-                        <span style={{ fontSize: 11, color: "#9B9A97" }}>· {c.time}</span>
+                        <span style={{ fontSize: 11, color: "#9B9A97" }}>· {timeAgo(c.time)}</span>
                       </div>
                       <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, fontFamily: font }}>{c.text}</p>
                     </div>
@@ -3126,23 +3131,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button onClick={() => setDocModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Create Doc</button>
             </div>
             {/* Search Bar */}
-            <div style={{ position: "relative", marginBottom: 12 }}>
-              <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 16 })}</div>
-              <input value={docSearch} onChange={(e) => setDocSearch(e.target.value)} placeholder="Search docs by title, content, category, or author..." style={{ width: "100%", padding: "12px 14px 12px 40px", borderRadius: 10, border: "1px solid #E8E7E4", background: "#fff", fontSize: 13, fontFamily: font, boxSizing: "border-box", outline: "none" }} />
-              {docSearch && (
-                <button onClick={() => setDocSearch("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 14 })}</button>
-              )}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, background: "#fff", padding: "10px 16px", borderRadius: 10, border: "1px solid #E8E7E4" }}>
-              <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Filter by City:</span>
-              <div style={{ position: "relative" }}>
-                <select value={docCityFilter} onChange={(e) => setDocCityFilter(e.target.value)} style={{ padding: "4px 24px 4px 8px", fontSize: 13, border: "none", background: "transparent", fontWeight: 600, color: "#37352F", cursor: "pointer", fontFamily: font, appearance: "none", outline: "none" }}>
-                  <option value="All">All</option>
+            <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+              <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 15 })}</div>
+                <input value={docSearch} onChange={(e) => setDocSearch(e.target.value)} placeholder="Search docs by title, content, category, or author..." style={{ ...inputStyle, paddingLeft: 36, paddingRight: docSearch ? 32 : 14 }} />
+                {docSearch && (
+                  <button onClick={() => setDocSearch("")} aria-label="Clear search" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 14 })}</button>
+                )}
+              </div>
+              <div style={{ position: "relative", width: 160 }}>
+                <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.mapPin({ size: 14 })}</div>
+                <select value={docCityFilter} onChange={(e) => setDocCityFilter(e.target.value)} style={{ ...inputStyle, paddingLeft: 34, appearance: "none", cursor: "pointer" }}>
+                  <option value="All">All cities</option>
                   {GLOBAL_CITIES.map(c => <option key={c} value={c.split(",")[0]}>{c}</option>)}
                 </select>
-                <div style={{ position: "absolute", right: 2, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="docs-grid">
@@ -3152,7 +3154,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   try {
                     const dbComments = await api.getDocComments(d.id);
                     if (dbComments && dbComments.length) {
-                      const withComments = { ...d, comments: dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).toLocaleString() })) };
+                      const withComments = { ...d, comments: dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).getTime() })) };
                       setSelectedDoc(withComments);
                     }
                   } catch(e) {}
@@ -3216,7 +3218,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <div style={{ position: "relative", width: 160 }}>
                 <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.mapPin({ size: 14 })}</div>
                 <select value={marketCityFilter} onChange={(e) => setMarketCityFilter(e.target.value)} style={{ ...inputStyle, paddingLeft: 34, appearance: "none", cursor: "pointer" }}>
-                  <option value="All">All</option>
+                  <option value="All">All cities</option>
                   {GLOBAL_CITIES.map(c => <option key={c} value={c.split(",")[0]}>{c}</option>)}
                 </select>
               </div>
@@ -3255,10 +3257,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         <Avatar name={item.seller} size={22} />
                         <span style={{ fontSize: 12, fontWeight: 500, color: "#37352F", fontFamily: font }}>{item.seller}</span>
                       </div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        {item.user_id === user.id && <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); } }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font }}>{Icons.trash({ size: 11 })}</button>}
-                        {item.user_id !== user.id && <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>}
-                        <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "marketplace", id: item.id, name: item.title }); }} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 12 })}</button>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        {item.user_id === user.id ? (
+                          <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); } }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>{Icons.trash({ size: 11 })} Delete</button>
+                        ) : (
+                          <>
+                            <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
+                            <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "marketplace", id: item.id, name: item.title }); }} aria-label="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 8, display: "flex" }}>{Icons.flag({ size: 12 })}</button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -4209,25 +4216,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               )}
 
-              {/* Thumbnail strip */}
-              {hasPhotos && photos.length > 1 && (
-                <div style={{ position: "absolute", bottom: 28, right: 14, display: "flex", gap: 4 }}>
-                  {photos.map((p, i) => (
-                    <button key={i} onClick={(e) => { e.stopPropagation(); setMarketPhotoIdx(i); }} style={{ width: 36, height: 36, borderRadius: 6, border: i === marketPhotoIdx ? "2px solid #fff" : "2px solid transparent", overflow: "hidden", cursor: "pointer", padding: 0, opacity: i === marketPhotoIdx ? 1 : 0.6, transition: "all 0.2s" }}>
-                      <img src={p} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    </button>
-                  ))}
-                </div>
-              )}
-
               <button onClick={() => { setExpandedMarketItem(null); setMarketPhotoIdx(0); }} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {Icons.x({ size: 16 })}
               </button>
-              <div style={{ position: "absolute", top: 14, left: 14, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(4px)", padding: "6px 14px", borderRadius: 6, fontSize: 14, fontWeight: 700, color: "#37352F" }}>{expandedMarketItem.price}</div>
-              <div style={{ position: "absolute", bottom: hasPhotos && photos.length > 1 ? 70 : 14, left: 14, background: "rgba(0,0,0,0.6)", padding: "4px 10px", borderRadius: 4, fontSize: 10, fontWeight: 600, color: "#fff", textTransform: "uppercase", letterSpacing: "0.06em" }}>{expandedMarketItem.category}</div>
-              {hasPhotos && photos.length > 1 && (
-                <div style={{ position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.5)", padding: "3px 10px", borderRadius: 10, fontSize: 11, color: "#fff", fontWeight: 600 }}>{marketPhotoIdx + 1} / {photos.length}</div>
-              )}
             </div>
 
             {/* Content */}
@@ -4236,7 +4227,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               
               {/* Price highlight */}
               <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "#F0EFED", borderRadius: 8, marginBottom: 20 }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
                 <span style={{ fontSize: 18, fontWeight: 700, color: "#37352F", fontFamily: font }}>{expandedMarketItem.price}</span>
               </div>
 
@@ -4609,9 +4599,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ maxHeight: 400, overflow: "auto" }}>
               {(() => {
                 const activities = [];
-                posts.filter(p => p.userId === user.id).forEach(p => activities.push({ action: "Posted", target: p.content.substring(0, 40) + (p.content.length > 40 ? "..." : ""), time: new Date(p.timestamp).toLocaleString() }));
-                groups.filter(g => g.joined).forEach(g => activities.push({ action: "Joined group", target: g.name, time: "Recently" }));
-                helpRequests.filter(h => h.user === user.name).forEach(h => activities.push({ action: "Asked for help", target: h.title, time: new Date(h.timestamp).toLocaleString() }));
+                posts.filter(p => p.userId === user.id).forEach(p => activities.push({ action: "Posted", target: p.content.substring(0, 40) + (p.content.length > 40 ? "..." : ""), time: timeAgo(p.timestamp) }));
+                groups.filter(g => g.joined).forEach(g => activities.push({ action: "Joined group", target: g.name, time: "" }));
+                helpRequests.filter(h => h.user === user.name).forEach(h => activities.push({ action: "Asked for help", target: h.title, time: timeAgo(h.timestamp) }));
                 if (activities.length === 0) activities.push({ action: "No activity yet", target: "Start posting or joining communities!", time: "" });
                 return activities.slice(0, 10).map((log, i) => (
                   <div key={i} style={{ padding: "16px 24px", borderBottom: "1px solid #F0EFED" }}>
@@ -4980,8 +4970,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
               <div style={{ marginBottom: 24 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Excerpt / Summary</label>
-                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newDoc.excerpt} onChange={(e) => setNewDoc({...newDoc, excerpt: e.target.value})} placeholder="Brief summary of your doc..." />
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Your guide</label>
+                <textarea className="doc-guide" style={{ ...inputStyle, minHeight: 200, resize: "none" }} value={newDoc.excerpt} onChange={(e) => setNewDoc({...newDoc, excerpt: e.target.value})} placeholder="Write the steps, tips and useful links…" />
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => setDocModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
@@ -5249,40 +5239,33 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Help Modal */}
       {helpModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setHelpModal(false)}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setHelpModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "16px 20px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FAFAF8" }}>
-              <h3 style={{ fontSize: 15, fontWeight: 600 }}>Ask for Help</h3>
+            <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Ask for Help</h3>
               <button onClick={() => setHelpModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Title</label>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
                 <input style={inputStyle} value={newHelp.title} onChange={(e) => setNewHelp({ ...newHelp, title: e.target.value })} placeholder="Summarize your need..." />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Category</label>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
                   <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.category} onChange={(e) => setNewHelp({ ...newHelp, category: e.target.value })}>
                     {["General", "Housing", "Health", "Legal/Visa", "Education", "Jobs", "Travel"].map((c) => <option key={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Urgency</label>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Priority</label>
                   <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.urgency} onChange={(e) => setNewHelp({ ...newHelp, urgency: e.target.value })}>
                     {["Low", "Medium", "High"].map((u) => <option key={u}>{u}</option>)}
                   </select>
                 </div>
               </div>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>City</label>
-                <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.city || ""} onChange={(e) => setNewHelp({ ...newHelp, city: e.target.value })}>
-                  <option value="">Select a city...</option>
-                  {GLOBAL_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Description</label>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
                 <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newHelp.description} onChange={(e) => setNewHelp({ ...newHelp, description: e.target.value })} placeholder="Provide details..." />
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
@@ -5421,6 +5404,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           .doc-article { border-radius: 0 !important; border-left: none !important; border-right: none !important; }
           .doc-body { padding: 20px 16px !important; }
           .doc-title { font-size: 20px !important; line-height: 1.35 !important; }
+          .doc-guide { min-height: 160px !important; }
           .doc-body textarea { min-height: 50px !important; }
         }
 
