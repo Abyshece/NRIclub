@@ -1097,6 +1097,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [settingsSaveError, setSettingsSaveError] = useState("");
   const [openFaq, setOpenFaq] = useState(null);
   const [bugError, setBugError] = useState("");
+  const [feedbackKind, setFeedbackKind] = useState(null); // null (choose) | "bug" | "idea"
+  const [feedbackSending, setFeedbackSending] = useState(false);
   // Privacy and email settings are saved the moment they change; a failed
   // save puts the row back.
   const saveSetting = async (setState, key, value, save) => {
@@ -4216,7 +4218,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </button>
             {/* Settings gear */}
             <div style={{ position: "relative" }}>
-              <button onClick={() => { setSettingsOpen(!settingsOpen); setNotifOpen(false); }}
+              <button onClick={() => { setSettingsOpen(!settingsOpen); setNotifOpen(false); }} aria-label="Settings" aria-expanded={settingsOpen}
                 style={{ background: "none", border: "none", cursor: "pointer", padding: 6, color: "#9B9A97", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
                 onMouseOver={(e) => (e.currentTarget.style.background = "#F0EFED")}
                 onMouseOut={(e) => (e.currentTarget.style.background = "none")}>
@@ -4249,10 +4251,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     ))}
                     <div style={{ height: 1, background: "#F0EFED", margin: "4px 0" }} />
                     {[
+                      { key: "feedback", icon: Icons.message, label: "Send feedback" },
                       { key: "helpCenter", icon: Icons.help, label: "Support" },
                       { key: "terms", icon: Icons.file, label: "Terms & Policies" },
                     ].map(item => (
-                      <button key={item.key} onClick={() => { setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
+                      <button key={item.key} onClick={() => { if (item.key === "feedback") { setFeedbackKind(null); setBugError(""); } setSettingsModal(item.key); setSettingsOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
                         onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
                         onMouseOut={(e) => e.currentTarget.style.background = "none"}>
                         {item.icon({ size: 16, stroke: "#9B9A97" })} {item.label}
@@ -5128,42 +5131,88 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         </div>
       )}
 
-      {/* Report Bug Modal */}
-      {settingsModal === "reportBug" && (
+      {/* Feedback: report a problem or suggest an idea (lands in the admin panel under Feedback) */}
+      {settingsModal === "feedback" && (() => {
+        const label = { display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font };
+        const pages = [["Feed", "Home / Feed"], ["Find", "Find / Search"], ["Groups", "Groups"], ["Events", "Events"], ["Messages", "Messages"], ["Ask", "Ask & Guides"], ["Marketplace", "Marketplace"], ["Profile", "Profile"], ["Other", "Somewhere else"]];
+        const here = ({ home: "Feed", network: "Find", groups: "Groups", events: "Events", messages: "Messages", market: "Marketplace", docs: "Ask", help: "Ask", profile: "Profile", member: "Find" })[view] || "Other";
+        const kinds = [
+          { k: "bug", icon: "🐞", title: "Something isn't working", text: "A button, a page or a message that doesn't do what it should." },
+          { k: "idea", icon: "💡", title: "I have an idea", text: "A feature or change that would make NRIClub better for you." },
+        ];
+        const send = async () => {
+          const desc = (document.getElementById("feedback-desc")?.value || "").trim();
+          if (!desc) { setBugError(feedbackKind === "bug" ? "Please tell us what went wrong." : "Please tell us your idea."); return; }
+          const summary = desc.split("\n")[0].slice(0, 60);
+          let reason;
+          if (feedbackKind === "bug") {
+            const page = document.getElementById("feedback-page")?.value || "Other";
+            // Which browser and screen, to help us reproduce it.
+            const device = `${(navigator.userAgent || "").slice(0, 160)} · ${window.innerWidth}×${window.innerHeight}`;
+            reason = `[BUG] ${page}: ${summary} — ${desc}\n\nDevice: ${device}`;
+          } else {
+            reason = `[IDEA] ${summary} — ${desc}`;
+          }
+          setFeedbackSending(true);
+          try {
+            await api.reportPost(user.id, reason.slice(0, 5000));
+            setBugError("");
+            setSettingsModal(null);
+            alert(feedbackKind === "bug" ? "Thanks! Your report was sent to the NRIClub team." : "Thanks for the idea! The NRIClub team reads every one.");
+          } catch (e) {
+            alert(isNetworkError(e) ? NETWORK_MESSAGE : "That couldn't be sent. Please try again.");
+          }
+          setFeedbackSending(false);
+        };
+        return (
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="feedback-title" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Report a problem</h3>
-              <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+              <h3 id="feedback-title" style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>{feedbackKind === "bug" ? "Report a problem" : feedbackKind === "idea" ? "Suggest an idea" : "Send feedback"}</h3>
+              <button onClick={() => setSettingsModal(null)} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
-              <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 16, fontFamily: font }}>Found something broken? Let us know and we'll fix it.</p>
-              <div style={{ marginBottom: 16 }}>
-                <label htmlFor="bug-desc" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>What went wrong?</label>
-                <textarea id="bug-desc" placeholder="Tell us what you tried and what happened" onChange={() => bugError && setBugError("")} style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", minHeight: 100, resize: "vertical" }} />
-                {bugError && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 4, fontFamily: font }}>{bugError}</p>}
-              </div>
-              <div style={{ marginBottom: 20 }}>
-                <label htmlFor="bug-page" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Where?</label>
-                <select id="bug-page" defaultValue={({ home: "Feed", network: "Find", groups: "Groups", events: "Events", messages: "Messages", market: "Marketplace", docs: "Docs", help: "Help", profile: "Profile" })[view] || "Other"} style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }}>
-                  <option value="Feed">Feed</option><option value="Find">Find / Search</option><option value="Groups">Groups</option><option value="Events">Events</option><option value="Messages">Messages</option><option value="Marketplace">Marketplace</option><option value="Docs">Docs</option><option value="Help">Help</option><option value="Profile">Profile</option><option value="Settings">Settings</option><option value="Other">Other</option>
-                </select>
-              </div>
-              <button onClick={async () => {
-                const page = document.getElementById("bug-page")?.value;
-                const desc = (document.getElementById("bug-desc")?.value || "").trim();
-                if (!desc) { setBugError("Please tell us what went wrong."); return; }
-                try {
-                  await api.reportPost(user.id, `[BUG] ${page}: ${desc.slice(0, 60)} — ${desc}`);
-                  alert("Thanks! Your report was sent.");
-                  setBugError("");
-                  setSettingsModal(null);
-                } catch(e) { alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your report couldn't be sent. Please try again."); }
-              }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Send report</button>
+              {!feedbackKind ? (
+                <>
+                  <p style={{ fontSize: 13, color: "#6B6A67", marginBottom: 14, fontFamily: font }}>NRIClub is built with its members. What would you like to tell us?</p>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {kinds.map(o => (
+                      <button key={o.k} onClick={() => setFeedbackKind(o.k)} style={{ display: "flex", gap: 12, alignItems: "flex-start", textAlign: "left", padding: "14px 16px", borderRadius: 12, border: "1px solid #E8E7E4", background: "#fff", cursor: "pointer", fontFamily: font }}>
+                        <span style={{ fontSize: 22 }} aria-hidden="true">{o.icon}</span>
+                        <span><strong style={{ display: "block", fontSize: 14, color: "#37352F" }}>{o.title}</strong><span style={{ fontSize: 12, color: "#6B6A67" }}>{o.text}</span></span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div role="radiogroup" aria-label="Kind of feedback" style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8, marginBottom: 16, width: "fit-content" }}>
+                    {kinds.map(o => (
+                      <button key={o.k} role="radio" aria-checked={feedbackKind === o.k} onClick={() => { setFeedbackKind(o.k); setBugError(""); }} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: feedbackKind === o.k ? "#fff" : "transparent", color: feedbackKind === o.k ? "#37352F" : "#6B6A67", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{o.icon} {o.k === "bug" ? "Problem" : "Idea"}</button>
+                    ))}
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <label htmlFor="feedback-desc" style={label}>{feedbackKind === "bug" ? "What went wrong?" : "Your idea"}</label>
+                    <textarea id="feedback-desc" key={feedbackKind} maxLength={4000} placeholder={feedbackKind === "bug" ? "Tell us what you tried and what happened" : "What would you like NRIClub to do, and how would it help you?"} onChange={() => bugError && setBugError("")} style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, minHeight: 110, resize: "vertical", outline: "none", fontFamily: font, boxSizing: "border-box", background: "#FAFAF8" }} />
+                    {bugError && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 4, fontFamily: font }}>{bugError}</p>}
+                  </div>
+                  {feedbackKind === "bug" && (
+                    <div style={{ marginBottom: 20 }}>
+                      <label htmlFor="feedback-page" style={label}>Where?</label>
+                      <select id="feedback-page" defaultValue={here} style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }}>
+                        {pages.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                      <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 6, fontFamily: font }}>We also send your browser and screen size, so we can see the problem the way you do.</p>
+                    </div>
+                  )}
+                  <button onClick={send} disabled={feedbackSending} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: feedbackSending ? "default" : "pointer", opacity: feedbackSending ? 0.7 : 1, fontFamily: font }}>{feedbackSending ? "Sending…" : feedbackKind === "bug" ? "Send report" : "Send idea"}</button>
+                </>
+              )}
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Help Center Modal */}
       {settingsModal === "helpCenter" && (
@@ -5179,7 +5228,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, marginBottom: 14, fontFamily: font }}>Our support team is here to help you with any issues or questions you might have.</p>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <a href="mailto:support@nriclub.app" style={{ ...btnPrimary, textDecoration: "none" }}>Contact support</a>
-                  <button onClick={() => { setBugError(""); setSettingsModal("reportBug"); }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Report a problem</button>
+                  <button onClick={() => { setBugError(""); setFeedbackKind("bug"); setSettingsModal("feedback"); }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Report a problem</button>
+                  <button onClick={() => { setBugError(""); setFeedbackKind("idea"); setSettingsModal("feedback"); }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Suggest an idea</button>
                 </div>
               </div>
               <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font }}>FAQs</h4>

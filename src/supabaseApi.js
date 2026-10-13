@@ -1540,7 +1540,10 @@ async function getAllPendingReports() {
 
 // Handled reports stay on record, so only the newest are loaded.
 export const HANDLED_REPORTS_SHOWN = 200;
+// Feedback (bug reports and ideas) is kept apart from reports about members
+// and content.
 const BUG_REASON = encodeURIComponent("[BUG]*");
+const IDEA_REASON = encodeURIComponent("[IDEA]*");
 
 // users holds the newest 1,000 members; usersTotal is how many there are.
 // reports holds every open report plus the newest 200 handled member reports
@@ -1553,8 +1556,8 @@ export async function adminGetDashboardData() {
     getCounted(`/rest/v1/profiles?${ADMIN_MEMBER_SELECT}&order=created_at.desc&limit=1000`),
     get("/rest/v1/groups?select=*&order=members_count.desc"),
     getAllPendingReports(),
-    getCounted(`${handled}&reason=not.like.${BUG_REASON}`),
-    getCounted(`${handled}&reason=like.${BUG_REASON}`),
+    getCounted(`${handled}&reason=not.like.${BUG_REASON}&reason=not.like.${IDEA_REASON}`),
+    getCounted(`${handled}&or=(reason.like.${BUG_REASON},reason.like.${IDEA_REASON})`),
     get("/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200"),
     get("/rest/v1/docs?select=id,title,excerpt,user_id&order=created_at.desc&limit=100"),
     get("/rest/v1/events?select=id,title,description,date,organizer_id&order=created_at.desc&limit=100"),
