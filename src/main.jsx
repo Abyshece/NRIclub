@@ -15,6 +15,10 @@ import '@fontsource/dm-sans/700.css';
 import '@fontsource/dm-sans/800.css';
 import App from './App';
 
+// "Add to Home Screen": browsers that support it offer installing the site
+// once; keep that offer for the menu item in Settings.
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window.nriInstallPrompt = e; });
+
 // If a screen crashes, show a friendly message with a way out instead of a
 // blank white page.
 class ErrorBoundary extends React.Component {

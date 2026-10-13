@@ -1264,8 +1264,34 @@ export async function uploadFile(bucket, filePath, file) {
   return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${filePath}`;
 }
 
+// Phone photos are often 3-8 MB. Before uploading, photos are scaled down to
+// at most `max` pixels on the long side and saved as JPEG (about 150-300 KB),
+// so uploads and feeds are fast. GIFs, SVGs and files that can't be read are
+// uploaded as they are; a smaller original is kept.
+async function shrinkImage(file, max = 1600, quality = 0.82) {
+  if (!file || !/^image\/(jpeg|png|webp|heic|heif)$/i.test(file.type || "") || typeof createImageBitmap !== "function") return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff"; // transparent PNG areas become white, not black
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", quality));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], (file.name || "photo").replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch (e) {
+    return file;
+  }
+}
+
 export async function uploadAvatar(file) {
   if (!currentUser) throw new Error("Not logged in");
+  file = await shrinkImage(file, 512);
   const ext = file.name.split(".").pop();
   const path = `${currentUser.id}/avatar_${Date.now()}.${ext}`;
   const url = await uploadFile("avatars", path, file);
@@ -1275,6 +1301,7 @@ export async function uploadAvatar(file) {
 
 export async function uploadPostImage(file) {
   if (!currentUser) throw new Error("Not logged in");
+  file = await shrinkImage(file, 1600);
   const ext = file.name.split(".").pop();
   const path = `${currentUser.id}/${Date.now()}.${ext}`;
   return uploadFile("post-images", path, file);
@@ -1282,6 +1309,7 @@ export async function uploadPostImage(file) {
 
 export async function uploadMarketImage(file) {
   if (!currentUser) throw new Error("Not logged in");
+  file = await shrinkImage(file, 1600);
   const ext = file.name.split(".").pop();
   const path = `${currentUser.id}/${Date.now()}.${ext}`;
   return uploadFile("marketplace-images", path, file);
