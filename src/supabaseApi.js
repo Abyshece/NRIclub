@@ -782,6 +782,17 @@ export async function getPost(postId) {
   return rows?.[0] || null;
 }
 
+// A member's latest posts (with author), for their profile page.
+export async function getUserPosts(userId, limit = 20) {
+  return restCall("GET", `/rest/v1/posts?user_id=eq.${encodeURIComponent(userId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown,linkedin_url)&order=created_at.desc&limit=${limit}`);
+}
+
+// The groups a member belongs to (ids), for "Groups in common".
+export async function getUserGroupIds(userId) {
+  const data = await restCall("GET", `/rest/v1/group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id`);
+  return (data || []).map(d => d.group_id);
+}
+
 export async function createPost(content, tags = [], imageUrl = null, groupId = null) {
   if (!currentUser) throw new Error("Not logged in");
   return restCall("POST", "/rest/v1/posts", {
