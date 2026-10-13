@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { Fragment, useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import * as api from "./supabaseApi";
 import "./member/base.css";
 import SignUpFlow from "./member/SignUpFlow";
@@ -86,6 +86,25 @@ const eventDate = (e) => {
   return new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 };
 const eventTime = (e) => (e.date || "").split("•")[1]?.trim() || e.time || "TBD";
+// The day an event happens, as a time to sort by, or null if its date can't be read.
+const eventDay = (e) => {
+  const t = new Date(eventDate(e)).getTime();
+  return Number.isNaN(t) ? null : t;
+};
+const isPastEvent = (e) => {
+  const t = eventDay(e);
+  return t !== null && t < new Date().setHours(0, 0, 0, 0);
+};
+// Events from today on, soonest first (any whose date can't be read last),
+// then past events, most recent first.
+const orderEvents = (list) => {
+  const byDay = (a, b) => {
+    const x = eventDay(a), y = eventDay(b);
+    if (x === null || y === null) return (x === null) - (y === null);
+    return x - y;
+  };
+  return [...list.filter(e => !isPastEvent(e)).sort(byDay), ...list.filter(isPastEvent).sort((a, b) => byDay(b, a))];
+};
 
 // A listing's photos are stored as a JSON list of image links (older ones as
 // a single link). Anything else gives no photos instead of breaking the page.
@@ -927,7 +946,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
         </div>
       </div>
 
-      <p style={{ fontSize: 14, lineHeight: 1.65, color: "#37352F", marginBottom: 12, whiteSpace: "pre-wrap" }}>{post.externalUrl ? post.content.replace(post.externalUrl, "").trim() : post.content}</p>
+      <p style={{ fontSize: 14, lineHeight: 1.65, color: "#37352F", marginBottom: 12, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{post.externalUrl ? post.content.replace(post.externalUrl, "").trim() : post.content}</p>
 
       {/* External Link Preview Card */}
       {post.externalUrl && (() => {
@@ -947,11 +966,11 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
         };
         const p = getPlatform(url);
         return (
-          <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ display: "block", marginBottom: 12, borderRadius: 12, overflow: "hidden", border: "1px solid #E8E7E4", textDecoration: "none", cursor: "pointer", transition: "box-shadow 0.15s" }} onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)"} onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
+          <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ display: "block", maxWidth: "100%", marginBottom: 12, borderRadius: 12, overflow: "hidden", border: "1px solid #E8E7E4", textDecoration: "none", cursor: "pointer", transition: "box-shadow 0.15s" }} onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)"} onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
             <div style={{ height: 110, background: p.gradient, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 44 }}>
               <span>{p.emoji}</span>
             </div>
-            <div style={{ padding: "12px 14px", background: "#fff" }}>
+            <div style={{ padding: "12px 14px", background: "#fff", minWidth: 0 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: p.color, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{p.name}</div>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", wordBreak: "break-all", lineHeight: 1.4 }}>Tap to open →</div>
               <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{url}</div>
@@ -1186,8 +1205,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [blockTargetId, setBlockTargetId] = useState(null);
   const [blockedIds, setBlockedIds] = useState(new Set());
-  const [reportModalOpen, setReportModalOpen] = useState(false);
-  const [reportReason, setReportReason] = useState("");
   // Notification & Settings state
   const [notifOpen, setNotifOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1318,7 +1335,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     try {
       await api.unfollowUser(userId);
       setAcceptedConnections(prev => { const s = new Set(prev); s.delete(userId); return s; });
-      setMyFollowing(prev => prev.filter(id => id !== userId));
+      setMyFollowing(prev => prev.filter(p => (p.id || p) !== userId));
     } catch(e) { console.error("Unfollow failed:", e); }
   };
 
@@ -1464,7 +1481,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               }
             });
             setAcceptedConnections(iFollowThem);
-            setMyFollowing(Array.from(iFollowThem));
+            setMyFollowing(acceptedData.filter(c => c.requester_id === user.id).map(c => c.recipient).filter(Boolean));
           }
         } catch (e) {}
 
@@ -1716,8 +1733,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   const deletePost = async (id) => {
-    setPosts(posts.filter((p) => p.id !== id));
-    try { await api.deletePost(id); } catch (e) {}
+    if (!confirm("Delete this post? This can't be undone.")) return;
+    const at = posts.findIndex((p) => p.id === id);
+    const removed = posts[at];
+    setPosts(prev => prev.filter((p) => p.id !== id));
+    try { await api.deletePost(id); } catch (e) {
+      // Put the post back where it was.
+      if (removed) setPosts(prev => prev.some(p => p.id === id) ? prev : [...prev.slice(0, at), removed, ...prev.slice(at)]);
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Couldn't delete the post. Please try again.");
+    }
   };
 
   const createEvent = async () => {
@@ -1782,6 +1806,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     } catch (e) {
       setHelpRequests(prev => prev.filter(x => x.id !== h.id));
       alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your request couldn't be posted. Please try again.");
+    }
+  };
+
+  // Opens a help request and loads its responses the first time.
+  const openHelp = async (h) => {
+    setSelectedHelp(h.id);
+    if (!helpResponses[h.id]) {
+      try {
+        const resp = await api.getHelpResponses(h.id);
+        if (resp) setHelpResponses(prev => ({ ...prev, [h.id]: resp.map(r => ({ id: r.id, text: r.content, user: r.profiles?.name || "User", time: new Date(r.created_at).toLocaleString() })) }));
+      } catch(e) {}
     }
   };
 
@@ -2312,7 +2347,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
                     <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.55, fontFamily: font, flex: 1 }}>{selectedGroup.description}</p>
                     <button
-                      onClick={() => toggleGroup(selectedGroup.id)}
+                      onClick={() => { if (!selectedGroup.joined || confirm(`Leave ${selectedGroup.name}? You'll stop seeing its posts.`)) toggleGroup(selectedGroup.id); }}
                       style={{
                         padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer", flexShrink: 0,
                         border: selectedGroup.joined ? "1px solid #E0E0DE" : "none",
@@ -2320,7 +2355,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         color: selectedGroup.joined ? "#5F5E5B" : "#fff",
                       }}
                     >
-                      {selectedGroup.joined ? "Joined" : "Join Community"}
+                      {selectedGroup.joined ? "✓ Joined" : "Join Community"}
                     </button>
                   </div>
                   <div style={{ display: "flex", gap: 16, marginTop: 14, fontSize: 12, color: "#9B9A97" }}>
@@ -2579,7 +2614,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   {/* Join button - full width at bottom */}
                   <div style={{ padding: "0 18px 16px" }}>
                     <button
-                      onClick={(e) => { e.stopPropagation(); toggleGroup(g.id); }}
+                      onClick={(e) => { e.stopPropagation(); if (g.joined) { setGroupMembers([]); setSelectedGroup(g); } else toggleGroup(g.id); }}
                       style={{
                         width: "100%", padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer",
                         border: g.joined ? "1px solid #E0E0DE" : "none",
@@ -2588,7 +2623,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         transition: "all 0.15s",
                       }}
                     >
-                      {g.joined ? "Joined" : "Join Community"}
+                      {g.joined ? "✓ Joined" : "Join Community"}
                     </button>
                   </div>
                 </div>
@@ -2609,13 +2644,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       case "events":
         const evtColors = ["#3D6B5A", "#5A4A3D", "#3D5A80", "#6B5B4E", "#4A6741"];
-        const filteredEvents = events.filter((e) => {
+        const filteredEvents = orderEvents(events.filter((e) => {
           const matchesView = eventViewMode === "all" || rsvps.has(e.id);
           const matchesCity = eventCityFilter === "All" || (e.location || "").includes(eventCityFilter);
           const q = eventSearch.trim().toLowerCase();
           const matchesSearch = !q || (e.title || "").toLowerCase().includes(q) || (e.description || "").toLowerCase().includes(q) || (e.location || "").toLowerCase().includes(q) || (e.organizer || "").toLowerCase().includes(q);
           return matchesView && matchesCity && matchesSearch;
-        });
+        }));
+        const firstPastEvent = filteredEvents.find(isPastEvent);
 
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
@@ -2699,7 +2735,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               const evtColor = evtColors[idx % evtColors.length];
 
               return (
-                <div key={e.id} className="event-card" style={{
+                <Fragment key={e.id}>
+                {e === firstPastEvent && <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", margin: "28px 0 14px", fontFamily: font }}>Past events</h4>}
+                <div className="event-card" style={{
                   background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden",
                   display: "flex", flexDirection: "row", marginBottom: 16, transition: "box-shadow 0.15s",
                 }}
@@ -2766,7 +2804,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         <div style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{e.organizer}</div>
                       </div>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <button
+                        {!isPastEvent(e) && <button
                           onClick={() => toggleRsvp(e.id)}
                           disabled={String(e.id).startsWith("e_")}
                           style={{
@@ -2777,8 +2815,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             color: "#22A06B", transition: "all 0.15s",
                           }}
                         >
-                          Going
-                        </button>
+                          {rsvps.has(e.id) ? "✓ Going" : "RSVP"}
+                        </button>}
                         {e.organizerId === user.id && <button onClick={async () => { if (confirm("Delete this event?")) { try { await api.deleteEvent(e.id); } catch(e2) {} setEvents(prev => prev.filter(x => x.id !== e.id)); } }} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", cursor: "pointer", color: "#DC2626" }}>{Icons.trash({ size: 14 })}</button>}
                         <button onClick={() => setReportConfirm({ type: "event", id: e.id, name: e.title })} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 14 })}</button>
                       </div>
@@ -2796,6 +2834,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     </div>
                   </div>
                 </div>
+                </Fragment>
               );
             }) : (
               <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", color: "#9B9A97", fontSize: 14, fontFamily: font }}>
@@ -2884,26 +2923,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <button onClick={async () => { setReportConfirm({ type: "help", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
                   </div>
                 </div>
-                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>{h.title}</h3>
-                <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical" }}>{h.description}</p>
-                {h.description && h.description.length > 100 && selectedHelp !== h.id && (
-                  <button onClick={() => setSelectedHelp(h.id)} style={{ background: "none", border: "none", color: "#5B9CFF", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 10, fontFamily: font }}>Read more</button>
-                )}
+                <h3 onClick={() => openHelp(h)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font, cursor: "pointer" }}>{h.title}</h3>
+                <p onClick={() => openHelp(h)} style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical", cursor: "pointer" }}>{h.description}</p>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Avatar name={h.user} size={24} />
                     <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{h.user} · {timeAgo(h.timestamp)}</span>
                   </div>
-                  <button onClick={async () => {
-                    const newId = selectedHelp === h.id ? null : h.id;
-                    setSelectedHelp(newId);
-                    if (newId && !helpResponses[newId]) {
-                      try {
-                        const resp = await api.getHelpResponses(newId);
-                        if (resp) setHelpResponses(prev => ({ ...prev, [newId]: resp.map(r => ({ id: r.id, text: r.content, user: r.profiles?.name || "User", time: new Date(r.created_at).toLocaleString() })) }));
-                      } catch(e) {}
-                    }
-                  }} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>{Icons.message({ size: 14 })} {h.responses} responses</button>
+                  <button onClick={() => { if (selectedHelp === h.id) setSelectedHelp(null); else openHelp(h); }} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>{Icons.message({ size: 14 })} {!h.responses ? "Reply" : h.responses === 1 ? "1 response" : `${h.responses} responses`}</button>
                 </div>
                 {selectedHelp === h.id && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
@@ -2950,15 +2977,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       case "docs":
         if (selectedDoc) {
           return (
-            <div className="doc-article" style={{ maxWidth: 700, margin: "0 auto", background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden" }}>
-              {/* Header bar */}
-              <div style={{ padding: "14px 20px", borderBottom: "1px solid #F0EFED", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 56, background: "#fff", zIndex: 5 }}>
-                <button onClick={() => setSelectedDoc(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.chevronLeft({ size: 18 })}</button>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <h3 style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedDoc.title}</h3>
-                  <p style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>By {selectedDoc.author}</p>
-                </div>
-                <button style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.dots({ size: 18 })}</button>
+            <div className="doc-article" style={{ maxWidth: 700, minWidth: 0, margin: "0 auto", background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden" }}>
+              {/* Back to the list */}
+              <div style={{ padding: "14px 20px", borderBottom: "1px solid #F0EFED" }}>
+                <button onClick={() => setSelectedDoc(null)} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#9B9A97", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: font, fontWeight: 500 }}>
+                  {Icons.chevronLeft({ size: 16 })} All docs
+                </button>
               </div>
               {/* Article content */}
               <div className="doc-body" style={{ padding: "32px 28px" }}>
@@ -3296,7 +3320,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             </div>
             {/* Chat Area */}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
               {selectedConvo && activeConvo ? (
                 <>
                   <div style={{ padding: "12px 18px", borderBottom: "1px solid #E8E7E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -3319,7 +3343,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             <button onClick={() => { const _bid = convos.find(c => c.id === selectedConvo)?.otherUserId; setBlockTargetId(_bid); setBlockModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg> Block User
                             </button>
-                            <button onClick={() => { setReportModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
+                            <button onClick={() => { setReportConfirm({ type: "user", id: activeConvo.otherUserId, name: activeConvo.name }); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
                               {Icons.flag({ size: 14 })} Report User
                             </button>
                             <button onClick={() => { setChatMessages(p => ({ ...p, [selectedConvo]: [] })); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontFamily: font }}>
@@ -3333,7 +3357,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ flex: 1, padding: 18, overflow: "auto", background: "#FAFAF8", display: "flex", flexDirection: "column", gap: 12 }}>
                     {currentMsgs.map(m => (
                       <div key={m.id} style={{ maxWidth: "75%", alignSelf: m.sender === "me" ? "flex-end" : "flex-start" }}>
-                        <div style={{ padding: "10px 14px", borderRadius: m.sender === "me" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.sender === "me" ? "#37352F" : "#fff", color: m.sender === "me" ? "#fff" : "#37352F", border: m.sender === "me" ? "none" : "1px solid #E8E7E4", fontSize: 14, lineHeight: 1.5, fontFamily: font }}>
+                        <div style={{ padding: "10px 14px", borderRadius: m.sender === "me" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.sender === "me" ? "#37352F" : "#fff", color: m.sender === "me" ? "#fff" : "#37352F", border: m.sender === "me" ? "none" : "1px solid #E8E7E4", fontSize: 14, lineHeight: 1.5, fontFamily: font, overflowWrap: "anywhere" }}>
                           {m.text}
                         </div>
                         <div style={{ fontSize: 10, color: "#9B9A97", marginTop: 4, textAlign: m.sender === "me" ? "right" : "left" }}>{m.time}</div>
@@ -3810,7 +3834,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       {user?.status === "blocked" && <BlockedOverlay onSignOut={onLogout} font={font} />}
 
       {/* MAIN */}
-      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 100px", display: "grid", gridTemplateColumns: (view === "profile" || view === "trending") ? "1fr" : "240px 1fr 210px", gap: 28 }} className="main-grid">
+      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 100px", display: "grid", gridTemplateColumns: (view === "profile" || view === "trending") ? "minmax(0,1fr)" : "240px minmax(0,1fr) 210px", gap: 28 }} className="main-grid">
         {view !== "profile" && view !== "trending" && (
           <aside className="sidebar-left" style={{ position: "sticky", top: 80, alignSelf: "start" }}>
             <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "24px 20px", textAlign: "center", position: "relative" }}>
@@ -4003,7 +4027,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             {/* EVENTS section */}
             <div>
               <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>Events</h4>
-              {events.slice(0, 2).map((e) => (
+              {orderEvents(events.filter(e => !isPastEvent(e))).slice(0, 2).map((e) => (
                 <div key={e.id} onClick={() => setView("events")} style={{ marginBottom: 14, cursor: "pointer" }}
                   onMouseOver={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "underline"}
                   onMouseOut={(ev) => ev.currentTarget.querySelector(".ev-title").style.textDecoration = "none"}
@@ -4078,7 +4102,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={(e) => e.stopPropagation()}>
             {/* Photo Gallery with Touch Swipe */}
             <div
-              style={{ height: 280, position: "relative", borderRadius: "18px 18px 0 0", overflow: "hidden", touchAction: "pan-y",
+              style={{ height: hasPhotos ? 280 : 120, position: "relative", borderRadius: "18px 18px 0 0", overflow: "hidden", touchAction: "pan-y",
                 background: hasPhotos ? "#F0EFED" : `linear-gradient(160deg, ${expandedMarketItem.color}EE, ${expandedMarketItem.color}AA)`,
               }}
               onTouchStart={(e) => { marketTouchRef.current.startX = e.touches[0].clientX; marketTouchRef.current.startY = e.touches[0].clientY; }}
@@ -4172,16 +4196,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
 
-              {/* Action buttons (no Contact Seller on your own listing) */}
-              <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
-                {expandedMarketItem.user_id !== user.id && (
+              {/* Action row, kept in view at the bottom (no Contact Seller on your own listing) */}
+              <div style={{ display: "flex", gap: 12, justifyContent: "space-between", alignItems: "center", position: "sticky", bottom: 0, background: "#fff", padding: "12px 0", borderTop: "1px solid #F0EFED" }}>
+                {expandedMarketItem.user_id !== user.id ? (
                   <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(`Hi ${expandedMarketItem.seller.split(" ")[0]}, is this still available?`); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
                     {Icons.send({ size: 15 })} Contact Seller
                   </button>
+                ) : (
+                  <>
+                    <span style={{ fontSize: 13, color: "#9B9A97", fontFamily: font }}>This is your listing</span>
+                    <button onClick={async () => { const item = expandedMarketItem; if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); setExpandedMarketItem(null); setMarketPhotoIdx(0); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontWeight: 600, padding: "10px 0", fontFamily: font }}>
+                      Delete listing
+                    </button>
+                  </>
                 )}
-                <button onClick={() => setExpandedMarketItem(null)} style={{ padding: "12px 20px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: font }}>
-                  Close
-                </button>
               </div>
             </div>
           </div>
@@ -4214,9 +4242,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </a>
               )}
               <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED", marginBottom: 14 }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>
-              <button onClick={() => { toggleRsvp(expandedEvent.id); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px", background: rsvps.has(expandedEvent.id) ? "#E3FCEF" : "#37352F", color: rsvps.has(expandedEvent.id) ? "#22A06B" : "#fff", border: rsvps.has(expandedEvent.id) ? "1px solid #B5E4CA" : "none" }}>
-                {rsvps.has(expandedEvent.id) ? "✓ Going" : "RSVP to Event"}
-              </button>
+              {!isPastEvent(expandedEvent) && <button onClick={() => { toggleRsvp(expandedEvent.id); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px", background: rsvps.has(expandedEvent.id) ? "#E3FCEF" : "#37352F", color: rsvps.has(expandedEvent.id) ? "#22A06B" : "#fff", border: rsvps.has(expandedEvent.id) ? "1px solid #B5E4CA" : "none" }}>
+                {rsvps.has(expandedEvent.id) ? "✓ Going" : "RSVP"}
+              </button>}
               
               {/* Comments section */}
               <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #F0EFED" }}>
@@ -4710,13 +4738,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               ) : (
                 (followModal === "followers" ? myFollowers : myFollowing).map((u, i) => (
-                  <div key={u.id || i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED" }}>
+                  <div key={u.id || i} onClick={() => { setFollowModal(null); setProfilePreview(u); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED", cursor: "pointer" }}>
                     <Avatar name={u.name || "User"} size={40} url={u.avatar_url} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name || "User"}</div>
                       <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{u.profession || ""}</div>
                     </div>
-                    <button onClick={() => { setFollowModal(null); setProfilePreview(u); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", fontSize: 11, fontWeight: 600, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>View</button>
+                    <button style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", fontSize: 11, fontWeight: 600, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>View</button>
                   </div>
                 ))
               )}
@@ -4797,10 +4825,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>Report this {reportConfirm.type}?</h3>
             {reportConfirm.name && <p style={{ fontSize: 12, color: "#5F5E5B", marginBottom: 8, fontFamily: font }}>"{reportConfirm.name}"</p>}
             <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 20, lineHeight: 1.5, fontFamily: font }}>This will be reviewed by our moderation team.</p>
+            {reportConfirm.type === "user" && (
+              <div style={{ textAlign: "left", marginBottom: 20 }}>
+                <label htmlFor="report-reason" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Reason</label>
+                <select id="report-reason" value={reportConfirm.reason || ""} onChange={(e) => setReportConfirm({ ...reportConfirm, reason: e.target.value })} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="" disabled>Choose a reason</option>
+                  {["Spam or misleading", "Harassment or hate speech", "Inappropriate content", "Violence or physical harm", "Impersonation", "Other"].map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
               <button onClick={() => setReportConfirm(null)} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 13, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={async () => {
-                const reason = `[${reportConfirm.type.toUpperCase()}] ${reportConfirm.name ? reportConfirm.name + " — " : ""}Reported as inappropriate`;
+              <button disabled={reportConfirm.type === "user" && !reportConfirm.reason} onClick={async () => {
+                const reason = `[${reportConfirm.type.toUpperCase()}] ${reportConfirm.name ? reportConfirm.name + " — " : ""}${reportConfirm.reason || "Reported as inappropriate"}`;
                 try {
                   if (reportConfirm.type === "user") {
                     await api.reportUser(reportConfirm.id, reason);
@@ -4815,7 +4852,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your report couldn't be sent. Please try again.");
                   setReportConfirm(null);
                 }
-              }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Report</button>
+              }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: reportConfirm.type === "user" && !reportConfirm.reason ? "#FECACA" : "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: reportConfirm.type === "user" && !reportConfirm.reason ? "default" : "pointer", fontFamily: font }}>Report</button>
             </div>
           </div>
         </div>
@@ -4852,38 +4889,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   setSelectedConvo(null);
                   alert("User blocked. You can unblock them in Settings → Blocked Users.");
                 }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, background: "#DC2626", color: "#fff", cursor: "pointer", fontFamily: font }}>Confirm Block</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Report User Modal */}
-      {reportModalOpen && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportModalOpen(false)}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FEF2F2" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#DC2626" }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                <h3 style={{ fontSize: 16, fontWeight: 700, fontFamily: font }}>Report User</h3>
-              </div>
-              <button onClick={() => setReportModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 4 }}>{Icons.x({ size: 18 })}</button>
-            </div>
-            <div style={{ padding: 24 }}>
-              <p style={{ fontSize: 14, color: "#5F5E5B", marginBottom: 20, fontFamily: font }}>Please select a reason for reporting this user:</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
-                {["Spam or misleading", "Harassment or hate speech", "Inappropriate content", "Violence or physical harm", "Impersonation", "Other"].map(reason => (
-                  <label key={reason} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 8, cursor: "pointer", border: reportReason === reason ? "1px solid #37352F" : "1px solid transparent", background: reportReason === reason ? "#FAFAF8" : "transparent", transition: "all 0.1s" }}
-                    onMouseOver={(e) => { if (reportReason !== reason) e.currentTarget.style.background = "#FAFAF8"; }}
-                    onMouseOut={(e) => { if (reportReason !== reason) e.currentTarget.style.background = "transparent"; }}>
-                    <input type="radio" name="reportReason" value={reason} checked={reportReason === reason} onChange={() => setReportReason(reason)} style={{ accentColor: "#37352F", width: 16, height: 16 }} />
-                    <span style={{ fontSize: 14, color: "#37352F", fontFamily: font }}>{reason}</span>
-                  </label>
-                ))}
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-                <button onClick={() => { setReportModalOpen(false); setReportReason(""); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button onClick={async () => { try { if (activeConvo) await api.reportUser(activeConvo.id, reportReason); } catch(e) {} setReportModalOpen(false); setReportReason(""); }} disabled={!reportReason} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, background: reportReason ? "#DC2626" : "#FECACA", color: "#fff", cursor: reportReason ? "pointer" : "default", fontFamily: font, transition: "background 0.15s" }}>Submit Report</button>
               </div>
             </div>
           </div>
@@ -5337,7 +5342,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
         @media (max-width: 900px) {
           .nav-grid { display: flex !important; justify-content: space-between !important; }
-          .main-grid { grid-template-columns: 1fr !important; padding: 16px 12px 80px !important; }
+          .main-grid { grid-template-columns: minmax(0,1fr) !important; padding: 16px 12px 80px !important; }
           .sidebar-left, .sidebar-right { display: none !important; }
           .desktop-nav { display: none !important; }
           .mobile-menu-btn { display: block !important; }
@@ -5356,7 +5361,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           .event-card > div:first-child { height: 160px !important; width: 100% !important; min-width: unset !important; border-radius: 12px 12px 0 0 !important; }
 
           /* Notification dropdown */
-          .notif-dropdown { width: calc(100vw - 24px) !important; right: -80px !important; max-height: 70vh !important; overflow-y: auto !important; }
+          .notif-dropdown { position: fixed !important; top: 64px !important; left: 12px !important; right: 12px !important; width: auto !important; max-height: 70vh !important; overflow-y: auto !important; }
 
           /* Signup form grids */
           .form-grid-2, .form-grid-3 { grid-template-columns: 1fr !important; }
@@ -5371,7 +5376,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           .filter-row { flex-wrap: wrap !important; gap: 8px !important; }
 
           /* Settings dropdown */
-          .settings-dropdown { width: calc(100vw - 32px) !important; right: -40px !important; }
+          .settings-dropdown { position: fixed !important; top: 64px !important; left: 12px !important; right: 12px !important; width: auto !important; }
+          .settings-dropdown button { padding: 13px 18px !important; font-size: 14px !important; }
 
           /* Post composer */
           .post-actions { flex-wrap: wrap !important; }
@@ -5398,7 +5404,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           .form-grid-2, .form-grid-3 { grid-template-columns: 1fr !important; }
           .admin-stats { grid-template-columns: 1fr !important; }
           .admin-user-card .user-fields { grid-template-columns: 1fr !important; }
-          .notif-dropdown { right: -100px !important; }
         }
       `}</style>
     </div>
