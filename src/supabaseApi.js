@@ -10,6 +10,10 @@ const REFRESH_KEY = "nriclub_refresh";
 
 let accessToken = null;
 let currentUser = null;
+// Goes up whenever this tab's session changes hands (sign-in, sign-out, or
+// the session ending by itself). A token refresh that finishes under a newer
+// generation keeps nothing, so signing out during a refresh sticks.
+let sessionGeneration = 0;
 
 // Builds from before the NRIclub rename kept the session under indin_* keys,
 // and an old signup fallback cached the plain password in indin_profile_cache.
@@ -40,14 +44,72 @@ export function onSessionEnded(handler) { sessionEndedHandler = handler; }
 
 function endSession({ clearStorage }) {
   const hadUser = !!currentUser;
+  sessionGeneration += 1;
   accessToken = null;
   currentUser = null;
-  if (clearStorage) {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_KEY);
-  }
+  if (clearStorage) clearStoredSession();
   if (hadUser && sessionEndedHandler) sessionEndedHandler();
 }
+
+function clearStoredSession() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_KEY);
+  } catch {}
+}
+
+// A new session for this tab (and every other tab: storage is shared). A
+// reset link that was left unfinished is dropped, so updatePassword can't
+// reach that account any more.
+function saveSession(data) {
+  if (recovery) cancelRecovery();
+  sessionGeneration += 1;
+  accessToken = data.access_token;
+  currentUser = data.user;
+  localStorage.setItem(TOKEN_KEY, data.access_token);
+  if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
+  else localStorage.removeItem(REFRESH_KEY);
+}
+
+function storedToken() {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+// The user id inside an access token (a JWT), or null.
+function tokenUserId(token) {
+  try {
+    const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(payload)).sub || null;
+  } catch {
+    return null;
+  }
+}
+
+// Ends a session on the server (this browser only). keepalive lets it finish
+// even if the page reloads or closes straight after.
+function logoutOnServer(token) {
+  if (!token) return;
+  fetch(`${SUPABASE_URL}/auth/v1/logout?scope=local`, {
+    method: "POST",
+    keepalive: true,
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` },
+  }).catch(() => {});
+}
+
+// Another tab signed out, or signed in as someone else: this tab's session is
+// over too. The same member's refreshed token is simply picked up.
+try {
+  window.addEventListener("storage", (e) => {
+    if (e.storageArea !== localStorage || (e.key !== null && e.key !== TOKEN_KEY)) return;
+    if (!currentUser) return;
+    const token = storedToken();
+    if (token && tokenUserId(token) === currentUser.id) {
+      accessToken = token;
+      return;
+    }
+    endSession({ clearStorage: false });
+  });
+} catch {}
 
 function headers(extra = {}) {
   const h = {
@@ -59,7 +121,8 @@ function headers(extra = {}) {
   return h;
 }
 
-async function restCall(method, path, body = null, extraHeaders = {}) {
+// Returns the response if it succeeded; throws with the error body otherwise.
+async function restRequest(method, path, body = null, extraHeaders = {}) {
   const send = () => fetch(`${SUPABASE_URL}${path}`, {
     method,
     headers: headers(extraHeaders),
@@ -72,10 +135,22 @@ async function restCall(method, path, body = null, extraHeaders = {}) {
   }
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(err);
+    throw new Error(err || `Request failed (${res.status})`);
   }
+  return res;
+}
+
+async function restCall(method, path, body = null, extraHeaders = {}) {
+  const res = await restRequest(method, path, body, extraHeaders);
   const text = await res.text();
   return text ? JSON.parse(text) : null;
+}
+
+// The total a request sent with "Prefer: count=exact" matched, from the
+// Content-Range header ("0-999/1108"), or null if the server didn't say.
+function totalFrom(res) {
+  const m = /\/(\d+)$/.exec(res.headers.get("Content-Range") || "");
+  return m ? Number(m[1]) : null;
 }
 
 // ============================================================================
@@ -107,27 +182,31 @@ export async function signIn(email, password) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error_description || data.msg || "Login failed");
-  accessToken = data.access_token;
-  currentUser = data.user;
-  localStorage.setItem(TOKEN_KEY, data.access_token);
-  localStorage.setItem(REFRESH_KEY, data.refresh_token);
+  saveSession(data);
   return data;
 }
 
-// Signs out this browser only; other devices stay signed in.
+// Signs out this browser only; other devices stay signed in. The tab is
+// signed out at once; the server is told in the background, so callers never
+// wait on the network.
 export async function signOut() {
-  try {
-    if (accessToken) {
-      await fetch(`${SUPABASE_URL}/auth/v1/logout?scope=local`, {
-        method: "POST",
-        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
-      });
-    }
-  } catch (e) {}
+  const token = accessToken || storedToken();
+  const refreshing = refreshInFlight;
+  sessionGeneration += 1;
   accessToken = null;
   currentUser = null;
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_KEY);
+  clearStoredSession();
+  unsubscribeFromMessages();
+  endServerSession(token, refreshing);
+}
+
+async function endServerSession(token, refreshing) {
+  logoutOnServer(token);
+  // A refresh still running renews the session with a newer token (the old
+  // one has usually just expired): sign that one out too once it arrives.
+  const result = refreshing && await refreshing.catch(() => null);
+  const renewed = result?.tokens?.access_token;
+  if (renewed && renewed !== token) logoutOnServer(renewed);
 }
 
 export async function resetPassword(email) {
@@ -144,20 +223,162 @@ export async function resetPassword(email) {
   return true;
 }
 
-// The password-reset email links back to the site with the session in the URL
-// hash (#access_token=...&type=recovery). Take it, clean the URL, and return
-// true so the app can ask for a new password.
-export function takeRecoverySession() {
-  const params = new URLSearchParams(window.location.hash.slice(1));
-  if (params.get("type") !== "recovery" || !params.get("access_token")) return false;
-  window.history.replaceState(null, "", window.location.pathname + window.location.search);
-  accessToken = params.get("access_token");
-  localStorage.setItem(TOKEN_KEY, accessToken);
-  if (params.get("refresh_token")) localStorage.setItem(REFRESH_KEY, params.get("refresh_token"));
-  return true;
+// ----------------------------------------------------------------------------
+// Links from auth emails
+// ----------------------------------------------------------------------------
+
+// Supabase sends people back to the site with auth data in the URL: a session
+// in the hash (#access_token=...&type=recovery for a password reset, or
+// type=signup, magiclink...), an error (#error=access_denied&error_code=
+// otp_expired&error_description=..., in the hash or the query), or a ?code=.
+// None of it may stay in the address bar, the history or a copied link.
+const AUTH_HASH_KEYS = ["access_token", "refresh_token", "expires_at", "expires_in", "token_type", "type",
+  "provider_token", "provider_refresh_token", "error", "error_code", "error_description", "message"];
+const AUTH_QUERY_KEYS = ["code", "token_hash", "error", "error_code", "error_description"];
+
+let authRedirect = null;
+// The password-reset link's session. It lives only here, in memory: it never
+// goes to storage and never replaces the session this browser already has,
+// so a crafted reset link can't sign anyone in to someone else's account.
+let recovery = null; // { accessToken, refreshToken }
+
+// What the page was opened with, read once (at startup, below) and the same
+// answer every time after. App.jsx calls this first, before the admin route:
+//   { kind: "recovery" }  a password-reset link: show the reset page, which
+//                         uses getRecoveryUser, updatePassword and cancelRecovery.
+//   { kind: "expired" }   an auth link that has expired, was already used or
+//                         is invalid: say so and offer a new one.
+//   { kind: "other" }     any other auth link (e.g. a signup confirmation);
+//                         nothing was signed in.
+//   { kind: null }        no auth data in the URL.
+export function takeAuthRedirect() {
+  if (!authRedirect) authRedirect = readAuthRedirect();
+  return authRedirect;
 }
 
+function readAuthRedirect() {
+  let hash, query;
+  try {
+    hash = new URLSearchParams(window.location.hash.slice(1));
+    query = new URLSearchParams(window.location.search);
+  } catch {
+    return { kind: null };
+  }
+  const hashIsAuth = AUTH_HASH_KEYS.some((k) => hash.has(k));
+  const queryKeys = AUTH_QUERY_KEYS.filter((k) => query.has(k));
+  if (!hashIsAuth && !queryKeys.length) return { kind: null };
+
+  const value = (k) => (hashIsAuth && hash.get(k)) || query.get(k) || "";
+  let kind = "other";
+  if (value("error") || value("error_code") || value("error_description")) {
+    kind = "expired";
+  } else if (hashIsAuth && hash.get("type") === "recovery") {
+    if (hash.get("access_token")) {
+      recovery = { accessToken: hash.get("access_token"), refreshToken: hash.get("refresh_token") || null };
+      kind = "recovery";
+    } else {
+      kind = "expired";
+    }
+  }
+
+  // Remove the auth data and keep everything else (e.g. #admin, ?utm_...).
+  queryKeys.forEach((k) => query.delete(k));
+  if (queryKeys.length) query.delete("type");
+  const search = query.toString();
+  try {
+    window.history.replaceState(null, "", window.location.pathname + (search ? `?${search}` : "") + (hashIsAuth ? "" : window.location.hash));
+  } catch {}
+  return { kind };
+}
+
+// Clean the URL as soon as the site loads.
+try { takeAuthRedirect(); } catch {}
+
+// Older name, kept for existing callers: true when the page was opened from a
+// password-reset link. Prefer takeAuthRedirect(), which also reports expired
+// links.
+export function takeRecoverySession() {
+  return takeAuthRedirect().kind === "recovery" && !!recovery;
+}
+
+const EXPIRED_LINK_MESSAGE = "This link has expired or has already been used. Please request a new one.";
+
+// err.expired tells the reset page to show the "request a new link" state.
+function expiredLinkError() {
+  const err = new Error(EXPIRED_LINK_MESSAGE);
+  err.expired = true;
+  return err;
+}
+
+// An Auth API call made with the reset link's session. Renews that session
+// (in memory) if the page was left open past the hour.
+async function recoveryRequest(method, path, body = null, fallback = "Something went wrong. Please try again.") {
+  if (!recovery) throw expiredLinkError();
+  const send = async () => {
+    const res = await fetch(`${SUPABASE_URL}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${recovery.accessToken}` },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { res, data: await res.json().catch(() => ({})) };
+  };
+  let { res, data } = await send();
+  if (res.status === 401 && await renewRecovery()) ({ res, data } = await send());
+  if (res.status === 401 || ["session_not_found", "user_not_found", "bad_jwt"].includes(data.error_code)) {
+    recovery = null;
+    throw expiredLinkError();
+  }
+  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || fallback);
+  return data;
+}
+
+async function renewRecovery() {
+  const current = recovery;
+  if (!current?.refreshToken) return false;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+      body: JSON.stringify({ refresh_token: current.refreshToken }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.access_token || recovery !== current) return false;
+    current.accessToken = data.access_token;
+    current.refreshToken = data.refresh_token || null;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Who the reset link is for, so the page can say which account gets the new
+// password. signedInAsSomeoneElse: this browser is signed in to a different
+// account (that session is left alone). Throws an expired-link error
+// (err.expired) when the link no longer works.
+export async function getRecoveryUser() {
+  const user = await recoveryRequest("GET", "/auth/v1/user");
+  const signedInId = tokenUserId(storedToken());
+  return { email: user.email || "", signedInAsSomeoneElse: !!signedInId && signedInId !== user.id };
+}
+
+// Leaves the reset page without changing anything: forget the link's session
+// and end it on the server.
+export function cancelRecovery() {
+  if (!recovery) return;
+  const token = recovery.accessToken;
+  recovery = null;
+  logoutOnServer(token);
+}
+
+// After a reset link: sets the new password for the link's account, then ends
+// the link's session and returns { email } so the member can sign in with the
+// new password. Otherwise: changes the signed-in member's password.
 export async function updatePassword(password) {
+  if (recovery) {
+    const user = await recoveryRequest("PUT", "/auth/v1/user", { password }, "Couldn't update your password.");
+    cancelRecovery();
+    return { email: user.email || "" };
+  }
   const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
@@ -191,60 +412,67 @@ export async function verifyOtp(email, token) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Invalid OTP");
-  if (data.access_token) {
-    accessToken = data.access_token;
-    currentUser = data.user;
-    localStorage.setItem(TOKEN_KEY, data.access_token);
-    if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
-  }
+  if (data.access_token) saveSession(data);
   return data;
 }
 
 // Concurrent callers share one refresh request; refresh tokens are single-use.
+// It resolves to { session, tokens }: session is what this tab now uses (or
+// null), tokens are the new tokens even when they were thrown away, which
+// signOut needs to end that session on the server.
 let refreshInFlight = null;
 
-export function refreshSession() {
+export async function refreshSession() {
   if (!refreshInFlight) {
     refreshInFlight = doRefreshSession().finally(() => { refreshInFlight = null; });
   }
-  return refreshInFlight;
+  return (await refreshInFlight).session;
 }
 
 async function doRefreshSession() {
+  const generation = sessionGeneration;
   const refresh = localStorage.getItem(REFRESH_KEY);
-  if (!refresh) return null;
-  let res;
+  if (!refresh) {
+    // Signed out in another tab (or storage was cleared): the session is over.
+    endSession({ clearStorage: false });
+    return { session: null, tokens: null };
+  }
+  let res, data;
   try {
     res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
       body: JSON.stringify({ refresh_token: refresh }),
     });
+    data = await res.json().catch(() => ({}));
   } catch {
-    return null; // offline: keep the session and try again later
+    return { session: null, tokens: null }; // offline: keep the session and try again later
   }
-  if (!res.ok) {
+  const tokens = res.ok && data.access_token ? data : null;
+  // Signed out, or signed in again, while this was running: keep nothing.
+  if (generation !== sessionGeneration) return { session: null, tokens };
+  if (!tokens) {
     // Revoked, expired or already-used refresh token: the session is over.
     if (res.status >= 400 && res.status < 500) endSession({ clearStorage: true });
-    return null;
+    return { session: null, tokens: null };
   }
-  const data = await res.json();
   // Tokens are shared by every tab. Save the rotated ones, but if another tab
   // signed in as someone else, don't switch this tab to that account.
   localStorage.setItem(TOKEN_KEY, data.access_token);
   if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
   if (currentUser && data.user?.id !== currentUser.id) {
     endSession({ clearStorage: false });
-    return null;
+    return { session: null, tokens };
   }
   accessToken = data.access_token;
   currentUser = data.user;
-  return data;
+  return { session: data, tokens };
 }
 
 export async function getSession() {
   const token = localStorage.getItem(TOKEN_KEY);
   if (!token) return null;
+  const generation = sessionGeneration;
   accessToken = token;
   try {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
@@ -252,12 +480,14 @@ export async function getSession() {
     });
     if (res.ok) {
       const user = await res.json();
+      if (generation !== sessionGeneration) return null;
       currentUser = user;
       return { user, access_token: token };
     }
   } catch {}
+  if (generation !== sessionGeneration) return null;
   const refreshed = await refreshSession();
-  if (!refreshed) {
+  if (!refreshed && generation === sessionGeneration) {
     accessToken = null;
     currentUser = null;
   }
@@ -281,15 +511,18 @@ export async function getProfile(userId) {
 // the user's own profile.
 const PRIVATE_PROFILE_FIELDS = ["email", "gdpr_consent", "gdpr_consent_date", "marketing_consent"];
 
+// Throws if the private row can't be read: without it the member would look
+// like a new, unverified, unblocked account. Callers keep what they have.
 export async function getMyProfile() {
   if (!currentUser) return null;
   restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { last_active: new Date().toISOString() }).catch(() => {});
   const [profile, privateRows] = await Promise.all([
     getProfile(currentUser.id),
-    restCall("GET", `/rest/v1/profile_private?id=eq.${currentUser.id}&select=*`).catch(() => []),
+    restCall("GET", `/rest/v1/profile_private?id=eq.${currentUser.id}&select=*`),
   ]);
   if (!profile) return null;
-  const { id, created_at, updated_at, ...privateFields } = privateRows?.[0] || {};
+  if (!privateRows?.[0]) throw new Error("Couldn't load your account details. Please try again.");
+  const { id, created_at, updated_at, ...privateFields } = privateRows[0];
   return { ...profile, email: currentUser.email, ...privateFields };
 }
 
@@ -325,6 +558,18 @@ export async function submitVerification({ city, countryCode, location, linkedin
     p_linkedin_url: linkedinUrl, p_note: note, p_voucher: voucher, p_profession: profession,
     p_accept_terms: acceptTerms,
   });
+}
+
+// Records "18 or older" and the Terms for members who haven't confirmed them
+// (older accounts). version must be the current one (TERMS_VERSION); returns it.
+export async function acceptTerms(version) {
+  return restCall("POST", "/rest/v1/rpc/accept_terms", { p_version: version });
+}
+
+// Everything NRIClub stores about the signed-in member, as one object, for
+// "Download my data".
+export async function exportMyData() {
+  return restCall("POST", "/rest/v1/rpc/export_my_data", {});
 }
 
 // Deletes the auth user server-side; every row the user owns cascades with it.
@@ -902,11 +1147,34 @@ export async function isAdmin() {
   return Array.isArray(rows) && rows.length > 0;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Members come with their private row embedded, so a status or email can
+// never land on the wrong person.
+const ADMIN_MEMBER_SELECT = "select=*,profile_private(email,verification_status,status,review_flag)";
+
+function adminMember(row) {
+  const { profile_private: embedded, ...p } = row;
+  const pp = (Array.isArray(embedded) ? embedded[0] : embedded) || {};
+  return {
+    ...p,
+    email: pp.email || "",
+    verification_status: pp.verification_status || "incomplete",
+    status: pp.status || "active",
+    review_flag: pp.review_flag || "",
+  };
+}
+
+// users holds the newest 1,000 members; usersTotal is how many there are.
 export async function adminGetDashboardData() {
   const get = (path) => restCall("GET", path);
-  const [profiles, privateRows, groups, reports, posts, docs, events, helpRequests, marketItems] = await Promise.all([
-    get("/rest/v1/profiles?select=*&order=created_at.desc"),
-    get("/rest/v1/profile_private?select=id,email,verification_status,status"),
+  const getMembers = async () => {
+    const res = await restRequest("GET", `/rest/v1/profiles?${ADMIN_MEMBER_SELECT}&order=created_at.desc&limit=1000`, null, { Prefer: "count=exact" });
+    const text = await res.text();
+    return { rows: text ? JSON.parse(text) : [], total: totalFrom(res) };
+  };
+  const [members, groups, reports, posts, docs, events, helpRequests, marketItems] = await Promise.all([
+    getMembers(),
     get("/rest/v1/groups?select=*&order=members_count.desc"),
     get("/rest/v1/reports?select=*&order=created_at.desc"),
     get("/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200"),
@@ -915,12 +1183,10 @@ export async function adminGetDashboardData() {
     get("/rest/v1/help_requests?select=id,title,description,user_id&order=created_at.desc&limit=100"),
     get("/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100"),
   ]);
-  const privateById = Object.fromEntries((privateRows || []).map((p) => [p.id, p]));
+  const users = (members.rows || []).map(adminMember);
   return {
-    users: (profiles || []).map((p) => {
-      const pp = privateById[p.id] || {};
-      return { ...p, email: pp.email || "", verification_status: pp.verification_status || "incomplete", status: pp.status || "active" };
-    }),
+    users,
+    usersTotal: members.total ?? users.length,
     groups: groups || [],
     reports: reports || [],
     posts: posts || [],
@@ -929,6 +1195,49 @@ export async function adminGetDashboardData() {
     helpRequests: helpRequests || [],
     marketItems: marketItems || [],
   };
+}
+
+// Member counts from the server, however many members there are.
+const VERIFICATION_STATUSES = ["incomplete", "pending", "needs_info", "approved", "rejected"];
+
+export async function adminCountMembers() {
+  const count = async (filter = "") => {
+    const res = await restRequest("HEAD", `/rest/v1/profile_private?select=id${filter}`, null, { Prefer: "count=exact" });
+    const total = totalFrom(res);
+    if (total === null) throw new Error("Couldn't count the members.");
+    return total;
+  };
+  const [total, blocked, ...byStatus] = await Promise.all([
+    count(),
+    count("&status=eq.blocked"),
+    ...VERIFICATION_STATUSES.map((s) => count(`&verification_status=eq.${s}`)),
+  ]);
+  return { total, blocked, byStatus: Object.fromEntries(VERIFICATION_STATUSES.map((s, i) => [s, byStatus[i]])) };
+}
+
+// Reported content by kind, with the same fields as the previews in
+// adminGetDashboardData ("marketplace" is accepted for "market").
+const REPORTED_ITEMS = {
+  post: ["posts", "id,content,image_url,user_id,created_at"],
+  doc: ["docs", "id,title,excerpt,user_id"],
+  event: ["events", "id,title,description,date,organizer_id"],
+  help: ["help_requests", "id,title,description,user_id"],
+  market: ["marketplace", "id,title,description,price,user_id,image_url"],
+};
+REPORTED_ITEMS.marketplace = REPORTED_ITEMS.market;
+
+// One reported item (or member, for "profile"), loaded by id so it can be
+// shown before anything is done to it. null when it no longer exists.
+export async function adminGetReportedItem(kind, id) {
+  if (kind !== "profile" && !REPORTED_ITEMS[kind]) throw new Error(`Unknown kind of content: ${kind}`);
+  if (!UUID.test(id || "")) return null;
+  if (kind === "profile") {
+    const rows = await restCall("GET", `/rest/v1/profiles?id=eq.${id}&${ADMIN_MEMBER_SELECT}`);
+    return rows?.[0] ? adminMember(rows[0]) : null;
+  }
+  const [table, fields] = REPORTED_ITEMS[kind];
+  const rows = await restCall("GET", `/rest/v1/${table}?id=eq.${id}&select=${fields}`);
+  return rows?.[0] || null;
 }
 
 // RLS turns a forbidden write into a silent no-op, so ask for the changed
@@ -955,20 +1264,43 @@ export async function adminVerificationQueue(statuses = ["pending"]) {
 
 // decision: "approved" | "needs_info" | "rejected" | "pending" (reopen/undo).
 // needs_info and rejected require a message, which the member sees.
-export async function adminReviewMember(memberId, decision, message = "", adminNote = "") {
-  return restCall("POST", "/rest/v1/rpc/review_member", {
-    p_member: memberId, p_decision: decision, p_message: message, p_admin_note: adminNote,
-  });
+// expected = { name, linkedinUrl } as the admin saw them: the database refuses
+// the decision if the member has changed either since.
+export async function adminReviewMember(memberId, decision, message = "", adminNote = "", expected = null) {
+  const body = { p_member: memberId, p_decision: decision, p_message: message, p_admin_note: adminNote };
+  if (expected?.name != null) body.p_expected_name = expected.name;
+  if (expected?.linkedinUrl != null) body.p_expected_linkedin = expected.linkedinUrl;
+  return restCall("POST", "/rest/v1/rpc/review_member", body);
 }
 
+// Approve and reject act only on a request that is still waiting, so a panel
+// that's out of date can't touch a community that is already live.
 export async function adminApproveGroup(groupId) {
-  return adminWrite("PATCH", `/rest/v1/groups?id=eq.${groupId}`, { is_approved: true });
+  return adminWrite("PATCH", `/rest/v1/groups?id=eq.${groupId}&is_approved=eq.false`, { is_approved: true });
 }
 
+export async function adminRejectGroupRequest(groupId) {
+  return adminWrite("DELETE", `/rest/v1/groups?id=eq.${groupId}&is_approved=eq.false`);
+}
+
+// Deletes any community, live or not. Community requests are rejected with
+// adminRejectGroupRequest.
 export async function adminDeleteGroup(groupId) {
   return adminWrite("DELETE", `/rest/v1/groups?id=eq.${groupId}`);
 }
 
+// Marks reports as handled ("reviewed": dismissed, "resolved": acted on).
+// They stay on record and show under Handled. Takes one id or several (every
+// report about the same item).
+export async function adminSetReportStatus(reportIds, status) {
+  if (status !== "reviewed" && status !== "resolved") throw new Error(`Unknown report status: ${status}`);
+  const ids = (Array.isArray(reportIds) ? reportIds : [reportIds]).filter((id) => UUID.test(id || ""));
+  if (!ids.length) throw new Error("No reports to update.");
+  return adminWrite("PATCH", `/rest/v1/reports?id=in.(${ids.join(",")})`, { status });
+}
+
+// Deletes a report for good (no record is kept); handling a report uses
+// adminSetReportStatus.
 export async function adminDeleteReport(reportId) {
   return adminWrite("DELETE", `/rest/v1/reports?id=eq.${reportId}`);
 }
