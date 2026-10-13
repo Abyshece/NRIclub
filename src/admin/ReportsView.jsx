@@ -1,7 +1,8 @@
 // Reports (flagged content and profiles) and Bug reports. Both live in the
 // reports table; the kind is the "[TYPE]" prefix of the reason. Handling a
 // report changes its status ("reviewed" when dismissed, "resolved" when acted
-// on), so it stays on record under Handled.
+// on), so it stays on record under Handled. The panel has every open report
+// but only the newest handled ones.
 import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import { Button, ConfirmDialog, EmptyState, PageHeader, Pill, SectionTitle } from "./ui";
@@ -15,6 +16,26 @@ export const isOpenBug = (r) => isBugReport(r) && isPending(r);
 const CATEGORIES = ["Feed posts", "Marketplace", "Docs", "Events", "Help requests", "Profiles"];
 
 const HANDLED_PAGE = 20;
+
+const fmt = (n) => n.toLocaleString("en-GB");
+
+// Reports handled from this panel since it loaded (on top of the server's
+// count of handled ones).
+const handledHere = (list) => list.filter((r) => r.handledHere).length;
+
+// Marks the reports the server changed (rows it returned) as handled here.
+function markHandled(prev, changedRows) {
+  const byId = new Map(changedRows.map((x) => [x.id, x]));
+  return prev.map((x) => (byId.has(x.id) ? { ...x, status: byId.get(x.id).status, handledHere: true } : x));
+}
+
+// "Showing the newest 200 of 1,234." when not all handled reports are loaded.
+function HandledNote({ shown, total }) {
+  if (total <= shown) return null;
+  return <p className="adm-muted adm-small" style={{ margin: "0 0 8px" }}>Showing the newest {fmt(shown)} of {fmt(total)}.</p>;
+}
+
+const ALREADY_HANDLED = "Already handled by someone else. Reloading the list.";
 
 function categoryOf(r) {
   const reason = (r.reason || "").toUpperCase();
@@ -114,7 +135,9 @@ function ContentPreview({ r, lookup, onRetry }) {
   return null;
 }
 
-export function ReportsView({ reports, setReports, usersById, onMemberChange, showToast }) {
+// handledTotal: how many handled member reports there are in all (only the
+// newest are loaded). onReload loads the panel's data again.
+export function ReportsView({ reports, setReports, handledTotal = 0, usersById, onMemberChange, showToast, onReload }) {
   const [busyId, setBusyId] = useState(null);
   const [confirm, setConfirm] = useState(null); // { report, kind: "remove" | "block" }
   const [confirmError, setConfirmError] = useState("");
@@ -125,6 +148,7 @@ export function ReportsView({ reports, setReports, usersById, onMemberChange, sh
 
   const open = reports.filter(isOpenReport);
   const handled = reports.filter((r) => !isBugReport(r) && !isOpenReport(r));
+  const handledCount = Math.max(handledTotal + handledHere(handled), handled.length);
   const grouped = {};
   open.forEach((r) => { const c = categoryOf(r); (grouped[c] = grouped[c] || []).push(r); });
 
@@ -163,13 +187,24 @@ export function ReportsView({ reports, setReports, usersById, onMemberChange, sh
     });
   }, [reports]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Only reports that are still open change. If this one isn't (another
+  // admin handled it first), show the list as it is now.
+  const alreadyHandled = () => {
+    showToast({ text: ALREADY_HANDLED });
+    onReload?.();
+  };
+
   const dismiss = async (r) => {
     if (busyId) return;
     setBusyId(r.id);
     try {
-      await api.adminSetReportStatus([r.id], "reviewed");
-      setReports((prev) => prev.map((x) => (x.id === r.id ? { ...x, status: "reviewed" } : x)));
-      showToast({ text: "Report dismissed" });
+      const changed = await api.adminSetReportStatus([r.id], "reviewed");
+      if (changed.length) {
+        setReports((prev) => markHandled(prev, changed));
+        showToast({ text: "Report dismissed" });
+      } else {
+        alreadyHandled();
+      }
     } catch (e) {
       showToast({ text: friendlyError(e), tone: "error" });
     }
@@ -207,19 +242,31 @@ export function ReportsView({ reports, setReports, usersById, onMemberChange, sh
       setBusyId(null);
       return;
     }
+    let changed;
     try {
-      await api.adminSetReportStatus(ids, "resolved");
+      changed = await api.adminSetReportStatus(ids, "resolved");
     } catch (e) {
       const done = kind === "remove" ? `The ${CONTENT_NOUN[kindOf(r)]} was removed` : `${who} is blocked`;
       setConfirmError(`${done}, but the report couldn't be closed: ${friendlyError(e)}`);
       setBusyId(null);
       return;
     }
-    setReports((prev) => prev.map((x) => (ids.includes(x.id) ? { ...x, status: "resolved" } : x)));
+    setReports((prev) => markHandled(prev, changed));
     setConfirm(null);
     setBusyId(null);
+    const done = kind === "remove" ? "Content removed" : `Blocked ${who}`;
+    // Reports another admin handled meanwhile keep their decision.
+    if (changed.length < ids.length) {
+      const rest = ids.length - changed.length;
+      const others = changed.length === 0
+        ? (ids.length > 1 ? "The reports were" : "The report was")
+        : `${fmt(changed.length)} of ${fmt(ids.length)} reports closed; ${rest === 1 ? "the other was" : "the others were"}`;
+      showToast({ text: `${done}. ${others} already handled by someone else.` });
+      onReload?.();
+      return;
+    }
     const closed = ids.length > 1 ? `. ${ids.length} reports closed` : "";
-    showToast({ text: `${kind === "remove" ? "Content removed" : `Blocked ${who}`}${closed}` });
+    showToast({ text: `${done}${closed}` });
   };
 
   const renderReport = (r, actionable) => {
@@ -270,7 +317,8 @@ export function ReportsView({ reports, setReports, usersById, onMemberChange, sh
       ))}
       {handled.length > 0 && (
         <section>
-          <SectionTitle count={handled.length}>Handled</SectionTitle>
+          <SectionTitle count={handledCount}>Handled</SectionTitle>
+          <HandledNote shown={handled.length} total={handledCount} />
           {handled.slice(0, handledLimit).map((r) => renderReport(r, false))}
           {handled.length > handledLimit && (
             <div className="adm-more">
@@ -308,19 +356,28 @@ function parseBug(r) {
   return { page, title: title || "Untitled bug", desc: desc && desc !== "No details" ? desc : "" };
 }
 
-export function BugReportsView({ reports, setReports, showToast }) {
+// handledTotal: how many resolved bug reports there are in all (only the
+// newest are loaded). onReload loads the panel's data again.
+export function BugReportsView({ reports, setReports, handledTotal = 0, showToast, onReload }) {
   const [busyId, setBusyId] = useState(null);
   const [resolvedLimit, setResolvedLimit] = useState(HANDLED_PAGE);
   const open = reports.filter(isOpenBug);
   const resolved = reports.filter((r) => isBugReport(r) && !isOpenBug(r));
+  const resolvedCount = Math.max(handledTotal + handledHere(resolved), resolved.length);
 
   const resolve = async (r) => {
     if (busyId) return;
     setBusyId(r.id);
     try {
-      await api.adminSetReportStatus([r.id], "resolved");
-      setReports((prev) => prev.map((x) => (x.id === r.id ? { ...x, status: "resolved" } : x)));
-      showToast({ text: "Bug report resolved", icon: "check" });
+      const changed = await api.adminSetReportStatus([r.id], "resolved");
+      if (changed.length) {
+        setReports((prev) => markHandled(prev, changed));
+        showToast({ text: "Bug report resolved", icon: "check" });
+      } else {
+        // Someone else resolved it first: show the list as it is now.
+        showToast({ text: ALREADY_HANDLED });
+        onReload?.();
+      }
     } catch (e) {
       showToast({ text: friendlyError(e), tone: "error" });
     }
@@ -356,7 +413,8 @@ export function BugReportsView({ reports, setReports, showToast }) {
       ) : open.map((r) => renderBug(r, true))}
       {resolved.length > 0 && (
         <section>
-          <SectionTitle count={resolved.length}>Resolved</SectionTitle>
+          <SectionTitle count={resolvedCount}>Resolved</SectionTitle>
+          <HandledNote shown={resolved.length} total={resolvedCount} />
           {resolved.slice(0, resolvedLimit).map((r) => renderBug(r, false))}
           {resolved.length > resolvedLimit && (
             <div className="adm-more">

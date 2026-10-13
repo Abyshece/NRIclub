@@ -46,7 +46,10 @@ export default function AdminPanel({ onLogout }) {
   // they couldn't be loaded; the counts then come from the loaded members.
   const [memberCounts, setMemberCounts] = useState(null);
   const [groups, setGroups] = useState([]);
+  // Every open report, plus the newest handled ones: handledTotals says how
+  // many handled reports and bug reports there are in all.
   const [reports, setReports] = useState([]);
+  const [handledTotals, setHandledTotals] = useState({ reports: 0, bugs: 0 });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [toast, setToast] = useState(null);
@@ -79,6 +82,7 @@ export default function AdminPanel({ onLogout }) {
       setUsersTotal(data.usersTotal ?? data.users.length);
       setGroups(data.groups);
       setReports(enrichReports(data));
+      setHandledTotals({ reports: data.handledReportsTotal ?? 0, bugs: data.handledBugsTotal ?? 0 });
       if (queue.status !== "fulfilled") {
         pendingCount = totals.status === "fulfilled" ? totals.value.byStatus.pending : data.users.filter((u) => u.verification_status === "pending").length;
       }
@@ -208,9 +212,9 @@ export default function AdminPanel({ onLogout }) {
   } else if (page === "communities") {
     content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} />;
   } else if (page === "reports") {
-    content = <ReportsView reports={reports} setReports={setReports} usersById={usersById} onMemberChange={onMemberChange} showToast={showToast} />;
+    content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} usersById={usersById} onMemberChange={onMemberChange} showToast={showToast} onReload={load} />;
   } else if (page === "bugs") {
-    content = <BugReportsView reports={reports} setReports={setReports} showToast={showToast} />;
+    content = <BugReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} showToast={showToast} onReload={load} />;
   } else {
     content = <OverviewView users={users} membersTotal={membersTotal} blockedTotal={blockedTotal} counts={counts} openReports={openReports} pendingGroups={pendingGroups} onNavigate={go} />;
   }
