@@ -7,7 +7,7 @@ import { CITIES } from './src/content/cities.js';
 import { slug } from './src/content/slug.js';
 import { guideBlocks } from './src/content/guideBlocks.js';
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES } from './src/content/home.js';
-import { hasImprint, imprintSections } from './src/content/imprint.js';
+import { IMPRINT, hasImprint, imprintSections } from './src/content/imprint.js';
 
 const SITE = 'https://nriclub.app';
 
@@ -136,6 +136,9 @@ function publicPages() {
       // The Impressum, once its details are filled in (src/content/imprint.js).
       // Kept out of search results and the sitemap: it holds a home address.
       if (hasImprint()) {
+        if (IMPRINT.representative.trim() && !IMPRINT.contentResponsible.trim()) {
+          throw new Error('src/content/imprint.js: for a company, contentResponsible must name the person responsible for the content (name and address in Germany).');
+        }
         const body = imprintSections().map((sec) => `<h2>${esc(sec.title)}</h2><p>${sec.lines
           .map((l) => (l.href ? `<a href="${esc(l.href)}">${esc(l.text)}</a>` : esc(l.text))).join('<br>')}</p>`).join('');
         page('/impressum', 'Impressum · NRIClub', 'Legal notice (Impressum) of NRIClub.',
@@ -143,8 +146,8 @@ function publicPages() {
       }
 
       // The plain page, for every other address of the app (vercel.json
-      // rewrites to it): no canonical, no homepage text.
-      fs.writeFileSync(path.join(outDir, 'app.html'), shell);
+      // rewrites to it): no canonical, no og:url, no homepage text.
+      fs.writeFileSync(path.join(outDir, 'app.html'), shell.replace(/\s*<meta property="og:url"[^>]*>/, ''));
 
       // The homepage, last: the pages above are copies of the plain
       // index.html, and only the homepage gets this text and this canonical.

@@ -152,6 +152,10 @@ export function ImpressumContent({ headingStyle = h4 }) {
   ));
 }
 
+export const ImpressumModal = ({ onClose }) => (
+  <LegalModal title="Impressum" onClose={onClose}><ImpressumContent /></LegalModal>
+);
+
 export const TermsModal = ({ onClose }) => (
   <LegalModal title="Terms of Use" onClose={onClose}><TermsContent /></LegalModal>
 );

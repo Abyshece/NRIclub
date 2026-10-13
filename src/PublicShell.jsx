@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import FlagIcon from "./FlagIcon";
 import { TermsModal, PrivacyModal } from "./member/LegalModals";
 import { hasImprint } from "./content/imprint";
@@ -34,6 +34,20 @@ export const Phrases = ({ text }) => text.split(" · ").map((part, i, all) => (
   <Fragment key={part}>{i > 0 && " "}<span style={{ whiteSpace: "nowrap" }}>{part}{i < all.length - 1 && " ·"}</span></Fragment>
 ));
 export const whatsappShare = (text) => `https://wa.me/?text=${encodeURIComponent(text)}`;
+
+// The page's own address for search engines: set while the page shows, then
+// put back. Public pages that aren't written at build time (newer city
+// groups, other spellings, the landing page at the app's other addresses)
+// come from a plain page without one.
+export function useCanonical(path) {
+  useEffect(() => {
+    let link = document.querySelector('link[rel="canonical"]');
+    const before = link?.getAttribute("href");
+    if (!link) { link = document.createElement("link"); link.rel = "canonical"; document.head.appendChild(link); }
+    link.setAttribute("href", `https://nriclub.app${path}`);
+    return () => { if (before) link.setAttribute("href", before); else link.remove(); };
+  }, [path]);
+}
 
 // The bar along the top of the public pages; it stays in view while the page
 // scrolls (the page around it must not have overflow hidden, or it won't).

@@ -671,6 +671,7 @@ const parsePath = (path, selfId) => {
     case "guides": return { view: "docs", pending: id ? { kind: "guide", id } : null };
     case "mentoring": return { view: "mentoring" };
     case "mentors": return { view: "network", findTab: "mentors" };
+    case "impressum": return { view: "home", legal: hasImprint() ? "impressum" : null };
     default: return { view: "home" };
   }
 };
@@ -1079,7 +1080,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // Notification & Settings state
   const [notifOpen, setNotifOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsModal, setSettingsModal] = useState(null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
+  const [settingsModal, setSettingsModal] = useState(startRoute.legal ? "terms" : null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
   const [notifications, setNotifications] = useState([]);
   const [acceptedNotifs, setAcceptedNotifs] = useState([]); // Namaste requests just accepted, shown as "✓ Accepted" for a moment
   const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
@@ -1088,7 +1089,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // one place it is kept; email and push live in user_settings.
   const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: !!user.marketingConsent });
   const [dataDownload, setDataDownload] = useState({ busy: false, error: "" });
-  const [legalTab, setLegalTab] = useState("terms"); // Settings > Terms & Policies: "terms" | "privacy" | "impressum"
+  const [legalTab, setLegalTab] = useState(startRoute.legal || "terms"); // Settings > Terms & Policies: "terms" | "privacy" | "impressum"
   // Opening a settings window shows what is stored now: the marketing
   // choice. (Terms & Policies opens on the tab its menu item names.)
   useEffect(() => {
@@ -1484,6 +1485,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       default: return "/";
     }
   })();
+  // nriclub.app/impressum opens the Impressum over the home page; the address
+  // becomes the home page's (replaced, so Back doesn't come back to it).
+  useEffect(() => {
+    if (startRoute.legal) { try { window.history.replaceState(null, "", "/"); } catch (e) {} }
+  }, []);
   useEffect(() => {
     if (pendingRoute || sharedLink) return; // still opening what the address points at
     if (window.location.pathname !== currentPath) {
@@ -1502,6 +1508,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       setFindTab(r.findTab || "people");
       setPendingRoute(r.pending || null);
       if (r.post) setSharedLink({ kind: "post", id: r.post });
+      if (r.legal) { setLegalTab(r.legal); setSettingsModal("terms"); }
       setView(r.view);
     };
     window.addEventListener("popstate", onPop);

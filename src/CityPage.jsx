@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import * as api from "./supabaseApi";
 import FlagIcon from "./FlagIcon";
-import PublicShell, { Phrases, INK, MUTED, NAVY, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, AMBASSADOR_MAIL, whatsappShare } from "./PublicShell";
+import PublicShell, { Phrases, useCanonical, INK, MUTED, NAVY, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, AMBASSADOR_MAIL, whatsappShare } from "./PublicShell";
 import { ESSENTIALS } from "./content/essentials";
 import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
@@ -15,7 +15,7 @@ import { slug, HOME_TITLE } from "./content/slug";
 // group has a few members it says so, instead of showing zeros.
 // ============================================================================
 
-const titleCase = (s) => s.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+const titleCase = (s) => s.replace(/(^|[\s-])(\p{L})/gu, (_, p, c) => p + (c === "ß" ? c : c.toLocaleUpperCase()));
 // Below this many members the page says the group is just starting.
 const SHOW_COUNTS_FROM = 5;
 
@@ -56,15 +56,7 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
     }
   }, [known, citySlug, key]);
 
-  // The page's own address for search engines, also for groups newer than
-  // the build (their pages come from the app's plain page, with none).
-  useEffect(() => {
-    let link = document.querySelector('link[rel="canonical"]');
-    const before = link?.getAttribute("href");
-    if (!link) { link = document.createElement("link"); link.rel = "canonical"; document.head.appendChild(link); }
-    link.setAttribute("href", `https://nriclub.app${cityPath}`);
-    return () => { if (before) link.setAttribute("href", before); else link.remove(); };
-  }, [cityPath]);
+  useCanonical(cityPath);
 
   useEffect(() => {
     document.title = `Indians in ${city} · NRIClub`;

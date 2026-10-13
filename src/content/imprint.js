@@ -14,14 +14,21 @@ export const IMPRINT = {
   // and city, country. One line each. A P.O. box isn't enough.
   address: [],
   email: "support@nriclub.app",
-  // A second quick way to reach you, usually a phone number.
+  // A second quick way to reach you, usually a phone number in international
+  // format, e.g. "+49 89 1234 5678" (with the country code, no leading 0).
   phone: "",
   // Companies only: the register entry (e.g. "Amtsgericht München, HRB 123456").
   register: "",
-  // Your VAT ID (USt-IdNr.), if you have one.
+  // Your VAT ID (USt-IdNr., e.g. "DE123456789"), if you have one.
   vatId: "",
-  // Who is responsible for the content (the guides and the site's texts), if
-  // not the person above: name and postal address in one line.
+  // Your business ID (Wirtschafts-Identifikationsnummer, e.g.
+  // "DE123456789-00001"), if the tax office gave you one. Fill in whichever
+  // of the two you have; never your plain tax number (Steuernummer).
+  businessId: "",
+  // The person responsible for the content (the guides and the site's texts)
+  // under § 18 (2) MStV: a person, not a company, who lives in Germany. Name
+  // and postal address on one line. A private person can leave this empty to
+  // name themselves; a company must fill it in (the build stops otherwise).
   contentResponsible: "",
 };
 
@@ -35,9 +42,14 @@ export function imprintSections() {
   const person = [{ text: I.name }, ...I.address.map((text) => ({ text }))];
   return [
     { title: "Information under § 5 DDG (Angaben gemäß § 5 DDG)", lines: lines([{ text: I.name }, { text: I.representative }, ...I.address.map((text) => ({ text }))]) },
-    { title: "Contact (Kontakt)", lines: lines([I.email && { text: `Email: ${I.email}`, href: `mailto:${I.email}` }, I.phone && { text: `Phone: ${I.phone}`, href: `tel:${I.phone.replace(/[^\d+]/g, "")}` }]) },
+    { title: "Contact (Kontakt)", lines: lines([I.email && { text: `Email: ${I.email}`, href: `mailto:${I.email}` }, I.phone && { text: `Phone: ${I.phone}`, href: `tel:${I.phone.replace(/\(0\)/g, "").replace(/[^\d+]/g, "")}` }]) },
     { title: "Register entry (Registereintrag)", lines: lines([{ text: I.register }]) },
-    { title: "VAT ID (Umsatzsteuer-ID)", lines: lines([I.vatId && { text: `VAT identification number under § 27a UStG: ${I.vatId}` }]) },
-    { title: "Responsible for the content under § 18 (2) MStV (Verantwortlich nach § 18 Abs. 2 MStV)", lines: lines(I.contentResponsible.trim() ? [{ text: I.contentResponsible }] : person) },
+    { title: "Tax IDs (Umsatzsteuer-ID / Wirtschafts-ID)", lines: lines([
+      I.vatId && { text: `VAT identification number under § 27a UStG: ${I.vatId}` },
+      I.businessId && { text: `Business identification number under § 139c AO (Wirtschafts-Identifikationsnummer): ${I.businessId}` },
+    ]) },
+    // A company can't be "the person responsible": then only contentResponsible counts.
+    { title: "Responsible for the content under § 18 (2) MStV (Verantwortlich nach § 18 Abs. 2 MStV)",
+      lines: lines(I.contentResponsible.trim() ? [{ text: I.contentResponsible }] : I.representative.trim() ? [] : person) },
   ].filter((s) => s.lines.length);
 }

@@ -427,12 +427,15 @@ export default function App() {
       setAuthState("link-expired");
       return;
     }
-    // Join free or Log in tapped on the homepage's text before the app had
-    // loaded (see vite.config.js): open that now.
+    // Nobody signed in: the landing page is already showing, and there is no
+    // session to restore (doing it anyway would undo a tap on Join free made
+    // just as the app appeared). A Join free or Log in tapped on the
+    // homepage's text before the app had loaded (see vite.config.js) opens now.
     const start = window.nriStart;
     window.nriStart = null;
-    if ((start === "signup" || start === "login") && startsSignedOut()) {
-      setAuthState(start);
+    if (startsSignedOut()) {
+      try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
+      if (start === "signup" || start === "login") setAuthState(start);
       return;
     }
     restoreSession();

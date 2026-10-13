@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { ImpressumModal } from "./LegalModals";
+import { hasImprint } from "../content/imprint";
 import * as api from "../supabaseApi";
 import { apiErrorMessage } from "./profile";
 import { FONT, COLORS, linkButtonStyle, ErrorBox } from "./ui";
@@ -68,6 +70,7 @@ export function useAccountActions(onSignOut) {
 // screen): who is signed in, Sign out, and the account actions.
 export function AccountFooter({ email, onSignOut }) {
   const { busy, error, download, deleteAccount } = useAccountActions(onSignOut);
+  const [impressum, setImpressum] = useState(() => hasImprint() && /^\/impressum\/?$/.test(window.location.pathname));
   const link = { ...linkButtonStyle, fontWeight: 500, color: COLORS.label };
   return (
     <div style={{ textAlign: "center", marginTop: 28, fontSize: 13, color: COLORS.helper, lineHeight: 1.6, fontFamily: FONT }}>
@@ -84,7 +87,13 @@ export function AccountFooter({ email, onSignOut }) {
           {busy === "delete" ? "Deleting..." : "Delete my account"}
         </button>
       </p>
+      {hasImprint() && (
+        <p style={{ margin: "8px 0 0" }}>
+          <button type="button" onClick={() => setImpressum(true)} style={link}>Impressum</button>
+        </p>
+      )}
       {error && <ErrorBox style={{ marginTop: 12, textAlign: "left" }}>{error}</ErrorBox>}
+      {impressum && <ImpressumModal onClose={() => setImpressum(false)} />}
     </div>
   );
 }

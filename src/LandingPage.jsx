@@ -7,7 +7,7 @@ import { findCity } from "./content/findCity";
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT } from "./content/home";
 import { TermsModal, PrivacyModal } from "./member/LegalModals";
 import { hasImprint } from "./content/imprint";
-import { PublicNav, Phrases, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, AMBASSADOR_MAIL, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
+import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, AMBASSADOR_MAIL, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
 
 // ============================================================================
 // LANDING PAGE: what NRIClub is for, before anyone signs up. Everything is
@@ -151,6 +151,7 @@ const trust = { fontSize: 14, color: MUTED, margin: "14px 0 0" };
 
 export default function LandingPage({ onJoin, onLogin }) {
   const [legal, setLegal] = useState(null); // "terms" | "privacy"
+  useCanonical("/"); // also when shown at another address (e.g. /post/<id> while signed out)
   const [groups, setGroups] = useState([]); // [{ city, members }]: the live city groups
   const [cityQuery, setCityQuery] = useState("");
   const [guides, setGuides] = useState(null); // all guides, loaded after the page (they're long)
