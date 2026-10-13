@@ -7,6 +7,7 @@ import { CITIES } from './src/content/cities.js';
 import { slug } from './src/content/slug.js';
 import { guideBlocks } from './src/content/guideBlocks.js';
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES } from './src/content/home.js';
+import { hasImprint, imprintSections } from './src/content/imprint.js';
 
 const SITE = 'https://nriclub.app';
 
@@ -84,7 +85,7 @@ function publicPages() {
     // After the bundle (and index.html) is written; never on a failed build.
     writeBundle() {
       const shell = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
-      const page = (route, title, description, body) => {
+      const page = (route, title, description, body, head = '') => {
         // Function replacements, so a "$" in a title is kept as it is.
         const meta = (re, value) => (h) => h.replace(re, (_, start) => start + value);
         let html = [
@@ -96,7 +97,7 @@ function publicPages() {
           meta(/(<meta name="twitter:description" content=")[^"]*/, esc(description)),
         ].reduce((h, f) => f(h), shell)
           .replace(/<title>[^<]*<\/title>/, () => `<title>${esc(title)}</title>`)
-          .replace('</head>', () => `  <link rel="canonical" href="${SITE}${route}" />\n</head>`)
+          .replace('</head>', () => `  <link rel="canonical" href="${SITE}${route}" />\n${head ? `  ${head}\n` : ''}</head>`)
           .replace('<div id="root"></div>', () => `<div id="root"><main style="max-width:720px;margin:0 auto;padding:32px 20px;font-family:system-ui,sans-serif;color:#37352F;line-height:1.6">${body}</main></div>`);
         const file = path.join(outDir, route.slice(1), 'index.html');
         fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -118,6 +119,15 @@ function publicPages() {
         page(`/city/${slug(city)}`, `Indians in ${city} · NRIClub`,
           `Indians in ${city}: ask questions, find housing and job referrals, discover desi places and celebrate festivals together. Free, and our team checks every new member.`,
           `<h1>Indians in ${esc(city)}</h1><p>Ask questions, find a room or a referral, discover desi places and celebrate festivals with Indians in ${esc(city)}.</p>${join}<h2>NRI essentials</h2><ul>${guideLinks}</ul>`);
+      }
+
+      // The Impressum, once its details are filled in (src/content/imprint.js).
+      // Kept out of search results and the sitemap: it holds a home address.
+      if (hasImprint()) {
+        const body = imprintSections().map((sec) => `<h2>${esc(sec.title)}</h2><p>${sec.lines
+          .map((l) => (l.href ? `<a href="${esc(l.href)}">${esc(l.text)}</a>` : esc(l.text))).join('<br>')}</p>`).join('');
+        page('/impressum', 'Impressum · NRIClub', 'Legal notice (Impressum) of NRIClub.',
+          `<h1>Impressum</h1><p>Legal notice</p>${body}`, '<meta name="robots" content="noindex" />');
       }
 
       // The homepage, last: the pages above are copies of the plain

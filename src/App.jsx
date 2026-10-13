@@ -6,6 +6,7 @@ import "./member/base.css";
 import { TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
 import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 import { rateLimiter } from "./rateLimiter";
+import { hasImprint } from "./content/imprint";
 
 // The landing page and this file load first; everything else (the member
 // site, signup, the admin panel) loads when it's needed, so a visitor's
@@ -18,6 +19,7 @@ const TermsGate = lazy(() => import("./member/TermsGate"));
 const AdminPanel = lazy(() => import("./admin/AdminPanel"));
 const CityPage = lazy(() => import("./CityPage"));
 const GuidePage = lazy(() => import("./GuidePage"));
+const ImpressumPage = lazy(() => import("./ImpressumPage"));
 
 // A public page's address: /city/<city>, /guides or /guides/<slug>.
 const publicPage = () => {
@@ -32,6 +34,7 @@ const publicPage = () => {
   }
   const guide = /^\/guides(?:\/([a-z0-9-]+))?\/?$/.exec(path);
   if (guide) return { kind: "guide", slug: guide[1] || "" };
+  if (/^\/impressum\/?$/.test(path) && hasImprint()) return { kind: "impressum" };
   return null;
 };
 
@@ -518,6 +521,7 @@ export default function App() {
       const login = () => setAuthState("login");
       if (page?.kind === "city") return <CityPage city={page.city} onJoin={join} onLogin={login} />;
       if (page?.kind === "guide") return <GuidePage slug={page.slug} onJoin={join} onLogin={login} />;
+      if (page?.kind === "impressum") return <ImpressumPage onJoin={join} onLogin={login} />;
       return <LandingPage onJoin={join} onLogin={login} />;
     };
     if (authState === "landing") return landing();

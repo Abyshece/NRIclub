@@ -6,6 +6,7 @@ import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT } from "./content/home";
 import { TermsModal, PrivacyModal } from "./member/LegalModals";
+import { hasImprint } from "./content/imprint";
 import { PublicNav, Phrases, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, AMBASSADOR_MAIL, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
 
 // ============================================================================
@@ -380,6 +381,7 @@ export default function LandingPage({ onJoin, onLogin }) {
           <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact</a>
           <button type="button" onClick={() => setLegal("terms")} style={footerLink}>Terms of Use</button>
           <button type="button" onClick={() => setLegal("privacy")} style={footerLink}>Privacy Policy</button>
+          {hasImprint() && <a href="/impressum" style={footerLink}>Impressum</a>}
         </div>
         <span>Made for Indians everywhere</span>
       </footer>

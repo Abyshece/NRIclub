@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
 import FlagIcon from "./FlagIcon";
 import { TermsModal, PrivacyModal } from "./member/LegalModals";
+import { hasImprint } from "./content/imprint";
 
 // ============================================================================
 // The frame of the public pages (city pages and guides): the tricolour line,
@@ -78,6 +79,7 @@ export default function PublicShell({ onLogin, onJoin, hero, children }) {
         <div>
           <button type="button" onClick={() => setLegal("terms")} style={footerLink}>Terms of Use</button>
           <button type="button" onClick={() => setLegal("privacy")} style={footerLink}>Privacy Policy</button>
+          {hasImprint() && <a href="/impressum" style={footerLink}>Impressum</a>}
         </div>
       </footer>
       {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
