@@ -5,4 +5,4 @@ export const slug = (text) => String(text || "")
   .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
 // The site's own page title (public pages set their own, and put this back).
-export const HOME_TITLE = "NRIClub · One home for Indians abroad";
+export const HOME_TITLE = "NRIClub · One home for NRIs and Indians abroad";

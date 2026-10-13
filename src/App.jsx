@@ -271,8 +271,25 @@ const ExpiredLinkPage = ({ onContinue }) => {
   );
 };
 
+const isAdminRoute = () => {
+  const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
+  return isAdminDomain || window.location.hash === "#admin";
+};
+
+// Nobody is signed in in this browser and the page wasn't opened from one of
+// our emails: show the landing page at once (index.html already has its
+// text, see vite.config.js) instead of "Loading..." first.
+const startsSignedOut = () => {
+  try {
+    const link = api.takeAuthRedirect().kind;
+    return link !== "recovery" && link !== "expired" && !isAdminRoute() && !api.hasStoredSession();
+  } catch (e) {
+    return false;
+  }
+};
+
 export default function App() {
-  const [authState, setAuthState] = useState("loading");
+  const [authState, setAuthState] = useState(() => (startsSignedOut() ? "landing" : "loading"));
   const [user, setUser] = useState(null);
   const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead" or a reset this browser asked for
   const [loginNotice, setLoginNotice] = useState(""); // e.g. after a new password
@@ -354,17 +371,14 @@ export default function App() {
     try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch (e) {}
   }, []);
 
-  const isAdminRoute = () => {
-    const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
-    return isAdminDomain || window.location.hash === "#admin";
-  };
-
   // Restores this browser's session, or shows `fallback` when nobody is
   // signed in. If the session is fine but the profile can't be read, the
   // member gets a retry: they are never shown as signed out or unverified
   // because of one failed request.
   const restoreSession = async (fallback = "landing") => {
-    setAuthState("loading");
+    // Already on the landing page with no session to check (see
+    // startsSignedOut): stay there rather than flash "Loading...".
+    setAuthState((state) => (state === "landing" && fallback === "landing" && !isAdminRoute() && !api.hasStoredSession() ? state : "loading"));
     if (isAdminRoute()) {
       try {
         const session = await api.getSession();

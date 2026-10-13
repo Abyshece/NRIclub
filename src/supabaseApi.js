@@ -87,6 +87,11 @@ function storedToken() {
   try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
 }
 
+// Whether this browser keeps a session (it may have expired: getSession()
+// checks). Without one, the app can show the landing page straight away.
+// index.html's start-up script reads the same key (see vite.config.js).
+export function hasStoredSession() { return !!storedToken(); }
+
 function storedRefreshToken() {
   try { return localStorage.getItem(REFRESH_KEY); } catch { return null; }
 }
