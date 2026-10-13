@@ -1241,7 +1241,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // marketing mirrors the member's marketing consent (profile_private), the
   // one place it is kept; email and push live in user_settings.
   const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: !!user.marketingConsent });
-  const [notifSaving, setNotifSaving] = useState(false);
   const [dataDownload, setDataDownload] = useState({ busy: false, error: "" });
   const [legalTab, setLegalTab] = useState("terms"); // Settings > Terms & Policies: "terms" | "privacy"
   // Opening a settings window shows what is stored now: the marketing
@@ -1252,6 +1251,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     if (settingsModal === "account") setDataDownload({ busy: false, error: "" });
   }, [settingsModal]);
   const [accountName, setAccountName] = useState(user.name);
+  const [accountPassword, setAccountPassword] = useState("");
+  const [accountSave, setAccountSave] = useState({ busy: false, error: "" });
+  const [deleteAccountText, setDeleteAccountText] = useState(null); // null = closed; otherwise what was typed
+  const [settingsSaveError, setSettingsSaveError] = useState("");
+  const [openFaq, setOpenFaq] = useState(null);
+  const [bugError, setBugError] = useState("");
+  // Privacy and email settings are saved the moment they change; a failed
+  // save puts the row back.
+  const saveSetting = async (setState, key, value, save) => {
+    let before;
+    setState(p => { before = p[key]; return { ...p, [key]: value }; });
+    setSettingsSaveError("");
+    try { await save(); } catch (e) {
+      setState(p => ({ ...p, [key]: before }));
+      setSettingsSaveError(isNetworkError(e) ? NETWORK_MESSAGE : "Couldn't save. Please try again.");
+    }
+  };
   // Filter modal state
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   // hometown: a city the author is from or lives in; occupation: their
@@ -1734,10 +1750,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         if (dbConvos && dbConvos.length) {
           const newConvos = dbConvos.map(c => ({
             id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
+            avatar_url: c.otherUser?.avatar_url || "",
             lastMsg: c.last_message_text || "", time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
             unread: false,
           }));
           setConvos(prev => {
+            newConvos.forEach(nc => { nc.isMarketplace = prev.find(p => p.id === nc.id)?.isMarketplace || nc.lastMsg.includes("[MARKETPLACE:"); });
             // Only flag unread if this is NOT the first load and a message actually changed
             if (lastSeenMsgRef.current !== null) {
               const changed = newConvos.some(nc => {
@@ -3348,7 +3366,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
         return (
           <div>
-          <div className="msg-layout" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: "calc(100vh - 220px)", minHeight: 500, maxHeight: 800, display: "flex" }}>
+          <div className={selectedConvo ? "msg-layout has-convo" : "msg-layout"} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden", height: "calc(100vh - 220px)", minHeight: 500, maxHeight: 800, display: "flex" }}>
             {/* Conversation List */}
             <div className="msg-sidebar" style={{ width: 240, borderRight: "1px solid #E8E7E4", background: "#FAFAF8", display: "flex", flexDirection: "column", flexShrink: 0 }}>
               <div style={{ padding: "16px 18px", borderBottom: "1px solid #E8E7E4" }}>
@@ -3389,22 +3407,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             </div>
             {/* Chat Area */}
-            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <div className="msg-chat" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
               {selectedConvo && activeConvo ? (
                 <>
                   <div style={{ padding: "12px 18px", borderBottom: "1px solid #E8E7E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ position: "relative" }}>
-                        <Avatar name={activeConvo.name} size={32} url={activeConvo.avatar_url} />
-                        <span style={{ position: "absolute", bottom: 0, right: 0, width: 8, height: 8, background: "#22C55E", borderRadius: "50%", border: "2px solid #fff" }} />
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font }}>{activeConvo.name}</div>
-                        <div style={{ fontSize: 11, color: "#22C55E", fontWeight: 500 }}>Online</div>
-                      </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <button className="msg-back" onClick={() => setSelectedConvo(null)} aria-label="Back to conversations" style={{ background: "none", border: "none", cursor: "pointer", color: "#5F5E5B", padding: 8, margin: "-8px 0 -8px -8px", fontSize: 22, lineHeight: 1 }}>‹</button>
+                      <Avatar name={activeConvo.name} size={32} url={activeConvo.avatar_url} />
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeConvo.name}</div>
                     </div>
                     <div style={{ position: "relative" }}>
-                      <button onClick={() => setChatSettings(!chatSettings)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.settings({ size: 16 })}</button>
+                      <button onClick={() => setChatSettings(!chatSettings)} aria-label="Chat options" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.dots({ size: 18 })}</button>
                       {chatSettings && (
                         <>
                           <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={() => setChatSettings(false)} />
@@ -3415,9 +3428,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             <button onClick={() => { setReportConfirm({ type: "user", id: activeConvo.otherUserId, name: activeConvo.name }); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
                               {Icons.flag({ size: 14 })} Report User
                             </button>
-                            <button onClick={() => { setChatMessages(p => ({ ...p, [selectedConvo]: [] })); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontFamily: font }}>
-                              {Icons.trash({ size: 14 })} Clear Chat
-                            </button>
                           </div>
                         </>
                       )}
@@ -3427,7 +3437,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     {currentMsgs.map(m => (
                       <div key={m.id} style={{ maxWidth: "75%", alignSelf: m.sender === "me" ? "flex-end" : "flex-start" }}>
                         <div style={{ padding: "10px 14px", borderRadius: m.sender === "me" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.sender === "me" ? "#37352F" : "#fff", color: m.sender === "me" ? "#fff" : "#37352F", border: m.sender === "me" ? "none" : "1px solid #E8E7E4", fontSize: 14, lineHeight: 1.5, fontFamily: font, overflowWrap: "anywhere" }}>
-                          {m.text}
+                          {(() => {
+                            const tag = (m.text || "").match(/^\[MARKETPLACE: ([^\]]+)\]\s*/);
+                            if (!tag) return m.text;
+                            return (<>
+                              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🛒 {tag[1]}</div>
+                              {m.text.slice(tag[0].length)}
+                            </>);
+                          })()}
                         </div>
                         <div style={{ fontSize: 10, color: "#9B9A97", marginTop: 4, textAlign: m.sender === "me" ? "right" : "left" }}>{m.time}</div>
                       </div>
@@ -4388,6 +4405,34 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         </div>
       )}
 
+      {/* Delete account: one in-app confirmation */}
+      {deleteAccountText !== null && (
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setDeleteAccountText(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 400, padding: 24, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#DC2626" }}>{Icons.trash({ size: 20 })}</div>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>Delete your account?</h3>
+            <p style={{ fontSize: 13, color: "#5F5E5B", marginBottom: 20, lineHeight: 1.5, fontFamily: font }}>Your posts, messages, connections and photos will be removed. This can't be undone.</p>
+            <label htmlFor="delete-account-confirm" style={{ display: "block", textAlign: "left", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Type DELETE to confirm</label>
+            <input id="delete-account-confirm" value={deleteAccountText} onChange={(e) => setDeleteAccountText(e.target.value)} autoComplete="off" style={{ ...inputStyle, marginBottom: 20 }} />
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <button onClick={() => setDeleteAccountText(null)} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 13, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button disabled={deleteAccountText.trim().toUpperCase() !== "DELETE"} onClick={async () => {
+                try {
+                  await api.deleteAccount();
+                } catch(e) {
+                  alert("Your account could not be deleted. Please try again, or contact support if it keeps failing.");
+                  return;
+                }
+                localStorage.clear();
+                setDeleteAccountText(null);
+                setSettingsModal(null);
+                onLogout();
+              }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: deleteAccountText.trim().toUpperCase() === "DELETE" ? "#DC2626" : "#FECACA", fontSize: 13, fontWeight: 600, color: "#fff", cursor: deleteAccountText.trim().toUpperCase() === "DELETE" ? "pointer" : "default", fontFamily: font }}>Delete account</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Account Settings Modal */}
       {settingsModal === "account" && (
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
@@ -4397,33 +4442,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
-              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Personal Information</h4>
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Personal Information</h4>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Full Name</label>
                 <input style={inputStyle} value={accountName} onChange={(e) => setAccountName(e.target.value)} />
               </div>
               <div style={{ marginBottom: 6 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Email Address</label>
-                <div style={{ position: "relative" }}>
-                  <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.message({ size: 14 })}</div>
-                  <input style={{ ...inputStyle, paddingLeft: 36, background: "#F0EFED", color: "#9B9A97" }} value={user.email || ""} readOnly disabled />
-                </div>
+                <input style={{ ...inputStyle, background: "#F0EFED", color: "#9B9A97" }} value={user.email || ""} readOnly disabled />
                 <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 4, fontFamily: font }}>Contact support to change email.</p>
               </div>
               <div style={{ borderTop: "1px solid #F0EFED", marginTop: 20, paddingTop: 20 }}>
-                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Security</h4>
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Current Password</label>
-                  <div style={{ position: "relative" }}>
-                    <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
-                    <input type="password" style={{ ...inputStyle, paddingLeft: 36 }} placeholder="••••••••" />
-                  </div>
-                </div>
+                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Security</h4>
                 <div style={{ marginBottom: 20 }}>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>New Password</label>
                   <div style={{ position: "relative" }}>
                     <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
-                    <input type="password" style={{ ...inputStyle, paddingLeft: 36 }} placeholder="••••••••" />
+                    <input type="password" autoComplete="new-password" value={accountPassword} onChange={(e) => setAccountPassword(e.target.value)} style={{ ...inputStyle, paddingLeft: 36 }} placeholder="Leave blank to keep your current password" />
                   </div>
                 </div>
               </div>
@@ -4452,28 +4487,35 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   Danger Zone
                 </h4>
                 <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 10, lineHeight: 1.5, fontFamily: font }}>Permanently delete your account and all associated data. This action cannot be undone.</p>
-                <button onClick={async () => { 
-                  if (confirm("Are you absolutely sure you want to delete your account? ALL your data — posts, likes, comments, messages, connections, photos — will be permanently removed. This cannot be undone.")) {
-                    if (confirm("This is your final warning. Type OK in the next prompt to confirm.") && prompt("Type DELETE to confirm account deletion:") === "DELETE") {
-                      try {
-                        await api.deleteAccount();
-                      } catch(e) {
-                        alert("Your account could not be deleted. Please try again, or contact support if it keeps failing.");
-                        return;
-                      }
-                      localStorage.clear();
-                      setSettingsModal(null);
-                      onLogout();
-                    }
-                  }
-                }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <button onClick={() => setDeleteAccountText("")} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                   {Icons.trash({ size: 14 })} Delete My Account
                 </button>
               </div>
             </div>
-            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 12, background: "#FAFAF8" }}>
-              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={() => setSettingsModal(null)} style={btnPrimary}>Save Changes</button>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", background: "#FAFAF8", position: "sticky", bottom: 0 }}>
+              {accountSave.error && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "8px 12px", marginBottom: 12, lineHeight: 1.5, fontFamily: font }}>{accountSave.error}</p>}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                <button onClick={() => { setSettingsModal(null); setAccountName(user.name); setAccountPassword(""); setAccountSave({ busy: false, error: "" }); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+                <button disabled={accountSave.busy} onClick={async () => {
+                  const name = accountName.trim();
+                  if (!name) { setAccountSave({ busy: false, error: "Please enter your name." }); return; }
+                  if (accountPassword && accountPassword.length < 8) { setAccountSave({ busy: false, error: "Use at least 8 characters." }); return; }
+                  setAccountSave({ busy: true, error: "" });
+                  try {
+                    if (name !== user.name) {
+                      await api.updateProfile({ name });
+                      onUserUpdate({ ...user, name });
+                    }
+                    if (accountPassword) await api.updatePassword(accountPassword);
+                  } catch (e) {
+                    setAccountSave({ busy: false, error: authErrorMessage(e) || apiErrorMessage(e, "Your changes couldn't be saved. Please try again.") });
+                    return;
+                  }
+                  setAccountPassword("");
+                  setAccountSave({ busy: false, error: "" });
+                  setSettingsModal(null);
+                }} style={{ ...btnPrimary, opacity: accountSave.busy ? 0.7 : 1 }}>{accountSave.busy ? "Saving..." : "Save Changes"}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -4484,27 +4526,28 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy & Safety</h3>
+              <div>
+                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Privacy & Safety</h3>
+                {settingsSaveError && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 2, fontFamily: font }}>{settingsSaveError}</p>}
+              </div>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               {[
-                { label: "Profile Visibility", desc: "Control who can see your profile details.", key: "visibility", type: "select", options: ["Everyone", "Connections Only", "Only Me"] },
-                { label: "Online Status", desc: "Show when you are active.", key: "onlineStatus", type: "toggle" },
-                { label: "Namaste Requests", desc: "Who can send you connection requests.", key: "namasteRequests", type: "select", options: ["Everyone", "Nobody"] },
-                { label: "Receive Messages", desc: "Who can send you direct messages.", key: "receiveMessages", type: "select", options: ["Everyone", "Connections Only", "Nobody"] },
+                { label: "Namaste Requests", desc: "Who can send you connection requests.", key: "namasteRequests", dbKey: "namaste_requests", type: "select", options: ["Everyone", "Nobody"] },
+                { label: "Receive Messages", desc: "Who can send you direct messages.", key: "receiveMessages", dbKey: "receive_messages", type: "select", options: ["Everyone", "Connections Only", "Nobody"] },
               ].map((item, i) => (
-                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 3 ? "1px solid #F0EFED" : "none" }}>
+                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 1 ? "1px solid #F0EFED" : "none" }}>
                   <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
                     <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{item.label}</h4>
                     <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{item.desc}</p>
                   </div>
                   {item.type === "toggle" ? (
-                    <button onClick={() => setPrivSettings(p => ({...p, [item.key]: !p[item.key]}))} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: privSettings[item.key] ? "#22C55E" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
+                    <button onClick={() => saveSetting(setPrivSettings, item.key, !privSettings[item.key], () => api.saveUserSettings({ [item.dbKey]: !privSettings[item.key] }))} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: privSettings[item.key] ? "#22C55E" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
                       <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: privSettings[item.key] ? 23 : 3, transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
                     </button>
                   ) : (
-                    <select value={privSettings[item.key]} onChange={(e) => setPrivSettings(p => ({...p, [item.key]: e.target.value}))} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", fontSize: 12, background: "#F0EFED", color: "#37352F", fontFamily: font, cursor: "pointer", flexShrink: 0 }}>
+                    <select value={privSettings[item.key]} onChange={(e) => { const v = e.target.value; saveSetting(setPrivSettings, item.key, v, () => api.saveUserSettings({ [item.dbKey]: v })); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #E0E0DE", fontSize: 12, background: "#F0EFED", color: "#37352F", fontFamily: font, cursor: "pointer", flexShrink: 0 }}>
                       {item.options.map(o => <option key={o}>{o}</option>)}
                     </select>
                   )}
@@ -4517,18 +4560,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
-              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={async () => {
-                try {
-                  await api.saveUserSettings({
-                    profile_visibility: privSettings.visibility,
-                    online_status: privSettings.onlineStatus,
-                    namaste_requests: privSettings.namasteRequests,
-                    receive_messages: privSettings.receiveMessages,
-                  });
-                } catch(e) {}
-                setSettingsModal(null);
-              }} style={{ ...btnPrimary, padding: "10px 20px" }}>Save Settings</button>
+              <button onClick={() => { setSettingsModal(null); setSettingsSaveError(""); }} style={{ ...btnPrimary, padding: "10px 20px" }}>Done</button>
             </div>
           </div>
         </div>
@@ -4539,50 +4571,35 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Email Notifications</h3>
+              <div>
+                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Email Notifications</h3>
+                {settingsSaveError && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 2, fontFamily: font }}>{settingsSaveError}</p>}
+              </div>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               {[
                 { label: "Email Notifications", desc: "Receive updates via email.", key: "email" },
-                { label: "Push Notifications", desc: "Receive push notifications on your device.", key: "push" },
                 { label: "Marketing Emails", desc: "Receive news and special offers.", key: "marketing" },
               ].map((item, i) => (
-                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 2 ? "1px solid #F0EFED" : "none" }}>
+                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 1 ? "1px solid #F0EFED" : "none" }}>
                   <div>
                     <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{item.label}</h4>
                     <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{item.desc}</p>
                   </div>
-                  <button onClick={() => setNotifSettings(p => ({...p, [item.key]: !p[item.key]}))} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: notifSettings[item.key] ? "#37352F" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
+                  <button onClick={() => {
+                    const v = !notifSettings[item.key];
+                    saveSetting(setNotifSettings, item.key, v, item.key === "marketing"
+                      ? async () => { await api.updateProfile({ marketing_consent: v }); onUserUpdate({ ...user, marketingConsent: v }); }
+                      : () => api.saveUserSettings({ email_notifications: v }));
+                  }} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: notifSettings[item.key] ? "#37352F" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
                     <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: notifSettings[item.key] ? 23 : 3, transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
                   </button>
                 </div>
               ))}
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
-              <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={async () => {
-                if (notifSaving) return;
-                setNotifSaving(true);
-                try {
-                  await api.saveUserSettings({
-                    email_notifications: notifSettings.email,
-                    push_notifications: notifSettings.push,
-                  });
-                } catch(e) {}
-                if (notifSettings.marketing !== !!user.marketingConsent) {
-                  try {
-                    await api.updateProfile({ marketing_consent: notifSettings.marketing });
-                    onUserUpdate({ ...user, marketingConsent: notifSettings.marketing });
-                  } catch (e) {
-                    setNotifSaving(false);
-                    alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your choice for marketing emails couldn't be saved. Please try again.");
-                    return;
-                  }
-                }
-                setNotifSaving(false);
-                setSettingsModal(null);
-              }} style={{ ...btnPrimary, padding: "10px 20px", opacity: notifSaving ? 0.7 : 1 }}>{notifSaving ? "Saving..." : "Save Settings"}</button>
+              <button onClick={() => { setSettingsModal(null); setSettingsSaveError(""); }} style={{ ...btnPrimary, padding: "10px 20px" }}>Done</button>
             </div>
           </div>
         </div>
@@ -4623,36 +4640,33 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Report a Bug</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Report a problem</h3>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 16, fontFamily: font }}>Found something broken? Let us know and we'll fix it.</p>
               <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Bug Title</label>
-                <input id="bug-title" placeholder="Brief description of the issue" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }} />
+                <label htmlFor="bug-desc" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>What went wrong?</label>
+                <textarea id="bug-desc" placeholder="Tell us what you tried and what happened" onChange={() => bugError && setBugError("")} style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", minHeight: 100, resize: "vertical" }} />
+                {bugError && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 4, fontFamily: font }}>{bugError}</p>}
               </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Page / Feature</label>
-                <select id="bug-page" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }}>
+              <div style={{ marginBottom: 20 }}>
+                <label htmlFor="bug-page" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Where?</label>
+                <select id="bug-page" defaultValue={({ home: "Feed", network: "Find", groups: "Groups", events: "Events", messages: "Messages", market: "Marketplace", docs: "Docs", help: "Help", profile: "Profile" })[view] || "Other"} style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box" }}>
                   <option value="Feed">Feed</option><option value="Find">Find / Search</option><option value="Groups">Groups</option><option value="Events">Events</option><option value="Messages">Messages</option><option value="Marketplace">Marketplace</option><option value="Docs">Docs</option><option value="Help">Help</option><option value="Profile">Profile</option><option value="Settings">Settings</option><option value="Other">Other</option>
                 </select>
               </div>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Steps to Reproduce</label>
-                <textarea id="bug-desc" placeholder="Describe what happened and what you expected..." style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", minHeight: 100, resize: "vertical" }} />
-              </div>
               <button onClick={async () => {
-                const title = document.getElementById("bug-title")?.value;
                 const page = document.getElementById("bug-page")?.value;
-                const desc = document.getElementById("bug-desc")?.value;
-                if (!title?.trim()) { alert("Please enter a bug title."); return; }
+                const desc = (document.getElementById("bug-desc")?.value || "").trim();
+                if (!desc) { setBugError("Please tell us what went wrong."); return; }
                 try {
-                  await api.reportPost(user.id, `[BUG] ${page}: ${title} — ${desc || "No details"}`);
-                  alert("Bug reported! Thank you for helping us improve NRIClub.");
+                  await api.reportPost(user.id, `[BUG] ${page}: ${desc.slice(0, 60)} — ${desc}`);
+                  alert("Thanks! Your report was sent.");
+                  setBugError("");
                   setSettingsModal(null);
-                } catch(e) { alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your bug report couldn't be sent. Please try again."); }
-              }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Submit Bug Report</button>
+                } catch(e) { alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your report couldn't be sent. Please try again."); }
+              }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Send report</button>
             </div>
           </div>
         </div>
@@ -4670,15 +4684,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <div style={{ background: "#EDF4FF", borderRadius: 10, padding: "18px 20px", marginBottom: 24, border: "1px solid #DBEAFE" }}>
                 <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.help({ size: 16 })} Need assistance?</h4>
                 <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, marginBottom: 14, fontFamily: font }}>Our support team is here to help you with any issues or questions you might have.</p>
-                <button style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#3B5EDB", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Contact Support</button>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <a href="mailto:support@nriclub.app" style={{ ...btnPrimary, textDecoration: "none" }}>Contact support</a>
+                  <button onClick={() => { setBugError(""); setSettingsModal("reportBug"); }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Report a problem</button>
+                </div>
               </div>
               <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font }}>FAQs</h4>
               <div style={{ border: "1px solid #E8E7E4", borderRadius: 10, overflow: "hidden" }}>
-                {["How do I verify my account?", "Can I change my username?", "How to report a user?"].map((q, i) => (
-                  <div key={i} style={{ padding: "14px 18px", borderBottom: i < 2 ? "1px solid #F0EFED" : "none", cursor: "pointer", fontSize: 14, color: "#37352F", fontFamily: font }}
-                    onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
-                    onMouseOut={(e) => e.currentTarget.style.background = "#fff"}>
-                    {q}
+                {[
+                  { q: "How do I get verified?", a: "An admin checks your LinkedIn or short note. Your status shows at the top of Home." },
+                  { q: "How do I change my name or password?", a: "Gear → Account Settings." },
+                  { q: "How do I report someone?", a: "Use '…' on a post or in a chat, or the flag on a member's card." },
+                ].map((f, i) => (
+                  <div key={i} style={{ borderBottom: i < 2 ? "1px solid #F0EFED" : "none" }}>
+                    <button onClick={() => setOpenFaq(openFaq === i ? null : i)} aria-expanded={openFaq === i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "14px 18px", border: "none", background: "#fff", cursor: "pointer", fontSize: 14, color: "#37352F", fontFamily: font, textAlign: "left" }}>
+                      {f.q} <span style={{ color: "#9B9A97", transform: openFaq === i ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>›</span>
+                    </button>
+                    {openFaq === i && <p style={{ padding: "0 18px 14px", fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, fontFamily: font }}>{f.a}</p>}
                   </div>
                 ))}
               </div>
@@ -4878,7 +4900,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             <div style={{ padding: 24 }}>
               <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 28, fontFamily: font }}>
-                Are you sure you want to block this user? They will no longer be able to message you or see your profile. You can unblock them in Settings → Privacy & Safety.
+                Block {convos.find(c => c.otherUserId === blockTargetId)?.name || networkUsers.find(u => u.id === blockTargetId)?.name || "this member"}? They won't be able to message you or see your profile. You can undo this in Settings → Privacy & Safety.
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setBlockModalOpen(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
@@ -5337,6 +5359,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         input:focus, select:focus, textarea:focus { border-color: #37352F !important; background: #fff !important; }
         button:hover { opacity: 0.92; }
         .sidebar-left, .sidebar-right { display: block; }
+        .msg-back { display: none; }
         .desktop-nav { display: flex !important; }
         .mobile-menu-btn { display: none !important; }
         .mobile-nav { display: none !important; }
@@ -5356,7 +5379,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         @media (max-width: 600px) {
           /* Messages */
           .msg-layout { flex-direction: column !important; height: auto !important; min-height: 500px !important; }
-          .msg-sidebar { width: 100% !important; max-height: 45vh !important; border-right: none !important; border-bottom: 1px solid #E8E7E4 !important; overflow-y: auto !important; }
+          .msg-sidebar { width: 100% !important; border-right: none !important; overflow-y: auto !important; }
+          .msg-layout:not(.has-convo) .msg-chat { display: none !important; }
+          .msg-layout.has-convo .msg-sidebar { display: none !important; }
+          .msg-layout.has-convo { height: calc(100dvh - 210px) !important; min-height: 0 !important; }
+          .msg-back { display: block !important; }
           .msg-chat { min-height: 320px !important; }
 
           /* Event cards */
