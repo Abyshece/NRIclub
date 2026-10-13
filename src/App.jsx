@@ -836,6 +836,17 @@ const LoginPage = ({ onComplete, onSignUp, onBack, initialEmail = "", notice = "
   );
 };
 
+// The dashed card shown in place of a list that came up empty, with one way
+// back to everything when filters or a search hid it.
+const EmptyCard = ({ text, action, onAction }) => (
+  <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: "'DM Sans', sans-serif" }}>
+    <p>{text}</p>
+    {action && (
+      <button onClick={onAction} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", fontSize: 13, fontWeight: 600, cursor: "pointer", marginTop: 6, padding: "6px 8px", fontFamily: "inherit" }}>{action}</button>
+    )}
+  </div>
+);
+
 // ============================================================================
 // POST CARD
 // ============================================================================
@@ -847,7 +858,23 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
   const [commentsLoaded, setCommentsLoaded] = useState(false);
   const [newComment, setNewComment] = useState("");
   const [showMenu, setShowMenu] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const isOwner = user && post.userId === user.id;
+
+  // Copies a link that opens this post (see the shared-link check in the
+  // Dashboard). Without clipboard access the link is shown to copy by hand.
+  const copyLink = async () => {
+    const url = `${window.location.origin}${window.location.pathname}#post=${post.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch (e) {
+      setShowMenu(false);
+      prompt("Copy this link:", url);
+      return;
+    }
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
 
   const toggleComments = async () => {
     const newShow = !showComments;
@@ -857,7 +884,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
       try {
         const dbComments = await api.getComments(post.id);
         if (dbComments && dbComments.length) {
-          setComments(dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).getTime() })));
+          setComments(dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", avatar: c.profiles?.avatar_url || "", text: c.content, time: new Date(c.created_at).getTime() })));
         }
       } catch(e) {}
     }
@@ -878,8 +905,8 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
 
   const addComment = async () => {
     if (!newComment.trim()) return;
-    const c = { id: Date.now(), user: user?.name || "You", text: newComment, time: Date.now() };
-    setComments([c, ...comments]);
+    const c = { id: Date.now(), user: user?.name || "You", avatar: user?.avatar_url || "", text: newComment, time: Date.now() };
+    setComments([...comments, c]);
     const commentText = newComment;
     setNewComment("");
     try {
@@ -924,13 +951,16 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
           </div>
         </div>
         <div style={{ position: "relative" }}>
-          <button onClick={() => setShowMenu(!showMenu)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "#9B9A97" }}>
+          <button onClick={() => setShowMenu(!showMenu)} style={{ background: "none", border: "none", cursor: "pointer", padding: 10, margin: -6, color: "#5F5E5B" }}>
             {Icons.dots({ size: 16 })}
           </button>
           {showMenu && (
             <>
               <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={() => setShowMenu(false)} />
-              <div style={{ position: "absolute", right: 0, top: "100%", background: "#fff", border: "1px solid #E8E7E4", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", zIndex: 20, minWidth: 120, overflow: "hidden" }}>
+              <div style={{ position: "absolute", right: 0, top: "100%", background: "#fff", border: "1px solid #E8E7E4", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", zIndex: 20, minWidth: 140, overflow: "hidden" }}>
+                <button onClick={copyLink} disabled={String(post.id).startsWith("p_")} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, whiteSpace: "nowrap" }}>
+                  {linkCopied ? <>{Icons.check({ size: 14 })} Link copied</> : <>{Icons.link({ size: 14 })} Copy link</>}
+                </button>
                 {isOwner && onDelete ? (
                   <button onClick={() => { onDelete(post.id); setShowMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#E00", fontSize: 13 }}>
                     {Icons.trash({ size: 14 })} Delete
@@ -986,30 +1016,34 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
         </div>
       )}
 
-      {post.tags?.filter(t => t !== "__external__").length > 0 && (
-        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
-          {post.tags.filter(t => t !== "__external__").map((t) => (
-            <span key={t} style={{ fontSize: 11, background: "#F0EFED", color: "#5F5E5B", padding: "3px 8px", borderRadius: 4, fontWeight: 500 }}>
-              #{t}
-            </span>
-          ))}
-        </div>
-      )}
-
       <div style={{ fontSize: 11, color: "#9B9A97", marginBottom: 12 }}>{timeAgo(post.timestamp)}</div>
 
+      {/* Like and comment get larger tap areas; the margins take back the extra
+          padding (buttons start with 1px 6px), so the row looks the same. */}
       <div style={{ display: "flex", gap: 20, paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
-        <button onClick={handleLike} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: liked ? "#E25555" : "#9B9A97", fontSize: 13, fontWeight: 500 }}>
+        <button onClick={handleLike} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: liked ? "#E25555" : "#9B9A97", fontSize: 13, fontWeight: 500, padding: "10px 8px", margin: "-9px -2px" }}>
           {Icons.heart({ size: 16, fill: liked ? "#E25555" : "none", stroke: liked ? "#E25555" : "currentColor" })} {likeCount}
         </button>
-        <button onClick={toggleComments} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500 }}>
+        <button onClick={toggleComments} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontWeight: 500, padding: "10px 8px", margin: "-9px -2px" }}>
           {Icons.message({ size: 16 })} {comments.length || post.commentsCount || 0}
         </button>
       </div>
 
       {showComments && (
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          {comments.map((c) => (
+            <div key={c.id} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <Avatar name={c.user} size={28} url={c.avatar} />
+              <div style={{ flex: 1, background: "#F7F7F5", padding: "8px 12px", borderRadius: "0 10px 10px 10px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>{c.user}</span>
+                  <span style={{ fontSize: 10, color: "#9B9A97" }}>{timeAgo(c.time)}</span>
+                </div>
+                <p style={{ fontSize: 13, color: "#5F5E5B", margin: 0 }}>{c.text}</p>
+              </div>
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8 }}>
             <input
               value={newComment} onChange={(e) => setNewComment(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addComment()}
@@ -1020,19 +1054,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
               {Icons.send({ size: 14 })}
             </button>
           </div>
-          <CharCount value={newComment} style={{ marginTop: -10, marginBottom: 12 }} />
-          {comments.map((c) => (
-            <div key={c.id} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <Avatar name={c.user} size={28} />
-              <div style={{ flex: 1, background: "#F7F7F5", padding: "8px 12px", borderRadius: "0 10px 10px 10px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>{c.user}</span>
-                  <span style={{ fontSize: 10, color: "#9B9A97" }}>{timeAgo(c.time)}</span>
-                </div>
-                <p style={{ fontSize: 13, color: "#5F5E5B", margin: 0 }}>{c.text}</p>
-              </div>
-            </div>
-          ))}
+          <CharCount value={newComment} />
         </div>
       )}
     </div>
@@ -1134,9 +1156,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [profilePreview, setProfilePreview] = useState(null);
   const [acceptedConnections, setAcceptedConnections] = useState(new Set());
   const [newPost, setNewPost] = useState("");
-  const [createPostDropdown, setCreatePostDropdown] = useState(false);
-  const [createPostModal, setCreatePostModal] = useState(null); // "text" | "photo" | "link"
+  const [createPostModal, setCreatePostModal] = useState(null); // "text" while "Create a post" is open
   const [postImage, setPostImage] = useState(null);
+  const [postPhotoOpen, setPostPhotoOpen] = useState(false); // the composer's photo block is shown
+  const [postPhotoUploading, setPostPhotoUploading] = useState(false);
+  const postPhotoUploadRef = useRef(0); // counts uploads, so one cancelled with Cancel is dropped
   const [mobileMenu, setMobileMenu] = useState(false);
   const [rsvps, setRsvps] = useState(new Set());
   const [profileTab, setProfileTab] = useState("posts");
@@ -1165,7 +1189,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileErrors, setProfileErrors] = useState({});
   const [selectedGroup, setSelectedGroup] = useState(null);
-  const [feedSort, setFeedSort] = useState("new");
+  const [feedSort, setFeedSort] = useState("new"); // "new" | "popular" (most liked)
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
   const [groupTab, setGroupTab] = useState("all");
   const [groupMembers, setGroupMembers] = useState([]);
@@ -1230,11 +1254,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [accountName, setAccountName] = useState(user.name);
   // Filter modal state
   const [filterModalOpen, setFilterModalOpen] = useState(false);
-  const [feedFilters, setFeedFilters] = useState({ hometown: "", occupation: "All", yearsAbroad: "All", community: "All" });
+  // hometown: a city the author is from or lives in; occupation: their
+  // occupation status from Edit Profile; livesIn: "Abroad" | "India";
+  // tag: a hashtag picked on Trending.
+  const noFeedFilters = { hometown: "", occupation: "All", livesIn: "All", community: "All", tag: "" };
+  const [feedFilters, setFeedFilters] = useState(noFeedFilters);
+  const feedFiltered = !!feedFilters.hometown || feedFilters.occupation !== "All" || feedFilters.livesIn !== "All" || feedFilters.community !== "All" || !!feedFilters.tag;
   const [feedPostType, setFeedPostType] = useState("all"); // 'all' | 'posts' | 'links'
-  const [linkModal, setLinkModal] = useState(false);
-  const [externalLinkInput, setExternalLinkInput] = useState("");
-  const [externalLinkNote, setExternalLinkNote] = useState("");
   // Docs state
   const [docModal, setDocModal] = useState(false);
   const [newDoc, setNewDoc] = useState({ title: "", city: "", category: "General", excerpt: "" });
@@ -1426,6 +1452,24 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  // A posts row (with its author's profile) as the feed shows it.
+  const toPost = (p, groupList) => {
+    const urlMatch = (p.content || "").match(/https?:\/\/[^\s]+/i);
+    return {
+      id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
+      tags: p.tags || [], likes: p.likes_count || 0, commentsCount: p.comments_count || 0, comments: [],
+      timestamp: new Date(p.created_at).getTime(),
+      groupName: p.group_id ? (groupList.find(g => g.id === p.group_id)?.name || null) : null,
+      groupId: p.group_id || null,
+      author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, occupation_status: p.profiles.occupation_status || "", location: p.profiles.location, hometown: p.profiles.hometown, avatar_url: p.profiles.avatar_url || "" } : { name: "User" },
+      externalUrl: urlMatch ? urlMatch[0] : null,
+    };
+  };
+
+  // Set once everything below has loaded, so an empty list can say so
+  // instead of looking blank while it loads.
+  const [listsLoaded, setListsLoaded] = useState(false);
+
   // Load data on mount, and again if the member may browse after all (e.g.
   // a rejection was undone). Locked members load nothing.
   useEffect(() => {
@@ -1441,18 +1485,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           setGroups(loadedGroups);
         } else { setGroups([]); }
         if (dbPosts && dbPosts.length) {
-          setPosts(dbPosts.map(p => {
-            const urlMatch = (p.content || "").match(/https?:\/\/[^\s]+/i);
-            return {
-              id: p.id, userId: p.user_id, content: p.content, image: p.image_url,
-              tags: p.tags || [], likes: p.likes_count || 0, commentsCount: p.comments_count || 0, comments: [],
-              timestamp: new Date(p.created_at).getTime(),
-              groupName: p.group_id ? (loadedGroups.find(g => g.id === p.group_id)?.name || null) : null,
-              groupId: p.group_id || null,
-              author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, location: p.profiles.location, hometown: p.profiles.hometown, avatar_url: p.profiles.avatar_url || "" } : { name: "User" },
-              externalUrl: urlMatch ? urlMatch[0] : null,
-            };
-          }));
+          setPosts(dbPosts.map(p => toPost(p, loadedGroups)));
         } else { setPosts([]); }
         // Load which posts this user has liked
         try {
@@ -1570,8 +1603,58 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         console.log("Falling back to defaults:", err.message);
         setPosts([]); setGroups([]); setEvents([]);
       }
+      setListsLoaded(true);
     })();
   }, [canBrowse]);
+
+  // Scrolls to a post on Home and outlines it for two seconds.
+  const highlightPost = (id) => setTimeout(() => {
+    const el = document.querySelector(`[data-post-id="${id}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.style.boxShadow = "0 0 0 3px #5B9CFF";
+    setTimeout(() => { el.style.boxShadow = ""; }, 2000);
+  }, 300);
+
+  // A shared link (#post=<id> from a post's "Copy link", #event=<id> from an
+  // event's Share) opens that post or event once the lists have loaded.
+  // Until then it stays in the address bar, so it still works after logging in.
+  const readSharedLink = () => {
+    const m = /^#(post|event)=([\w-]+)$/.exec(window.location.hash);
+    return m ? { kind: m[1], id: m[2] } : null;
+  };
+  const [sharedLink, setSharedLink] = useState(readSharedLink);
+  useEffect(() => {
+    const onHashChange = () => setSharedLink(readSharedLink());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+  useEffect(() => {
+    if (!sharedLink || !canBrowse) return;
+    const { kind, id } = sharedLink;
+    const post = kind === "post" && posts.find(p => String(p.id) === id && !blockedIds.has(p.userId));
+    const event = kind === "event" && events.find(e => String(e.id) === id);
+    if (!post && !event && !listsLoaded) return;
+    setSharedLink(null);
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
+    if (kind === "event") {
+      if (event) { setView("events"); setExpandedEvent(event); }
+      else alert("This event isn't available any more.");
+      return;
+    }
+    setView("home");
+    setFeedFilters(noFeedFilters);
+    setFeedPostType("all");
+    if (post) { highlightPost(id); return; }
+    // Older than the posts the feed loads: fetch it on its own.
+    (async () => {
+      let row = null;
+      try { row = await api.getPost(id); } catch (e) {}
+      if (!row || blockedIds.has(row.user_id)) { alert("This post isn't available any more."); return; }
+      setPosts(prev => prev.some(p => p.id === row.id) ? prev : [...prev, toPost(row, groups)]);
+      highlightPost(id);
+    })();
+  }, [sharedLink, canBrowse, posts, events, listsLoaded]);
 
   // Load the member's own settings (also while a member flagged for review
   // waits for approval, so saving them never overwrites them with defaults).
@@ -1749,7 +1832,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     const imageUrl = postImage?.url || null;
     const post = {
       id: "p_" + Date.now(), userId: user.id, content: newPost,
-      author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
+      author: { name: user.name, profession: user.profession, occupation_status: user.occupationStatus || "", location: user.location, hometown: user.hometown },
       likes: 0, comments: [], tags, timestamp: Date.now(), groupName, groupId,
       image: imageUrl, externalUrl,
     };
@@ -1938,6 +2021,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const renderContent = () => {
     switch (view) {
       case "home":
+        const feedPosts = posts.filter(p => {
+          // Hide blocked users' posts
+          if (blockedIds.has(p.userId)) return false;
+          const a = p.author || {};
+          if (feedFilters.hometown && !(a.hometown || "").toLowerCase().includes(feedFilters.hometown.toLowerCase()) && !(a.location || "").toLowerCase().includes(feedFilters.hometown.toLowerCase())) return false;
+          if (feedFilters.occupation !== "All" && a.occupation_status !== feedFilters.occupation) return false;
+          // Where the author lives: abroad (an NRI) or in India
+          if (feedFilters.livesIn === "Abroad" && !isUserNRI(a)) return false;
+          if (feedFilters.livesIn === "India" && isUserNRI(a)) return false;
+          if (feedFilters.community !== "All" && p.groupName !== feedFilters.community) return false;
+          // A hashtag from Trending: in the post's tags or its text
+          if (feedFilters.tag && !(p.tags || []).includes(feedFilters.tag) && !((p.content || "").match(/#\w+/g) || []).includes(`#${feedFilters.tag}`)) return false;
+          // Post type filter
+          if (feedPostType === "links" && !p.externalUrl) return false;
+          if (feedPostType === "posts" && p.externalUrl) return false;
+          return true;
+        }).sort((a, b) => feedSort === "popular" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0));
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
             {/* Complete your profile (mobile; the left column has it on desktop) */}
@@ -1945,43 +2045,25 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} collapseAfter={2} style={{ marginBottom: 20 }} />
             </div>
             {/* Header with Filters + Add Post button */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 2, fontFamily: font }}>Home Feed</h2>
-                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Updates from the global community</p>
+                <p className="feed-subtitle" style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Updates from the global community</p>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <div style={{ position: "relative" }}>
-                  <button onClick={() => setCreatePostDropdown(!createPostDropdown)} style={{
-                    display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
-                    borderRadius: 6, border: "none", background: "#37352F",
-                    fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font,
-                  }}>
-                    {Icons.plus({ size: 14 })} Add Post
-                  </button>
-                  {createPostDropdown && (
-                    <>
-                      <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setCreatePostDropdown(false)} />
-                      <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 6, width: 180, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "4px 0" }}>
-                        {[
-                          { key: "text", icon: Icons.file, label: "Write a Post" },
-                          { key: "photo", icon: Icons.image, label: "Share a Photo" },
-                          { key: "link", icon: Icons.link, label: "Share a Link" },
-                        ].map(item => (
-                          <button key={item.key} onClick={() => { setCreatePostModal(item.key); setCreatePostDropdown(false); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
-                            onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
-                            onMouseOut={(e) => e.currentTarget.style.background = "none"}>
-                            {item.icon({ size: 15, stroke: "#9B9A97" })} {item.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
+                <button onClick={() => setCreatePostModal("text")} style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
+                  borderRadius: 6, border: "none", background: "#37352F",
+                  fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font,
+                  whiteSpace: "nowrap", flexShrink: 0,
+                }}>
+                  {Icons.plus({ size: 14 })} Add Post
+                </button>
                 <button onClick={() => setFilterModalOpen(true)} style={{
                   display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
                   borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff",
                   fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
+                  whiteSpace: "nowrap", flexShrink: 0,
                 }}>
                   {Icons.filter({ size: 14 })} Filters
                 </button>
@@ -1989,66 +2071,42 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
 
             {/* Active Filters Status */}
-            {(feedFilters.hometown || feedFilters.occupation !== "All" || feedFilters.yearsAbroad !== "All" || feedFilters.community !== "All") && (
+            {feedFiltered && (
               <div style={{ background: "#E3FCEF", border: "1px solid #B5E4CA", borderRadius: 8, padding: "8px 14px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: "#22A06B", textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: font }}>{Icons.filter({ size: 12, stroke: "#22A06B" })} Filters:</span>
+                  {feedFilters.tag && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>#{feedFilters.tag}</span>}
                   {feedFilters.hometown && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>City: {feedFilters.hometown}</span>}
-                  {feedFilters.occupation !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Profession: {feedFilters.occupation}</span>}
-                  {feedFilters.yearsAbroad !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Status: {feedFilters.yearsAbroad}</span>}
+                  {feedFilters.occupation !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Occupation: {feedFilters.occupation}</span>}
+                  {feedFilters.livesIn !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Lives in: {feedFilters.livesIn}</span>}
                   {feedFilters.community !== "All" && <span style={{ fontSize: 12, color: "#22A06B", background: "#fff", padding: "2px 8px", borderRadius: 4, fontFamily: font }}>Community: {feedFilters.community}</span>}
                 </div>
-                <button onClick={() => setFeedFilters({ hometown: "", occupation: "All", yearsAbroad: "All", community: "All" })} style={{ background: "none", border: "none", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap" }}>Clear All</button>
+                <button onClick={() => setFeedFilters(noFeedFilters)} style={{ background: "none", border: "none", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap" }}>Clear All</button>
               </div>
             )}
 
-            {/* Post Type Filter + Viral/New Toggle - same row */}
+            {/* Post Type Filter + Newest/Popular - same row */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
               <div style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8 }}>
                 {[{ k: "all", l: "All" }, { k: "posts", l: "Posts" }, { k: "links", l: "Links" }].map(tab => (
                   <button key={tab.k} onClick={() => setFeedPostType(tab.k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: feedPostType === tab.k ? "#fff" : "transparent", color: feedPostType === tab.k ? "#37352F" : "#9B9A97", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: feedPostType === tab.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{tab.l}</button>
                 ))}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "viral" ? "#37352F" : "#9B9A97", fontFamily: font }}>Viral</span>
-                <button
-                  onClick={() => setFeedSort(feedSort === "new" ? "viral" : "new")}
-                  style={{
-                    width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
-                    background: "#D4D4D2", position: "relative", padding: 0, transition: "background 0.2s",
-                  }}
-                >
-                  <div style={{
-                    width: 18, height: 18, borderRadius: "50%", background: "#37352F",
-                    position: "absolute", top: 3,
-                    left: feedSort === "new" ? 23 : 3,
-                    transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
-                  }} />
-                </button>
-                <span style={{ fontSize: 13, fontWeight: 500, color: feedSort === "new" ? "#37352F" : "#9B9A97", fontFamily: font }}>New</span>
+              <div style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8 }}>
+                {[{ k: "new", l: "Newest" }, { k: "popular", l: "Popular" }].map(s => (
+                  <button key={s.k} onClick={() => setFeedSort(s.k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: feedSort === s.k ? "#fff" : "transparent", color: feedSort === s.k ? "#37352F" : "#9B9A97", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: feedSort === s.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{s.l}</button>
+                ))}
               </div>
             </div>
 
             {/* Feed List */}
-            {[...posts].filter(p => {
-              // Hide blocked users' posts
-              if (blockedIds.has(p.userId)) return false;
-              const a = p.author || {};
-              if (feedFilters.hometown && !(a.hometown || "").toLowerCase().includes(feedFilters.hometown.toLowerCase()) && !(a.location || "").toLowerCase().includes(feedFilters.hometown.toLowerCase())) return false;
-              if (feedFilters.occupation !== "All" && !(a.profession || "").toLowerCase().includes(feedFilters.occupation.toLowerCase())) return false;
-              if (feedFilters.yearsAbroad !== "All") {
-                // Filter by NRI vs non-NRI based on author location
-                if (feedFilters.yearsAbroad === "NRI" && !isUserNRI(a)) return false;
-                if (feedFilters.yearsAbroad === "Based in India" && isUserNRI(a)) return false;
-              }
-              if (feedFilters.community !== "All" && p.groupName !== feedFilters.community) return false;
-              // Post type filter
-              if (feedPostType === "links" && !p.externalUrl) return false;
-              if (feedPostType === "posts" && p.externalUrl) return false;
-              return true;
-            }).sort((a, b) => feedSort === "viral" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0)).map((p) => (
+            {feedPosts.length > 0 ? feedPosts.map((p) => (
               <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />
-            ))}
+            )) : (feedFiltered || feedPostType !== "all") ? (
+              <EmptyCard text="No posts match these filters." action="Clear filters" onAction={() => { setFeedFilters(noFeedFilters); setFeedPostType("all"); }} />
+            ) : listsLoaded && (
+              <EmptyCard text="No posts yet. Be the first to share something." />
+            )}
           </div>
         );
 
@@ -2661,12 +2719,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
             {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Events</h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Discover festivals, meetups, and networking events.</p>
               </div>
-              <button onClick={() => setEventModal(true)} style={btnPrimary}>
+              <button onClick={() => setEventModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>
                 {Icons.plus({ size: 14 })} Host Event
               </button>
             </div>
@@ -2689,7 +2747,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button
                   onClick={() => setEventViewMode("all")}
                   style={{
-                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font,
+                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap", flexShrink: 0,
                     background: eventViewMode === "all" ? "#fff" : "transparent",
                     color: eventViewMode === "all" ? "#37352F" : "#9B9A97",
                     boxShadow: eventViewMode === "all" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
@@ -2700,7 +2758,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button
                   onClick={() => setEventViewMode("rsvped")}
                   style={{
-                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font,
+                    padding: "6px 14px", borderRadius: 5, border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap", flexShrink: 0,
                     background: eventViewMode === "rsvped" ? "#fff" : "transparent",
                     color: eventViewMode === "rsvped" ? "#37352F" : "#9B9A97",
                     boxShadow: eventViewMode === "rsvped" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
@@ -2851,7 +2909,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       case "trending":
         // Compute trending hashtags from actual posts
         const tagCounts = {};
-        const tagCategories = {};
         const extractHashtags = (text) => {
           const matches = (text || "").match(/#(\w+)/g) || [];
           return matches.map(h => h.replace("#", ""));
@@ -2862,14 +2919,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           const all = [...new Set([...inline, ...fromTags])];
           all.forEach(tag => {
             tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-            if (!tagCategories[tag]) {
-              // Guess category based on post author profession
-              tagCategories[tag] = p.author?.profession || "Community";
-            }
           });
         });
         const trendingTags = Object.entries(tagCounts)
-          .map(([tag, count]) => ({ tag, count, category: tagCategories[tag] || "Community" }))
+          .map(([tag, count]) => ({ tag, count }))
           .sort((a, b) => b.count - a.count)
           .slice(0, 10);
         return (
@@ -2884,15 +2937,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             ) : (
               <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", overflow: "hidden" }}>
                 {trendingTags.map((t, i) => (
-                  <div key={t.tag} onClick={() => { setFeedFilters(prev => ({ ...prev })); setView("home"); }} style={{ padding: "16px 20px", borderBottom: i < trendingTags.length - 1 ? "1px solid #F0EFED" : "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}
+                  <div key={t.tag} onClick={() => { setFeedFilters(prev => ({ ...prev, tag: t.tag })); setView("home"); }} style={{ padding: "16px 20px", borderBottom: i < trendingTags.length - 1 ? "1px solid #F0EFED" : "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}
                     onMouseOver={(e) => (e.currentTarget.style.background = "#FAFAF8")} onMouseOut={(e) => (e.currentTarget.style.background = "#fff")}>
                     <div style={{ width: 32, height: 32, borderRadius: "50%", background: i < 3 ? "#FFF3E0" : "#F0EFED", color: i < 3 ? "#E65100" : "#5F5E5B", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontFamily: font, flexShrink: 0 }}>#{i + 1}</div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 11, color: "#9B9A97", marginBottom: 2, fontFamily: font, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>{t.category}</div>
                       <div style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>#{t.tag}</div>
                       <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{t.count} {t.count === 1 ? "post" : "posts"}</div>
                     </div>
-                    {Icons.trending({ size: 18, stroke: "#22A06B" })}
                   </div>
                 ))}
               </div>
@@ -2903,14 +2954,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       case "help":
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font, display: "flex", alignItems: "center", gap: 8 }}>
                   {Icons.help({ size: 22, stroke: "#E25555" })} Community Help
                 </h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Ask questions, share advice, and help fellow Indians.</p>
               </div>
-              <button onClick={() => setHelpModal(true)} style={btnPrimary}>Ask for Help</button>
+              <button onClick={() => setHelpModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>Ask for Help</button>
             </div>
             {helpRequests.map((h) => (
               <div key={h.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px", marginBottom: 14 }}>
@@ -2974,6 +3025,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 )}
               </div>
             ))}
+            {listsLoaded && helpRequests.length === 0 && <EmptyCard text="No requests yet. Ask the first question." />}
           </div>
         );
 
@@ -3062,12 +3114,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         });
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Community Docs</h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Essential guides and tips for your city.</p>
               </div>
-              <button onClick={() => setDocModal(true)} style={btnPrimary}>{Icons.plus({ size: 14 })} Create Doc</button>
+              <button onClick={() => setDocModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Create Doc</button>
             </div>
             {/* Search Bar */}
             <div style={{ position: "relative", marginBottom: 12 }}>
@@ -3129,6 +3181,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               ))}
             </div>
+            {filteredDocs.length === 0 && (docSearch.trim() || docCityFilter !== "All"
+              ? <EmptyCard text="No docs match." action="Clear search" onAction={() => { setDocSearch(""); setDocCityFilter("All"); }} />
+              : listsLoaded && <EmptyCard text="No docs yet." />)}
           </div>
         );
 
@@ -3141,12 +3196,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         });
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Marketplace</h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Buy, sell, rent, and find services within the community.</p>
               </div>
-              <button onClick={() => setMarketModal(true)} style={btnPrimary}>{Icons.plus({ size: 14 })} Post Item</button>
+              <button onClick={() => setMarketModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Post Item</button>
             </div>
             {/* Search + city */}
             <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
@@ -3206,6 +3261,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               ))}
             </div>
+            {filteredMarket.length === 0 && (marketSearch.trim() || marketCityFilter !== "All" || marketCategory !== "All"
+              ? <EmptyCard text="No listings match." action="Clear filters" onAction={() => { setMarketSearch(""); setMarketCityFilter("All"); setMarketCategory("All"); }} />
+              : listsLoaded && <EmptyCard text="No listings yet." />)}
           </div>
         );
 
@@ -3780,15 +3838,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       {/* Verification status: pending (blue) or needs_info (amber, with Update details) */}
       <VerificationBanner user={user} onUpdateDetails={() => setVerifyOpen(true)} />
 
-      {/* Create Post Modal */}
+      {/* Create Post Modal: closing it keeps what was written; Cancel clears it. */}
       {createPostModal && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); }}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setCreatePostModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 500, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>
-                {createPostModal === "text" ? "Write a Post" : createPostModal === "photo" ? "Share a Photo" : "Share a Link"}
-              </h3>
-              <button onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Create a post</h3>
+              <button onClick={() => setCreatePostModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               {/* User info */}
@@ -3800,32 +3856,41 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
 
-              {/* Text area - always shown */}
               <textarea
                 value={newPost} onChange={(e) => setNewPost(e.target.value)}
-                placeholder={createPostModal === "link" ? "Paste a link and add your thoughts..." : createPostModal === "photo" ? "Add a caption for your photo..." : `What's on your mind, ${user.name.split(" ")[0]}?`}
-                style={{ width: "100%", padding: "14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F", fontFamily: font, boxSizing: "border-box", minHeight: createPostModal === "text" ? 140 : 80, resize: "vertical" }}
+                placeholder={`What's on your mind, ${user.name.split(" ")[0]}? You can paste a link too.`}
+                style={{ width: "100%", padding: "14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F", fontFamily: font, boxSizing: "border-box", minHeight: 140, resize: "vertical" }}
                 autoFocus
               />
 
-              {/* Photo upload - for photo mode */}
-              {createPostModal === "photo" && (
+              {/* Photo, once "Photo" is pressed (or one is attached) */}
+              {(postPhotoOpen || postImage) && (
                 <div style={{ marginTop: 14 }}>
                   <input type="file" accept="image/*" id="modal-photo-upload" style={{ display: "none" }}
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
+                      const upload = ++postPhotoUploadRef.current;
+                      setPostPhotoUploading(true);
                       try {
                         const preview = URL.createObjectURL(file);
                         const url = await api.uploadPostImage(file);
-                        setPostImage({ url, preview });
-                      } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB.")); }
+                        if (upload === postPhotoUploadRef.current) setPostImage({ url, preview });
+                      } catch (err) {
+                        if (upload === postPhotoUploadRef.current) alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB."));
+                      }
+                      if (upload === postPhotoUploadRef.current) setPostPhotoUploading(false);
                     }}
                   />
                   {postImage ? (
                     <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
                       <img src={postImage.preview} alt="" style={{ width: "100%", maxHeight: 300, objectFit: "cover", borderRadius: 10 }} />
                       <button onClick={() => setPostImage(null)} style={{ position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 14 })}</button>
+                    </div>
+                  ) : postPhotoUploading ? (
+                    <div role="status" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "32px 20px", borderRadius: 10, border: "2px dashed #E0E0DE", background: "#FAFAF8" }}>
+                      {Icons.image({ size: 28, stroke: "#9B9A97" })}
+                      <span style={{ fontSize: 13, color: "#9B9A97", fontWeight: 500, fontFamily: font }}>Uploading photo...</span>
                     </div>
                   ) : (
                     <label htmlFor="modal-photo-upload" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "32px 20px", borderRadius: 10, border: "2px dashed #E0E0DE", background: "#FAFAF8", cursor: "pointer" }}>
@@ -3836,19 +3901,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   )}
                 </div>
               )}
-
-              {/* Link hint for link mode */}
-              {createPostModal === "link" && (
-                <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 6, fontFamily: font }}>Paste any URL — YouTube, Instagram, TikTok, articles, etc. A preview will be shown automatically.</p>
-              )}
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 12, background: "#FAFAF8", borderRadius: "0 0 16px 16px" }}>
-              <button onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={() => { createPost(); setCreatePostModal(null); }} disabled={!newPost.trim() && !postImage} style={{
+              {!postPhotoOpen && !postImage && (
+                <button onClick={() => setPostPhotoOpen(true)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 6, marginRight: "auto" }}>{Icons.image({ size: 16 })} Photo</button>
+              )}
+              <button onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); setPostPhotoOpen(false); setPostPhotoUploading(false); postPhotoUploadRef.current += 1; }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button onClick={() => { createPost(); setCreatePostModal(null); setPostPhotoOpen(false); }} disabled={(!newPost.trim() && !postImage) || postPhotoUploading} style={{
                 padding: "10px 24px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600,
-                background: (newPost.trim() || postImage) ? "#37352F" : "#E8E7E4",
-                color: (newPost.trim() || postImage) ? "#fff" : "#9B9A97",
-                cursor: (newPost.trim() || postImage) ? "pointer" : "default", fontFamily: font,
+                background: (newPost.trim() || postImage) && !postPhotoUploading ? "#37352F" : "#E8E7E4",
+                color: (newPost.trim() || postImage) && !postPhotoUploading ? "#fff" : "#9B9A97",
+                cursor: (newPost.trim() || postImage) && !postPhotoUploading ? "pointer" : "default", fontFamily: font,
               }}>Publish</button>
             </div>
           </div>
@@ -4275,43 +4338,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Share External Link Modal */}
-      {linkModal && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setLinkModal(false); setExternalLinkInput(""); setExternalLinkNote(""); }}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "18px 24px", borderBottom: "1px solid #F0EFED", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Share an External Link</h3>
-              <button onClick={() => { setLinkModal(false); setExternalLinkInput(""); setExternalLinkNote(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
-            </div>
-            <div style={{ padding: 24 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#5F5E5B", fontFamily: font, display: "block", marginBottom: 6 }}>Paste a link (TikTok, Instagram, YouTube, X, etc.)</label>
-              <input value={externalLinkInput} onChange={(e) => setExternalLinkInput(e.target.value)} placeholder="https://..." style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", marginBottom: 14 }} />
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#5F5E5B", fontFamily: font, display: "block", marginBottom: 6 }}>Add a caption (optional)</label>
-              <textarea value={externalLinkNote} onChange={(e) => setExternalLinkNote(e.target.value)} placeholder="What's this about?" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, boxSizing: "border-box", minHeight: 70, resize: "none" }} />
-            </div>
-            <div style={{ padding: "14px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
-              <button onClick={() => { setLinkModal(false); setExternalLinkInput(""); setExternalLinkNote(""); }} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button disabled={!externalLinkInput.trim() || !externalLinkInput.match(/^https?:\/\//i)} onClick={async () => {
-                const url = externalLinkInput.trim();
-                const content = externalLinkNote.trim() ? `${externalLinkNote.trim()}\n\n${url}` : url;
-                const tags = postTags(content, true);
-                const post = {
-                  id: "p_" + Date.now(), userId: user.id, content,
-                  author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
-                  likes: 0, comments: [], tags, timestamp: Date.now(), groupName: null,
-                  image: null, externalUrl: url,
-                };
-                setPosts([post, ...posts]);
-                setLinkModal(false);
-                setExternalLinkInput("");
-                setExternalLinkNote("");
-                try { const r = await api.createPost(content, tags, null); if (r?.[0]) setPosts(prev => prev.map(p => p.id === post.id ? { ...p, id: r[0].id } : p)); } catch(e) {}
-              }} style={{ ...btnPrimary, padding: "10px 20px", opacity: (externalLinkInput.trim() && externalLinkInput.match(/^https?:\/\//i)) ? 1 : 0.4 }}>Share Link</button>
             </div>
           </div>
         </div>
@@ -4911,10 +4937,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             <div style={{ padding: "0 20px 20px" }}>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.mapPin({ size: 12 })} Hometown</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.mapPin({ size: 12 })} City</label>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.search({ size: 14 })}</div>
-                  <input value={feedFilters.hometown} onChange={(e) => setFeedFilters({...feedFilters, hometown: e.target.value})} placeholder="Search city..." style={{ ...inputStyle, paddingLeft: 34 }} />
+                  <input value={feedFilters.hometown} onChange={(e) => setFeedFilters({...feedFilters, hometown: e.target.value})} placeholder="Hometown or current city" style={{ ...inputStyle, paddingLeft: 34 }} />
                 </div>
               </div>
               <div style={{ marginBottom: 20 }}>
@@ -4924,19 +4950,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </select>
               </div>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.globe({ size: 12 })} NRI / Based in India</label>
-                <select value={feedFilters.yearsAbroad} onChange={(e) => setFeedFilters({...feedFilters, yearsAbroad: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
-                  {["All", "NRI", "Based in India"].map(y => <option key={y}>{y}</option>)}
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.globe({ size: 12 })} Lives in</label>
+                <select value={feedFilters.livesIn} onChange={(e) => setFeedFilters({...feedFilters, livesIn: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                  {["All", "Abroad", "India"].map(y => <option key={y}>{y}</option>)}
                 </select>
               </div>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.users({ size: 12 })} Specific Community</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{Icons.users({ size: 12 })} Community</label>
                 <select value={feedFilters.community} onChange={(e) => setFeedFilters({...feedFilters, community: e.target.value})} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
                   <option value="All">All Communities</option>
                   {groups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
                 </select>
               </div>
-              <button onClick={() => setFilterModalOpen(false)} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px" }}>Apply Filters</button>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button onClick={() => setFeedFilters(noFeedFilters)} style={{ background: "none", border: "none", color: "#5F5E5B", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, padding: "12px 8px" }}>Clear</button>
+                <button onClick={() => setFilterModalOpen(false)} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px" }}>Done</button>
+              </div>
             </div>
           </div>
         </div>
@@ -5388,6 +5417,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
           /* Post composer */
           .post-actions { flex-wrap: wrap !important; }
+
+          /* Home feed: posts start higher */
+          .feed-subtitle { display: none !important; }
 
           /* Profile page */
           .profile-full { padding: 20px 16px !important; }
