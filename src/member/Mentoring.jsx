@@ -22,6 +22,8 @@ const h3 = { fontSize: 16, fontWeight: 700, color: INK, fontFamily: font, margin
 
 export const MENTOR_AREAS = ["Job search", "CV & LinkedIn review", "Interview practice", "Moving here", "Studying abroad", "Visas & residence", "Starting a business", "Career change"];
 
+const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 const listOf = (text) => [...new Set((text || "").split(",").map(t => t.trim()).filter(Boolean))].slice(0, 8);
 
 // "Tue 15 Oct, 18:00–18:30 CEST", in the viewer's own time zone.
@@ -106,11 +108,14 @@ export function BookingModal({ mentor, onClose, onMessage, Avatar }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [booked, setBooked] = useState(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const areas = listOf(mentor.mentorAreas);
 
-  useEffect(() => {
-    api.getMentorSlots(mentor.id).then(setSlots).catch(() => { setSlots([]); setError("Open times couldn't be loaded. Please try again."); });
-  }, [mentor.id]);
+  const loadSlots = () => {
+    setLoadFailed(false);
+    api.getMentorSlots(mentor.id).then(setSlots).catch(() => setLoadFailed(true));
+  };
+  useEffect(loadSlots, [mentor.id]);
 
   const byDay = useMemo(() => {
     const groups = [];
@@ -130,7 +135,7 @@ export function BookingModal({ mentor, onClose, onMessage, Avatar }) {
       setBooked({ id, starts_at: pick.starts_at, duration_min: pick.duration_min, topic, meeting_link: "" });
     } catch (e) {
       setError(errorText(e, "The session couldn't be booked. Please try again."));
-      if (/no longer free/i.test(e?.message || "")) api.getMentorSlots(mentor.id).then(setSlots).catch(() => {});
+      if (/no longer free/i.test(e?.message || "")) { setPick(null); loadSlots(); }
     }
     setBusy(false);
   };
@@ -161,7 +166,9 @@ export function BookingModal({ mentor, onClose, onMessage, Avatar }) {
                 </div>
               </>
             );
-          })() : slots === null ? (
+          })() : loadFailed ? (
+            <p role="alert" style={{ fontSize: 13, color: "#B91C1C" }}>Open times couldn't be loaded. <button onClick={loadSlots} style={{ background: "none", border: "none", padding: 0, color: INK, fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontFamily: font }}>Try again</button></p>
+          ) : slots === null ? (
             <p role="status" style={{ fontSize: 13, color: FAINT }}>Loading open times…</p>
           ) : slots.length === 0 ? (
             <div>
@@ -257,22 +264,18 @@ export function MentorProfileCard({ member, rating, onBook, isSelf, Avatar, me }
 // ---------------------------------------------------------------------------
 // MENTORS LIST (Find → Mentors)
 // ---------------------------------------------------------------------------
-export function MentorsList({ user, people, ratings, onBook, openMember, Avatar }) {
-  const [slots, setSlots] = useState(null);
+export function MentorsList({ user, people, ready = true, ratings, onBook, openMember, Avatar }) {
+  const [next, setNext] = useState(null); // { [mentor id]: next open time }
   const [area, setArea] = useState("");
-  useEffect(() => { api.getMentorSlots().then(setSlots).catch(() => setSlots([])); }, []);
-  const next = useMemo(() => {
-    const m = {};
-    (slots || []).forEach(s => { if (!m[s.mentor_id]) m[s.mentor_id] = s; });
-    return m;
-  }, [slots]);
+  useEffect(() => { api.getMentorNextSlots().then(setNext).catch(() => setNext({})); }, []);
+  const slots = next;
   const myCity = (user.city || (user.location || "").split(",")[0] || "").trim().toLowerCase();
   const mentors = people
     .filter(p => p.mentorOpen && p.linkedin_verified && p.id !== user.id)
     .filter(p => !area || listOf(p.mentorAreas).some(a => a.toLowerCase() === area.toLowerCase()))
     .sort((a, b) =>
       ((b.location || "").toLowerCase().startsWith(myCity) - (a.location || "").toLowerCase().startsWith(myCity))
-      || (!!next[b.id] - !!next[a.id])
+      || (!!next?.[b.id] - !!next?.[a.id])
       || ((ratings[b.id]?.rating || 0) - (ratings[a.id]?.rating || 0)));
   return (
     <div>
@@ -281,7 +284,9 @@ export function MentorsList({ user, people, ratings, onBook, openMember, Avatar 
           <button key={a || "all"} onClick={() => setArea(a)} aria-pressed={area === a} style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 20, border: `1px solid ${area === a ? INK : "#E0E0DE"}`, background: area === a ? INK : "#fff", color: area === a ? "#fff" : "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{a || "All mentors"}</button>
         ))}
       </div>
-      {mentors.length === 0 ? (
+      {!ready ? (
+        <p role="status" style={{ fontSize: 13, color: FAINT, fontFamily: font }}>Loading mentors…</p>
+      ) : mentors.length === 0 ? (
         <div style={{ ...card, textAlign: "center", color: MUTED, fontSize: 14, fontFamily: font }}>
           {area ? `No mentors for "${area}" yet.` : "No mentors yet."} Know your way around? Offer mentoring under Mentoring.
         </div>
@@ -293,9 +298,9 @@ export function MentorsList({ user, people, ratings, onBook, openMember, Avatar 
             <p style={{ fontSize: 13, color: MUTED }}>{[m.profession, (m.location || "").split(",")[0]].filter(Boolean).join(" · ")}</p>
             <div style={{ margin: "6px 0" }}><RatingLine rating={ratings[m.id]} /></div>
             {m.mentorAreas && <AreaChips text={m.mentorAreas} max={4} />}
-            <p style={{ fontSize: 12, color: next[m.id] ? "#047857" : FAINT, marginTop: 8 }}>{slots === null ? "" : next[m.id] ? `Next free: ${sessionTime(next[m.id].starts_at, next[m.id].duration_min)}` : "No open times right now"}</p>
+            <p style={{ fontSize: 12, color: next?.[m.id] ? "#047857" : FAINT, marginTop: 8 }}>{slots === null ? "" : next[m.id] ? `Next free: ${sessionTime(next[m.id].starts_at, next[m.id].duration_min)}` : "No open times right now"}</p>
           </div>
-          <button onClick={() => onBook(m)} style={{ ...btn, alignSelf: "center" }}>{next[m.id] ? "Book" : "Ask"}</button>
+          <button onClick={() => onBook(m)} style={{ ...btn, alignSelf: "center" }}>{next?.[m.id] ? "Book" : "Ask"}</button>
         </div>
       ))}
     </div>
@@ -311,6 +316,7 @@ function SessionCard({ b, user, review, onChanged, onMessage, openMember, Avatar
   const otherName = other?.name || "Member";
   const end = new Date(b.starts_at).getTime() + b.duration_min * 60000;
   const past = end < Date.now();
+  const started = new Date(b.starts_at).getTime() <= Date.now();
   const cancelled = b.status === "cancelled";
   const [link, setLink] = useState(b.meeting_link || "");
   const [editing, setEditing] = useState(false);
@@ -322,7 +328,7 @@ function SessionCard({ b, user, review, onChanged, onMessage, openMember, Avatar
   const run = async (fn, fallback) => {
     if (busy) return;
     setBusy(true);
-    try { await fn(); await onChanged(); } catch (e) { alert(errorText(e, fallback)); }
+    try { await fn(); await onChanged(); } catch (e) { alert(errorText(e, fallback)); onChanged(); }
     setBusy(false);
   };
   const cancel = () => {
@@ -360,7 +366,7 @@ function SessionCard({ b, user, review, onChanged, onMessage, openMember, Avatar
             <button onClick={() => onMessage(other)} style={btnLight}>Message</button>
             <a href={cal.google} target="_blank" rel="noopener noreferrer" style={{ ...btnLight, textDecoration: "none" }}>📅 Add to calendar</a>
             <button onClick={cal.ics} style={btnLight}>.ics</button>
-            <button onClick={cancel} disabled={busy} style={{ ...btnLight, color: "#B91C1C" }}>Cancel</button>
+            {!started && <button onClick={cancel} disabled={busy} style={{ ...btnLight, color: "#B91C1C" }}>Cancel</button>}
           </div>
         </div>
       )}
@@ -369,6 +375,8 @@ function SessionCard({ b, user, review, onChanged, onMessage, openMember, Avatar
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0EFED", fontFamily: font }}>
           {review ? (
             <p style={{ fontSize: 13, color: MUTED }}>Your rating: <Stars value={review.rating} />{review.comment ? ` · “${review.comment}”` : ""}</p>
+          ) : b.reviewed_at ? (
+            <p style={{ fontSize: 13, color: MUTED }}>Rated. Thank you!</p>
           ) : (
             <>
               <p style={{ fontSize: 13, color: INK, fontWeight: 600, marginBottom: 6 }}>How was it? Your rating helps others find good mentors.</p>
@@ -388,7 +396,7 @@ function SessionCard({ b, user, review, onChanged, onMessage, openMember, Avatar
   );
 }
 
-export function MentoringPage({ user, onUserUpdate, people, ratings, onBook, onMessage, openMember, Avatar }) {
+export function MentoringPage({ user, onUserUpdate, seekers: seekerList = [], ratings, onRated, onBook, onMessage, openMember, Avatar }) {
   const [sessions, setSessions] = useState(null);
   const [myReviews, setMyReviews] = useState([]);
   const [mySlots, setMySlots] = useState([]);
@@ -435,10 +443,19 @@ export function MentoringPage({ user, onUserUpdate, people, ratings, onBook, onM
     if (!date || !time) { setSlotError("Pick a date and a time."); return; }
     const first = new Date(`${date}T${time}`);
     if (isNaN(first) || first.getTime() < Date.now() + 3600000) { setSlotError("Pick a time at least an hour from now."); return; }
-    const times = Array.from({ length: Number(weeks) }, (_, i) => ({ starts_at: new Date(first.getTime() + i * 7 * 86400000).toISOString(), duration_min: Number(duration) }));
+    // Same clock time each week (also across a change to or from summer time),
+    // up to 90 days ahead.
+    const limit = Date.now() + 90 * 86400000 - 60000;
+    const all = Array.from({ length: Number(weeks) }, (_, i) => { const d = new Date(first); d.setDate(d.getDate() + 7 * i); return d; });
+    const fit = all.filter(d => d.getTime() <= limit);
+    if (!fit.length) { setSlotError("Pick a time within the next 90 days."); return; }
+    const times = fit.map(d => ({ starts_at: d.toISOString(), duration_min: Number(duration) }));
     setSaving("slots");
-    try { await api.addMentorSlots(times); await load(); setSlotForm(f => ({ ...f, date: "" })); }
-    catch (e2) { setSlotError(/23505|duplicate/i.test(e2?.message || "") ? "You already have a time at that moment." : errorText(e2, "Those times couldn't be added. Please try again.")); }
+    try {
+      await api.addMentorSlots(times); await load(); setSlotForm(f => ({ ...f, date: "" }));
+      if (fit.length < all.length) setSlotError(`Added ${fit.length} ${fit.length === 1 ? "time" : "times"}. Later weeks are more than 90 days ahead, so they weren't added.`);
+    }
+    catch (e2) { setSlotError(/23505|duplicate/i.test(e2?.message || "") ? "You already have a time at that moment." : errorText(e2, "Those times couldn't be added. Please try again.")); load(); }
     setSaving("");
   };
   const removeSlot = async (s) => {
@@ -447,12 +464,14 @@ export function MentoringPage({ user, onUserUpdate, people, ratings, onBook, onM
   };
 
   const now = Date.now();
-  const upcoming = (sessions || []).filter(b => b.status === "booked" && new Date(b.starts_at).getTime() + b.duration_min * 60000 > now).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
-  const past = (sessions || []).filter(b => !upcoming.includes(b)).slice(0, 20);
+  const endOf = (b) => new Date(b.starts_at).getTime() + b.duration_min * 60000;
+  const upcoming = (sessions || []).filter(b => b.status === "booked" && endOf(b) > now).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  const ended = (sessions || []).filter(b => b.status === "booked" && endOf(b) <= now);
+  const cancelledList = (sessions || []).filter(b => b.status === "cancelled").slice(0, 10);
   const reviewFor = (id) => myReviews.find(r => r.booking_id === id);
-  const toRate = past.filter(b => b.mentee_id === user.id && b.status === "booked" && !reviewFor(b.id)).length;
+  const toRate = ended.filter(b => b.mentee_id === user.id && !b.reviewed_at && !reviewFor(b.id)).length;
   const myCity = (user.city || (user.location || "").split(",")[0] || "").trim().toLowerCase();
-  const seekers = people.filter(p => p.menteeOpen && p.id !== user.id).sort((a, b) => (b.location || "").toLowerCase().startsWith(myCity) - (a.location || "").toLowerCase().startsWith(myCity)).slice(0, 6);
+  const seekers = seekerList.filter(p => p.id !== user.id).sort((a, b) => (b.location || "").toLowerCase().startsWith(myCity) - (a.location || "").toLowerCase().startsWith(myCity)).slice(0, 6);
   const freeSlots = mySlots.filter(s => !s.booked);
 
   return (
@@ -495,8 +514,8 @@ export function MentoringPage({ user, onUserUpdate, people, ratings, onBook, onM
             <h3 style={h3}>🤝 Offer free mentoring</h3>
             <p style={{ fontSize: 13, color: MUTED, fontFamily: font }}>{verified ? "Share what you've learned. You choose when you're free." : "You can offer mentoring once you're verified."}</p>
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: verified ? "pointer" : "default", flexShrink: 0, opacity: verified ? 1 : 0.5 }}>
-            <input type="checkbox" aria-label="Offer free mentoring" checked={!!user.mentorOpen} disabled={!verified || saving === "mentor"} onChange={(e) => save("mentor", { mentor_open: e.target.checked, mentor_areas: areas.join(", ").slice(0, 300) })} /> {user.mentorOpen ? "On" : "Off"}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: verified || user.mentorOpen ? "pointer" : "default", flexShrink: 0, opacity: verified || user.mentorOpen ? 1 : 0.5 }}>
+            <input type="checkbox" aria-label="Offer free mentoring" checked={!!user.mentorOpen} disabled={(!verified && !user.mentorOpen) || saving === "mentor"} onChange={(e) => save("mentor", { mentor_open: e.target.checked, mentor_areas: areas.join(", ").slice(0, 300) })} /> {user.mentorOpen ? "On" : "Off"}
           </label>
         </div>
         {user.mentorOpen && (
@@ -511,10 +530,10 @@ export function MentoringPage({ user, onUserUpdate, people, ratings, onBook, onM
               <button disabled={saving === "areas" || areas.join(", ") === listOf(user.mentorAreas).join(", ")} onClick={() => save("areas", { mentor_areas: areas.join(", ").slice(0, 300) })} style={{ ...btn, marginTop: 10, opacity: areas.join(", ") === listOf(user.mentorAreas).join(", ") ? 0.5 : 1 }}>Save areas</button>
             </div>
 
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid #F0EFED" }}>
+            {verified && <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid #F0EFED" }}>
               <span style={label}>When you're free ({freeSlots.length} open {freeSlots.length === 1 ? "time" : "times"})</span>
               <form onSubmit={addTimes} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, alignItems: "end" }}>
-                <div><label htmlFor="slot-date" style={{ ...label, textTransform: "none", letterSpacing: 0 }}>Day</label><input id="slot-date" type="date" style={input} value={slotForm.date} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setSlotForm({ ...slotForm, date: e.target.value })} /></div>
+                <div><label htmlFor="slot-date" style={{ ...label, textTransform: "none", letterSpacing: 0 }}>Day</label><input id="slot-date" type="date" style={input} value={slotForm.date} min={localDate(new Date())} max={localDate(new Date(Date.now() + 89 * 86400000))} onChange={(e) => setSlotForm({ ...slotForm, date: e.target.value })} /></div>
                 <div><label htmlFor="slot-time" style={{ ...label, textTransform: "none", letterSpacing: 0 }}>Time</label><input id="slot-time" type="time" step={900} style={input} value={slotForm.time} onChange={(e) => setSlotForm({ ...slotForm, time: e.target.value })} /></div>
                 <div><label htmlFor="slot-dur" style={{ ...label, textTransform: "none", letterSpacing: 0 }}>Length</label><select id="slot-dur" style={input} value={slotForm.duration} onChange={(e) => setSlotForm({ ...slotForm, duration: e.target.value })}>{[20, 30, 45, 60].map(d => <option key={d} value={d}>{d} min</option>)}</select></div>
                 <div><label htmlFor="slot-weeks" style={{ ...label, textTransform: "none", letterSpacing: 0 }}>Repeat</label><select id="slot-weeks" style={input} value={slotForm.weeks} onChange={(e) => setSlotForm({ ...slotForm, weeks: e.target.value })}><option value={1}>Once</option><option value={2}>2 weeks</option><option value={4}>4 weeks</option><option value={8}>8 weeks</option></select></div>
@@ -532,7 +551,7 @@ export function MentoringPage({ user, onUserUpdate, people, ratings, onBook, onM
                   ))}
                 </div>
               )}
-            </div>
+            </div>}
 
             {seekers.length > 0 && (
               <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid #F0EFED" }}>
@@ -555,14 +574,23 @@ export function MentoringPage({ user, onUserUpdate, people, ratings, onBook, onM
         )}
       </div>
 
-      {past.length > 0 && (
+      {ended.length > 0 && (
         <div>
           <h3 style={{ ...h3, marginBottom: 10 }}>Past sessions</h3>
-          {past.map(b => <SessionCard key={b.id} b={b} user={user} review={reviewFor(b.id)} onChanged={load} onMessage={onMessage} openMember={openMember} Avatar={Avatar} />)}
+          {ended.slice(0, 20).map(b => <SessionCard key={b.id} b={b} user={user} review={reviewFor(b.id)} onChanged={async () => { await load(); onRated?.(); }} onMessage={onMessage} openMember={openMember} Avatar={Avatar} />)}
         </div>
       )}
-      {user.mentorOpen && ratings[user.id] && (
-        <p style={{ fontSize: 13, color: MUTED, fontFamily: font, textAlign: "center", marginTop: 8 }}>Your mentoring rating: <RatingLine rating={ratings[user.id]} /></p>
+      {cancelledList.length > 0 && (
+        <div>
+          <h3 style={{ ...h3, marginBottom: 10 }}>Cancelled</h3>
+          {cancelledList.map(b => <SessionCard key={b.id} b={b} user={user} onChanged={load} onMessage={onMessage} openMember={openMember} Avatar={Avatar} />)}
+        </div>
+      )}
+      {(user.mentorOpen || ratings[user.id]) && (
+        <div style={{ marginTop: 8 }}>
+          <h3 style={{ ...h3, marginBottom: 10 }}>Your reviews as a mentor</h3>
+          <MentorProfileCard member={{ id: user.id, name: user.name, avatar_url: user.avatar_url, mentorAreas: user.mentorAreas }} rating={ratings[user.id]} isSelf me={user.id} Avatar={Avatar} />
+        </div>
       )}
     </div>
   );

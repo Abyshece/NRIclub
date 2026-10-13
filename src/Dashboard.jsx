@@ -1983,11 +1983,33 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [bookingMentor, setBookingMentor] = useState(null);
   const [mentorRatings, setMentorRatings] = useState({});
+  const [mentorsList, setMentorsList] = useState([]); // verified mentors
+  const [seekersList, setSeekersList] = useState([]); // members looking for a mentor
+  const [mentorsReady, setMentorsReady] = useState(false);
+  const [mentoringKey, setMentoringKey] = useState(0); // reloads the Mentoring page
   const placesCity = selectedGroup?.category === "City" ? (selectedGroup.name || "").replace(/^Indians in /i, "") : null;
   useEffect(() => { setPlaceKind("All"); }, [placesCity]);
   useEffect(() => { api.isAdmin().then(setIsAdminUser).catch(() => {}); }, []);
   useEffect(() => { document.title = HOME_TITLE; }, []);
-  useEffect(() => { if (canBrowse) api.getMentorRatings().then(setMentorRatings).catch(() => {}); }, [canBrowse]);
+  const refreshRatings = () => api.getMentorRatings().then(setMentorRatings).catch(() => {});
+  const asMentoringPerson = (p) => ({
+    id: p.id, name: p.name, avatar_url: p.avatar_url || "", profession: p.profession || "", location: p.location || "",
+    linkedin_verified: !!p.linkedin_verified, mentorOpen: !!p.mentor_open, mentorAreas: p.mentor_areas || "",
+    menteeOpen: !!p.mentee_open, menteeNeeds: p.mentee_needs || "",
+  });
+  const loadMentoring = () => Promise.all([
+    api.getMentors().then(rows => setMentorsList(rows.map(asMentoringPerson))).catch(() => {}),
+    api.getSeekers().then(rows => setSeekersList(rows.map(asMentoringPerson))).catch(() => {}),
+    refreshRatings(),
+  ]).finally(() => setMentorsReady(true));
+  // Mentors, seekers and ratings: on arrival, and again when the member
+  // opens Find -> Mentors or Mentoring.
+  useEffect(() => {
+    if (!canBrowse) return;
+    if (view === "mentoring" || (view === "network" && findTab === "mentors") || !mentorsReady) loadMentoring();
+  }, [canBrowse, view, findTab]);
+  // Leaving Find goes back to People next time.
+  useEffect(() => { if (view !== "network") setFindTab("people"); }, [view]);
   // "Book" on a mentor (null: go to Find → Mentors).
   const bookMentor = (m) => {
     if (!m) { setFindTab("mentors"); setView("network"); return; }
@@ -2256,9 +2278,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             {(() => {
               const city = helpNearbyCity.toLowerCase();
               const near = (u) => (u.location || "").toLowerCase().startsWith(city);
-              const others = networkUsers.filter(u => u.id !== user.id && !blockedIds.has(u.id));
-              const mentors = user.menteeOpen ? others.filter(u => u.mentorOpen && u.linkedin_verified).sort((a, b) => (near(b) - near(a)) || ((mentorRatings[b.id]?.rating || 0) - (mentorRatings[a.id]?.rating || 0))).slice(0, 3) : [];
-              const seekers = user.mentorOpen ? others.filter(u => u.menteeOpen) : [];
+              const ok = (u) => u.id !== user.id && !blockedIds.has(u.id);
+              const mentors = user.menteeOpen ? mentorsList.filter(ok).sort((a, b) => (near(b) - near(a)) || ((mentorRatings[b.id]?.rating || 0) - (mentorRatings[a.id]?.rating || 0))).slice(0, 3) : [];
+              const seekers = user.mentorOpen ? seekersList.filter(ok) : [];
               if (!mentors.length && !seekers.length) return null;
               return (
                 <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #A7F3D0", padding: "16px 18px", marginBottom: 16, fontFamily: font }}>
@@ -2376,7 +2398,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button onClick={() => setView("mentoring")} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>My sessions</button>
             </div>
             {findTabs}
-            <MentorsList user={user} people={networkUsers.filter(u => !blockedIds.has(u.id))} ratings={mentorRatings} onBook={bookMentor} openMember={openMember} Avatar={Avatar} />
+            <MentorsList user={user} people={mentorsList.filter(u => !blockedIds.has(u.id))} ready={mentorsReady} ratings={mentorRatings} onBook={bookMentor} openMember={openMember} Avatar={Avatar} />
           </div>
         );
         return (
@@ -3895,7 +3917,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         );
 
       case "mentoring":
-        return <MentoringPage user={user} onUserUpdate={onUserUpdate} people={networkUsers.filter(u => !blockedIds.has(u.id))} ratings={mentorRatings} onBook={bookMentor} onMessage={messageMember} openMember={openMember} Avatar={Avatar} />;
+        return <MentoringPage key={mentoringKey} user={user} onUserUpdate={onUserUpdate} seekers={seekersList.filter(u => !blockedIds.has(u.id))} ratings={mentorRatings} onRated={refreshRatings} onBook={bookMentor} onMessage={messageMember} openMember={openMember} Avatar={Avatar} />;
 
       case "member": {
         const mp = memberPage && memberPage.id === memberId ? memberPage : null;
@@ -4187,6 +4209,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             setNotifOpen(false);
                             Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
                             setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+                            setMentoringKey(k => k + 1);
+                            if (n.type === "review") refreshRatings();
                             setView("mentoring");
                           } else if (["answer", "thanks", "best", "urgent", "rsvp", "member"].includes(n.type)) {
                             setNotifOpen(false);

@@ -17,14 +17,20 @@ $$;
 --     mentor helps with, and "Looking for a mentor" with what the member
 --     needs help with.
 --   * public.mentor_slots: times a mentor is free for a session (up to 90
---     days ahead, 15 to 120 minutes, at most 40 open times at once).
+--     days ahead, 15 to 120 minutes, not overlapping, at most 40 open times
+--     at once).
 --   * public.mentor_bookings: a member books one of those times. Only the
 --     mentor and the member see a booking. Booking and cancelling go
 --     through public.book_mentor_session and public.cancel_mentor_session;
---     a member can have 3 upcoming sessions, 1 of them with the same mentor.
+--     a member can have 3 upcoming sessions, 1 of them with the same mentor,
+--     and book at most 6 times a day. If the member cancels, the time opens
+--     up again; if the mentor cancels, the time is removed.
+--   * A mentor who is blocked, or no longer verified, stops mentoring: open
+--     times are removed (and, when blocked, upcoming sessions cancelled).
 --   * public.mentor_reviews: after a session, the member rates it (1 to 5
 --     stars) with an optional comment, once. Reviews are public to members;
---     public.mentor_ratings() gives each mentor's average.
+--     public.mentor_ratings() gives each mentor's average. A removed review
+--     can't be posted again.
 --   * A mentor and a member with a booked session can message each other,
 --     even if one only takes messages from connections ("Nobody" still
 --     means nobody, and blocks still apply).
@@ -95,6 +101,14 @@ BEGIN
     IF NEW.starts_at < NOW() + INTERVAL '1 hour' OR NEW.starts_at > NOW() + INTERVAL '90 days' THEN
       RAISE EXCEPTION 'Pick a time between an hour and 90 days from now.' USING ERRCODE = '23514';
     END IF;
+    -- One mentor's new times are checked one by one.
+    PERFORM pg_advisory_xact_lock(hashtext('nriclub-slots:' || NEW.mentor_id::text));
+    IF EXISTS (SELECT 1 FROM public.mentor_slots s
+               WHERE s.mentor_id = NEW.mentor_id
+                 AND s.starts_at < NEW.starts_at + make_interval(mins => NEW.duration_min)
+                 AND NEW.starts_at < s.starts_at + make_interval(mins => s.duration_min)) THEN
+      RAISE EXCEPTION 'This overlaps another of your times.' USING ERRCODE = '23514';
+    END IF;
     IF (SELECT count(*) FROM public.mentor_slots s
         WHERE s.mentor_id = NEW.mentor_id AND NOT s.booked AND s.starts_at > NOW()) >= 40 THEN
       RAISE EXCEPTION 'You can have up to 40 open times. Remove some first.' USING ERRCODE = '23514';
@@ -122,18 +136,20 @@ CREATE TABLE public.mentor_bookings (
   status TEXT NOT NULL DEFAULT 'booked' CHECK (status IN ('booked', 'cancelled')),
   cancelled_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   cancel_reason TEXT NOT NULL DEFAULT '' CHECK (char_length(cancel_reason) <= 300),
+  reviewed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE UNIQUE INDEX idx_mentor_bookings_one_per_slot ON public.mentor_bookings (slot_id) WHERE status = 'booked';
 CREATE INDEX idx_mentor_bookings_mentor ON public.mentor_bookings (mentor_id, starts_at);
 CREATE INDEX idx_mentor_bookings_mentee ON public.mentor_bookings (mentee_id, starts_at);
+CREATE INDEX idx_mentor_bookings_mentee_created ON public.mentor_bookings (mentee_id, created_at);
 CREATE INDEX idx_mentor_bookings_cancelled_by ON public.mentor_bookings (cancelled_by);
 
 ALTER TABLE public.mentor_bookings ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.mentor_bookings FROM anon;
 CREATE POLICY "Mentor and member see their sessions" ON public.mentor_bookings
   FOR SELECT TO authenticated
-  USING ((SELECT auth.uid()) IN (mentor_id, mentee_id) OR (SELECT private.is_admin()));
+  USING ((SELECT auth.uid()) IN (mentor_id, mentee_id));
 
 -- Books an open time for the signed-in member.
 CREATE FUNCTION public.book_mentor_session(p_slot UUID, p_topic TEXT DEFAULT '', p_note TEXT DEFAULT '')
@@ -169,6 +185,11 @@ BEGIN
              WHERE b.mentee_id = me AND b.mentor_id = s.mentor_id AND b.status = 'booked' AND b.starts_at > NOW()) THEN
     RAISE EXCEPTION 'You already have an upcoming session with this mentor.' USING ERRCODE = '23514';
   END IF;
+  -- Booking and cancelling over and over would keep notifying the mentor.
+  IF (SELECT count(*) FROM public.mentor_bookings b
+      WHERE b.mentee_id = me AND b.created_at > NOW() - INTERVAL '1 day') >= 6 THEN
+    RAISE EXCEPTION 'You''ve booked a lot of sessions today. Please try again tomorrow.' USING ERRCODE = '23514';
+  END IF;
   INSERT INTO public.mentor_bookings (slot_id, mentor_id, mentee_id, starts_at, duration_min, topic, note)
   VALUES (s.id, s.mentor_id, me, s.starts_at, s.duration_min, LEFT(btrim(COALESCE(p_topic, '')), 200), LEFT(btrim(COALESCE(p_note, '')), 1000))
   RETURNING id INTO booking_id;
@@ -180,8 +201,9 @@ BEGIN
 END;
 $$;
 
--- Cancels a session (mentor or member, before it starts). The time opens
--- up again for others.
+-- Cancels a session (mentor or member, before it starts). If the member
+-- cancels, the time opens up again for others; if the mentor cancels, they
+-- aren't free then, so the time is removed.
 CREATE FUNCTION public.cancel_mentor_session(p_booking UUID, p_reason TEXT DEFAULT '')
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -198,7 +220,11 @@ BEGIN
   UPDATE public.mentor_bookings
   SET status = 'cancelled', cancelled_by = me, cancel_reason = LEFT(btrim(COALESCE(p_reason, '')), 300)
   WHERE id = b.id;
-  UPDATE public.mentor_slots SET booked = FALSE WHERE id = b.slot_id AND starts_at > NOW();
+  IF me = b.mentee_id THEN
+    UPDATE public.mentor_slots SET booked = FALSE WHERE id = b.slot_id AND starts_at > NOW();
+  ELSE
+    DELETE FROM public.mentor_slots WHERE id = b.slot_id;
+  END IF;
   PERFORM private.notify(CASE WHEN me = b.mentor_id THEN b.mentee_id ELSE b.mentor_id END, 'booking_cancelled', me,
     'cancelled your mentoring session' || CASE WHEN b.topic <> '' THEN ': ' || private.short_title(b.topic) ELSE '' END,
     b.id);
@@ -211,6 +237,9 @@ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   link TEXT := btrim(COALESCE(p_link, ''));
 BEGIN
+  IF NOT private.is_active_member() THEN
+    RAISE EXCEPTION 'Session not found.' USING ERRCODE = 'P0002';
+  END IF;
   IF link <> '' AND link !~* '^https://[^[:space:]]+$' THEN
     RAISE EXCEPTION 'The link must start with https://' USING ERRCODE = '23514';
   END IF;
@@ -259,6 +288,9 @@ BEGIN
   IF b.status <> 'booked' OR b.starts_at + make_interval(mins => b.duration_min) > NOW() THEN
     RAISE EXCEPTION 'You can rate a session once it has taken place.' USING ERRCODE = '23514';
   END IF;
+  IF b.reviewed_at IS NOT NULL THEN
+    RAISE EXCEPTION 'You have already rated this session.' USING ERRCODE = '23505';
+  END IF;
   IF p_rating IS NULL OR p_rating NOT BETWEEN 1 AND 5 THEN
     RAISE EXCEPTION 'Choose 1 to 5 stars.' USING ERRCODE = '23514';
   END IF;
@@ -269,6 +301,7 @@ BEGIN
   IF review_id IS NULL THEN
     RAISE EXCEPTION 'You have already rated this session.' USING ERRCODE = '23505';
   END IF;
+  UPDATE public.mentor_bookings SET reviewed_at = NOW() WHERE id = b.id;
   PERFORM private.notify(b.mentor_id, 'review', me,
     'rated your mentoring session ' || repeat('★', p_rating) || repeat('☆', 5 - p_rating), b.id);
   RETURN review_id;
@@ -281,6 +314,72 @@ RETURNS TABLE (mentor_id UUID, rating NUMERIC, reviews INTEGER)
 LANGUAGE sql STABLE SET search_path = '' AS $$
   SELECT r.mentor_id, round(avg(r.rating)::numeric, 1), count(*)::INTEGER
   FROM public.mentor_reviews r GROUP BY r.mentor_id;
+$$;
+
+-- A removed review takes its notification with it (the booking stays rated).
+CREATE FUNCTION private.forget_review_notification()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  DELETE FROM public.notifications n
+  WHERE n.type = 'review' AND n.reference_id = OLD.booking_id AND n.user_id = OLD.mentor_id;
+  RETURN NULL;
+END;
+$$;
+CREATE TRIGGER forget_review_notification AFTER DELETE ON public.mentor_reviews
+  FOR EACH ROW EXECUTE FUNCTION private.forget_review_notification();
+
+-- A booking that disappears (e.g. the member deleted their account) frees
+-- its time again.
+CREATE FUNCTION private.free_slot_of_deleted_booking()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF OLD.status = 'booked' AND OLD.slot_id IS NOT NULL THEN
+    UPDATE public.mentor_slots SET booked = FALSE WHERE id = OLD.slot_id AND starts_at > NOW();
+  END IF;
+  RETURN NULL;
+END;
+$$;
+CREATE TRIGGER free_slot_of_deleted_booking AFTER DELETE ON public.mentor_bookings
+  FOR EACH ROW EXECUTE FUNCTION private.free_slot_of_deleted_booking();
+
+-- A mentor who is no longer an active, verified member stops mentoring:
+-- open times go, and if they were blocked, upcoming sessions are cancelled
+-- (the members are told).
+CREATE FUNCTION private.stop_mentoring_when_inactive()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  b public.mentor_bookings;
+BEGIN
+  IF NEW.status = 'active' AND NEW.verification_status = 'approved' THEN
+    RETURN NULL;
+  END IF;
+  UPDATE public.profiles SET mentor_open = FALSE WHERE id = NEW.id AND mentor_open;
+  DELETE FROM public.mentor_slots WHERE mentor_id = NEW.id AND NOT booked;
+  IF NEW.status <> 'active' THEN
+    FOR b IN SELECT * FROM public.mentor_bookings
+             WHERE mentor_id = NEW.id AND status = 'booked' AND starts_at > NOW() LOOP
+      UPDATE public.mentor_bookings
+      SET status = 'cancelled', cancelled_by = NEW.id, cancel_reason = 'The mentor is no longer available.'
+      WHERE id = b.id;
+      DELETE FROM public.mentor_slots WHERE id = b.slot_id;
+      PERFORM private.notify(b.mentee_id, 'booking_cancelled', NULL,
+        'Your mentoring session was cancelled: the mentor is no longer available.', b.id);
+    END LOOP;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+CREATE TRIGGER stop_mentoring_when_inactive AFTER UPDATE OF status, verification_status ON public.profile_private
+  FOR EACH ROW EXECUTE FUNCTION private.stop_mentoring_when_inactive();
+
+-- Each mentor's next open time (for "Next free" in Find).
+CREATE FUNCTION public.mentor_next_slots()
+RETURNS TABLE (mentor_id UUID, slot_id UUID, starts_at TIMESTAMPTZ, duration_min INTEGER)
+LANGUAGE sql STABLE SET search_path = '' AS $$
+  SELECT DISTINCT ON (s.mentor_id) s.mentor_id, s.id, s.starts_at, s.duration_min
+  FROM public.mentor_slots s
+  WHERE NOT s.booked AND s.starts_at > NOW() + INTERVAL '30 minutes'
+  ORDER BY s.mentor_id, s.starts_at;
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -396,10 +495,15 @@ $$;
 -- ---------------------------------------------------------------------------
 -- PERMISSIONS
 -- ---------------------------------------------------------------------------
-REVOKE ALL ON FUNCTION private.check_mentor_open(), private.check_mentor_slot(), private.have_session(UUID, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION private.check_mentor_open(), private.check_mentor_slot(), private.have_session(UUID, UUID),
+  private.forget_review_notification(), private.free_slot_of_deleted_booking(), private.stop_mentoring_when_inactive() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION private.forget_review_notification(), private.free_slot_of_deleted_booking(),
+  private.stop_mentoring_when_inactive() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION private.check_mentor_open(), private.check_mentor_slot() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION private.have_session(UUID, UUID) TO service_role;
 REVOKE ALL ON FUNCTION public.book_mentor_session(UUID, TEXT, TEXT), public.cancel_mentor_session(UUID, TEXT),
-  public.set_session_link(UUID, TEXT), public.review_mentor_session(UUID, INTEGER, TEXT), public.mentor_ratings() FROM PUBLIC, anon;
+  public.set_session_link(UUID, TEXT), public.review_mentor_session(UUID, INTEGER, TEXT), public.mentor_ratings(),
+  public.mentor_next_slots() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.book_mentor_session(UUID, TEXT, TEXT), public.cancel_mentor_session(UUID, TEXT),
-  public.set_session_link(UUID, TEXT), public.review_mentor_session(UUID, INTEGER, TEXT), public.mentor_ratings() TO authenticated;
+  public.set_session_link(UUID, TEXT), public.review_mentor_session(UUID, INTEGER, TEXT), public.mentor_ratings(),
+  public.mentor_next_slots() TO authenticated;

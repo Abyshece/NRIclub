@@ -1752,8 +1752,9 @@ export async function getPublicCities() {
 // ============================================================================
 
 // Open times from now on (all mentors, or one).
+// (Bookings close 30 minutes before a session, so those aren't listed.)
 export async function getMentorSlots(mentorId = null) {
-  let url = `/rest/v1/mentor_slots?booked=eq.false&starts_at=gt.${encodeURIComponent(new Date().toISOString())}&select=id,mentor_id,starts_at,duration_min&order=starts_at.asc&limit=500`;
+  let url = `/rest/v1/mentor_slots?booked=eq.false&starts_at=gt.${encodeURIComponent(new Date(Date.now() + 31 * 60000).toISOString())}&select=id,mentor_id,starts_at,duration_min&order=starts_at.asc&limit=500`;
   if (mentorId) url += `&mentor_id=eq.${encodeURIComponent(mentorId)}`;
   return (await restCall("GET", url)) || [];
 }
@@ -1814,4 +1815,20 @@ export async function getMyReviews() {
 
 export async function deleteMyReview(id) {
   return restCall("DELETE", `/rest/v1/mentor_reviews?id=eq.${encodeURIComponent(id)}&mentee_id=eq.${currentUser?.id}`);
+}
+
+// Verified mentors, and members looking for a mentor (their own lists, not
+// limited to the newest members Find loads).
+const MENTORING_FIELDS = "id,name,avatar_url,profession,location,city,linkedin_verified,mentor_open,mentor_areas,mentee_open,mentee_needs";
+export async function getMentors() {
+  return (await restCall("GET", `/rest/v1/profiles?mentor_open=eq.true&linkedin_verified=eq.true&select=${MENTORING_FIELDS}&limit=500`)) || [];
+}
+export async function getSeekers() {
+  return (await restCall("GET", `/rest/v1/profiles?mentee_open=eq.true&select=${MENTORING_FIELDS}&order=updated_at.desc&limit=200`)) || [];
+}
+
+// { [mentor id]: their next open time }
+export async function getMentorNextSlots() {
+  const rows = (await restCall("POST", "/rest/v1/rpc/mentor_next_slots", {})) || [];
+  return Object.fromEntries(rows.map(r => [r.mentor_id, { id: r.slot_id, starts_at: r.starts_at, duration_min: r.duration_min }]));
 }
