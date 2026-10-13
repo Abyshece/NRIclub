@@ -1,5 +1,7 @@
 import { Fragment, useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import * as api from "./supabaseApi";
+import LandingPage from "./LandingPage";
+import FlagIcon from "./FlagIcon";
 import "./member/base.css";
 import SignUpFlow from "./member/SignUpFlow";
 import GetVerified from "./member/GetVerified";
@@ -301,295 +303,6 @@ const CharCount = ({ value, max = TEXT_LIMIT, style }) => (value || "").length <
 );
 
 // ============================================================================
-// LANDING PAGE
-// ============================================================================
-
-// Exact SVG icons matching the screenshot
-const LandingIcons = {
-  // Globe icon for logo - filled dark square with globe outline
-  logoGlobe: () => (
-    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-      <rect width="28" height="28" rx="6" fill="#37352F"/>
-      <circle cx="14" cy="14" r="7" stroke="white" strokeWidth="1.5" fill="none"/>
-      <ellipse cx="14" cy="14" rx="3.5" ry="7" stroke="white" strokeWidth="1.2" fill="none"/>
-      <line x1="7" y1="14" x2="21" y2="14" stroke="white" strokeWidth="1.2"/>
-    </svg>
-  ),
-  // Community Groups icon - two people outline, matching screenshot
-  communityGroups: () => (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-      <circle cx="9" cy="7" r="4"/>
-      <path d="M23 21v-2a4 4 0 00-3-3.87"/>
-      <path d="M16 3.13a4 4 0 010 7.75"/>
-    </svg>
-  ),
-  // Mentorship icon - graduation cap, matching screenshot (purple)
-  mentorship: () => (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 10l-10-5L2 10l10 5 10-5z"/>
-      <path d="M6 12v5c0 0 3 3 6 3s6-3 6-3v-5"/>
-    </svg>
-  ),
-  // Verified Events icon - shield with checkmark, matching screenshot (green)
-  verifiedEvents: () => (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-      <path d="M9 12l2 2 4-4"/>
-    </svg>
-  ),
-  // Arrow right for button
-  arrowRight: () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="5" y1="12" x2="19" y2="12"/>
-      <polyline points="12 5 19 12 12 19"/>
-    </svg>
-  ),
-};
-
-const LandingPage = ({ onJoin, onLogin }) => {
-  const [legal, setLegal] = useState(null); // "terms" | "privacy"
-  const footerLink = { background: "none", border: "none", padding: 4, cursor: "pointer", color: "#6B6A67", fontSize: 12, fontFamily: "inherit", textDecoration: "underline" };
-  return (
-  <div style={{
-    minHeight: "100vh",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    padding: "0 1.5rem",
-    background: "#ffffff",
-    fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  }}>
-    {/* Top Navigation */}
-    <nav style={{
-      width: "100%",
-      maxWidth: 1200,
-      padding: "24px 24px",
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <LandingIcons.logoGlobe />
-        <span style={{
-          fontSize: 20,
-          fontWeight: 700,
-          letterSpacing: "-0.02em",
-          color: "#37352F",
-        }}>NRI<span style={{fontStyle:'italic',fontFamily:'"Times New Roman",serif'}}>Club</span></span>
-      </div>
-      <button
-        onClick={onLogin}
-        style={{
-          fontSize: 14,
-          fontWeight: 500,
-          padding: "8px 16px",
-          border: "1px solid #E0E0DE",
-          borderRadius: 8,
-          background: "#fff",
-          cursor: "pointer",
-          color: "#37352F",
-          letterSpacing: "-0.01em",
-        }}
-      >
-        Log in
-      </button>
-    </nav>
-
-    {/* Hero Section */}
-    <div style={{
-      maxWidth: 780,
-      textAlign: "center",
-      marginTop: "clamp(60px, 10vh, 120px)",
-      padding: "0 1rem",
-    }}>
-      {/* Main Heading */}
-      <h1 style={{
-        fontSize: "clamp(36px, 5.5vw, 60px)",
-        fontWeight: 700,
-        lineHeight: 1.12,
-        letterSpacing: "-0.03em",
-        color: "#37352F",
-        marginBottom: 0,
-      }}>
-        Connect with your roots,
-      </h1>
-      <h1 style={{
-        fontSize: "clamp(36px, 5.5vw, 60px)",
-        fontWeight: 700,
-        lineHeight: 1.12,
-        letterSpacing: "-0.03em",
-        color: "#9B9A97",
-        marginTop: 0,
-        marginBottom: 32,
-      }}>
-        wherever you are.
-      </h1>
-
-      {/* Subtitle paragraph - exact copy from screenshot */}
-      <p style={{
-        fontSize: "clamp(15px, 1.8vw, 18px)",
-        color: "#6B6B6B",
-        lineHeight: 1.7,
-        maxWidth: 620,
-        margin: "0 auto 40px",
-        fontWeight: 400,
-      }}>
-        Tired of scattered WhatsApp, Facebook, and Telegram groups? We are
-        uniting the Indian diaspora on one dedicated platform. A space for Indians,
-        by Indians—to find community, local events, and support for life abroad in
-        one umbrella network.
-      </p>
-
-      {/* CTA Button */}
-      <button
-        onClick={onJoin}
-        style={{
-          background: "#37352F",
-          color: "#ffffff",
-          padding: "16px 40px",
-          borderRadius: 8,
-          fontSize: 17,
-          fontWeight: 500,
-          border: "none",
-          cursor: "pointer",
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 10,
-          letterSpacing: "-0.01em",
-          transition: "background 0.15s",
-        }}
-        onMouseOver={(e) => (e.currentTarget.style.background = "#2A2926")}
-        onMouseOut={(e) => (e.currentTarget.style.background = "#37352F")}
-      >
-        Join the Community
-        <LandingIcons.arrowRight />
-      </button>
-
-      {/* Sub-text under button */}
-      <p style={{
-        marginTop: 20,
-        fontSize: 12,
-        color: "#B0B0B0",
-        fontWeight: 400,
-        letterSpacing: "0.01em",
-      }}>
-        Free to join · 10,000+ Indians abroad
-      </p>
-    </div>
-
-    {/* Feature Cards - exact 3 cards from screenshot */}
-    <div style={{
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-      gap: 24,
-      marginTop: "clamp(60px, 8vh, 100px)",
-      maxWidth: 900,
-      width: "100%",
-      padding: "0 1rem 60px",
-    }}>
-      {/* Card 1: Community Groups */}
-      <div style={{
-        padding: "32px 28px",
-        borderRadius: 12,
-        border: "1px solid #E5E5E3",
-        background: "#FAFAF9",
-      }}>
-        <div style={{ marginBottom: 20 }}>
-          <LandingIcons.communityGroups />
-        </div>
-        <h3 style={{
-          fontWeight: 600,
-          fontSize: 18,
-          marginBottom: 8,
-          color: "#37352F",
-          letterSpacing: "-0.02em",
-        }}>
-          Community Groups
-        </h3>
-        <p style={{
-          fontSize: 14,
-          color: "#8C8C8C",
-          lineHeight: 1.55,
-          fontWeight: 400,
-        }}>
-          Find your tribe based on your city, hometown, or profession.
-        </p>
-      </div>
-
-      {/* Card 2: Mentorship */}
-      <div style={{
-        padding: "32px 28px",
-        borderRadius: 12,
-        border: "1px solid #E5E5E3",
-        background: "#FAFAF9",
-      }}>
-        <div style={{ marginBottom: 20 }}>
-          <LandingIcons.mentorship />
-        </div>
-        <h3 style={{
-          fontWeight: 600,
-          fontSize: 18,
-          marginBottom: 8,
-          color: "#37352F",
-          letterSpacing: "-0.02em",
-        }}>
-          Mentorship
-        </h3>
-        <p style={{
-          fontSize: 14,
-          color: "#8C8C8C",
-          lineHeight: 1.55,
-          fontWeight: 400,
-        }}>
-          Get guidance from seniors in your field who have been there.
-        </p>
-      </div>
-
-      {/* Card 3: Verified Events */}
-      <div style={{
-        padding: "32px 28px",
-        borderRadius: 12,
-        border: "1px solid #E5E5E3",
-        background: "#FAFAF9",
-      }}>
-        <div style={{ marginBottom: 20 }}>
-          <LandingIcons.verifiedEvents />
-        </div>
-        <h3 style={{
-          fontWeight: 600,
-          fontSize: 18,
-          marginBottom: 8,
-          color: "#37352F",
-          letterSpacing: "-0.02em",
-        }}>
-          Verified Events
-        </h3>
-        <p style={{
-          fontSize: 14,
-          color: "#8C8C8C",
-          lineHeight: 1.55,
-          fontWeight: 400,
-        }}>
-          Discover festivals, meetups, and networking events near you.
-        </p>
-      </div>
-    </div>
-
-    {/* Footer: the Terms and the Privacy Policy, readable before signing up */}
-    <footer style={{ width: "100%", maxWidth: 900, padding: "0 1rem 32px", textAlign: "center", fontSize: 12, color: "#6B6A67" }}>
-      <button type="button" onClick={() => setLegal("terms")} style={footerLink}>Terms of Use</button>
-      <span aria-hidden="true"> · </span>
-      <button type="button" onClick={() => setLegal("privacy")} style={footerLink}>Privacy Policy</button>
-    </footer>
-    {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
-    {legal === "privacy" && <PrivacyModal onClose={() => setLegal(null)} />}
-  </div>
-  );
-};
-
-// ============================================================================
 // LOGIN PAGE
 // ============================================================================
 // notice: a confirmation to show above the form (e.g. after a new password).
@@ -774,9 +487,7 @@ const LoginPage = ({ onComplete, onSignUp, onBack, initialEmail = "", notice = "
           <span aria-hidden="true">←</span> Back
         </button>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <div style={{ width: 48, height: 48, background: "#F0EFED", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
-            {Icons.globe({ size: 24, stroke: "#37352F" })}
-          </div>
+          <div style={{ display: "inline-block", marginBottom: 20 }}><FlagIcon size={48} /></div>
           <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Welcome back</h2>
           <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Log in to NRIClub</p>
         </div>
@@ -3609,9 +3320,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       <nav style={{ background: "#fff", borderBottom: "1px solid #E8E7E4", position: "sticky", top: 0, zIndex: 30 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 16px", height: 56, display: "grid", gridTemplateColumns: "240px 1fr 210px", gap: 28, alignItems: "center" }} className="nav-grid">
           <div onClick={() => setView("home")} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-            <div style={{ background: "#37352F", color: "#fff", padding: 4, borderRadius: 6 }}>
-              {Icons.globe({ size: 16 })}
-            </div>
+            <FlagIcon size={28} />
             <span style={{ fontSize: 18, fontWeight: 800, color: "#37352F", letterSpacing: -0.5 }}>NRI<span style={{fontStyle:'italic',fontFamily:'"Times New Roman",serif'}}>Club</span></span>
           </div>
 
@@ -5839,9 +5548,7 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ width: 48, height: 48, background: "#37352F", borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16, color: "#fff" }}>
-            {Icons.globe({ size: 24 })}
-          </div>
+          <div style={{ display: "inline-block", marginBottom: 16 }}><FlagIcon size={48} /></div>
           <p style={{ color: "#9B9A97", fontSize: 14 }}>Loading...</p>
         </div>
       </div>
@@ -5853,9 +5560,7 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
         <div role="alert" style={{ textAlign: "center", maxWidth: 360 }}>
-          <div style={{ width: 48, height: 48, background: "#37352F", borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16, color: "#fff" }}>
-            {Icons.globe({ size: 24 })}
-          </div>
+          <div style={{ display: "inline-block", marginBottom: 16 }}><FlagIcon size={48} /></div>
           <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>We couldn't load your profile</h2>
           <p style={{ color: "#6B6A67", fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>Please check your connection and try again.</p>
           <button type="button" onClick={() => restoreSession()} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Try again</button>
