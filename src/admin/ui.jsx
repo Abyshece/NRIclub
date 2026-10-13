@@ -197,8 +197,8 @@ export function Toast({ toast, onUndo, onClose }) {
   );
 }
 
+// Inter is served by the site itself (no Google Fonts request).
 export const ADMIN_CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 .adm { --text:#37352F; --muted:#787774; --faint:#9B9A97; --line:#EDEDEB; --line-strong:#E0E0DE; --side:#F7F7F5; --hover:rgba(55,53,47,0.08); --row-hover:rgba(55,53,47,0.035); --select:rgba(91,156,255,0.12);
   display:flex; min-height:100vh; background:#fff; color:var(--text);
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;

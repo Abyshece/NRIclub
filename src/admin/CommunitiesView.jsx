@@ -2,9 +2,10 @@
 import { useState } from "react";
 import * as api from "../supabaseApi";
 import { Button, ConfirmDialog, EmptyState, PageHeader, Pill, SectionTitle } from "./ui";
-import { ago, friendlyError } from "./format";
+import { ago, friendlyError, isNothingChangedError } from "./format";
 
-export default function CommunitiesView({ groups, setGroups, usersById, showToast }) {
+// onReload loads the panel's data again.
+export default function CommunitiesView({ groups, setGroups, usersById, showToast, onReload }) {
   const [busyId, setBusyId] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [confirmError, setConfirmError] = useState("");
@@ -13,14 +14,22 @@ export default function CommunitiesView({ groups, setGroups, usersById, showToas
   const active = groups.filter((g) => g.is_approved).sort((a, b) => (b.members_count || 0) - (a.members_count || 0));
   const creatorName = (g) => (g.created_by && usersById[g.created_by]?.name) || null;
 
+  // Approve and reject only touch a request that is still waiting. If it
+  // isn't (another admin got there first), show the list as it is now.
+  const alreadyHandled = () => {
+    showToast({ text: "This request may already have been handled, so nothing was changed. Reloading the list." });
+    onReload?.();
+  };
+
   const approve = async (g) => {
     if (busyId) return;
     setBusyId(g.id);
     try {
       await api.adminApproveGroup(g.id);
     } catch (e) {
-      showToast({ text: friendlyError(e), tone: "error" });
       setBusyId(null);
+      if (isNothingChangedError(e)) alreadyHandled();
+      else showToast({ text: friendlyError(e), tone: "error" });
       return;
     }
     if (g.created_by) {
@@ -36,10 +45,10 @@ export default function CommunitiesView({ groups, setGroups, usersById, showToas
     setBusyId(g.id);
     setConfirmError("");
     try {
-      await api.adminDeleteGroup(g.id);
+      await api.adminRejectGroupRequest(g.id);
     } catch (e) {
-      setConfirmError(friendlyError(e));
       setBusyId(null);
+      if (isNothingChangedError(e)) { setConfirm(null); alreadyHandled(); } else setConfirmError(friendlyError(e));
       return;
     }
     if (g.created_by) {

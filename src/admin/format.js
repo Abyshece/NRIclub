@@ -97,6 +97,33 @@ export function friendlyError(e) {
   return raw || "Something went wrong. Please try again.";
 }
 
+// review_member refuses a decision when the member's name or LinkedIn link is
+// no longer what the admin saw.
+export const isChangedDetailsError = (e) => /changed their details/i.test(friendlyError(e));
+export const CHANGED_DETAILS_TEXT = "This member changed their details while you were looking. Their latest details are shown now, so check them again before you decide.";
+
+// An admin write that matched no row ("Nothing was changed. It may already
+// have been handled…").
+export const isNothingChangedError = (e) => /^nothing was changed/i.test(friendlyError(e));
+
+// The identity an admin approves: name and LinkedIn link, as shown.
+export function identityChanged(a, b) {
+  return ["name", "linkedin_url"].some((k) => String(a?.[k] ?? "") !== String(b?.[k] ?? ""));
+}
+
+// Fields of a fresh member (profile plus private status) that also appear in
+// review queue rows.
+const MEMBER_FIELDS = [
+  "name", "avatar_url", "email", "email_verified", "city", "country_code", "location", "hometown",
+  "profession", "years_abroad", "linkedin_url", "verification_status", "status", "review_flag",
+];
+
+export function memberFields(fresh) {
+  const out = {};
+  MEMBER_FIELDS.forEach((k) => { if (fresh && fresh[k] !== undefined) out[k] = fresh[k]; });
+  return out;
+}
+
 // Same pattern as private.normalize_linkedin() in the database.
 const LINKEDIN_RE = /^(?:https?:\/\/)?(?:[a-z]{2,3}\.)?(?:www\.)?linkedin\.com\/in\/([a-z0-9%_.-]{3,100})\/?(?:[?#].*)?$/i;
 
@@ -131,6 +158,22 @@ export function nameMatchesSlug(name, slug) {
   return candidates.some((p) => p.length >= 2 && s.includes(p));
 }
 
+// The database flags a member whose email or LinkedIn matches an account that
+// was rejected or blocked before ("previously rejected", "previously
+// blocked"). "Previously rejected" for pills.
+export function reviewFlagLabel(flag) {
+  const f = String(flag || "").trim();
+  return f ? f[0].toUpperCase() + f.slice(1) : "";
+}
+
+// "Matches an account that was rejected before"
+export function reviewFlagText(flag) {
+  const f = String(flag || "").trim().toLowerCase();
+  if (!f) return "";
+  const m = /^previously (\w+)$/.exec(f);
+  return m ? `Matches an account that was ${m[1]} before` : `Flagged: ${f}`;
+}
+
 // ok: true = ✓, false = ⚠, null = neutral note. Unknown values (undefined,
 // when the full record hasn't loaded) are left out.
 export function verificationChecks(m) {
@@ -139,6 +182,10 @@ export function verificationChecks(m) {
   const hasLinkedin = !!String(m.linkedin_url || "").trim();
   const slug = linkedinSlug(m.linkedin_url);
   const note = String(m.verification_note || "").trim();
+
+  if (m.review_flag) {
+    checks.push({ key: "flag", ok: false, label: reviewFlagText(m.review_flag), detail: "same email or LinkedIn; no access until approved" });
+  }
 
   if (hasLinkedin) {
     checks.push(slug

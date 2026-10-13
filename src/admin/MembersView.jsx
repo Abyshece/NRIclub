@@ -4,11 +4,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import MemberPeek from "./MemberPeek";
 import { Avatar, Button, ConfirmDialog, EmptyState, Icon, PageHeader, Pill } from "./ui";
-import { VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, placeLabel, shortName } from "./format";
+import {
+  CHANGED_DETAILS_TEXT, VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, identityChanged,
+  isChangedDetailsError, memberFields, placeLabel, shortName,
+} from "./format";
 
 const PAGE = 100;
 
-export default function MembersView({ users, onMemberChange, showToast }) {
+const fmt = (n) => n.toLocaleString("en-GB");
+
+// users holds the newest members (at most 1,000); total and blockedTotal are
+// the server's counts of all of them.
+export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, showToast }) {
   const [query, setQuery] = useState("");
   const [show, setShow] = useState("all"); // all | blocked
   const [limit, setLimit] = useState(PAGE);
@@ -20,8 +27,11 @@ export default function MembersView({ users, onMemberChange, showToast }) {
   const [confirmError, setConfirmError] = useState("");
   const listRef = useRef(null);
   const fetchedStatuses = useRef(new Set());
+  const detailsRef = useRef(details);
+  detailsRef.current = details;
 
-  const blockedCount = users.filter((u) => u.status === "blocked").length;
+  const blockedCount = blockedTotal ?? users.filter((u) => u.status === "blocked").length;
+  const cut = users.length < total;
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return users.filter((u) => {
@@ -39,10 +49,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
 
   // The members list has the public profile; the review queue has the rest
   // (consents, explanation, duplicates). Load it for the member's status.
-  useEffect(() => {
-    if (!openUser) return;
-    const status = openUser.verification_status;
-    if (details[openUser.id] || fetchedStatuses.current.has(status)) return;
+  const loadDetails = (status) => {
     fetchedStatuses.current.add(status);
     setLoadingDetails((l) => ({ ...l, [status]: true }));
     // Rows are keyed by id, so keep them even if the admin has moved on.
@@ -57,7 +64,41 @@ export default function MembersView({ users, onMemberChange, showToast }) {
       })
       .catch(() => { fetchedStatuses.current.delete(status); })
       .finally(() => { setLoadingDetails((l) => ({ ...l, [status]: false })); });
+  };
+
+  useEffect(() => {
+    if (!openUser) return;
+    const status = openUser.verification_status;
+    if (details[openUser.id] || fetchedStatuses.current.has(status)) return;
+    loadDetails(status);
   }, [openUser?.id, openUser?.verification_status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Counts the changes made here to each member, so a refresh that started
+  // before one can't bring back what the member looked like before it.
+  const changes = useRef({});
+  const touch = (id) => { changes.current[id] = (changes.current[id] || 0) + 1; };
+
+  // Load the member again each time the peek opens on them, so the admin
+  // decides on their details as they are now. If the name, LinkedIn link or
+  // status changed, load their review details again too.
+  const refreshMember = async (id) => {
+    const mark = changes.current[id] || 0;
+    let fresh = null;
+    try { fresh = await api.adminGetReportedItem("profile", id); } catch { return; }
+    if (!fresh || (changes.current[id] || 0) !== mark) return;
+    const d = detailsRef.current[id];
+    onMemberChange(id, fresh);
+    if (d && (identityChanged(d, fresh) || d.verification_status !== fresh.verification_status)) {
+      setDetails((prev) => { const next = { ...prev }; delete next[id]; return next; });
+      loadDetails(fresh.verification_status);
+    } else if (d) {
+      patchDetails(id, memberFields(fresh));
+    }
+  };
+
+  useEffect(() => {
+    if (openId) refreshMember(openId);
+  }, [openId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const peekMember = useMemo(() => {
     if (!openUser) return null;
@@ -80,16 +121,29 @@ export default function MembersView({ users, onMemberChange, showToast }) {
   });
 
   const decide = async (m, decision, message = "", note = "") => {
-    await api.adminReviewMember(m.id, decision, message, note);
+    // The name and LinkedIn link the admin is looking at: the database
+    // refuses the decision if the member has changed either since.
+    const expected = decision === "pending" ? null : { name: m.name ?? null, linkedinUrl: m.linkedin_url ?? null };
+    try {
+      await api.adminReviewMember(m.id, decision, message, note, expected);
+    } catch (e) {
+      if (!isChangedDetailsError(e)) throw e;
+      await refreshMember(m.id);
+      throw new Error(CHANGED_DETAILS_TEXT);
+    }
+    touch(m.id);
     const counted = decision !== "pending";
+    // Approving clears the review flag.
+    const flag = decision === "approved" ? { review_flag: "" } : {};
     const before = { verification_message: m.verification_message, reviewed_at: m.reviewed_at, previous_decisions: m.previous_decisions };
     patchDetails(m.id, {
       verification_message: decision === "needs_info" || decision === "rejected" ? message : "",
       reviewed_at: decision === "pending" ? null : new Date().toISOString(),
       previous_decisions: (Number(m.previous_decisions) || 0) + (counted ? 1 : 0),
       verification_status: decision,
+      ...flag,
     });
-    onMemberChange(m.id, { verification_status: decision, linkedin_verified: decision === "approved" });
+    onMemberChange(m.id, { verification_status: decision, linkedin_verified: decision === "approved", ...flag });
     const who = shortName(m.name);
     showToast({
       text: { approved: `Approved ${who}`, needs_info: `Asked ${who} for more info`, rejected: `Rejected ${who}`, pending: `Moved ${who} back to pending` }[decision],
@@ -97,6 +151,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
       // Undo moves the member back to pending, so only offer it if that's where they were.
       undo: counted && m.verification_status === "pending" ? async () => {
         await api.adminReviewMember(m.id, "pending", "", "Undo");
+        touch(m.id);
         patchDetails(m.id, { ...before, verification_message: "", reviewed_at: null, verification_status: "pending" });
         onMemberChange(m.id, { verification_status: "pending", linkedin_verified: false });
         return `Undone. ${who} is now pending.`;
@@ -106,6 +161,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
 
   const setStatus = async (m, status) => {
     await api.adminSetMemberStatus(m.id, status);
+    touch(m.id);
     onMemberChange(m.id, { status });
     const who = shortName(m.name);
     showToast(status === "blocked"
@@ -113,6 +169,7 @@ export default function MembersView({ users, onMemberChange, showToast }) {
         text: `Blocked ${who}`,
         undo: async () => {
           await api.adminSetMemberStatus(m.id, "active");
+          touch(m.id);
           onMemberChange(m.id, { status: "active" });
           return `Unblocked ${who}`;
         },
@@ -147,14 +204,20 @@ export default function MembersView({ users, onMemberChange, showToast }) {
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, email or city" aria-label="Search members" />
         </label>
         <div className="adm-filters" role="group" aria-label="Show">
-          <button type="button" className="adm-filter" aria-pressed={show === "all"} onClick={() => setShow("all")}>All <span className="adm-filter-count">{users.length}</span></button>
-          <button type="button" className="adm-filter" aria-pressed={show === "blocked"} onClick={() => setShow("blocked")}>Blocked <span className="adm-filter-count">{blockedCount}</span></button>
+          <button type="button" className="adm-filter" aria-pressed={show === "all"} onClick={() => setShow("all")}>All <span className="adm-filter-count">{fmt(total)}</span></button>
+          <button type="button" className="adm-filter" aria-pressed={show === "blocked"} onClick={() => setShow("blocked")}>Blocked <span className="adm-filter-count">{fmt(blockedCount)}</span></button>
         </div>
       </div>
 
+      {cut && (
+        <p className="adm-muted adm-small" style={{ margin: "0 0 10px" }}>
+          Showing the newest {fmt(users.length)} of {fmt(total)} members. Search and the Blocked filter only cover these.
+        </p>
+      )}
+
       {filtered.length === 0 ? (
-        <EmptyState icon={query ? "search" : "users"} title={query ? "No members match" : show === "blocked" ? "No blocked accounts" : "No members yet"}>
-          {query ? "Try a different name, email or city." : show === "blocked" ? "Accounts you block appear here." : null}
+        <EmptyState icon={query ? "search" : "users"} title={query ? "No members match" : show === "blocked" ? (blockedCount > 0 ? "No blocked accounts among these members" : "No blocked accounts") : "No members yet"}>
+          {query ? "Try a different name, email or city." : show === "blocked" ? (blockedCount > 0 ? "Blocked accounts that joined earlier aren't loaded here." : "Accounts you block appear here.") : null}
         </EmptyState>
       ) : (
         <div className="adm-list" ref={listRef} role="table" aria-label="Members">

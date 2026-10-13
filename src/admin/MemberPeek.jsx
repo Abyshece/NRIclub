@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Avatar, Button, ConfirmDialog, ErrorNote, Icon, Kbd, Pill } from "./ui";
 import {
   VERIFICATION_LABELS, VERIFICATION_TONES, ago, firstName, formatDate, friendlyError,
-  linkedinHref, placeLabel, verificationChecks,
+  linkedinHref, placeLabel, reviewFlagLabel, reviewFlagText, verificationChecks,
 } from "./format";
 
 const TEMPLATES = {
@@ -80,11 +80,15 @@ export default function MemberPeek({
 
   const status = member.verification_status || "incomplete";
   const blocked = member.status === "blocked";
+  // Matches review_member: approve or ask for more only while the member is
+  // waiting for review (so someone who never sent their details can only be
+  // rejected); reopen approved members, and rejected ones who sent details.
+  const waiting = status === "pending" || status === "needs_info";
   const can = {
-    approve: status !== "approved",
-    info: true,
+    approve: waiting,
+    info: waiting,
     reject: status !== "rejected",
-    reopen: status === "approved" || status === "rejected",
+    reopen: status === "approved" || (status === "rejected" && member.submitted_at !== null),
   };
 
   const run = async (kind, fn) => {
@@ -142,6 +146,11 @@ export default function MemberPeek({
   keyHandler.current = (e) => {
     // Holding a key down mustn't act on member after member.
     if (e.repeat) return;
+    if (composer && e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.defaultPrevented && !confirmBlock) {
+      e.preventDefault();
+      submitComposer();
+      return;
+    }
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || confirmBlock) return;
     const t = e.target;
     const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
@@ -150,13 +159,17 @@ export default function MemberPeek({
       if (composer) closeComposer(); else onClose();
       return;
     }
+    // While a message is open only Escape and Ctrl/⌘+Enter act, wherever the
+    // focus is, so typing that lands outside the box can't approve the member,
+    // switch the message or wipe it.
+    if (composer) return;
     if (typing || busy) return;
     const k = e.key.toLowerCase();
     if (k === "a" && can.approve) { e.preventDefault(); approve(); }
     else if (k === "i" && can.info) { e.preventDefault(); openComposer("needs_info"); }
     else if (k === "r" && can.reject) { e.preventDefault(); openComposer("rejected"); }
-    else if (k === "j" && onNext && !composer) { e.preventDefault(); onNext(); }
-    else if (k === "k" && onPrev && !composer) { e.preventDefault(); onPrev(); }
+    else if (k === "j" && onNext) { e.preventDefault(); onNext(); }
+    else if (k === "k" && onPrev) { e.preventDefault(); onPrev(); }
   };
   useEffect(() => {
     const h = (e) => keyHandler.current(e);
@@ -185,6 +198,7 @@ export default function MemberPeek({
         <div className="adm-peek-pills">
           <Pill tone={VERIFICATION_TONES[status]}>{VERIFICATION_LABELS[status] || status}</Pill>
           {blocked ? <Pill tone="red">Blocked</Pill> : null}
+          {member.review_flag ? <Pill tone="red" title={reviewFlagText(member.review_flag)}>{reviewFlagLabel(member.review_flag)}</Pill> : null}
         </div>
 
         <div className="adm-props">
