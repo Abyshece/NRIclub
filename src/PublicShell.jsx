@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import FlagIcon from "./FlagIcon";
 import { TermsModal, PrivacyModal } from "./member/LegalModals";
+import { hasImprint } from "./content/imprint";
 
 // ============================================================================
 // The frame of the public pages (city pages and guides): the tricolour line,
-// the logo with Log in, a hero, and a footer with the Terms and Privacy.
+// a header that stays in view with Log in and Join free, a hero, and a footer
+// with the Terms and Privacy.
 // ============================================================================
 
 export const INK = "#37352F";
@@ -12,6 +14,10 @@ export const MUTED = "#6B6A67";
 export const SAFFRON = "#FF9933";
 export const GREEN = "#138808";
 export const NAVY = "#000080";
+// Saffron and green dark enough to read as text (4.5:1 or more on white and
+// on #FAFAF8); the bright ones are for lines, dots and fills.
+export const SAFFRON_TEXT = "#B35400";
+export const GREEN_TEXT = "#117A07";
 
 export const section = { width: "100%", maxWidth: 880, margin: "0 auto", padding: "0 24px", boxSizing: "border-box" };
 export const primaryBtn = {
@@ -19,34 +25,75 @@ export const primaryBtn = {
   border: "none", cursor: "pointer", fontFamily: "inherit",
 };
 
-export const AMBASSADOR_MAIL = "mailto:support@nriclub.app?subject=" + encodeURIComponent("I'd like to be a city ambassador");
+export const SUPPORT_EMAIL = "support@nriclub.app";
+export const AMBASSADOR_MAIL = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("I'd like to be a city ambassador")}`
+  + `&body=${encodeURIComponent("My city: \nMy LinkedIn (or a few words about me): \nHow I'd help: \n")}`;
+// "Free · Our team checks… · Your phone…", wrapping only between the parts.
+// (The spaces sit between the spans, where a line may break.)
+export const Phrases = ({ text }) => text.split(" · ").map((part, i, all) => (
+  <Fragment key={part}>{i > 0 && " "}<span style={{ whiteSpace: "nowrap" }}>{part}{i < all.length - 1 && " ·"}</span></Fragment>
+));
+export const whatsappShare = (text) => `https://wa.me/?text=${encodeURIComponent(text)}`;
 
-export default function PublicShell({ onLogin, hero, children }) {
-  const [legal, setLegal] = useState(null); // "terms" | "privacy"
-  const footerLink = { background: "none", border: "none", padding: 4, cursor: "pointer", color: MUTED, fontSize: 13, fontFamily: "inherit", textDecoration: "underline" };
+// The page's own address for search engines: set while the page shows, then
+// put back. Public pages that aren't written at build time (newer city
+// groups, other spellings, the landing page at the app's other addresses)
+// come from a plain page without one.
+export function useCanonical(path) {
+  useEffect(() => {
+    let link = document.querySelector('link[rel="canonical"]');
+    const before = link?.getAttribute("href");
+    if (!link) { link = document.createElement("link"); link.rel = "canonical"; document.head.appendChild(link); }
+    link.setAttribute("href", `https://nriclub.app${path}`);
+    return () => { if (before) link.setAttribute("href", before); else link.remove(); };
+  }, [path]);
+}
+
+// The bar along the top of the public pages; it stays in view while the page
+// scrolls (the page around it must not have overflow hidden, or it won't).
+export function PublicNav({ onLogin, onJoin, maxWidth = 1100 }) {
+  const btn = { fontSize: 14, fontWeight: 600, minHeight: 44, padding: "0 16px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
   return (
-    <div style={{ minHeight: "100vh", background: "#fff", color: INK, fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", overflowX: "hidden" }}>
-      <div aria-hidden="true" style={{ height: 4, background: `linear-gradient(90deg, ${SAFFRON} 0 33.3%, #fff 33.3% 66.6%, ${GREEN} 66.6%)`, borderBottom: "1px solid #F0EFED" }} />
-      <header style={{ background: "radial-gradient(700px 360px at 0% 0%, rgba(255,153,51,0.10), transparent 70%), radial-gradient(600px 360px at 100% 10%, rgba(19,136,8,0.07), transparent 70%)" }}>
-        <nav style={{ ...section, maxWidth: 1100, display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 22, paddingBottom: 22 }}>
-          <a href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: INK }}>
-            <FlagIcon size={30} />
-            <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></span>
-          </a>
-          <button onClick={onLogin} style={{ fontSize: 14, fontWeight: 600, padding: "9px 18px", border: "1px solid #E0E0DE", borderRadius: 8, background: "#fff", cursor: "pointer", color: INK, fontFamily: "inherit" }}>Log in</button>
-        </nav>
-        {hero}
-      </header>
-      <main>{children}</main>
-      <footer style={{ ...section, maxWidth: 1100, borderTop: "1px solid #F0EFED", marginTop: 32, paddingTop: 22, paddingBottom: 30, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, fontSize: 13, color: MUTED }}>
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-          <a href="/" style={{ color: MUTED }}>NRIClub home</a>
-          <a href="/guides" style={{ color: MUTED }}>NRI guides</a>
+    <header style={{ position: "sticky", top: 0, zIndex: 20, background: "#fff", borderBottom: "1px solid #F0EFED" }}>
+      <style>{`html { scroll-padding-top: 72px; } @media (max-width: 359px) { .pub-logo-text { display: none; } }`}</style>
+      <nav aria-label="NRIClub" style={{ ...section, maxWidth, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 10, paddingBottom: 10 }}>
+        <a href="/" aria-label="NRIClub home" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: INK, minHeight: 44 }}>
+          <FlagIcon size={30} />
+          <span className="pub-logo-text" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></span>
+        </a>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" onClick={onLogin} style={{ ...btn, border: "1px solid #C9C8C5", background: "#fff", color: INK }}>Log in</button>
+          {onJoin && <button type="button" onClick={onJoin} style={{ ...btn, border: "1px solid " + INK, background: INK, color: "#fff" }}>Join free</button>}
+        </div>
+      </nav>
+    </header>
+  );
+}
+
+export default function PublicShell({ onLogin, onJoin, hero, children }) {
+  const [legal, setLegal] = useState(null); // "terms" | "privacy"
+  const footerLink = { background: "none", border: "none", padding: "10px 8px", cursor: "pointer", color: MUTED, fontSize: 13, fontFamily: "inherit", textDecoration: "underline", display: "inline-block" };
+  return (
+    <div className="pub-root" style={{ minHeight: "100vh", background: "#fff", color: INK, fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+      <style>{`.pub-root { overflow-x: hidden; overflow-x: clip; }`}</style>
+      <div aria-hidden="true" style={{ height: 4, background: `linear-gradient(90deg, ${SAFFRON} 0 33.3%, #fff 33.3% 66.6%, ${GREEN} 66.6%)` }} />
+      <PublicNav onLogin={onLogin} onJoin={onJoin} />
+      <main>
+        <div style={{ background: "radial-gradient(700px 360px at 0% 0%, rgba(255,153,51,0.10), transparent 70%), radial-gradient(600px 360px at 100% 10%, rgba(19,136,8,0.07), transparent 70%)" }}>
+          {hero}
+        </div>
+        {children}
+      </main>
+      <footer style={{ ...section, maxWidth: 1100, borderTop: "1px solid #F0EFED", marginTop: 32, paddingTop: 14, paddingBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 13, color: MUTED }}>
+        <div style={{ display: "flex", flexWrap: "wrap" }}>
+          <a href="/" style={footerLink}>NRIClub home</a>
+          <a href="/guides" style={footerLink}>NRI guides</a>
+          <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact</a>
         </div>
         <div>
           <button type="button" onClick={() => setLegal("terms")} style={footerLink}>Terms of Use</button>
-          <span aria-hidden="true"> · </span>
           <button type="button" onClick={() => setLegal("privacy")} style={footerLink}>Privacy Policy</button>
+          {hasImprint() && <a href="/impressum" style={footerLink}>Impressum</a>}
         </div>
       </footer>
       {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}

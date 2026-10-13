@@ -6,7 +6,8 @@ import GetVerified from "./member/GetVerified";
 import CodeEntry from "./member/CodeEntry";
 import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner";
 import ProfileChecklist, { setupSteps, useProfileCardDismissed } from "./member/ProfileChecklist";
-import { TermsContent, PrivacyContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
+import { TermsContent, PrivacyContent, ImpressumContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
+import { hasImprint } from "./content/imprint";
 import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
@@ -670,6 +671,7 @@ const parsePath = (path, selfId) => {
     case "guides": return { view: "docs", pending: id ? { kind: "guide", id } : null };
     case "mentoring": return { view: "mentoring" };
     case "mentors": return { view: "network", findTab: "mentors" };
+    case "impressum": return { view: "home", legal: hasImprint() ? "impressum" : null };
     default: return { view: "home" };
   }
 };
@@ -1078,7 +1080,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // Notification & Settings state
   const [notifOpen, setNotifOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsModal, setSettingsModal] = useState(null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
+  const [settingsModal, setSettingsModal] = useState(startRoute.legal ? "terms" : null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
   const [notifications, setNotifications] = useState([]);
   const [acceptedNotifs, setAcceptedNotifs] = useState([]); // Namaste requests just accepted, shown as "✓ Accepted" for a moment
   const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
@@ -1087,12 +1089,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // one place it is kept; email and push live in user_settings.
   const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: !!user.marketingConsent });
   const [dataDownload, setDataDownload] = useState({ busy: false, error: "" });
-  const [legalTab, setLegalTab] = useState("terms"); // Settings > Terms & Policies: "terms" | "privacy"
+  const [legalTab, setLegalTab] = useState(startRoute.legal || "terms"); // Settings > Terms & Policies: "terms" | "privacy" | "impressum"
   // Opening a settings window shows what is stored now: the marketing
-  // choice, and the Terms first.
+  // choice. (Terms & Policies opens on the tab its menu item names.)
   useEffect(() => {
     if (settingsModal === "notifications") setNotifSettings(prev => ({ ...prev, marketing: !!user.marketingConsent }));
-    if (settingsModal === "terms") setLegalTab("terms");
     if (settingsModal === "account") setDataDownload({ busy: false, error: "" });
   }, [settingsModal]);
   const [accountName, setAccountName] = useState(user.name);
@@ -1484,6 +1485,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       default: return "/";
     }
   })();
+  // nriclub.app/impressum opens the Impressum over the home page; the address
+  // becomes the home page's (replaced, so Back doesn't come back to it).
+  useEffect(() => {
+    if (startRoute.legal) { try { window.history.replaceState(null, "", "/"); } catch (e) {} }
+  }, []);
   useEffect(() => {
     if (pendingRoute || sharedLink) return; // still opening what the address points at
     if (window.location.pathname !== currentPath) {
@@ -1502,6 +1508,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       setFindTab(r.findTab || "people");
       setPendingRoute(r.pending || null);
       if (r.post) setSharedLink({ kind: "post", id: r.post });
+      if (r.legal) { setLegalTab(r.legal); setSettingsModal("terms"); }
       setView(r.view);
     };
     window.addEventListener("popstate", onPop);
@@ -4368,8 +4375,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       { key: "feedback", icon: Icons.message, label: "Send feedback" },
                       { key: "helpCenter", icon: Icons.help, label: "Support" },
                       { key: "terms", icon: Icons.file, label: "Terms & Policies" },
+                      ...(hasImprint() ? [{ key: "impressum", icon: Icons.file, label: "Impressum" }] : []),
                     ].map(item => (
-                      <button key={item.key} onClick={() => { setSettingsOpen(false); if (item.key === "mentoring") { setView("mentoring"); return; } if (item.key === "feedback") { setFeedbackKind(null); setBugError(""); } setSettingsModal(item.key); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
+                      <button key={item.key} onClick={() => { setSettingsOpen(false); if (item.key === "mentoring") { setView("mentoring"); return; } if (item.key === "feedback") { setFeedbackKind(null); setBugError(""); } if (item.key === "terms" || item.key === "impressum") { setLegalTab(item.key); setSettingsModal("terms"); return; } setSettingsModal(item.key); }} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 18px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font }}
                         onMouseOver={(e) => e.currentTarget.style.background = "#FAFAF8"}
                         onMouseOut={(e) => e.currentTarget.style.background = "none"}>
                         {item.icon({ size: 16, stroke: "#9B9A97" })} {item.label}
@@ -5379,11 +5387,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             <div style={{ padding: 24, overflow: "auto", flex: 1, fontSize: 13, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
               <div role="tablist" aria-label="Terms and policies" style={{ display: "flex", gap: 4, background: "#F0EFED", padding: 3, borderRadius: 8, marginBottom: 20 }}>
-                {[{ k: "terms", l: "Terms of Use" }, { k: "privacy", l: "Privacy Policy" }].map(tab => (
+                {[{ k: "terms", l: "Terms of Use" }, { k: "privacy", l: "Privacy Policy" }, ...(hasImprint() ? [{ k: "impressum", l: "Impressum" }] : [])].map(tab => (
                   <button key={tab.k} type="button" role="tab" aria-selected={legalTab === tab.k} onClick={() => setLegalTab(tab.k)} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "none", background: legalTab === tab.k ? "#fff" : "transparent", color: legalTab === tab.k ? "#37352F" : "#6B6A67", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: legalTab === tab.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{tab.l}</button>
                 ))}
               </div>
-              {legalTab === "terms" ? <TermsContent /> : <PrivacyContent />}
+              {legalTab === "terms" ? <TermsContent /> : legalTab === "impressum" ? <ImpressumContent headingStyle={{ fontSize: 14, fontWeight: 700, color: "#37352F", margin: "0 0 4px" }} /> : <PrivacyContent />}
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8", flexShrink: 0 }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>

@@ -20,13 +20,13 @@ Most cities already have Indian WhatsApp or Telegram groups. Ask the admin first
 
 > Hi [Name], I'm [your name], I live in [City] too. Thanks for running [group name], it's really useful.
 >
-> I'm helping build NRIClub (nriclub.app), a free site just for Indians abroad. Every member is verified, and each city has its own group, desi places list, events and guides (passport, OCI, NRE/NRO, taxes).
+> I'm helping build NRIClub (nriclub.app), a free site just for Indians abroad. Our team checks every new member, and each city has its own group, desi places list, events and guides (passport, OCI, NRE/NRO, taxes).
 >
 > It isn't meant to replace your group. It's for the things WhatsApp is bad at: finding old answers, housing and referrals, and events. Would you be OK with me sharing it once in the group? Happy to make you the [City] ambassador if you'd like.
 
 **Post for the group (after the admin agrees):**
 
-> 🇮🇳 For everyone in [City]: NRIClub is a free, verified community for Indians abroad.
+> 🇮🇳 For everyone in [City]: NRIClub is a free community for Indians abroad, and our team checks every new member.
 >
 > • Ask questions and find answers later (no scrolling through 1,000 messages)
 > • Rooms, flatmates and job referrals
@@ -47,7 +47,7 @@ Students arrive every semester and need the most help. Reach them before the sem
 >
 > Hi [Name],
 >
-> I'm [your name] from NRIClub (nriclub.app), a free, verified community for Indians living abroad.
+> I'm [your name] from NRIClub (nriclub.app), a free community for Indians living abroad, where our team checks every new member.
 >
 > New students ask the same questions every year: where to stay, how to open a bank account, where to buy Indian groceries, how the NRE/NRO accounts work. On NRIClub they can ask people who already live in [City], and read short guides on the basics.
 >
@@ -70,7 +70,7 @@ Their notice boards and newsletters reach families who are not on social media.
 >
 > Namaste [Name],
 >
-> I'm [your name] from NRIClub (nriclub.app), a free online community for Indians abroad. Members are verified, and each city has its own group where people help each other: newcomers, parents visiting, families looking for a room or a job referral.
+> I'm [your name] from NRIClub (nriclub.app), a free online community for Indians abroad. Our team checks every new member, and each city has its own group where people help each other: newcomers, parents visiting, families looking for a room or a job referral.
 >
 > We'd be grateful if you could mention us in your newsletter or on your notice board, or let us list your [festival] celebration on our Events page so more people can come.
 >
@@ -83,7 +83,7 @@ Their notice boards and newsletters reach families who are not on social media.
 
 > 🇮🇳 New to [City]? Indians in [City] help each other on NRIClub.
 > Ask questions · Rooms and referrals · Desi places · Festivals
-> Free and verified: nriclub.app/city/[city]
+> Free · Our team checks every new member · nriclub.app/city/[city]
 
 ---
 
@@ -93,7 +93,7 @@ Their notice boards and newsletters reach families who are not on social media.
 
 > When I moved to [City], the hardest part wasn't the job. It was not knowing anyone, and not knowing who to ask.
 >
-> NRIClub is a free, verified community for Indians abroad: one group per city, answers that don't disappear in a chat, housing and job referrals, desi places and festivals.
+> NRIClub is a free community for Indians abroad, and our team checks every new member: one group per city, answers that don't disappear in a chat, housing and job referrals, desi places and festivals.
 >
 > If you're an Indian living outside India, join us: https://nriclub.app
 
@@ -101,7 +101,7 @@ Their notice boards and newsletters reach families who are not on social media.
 
 > Far from home, never alone. 🇮🇳
 > One home for Indians abroad: your city's group, desi places, festivals and help from people who've been there.
-> Free and verified → nriclub.app
+> Free · Our team checks every new member → nriclub.app
 
 **Before a festival (two to three weeks ahead):**
 

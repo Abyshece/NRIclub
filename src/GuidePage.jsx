@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import PublicShell, { INK, MUTED, SAFFRON, section, primaryBtn } from "./PublicShell";
+import PublicShell, { Phrases, INK, MUTED, SAFFRON_TEXT, section, primaryBtn } from "./PublicShell";
+import { TRUST_LINE } from "./content/home";
 import { ESSENTIALS } from "./content/essentials";
 import { guideBlocks } from "./content/guideBlocks";
 import { HOME_TITLE } from "./content/slug";
@@ -12,7 +13,7 @@ import { HOME_TITLE } from "./content/slug";
 
 export function GuideBody({ text }) {
   return guideBlocks(text).map((b, i) => {
-    if (b.type === "h") return <h2 key={i} style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", color: SAFFRON, margin: "28px 0 8px" }}>{b.text}</h2>;
+    if (b.type === "h") return <h2 key={i} style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", color: SAFFRON_TEXT, margin: "28px 0 8px" }}>{b.text}</h2>;
     if (b.type === "ul") return <ul key={i} style={{ margin: "0 0 12px", paddingLeft: 22, fontSize: 16, lineHeight: 1.7 }}>{b.items.map((t, j) => <li key={j} style={{ marginBottom: 4 }}>{t}</li>)}</ul>;
     return <p key={i} style={{ fontSize: 16, lineHeight: 1.75, margin: "0 0 14px" }}>{b.text}</p>;
   });
@@ -30,8 +31,9 @@ export default function GuidePage({ slug, onJoin, onLogin }) {
   const join = (
     <div style={{ marginTop: 36, padding: "22px 20px", borderRadius: 14, border: "1px solid #ECEBE8", background: "#FCFCFB", textAlign: "center" }}>
       <h2 style={{ fontSize: 19, fontWeight: 700, margin: "0 0 6px" }}>Questions? Ask Indians who've done it.</h2>
-      <p style={{ fontSize: 14, color: MUTED, margin: "0 auto 16px", maxWidth: 460 }}>NRIClub is a free, verified community for Indians abroad: one group in every city, answers from members, desi places and festivals.</p>
-      <button onClick={onJoin} style={primaryBtn}>Join NRIClub</button>
+      <p style={{ fontSize: 14, color: MUTED, margin: "0 auto 16px", maxWidth: 460 }}>NRIClub is a free community for Indians abroad: a group for your city, answers from members, desi places and festivals.</p>
+      <button onClick={onJoin} style={primaryBtn}>Join free</button>
+      <p style={{ fontSize: 13, color: MUTED, margin: "12px 0 0" }}><Phrases text={TRUST_LINE} /></p>
     </div>
   );
 
@@ -43,7 +45,7 @@ export default function GuidePage({ slug, onJoin, onLogin }) {
       </div>
     );
     return (
-      <PublicShell onLogin={onLogin} hero={hero}>
+      <PublicShell onLogin={onLogin} onJoin={onJoin} hero={hero}>
         <section style={{ ...section, maxWidth: 720 }}>
           {slug && <p role="status" style={{ fontSize: 14, color: MUTED, marginBottom: 16 }}>That guide isn't here any more. Here are all our guides.</p>}
           <div style={{ display: "grid", gap: 12 }}>
@@ -63,14 +65,14 @@ export default function GuidePage({ slug, onJoin, onLogin }) {
   const others = ESSENTIALS.filter((g) => g.slug !== guide.slug).slice(0, 5);
   const hero = (
     <div style={{ ...section, maxWidth: 720, paddingTop: "clamp(16px, 4vh, 40px)", paddingBottom: 28 }}>
-      <a href="/guides" style={{ fontSize: 13, color: MUTED }}>← NRI essentials</a>
+      <a href="/guides" style={{ display: "inline-block", padding: "10px 0", fontSize: 14, color: MUTED }}>← NRI essentials</a>
       <h1 style={{ fontSize: "clamp(30px, 5vw, 44px)", fontWeight: 800, lineHeight: 1.12, letterSpacing: "-0.03em", margin: "14px 0 10px" }}>{guide.title}</h1>
       <p style={{ fontSize: 17, color: MUTED, lineHeight: 1.6, margin: 0 }}>{guide.excerpt}</p>
-      <p style={{ fontSize: 13, color: "#9B9A97", marginTop: 10 }}>{guide.readTime} · From the NRIClub team</p>
+      <p style={{ fontSize: 13, color: MUTED, marginTop: 10 }}>{guide.readTime} · From the NRIClub team</p>
     </div>
   );
   return (
-    <PublicShell onLogin={onLogin} hero={hero}>
+    <PublicShell onLogin={onLogin} onJoin={onJoin} hero={hero}>
       <article style={{ ...section, maxWidth: 720 }}>
         <GuideBody text={guide.content} />
         {join}

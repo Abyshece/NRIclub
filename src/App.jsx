@@ -6,6 +6,7 @@ import "./member/base.css";
 import { TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
 import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 import { rateLimiter } from "./rateLimiter";
+import { hasImprint } from "./content/imprint";
 
 // The landing page and this file load first; everything else (the member
 // site, signup, the admin panel) loads when it's needed, so a visitor's
@@ -18,6 +19,7 @@ const TermsGate = lazy(() => import("./member/TermsGate"));
 const AdminPanel = lazy(() => import("./admin/AdminPanel"));
 const CityPage = lazy(() => import("./CityPage"));
 const GuidePage = lazy(() => import("./GuidePage"));
+const ImpressumPage = lazy(() => import("./ImpressumPage"));
 
 // A public page's address: /city/<city>, /guides or /guides/<slug>.
 const publicPage = () => {
@@ -32,6 +34,7 @@ const publicPage = () => {
   }
   const guide = /^\/guides(?:\/([a-z0-9-]+))?\/?$/.exec(path);
   if (guide) return { kind: "guide", slug: guide[1] || "" };
+  if (/^\/impressum\/?$/.test(path) && hasImprint()) return { kind: "impressum" };
   return null;
 };
 
@@ -271,8 +274,25 @@ const ExpiredLinkPage = ({ onContinue }) => {
   );
 };
 
+const isAdminRoute = () => {
+  const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
+  return isAdminDomain || window.location.hash === "#admin";
+};
+
+// Nobody is signed in in this browser and the page wasn't opened from one of
+// our emails: show the landing page at once (index.html already has its
+// text, see vite.config.js) instead of "Loading..." first.
+const startsSignedOut = () => {
+  try {
+    const link = api.takeAuthRedirect().kind;
+    return link !== "recovery" && link !== "expired" && !isAdminRoute() && !api.hasStoredSession();
+  } catch (e) {
+    return false;
+  }
+};
+
 export default function App() {
-  const [authState, setAuthState] = useState("loading");
+  const [authState, setAuthState] = useState(() => (startsSignedOut() ? "landing" : "loading"));
   const [user, setUser] = useState(null);
   const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead" or a reset this browser asked for
   const [loginNotice, setLoginNotice] = useState(""); // e.g. after a new password
@@ -354,17 +374,14 @@ export default function App() {
     try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch (e) {}
   }, []);
 
-  const isAdminRoute = () => {
-    const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
-    return isAdminDomain || window.location.hash === "#admin";
-  };
-
   // Restores this browser's session, or shows `fallback` when nobody is
   // signed in. If the session is fine but the profile can't be read, the
   // member gets a retry: they are never shown as signed out or unverified
   // because of one failed request.
   const restoreSession = async (fallback = "landing") => {
-    setAuthState("loading");
+    // Already on the landing page with no session to check (see
+    // startsSignedOut): stay there rather than flash "Loading...".
+    setAuthState((state) => (state === "landing" && fallback === "landing" && !isAdminRoute() && !api.hasStoredSession() ? state : "loading"));
     if (isAdminRoute()) {
       try {
         const session = await api.getSession();
@@ -408,6 +425,17 @@ export default function App() {
     }
     if (link.kind === "expired") {
       setAuthState("link-expired");
+      return;
+    }
+    // Nobody signed in: the landing page is already showing, and there is no
+    // session to restore (doing it anyway would undo a tap on Join free made
+    // just as the app appeared). A Join free or Log in tapped on the
+    // homepage's text before the app had loaded (see vite.config.js) opens now.
+    const start = window.nriStart;
+    window.nriStart = null;
+    if (startsSignedOut()) {
+      try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
+      if (start === "signup" || start === "login") setAuthState(start);
       return;
     }
     restoreSession();
@@ -504,6 +532,7 @@ export default function App() {
       const login = () => setAuthState("login");
       if (page?.kind === "city") return <CityPage city={page.city} onJoin={join} onLogin={login} />;
       if (page?.kind === "guide") return <GuidePage slug={page.slug} onJoin={join} onLogin={login} />;
+      if (page?.kind === "impressum") return <ImpressumPage onJoin={join} onLogin={login} />;
       return <LandingPage onJoin={join} onLogin={login} />;
     };
     if (authState === "landing") return landing();

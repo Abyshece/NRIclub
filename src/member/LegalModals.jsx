@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FONT, linkButtonStyle } from "./ui";
+import { IMPRINT, hasImprint, imprintSections } from "../content/imprint";
 
 const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
@@ -129,11 +130,31 @@ export function PrivacyContent() {
       <h4 style={h4}>6. Data Sharing</h4>
       <p style={para}>We do not sell your personal data. Data is only shared with essential service providers (email delivery, hosting) under data processing agreements compliant with GDPR.</p>
       <h4 style={h4}>7. Contact</h4>
+      {hasImprint() && <p style={para}>The controller responsible for your data is {[IMPRINT.name, ...IMPRINT.address].map((l) => l.trim()).filter(Boolean).join(", ")}.</p>}
       <p style={{ margin: 0 }}>For any data protection inquiries, contact our Data Protection Officer at privacy@nriclub.app.</p>
       <p style={{ marginTop: 20, marginBottom: 0, fontSize: 11, color: "#6B6A67", fontStyle: "italic" }}>Last updated: October 2026</p>
     </>
   );
 }
+
+// The Impressum (legal notice), from src/content/imprint.js. Only shown
+// where hasImprint() is true.
+export function ImpressumContent({ headingStyle = h4 }) {
+  return imprintSections().map((section) => (
+    <div key={section.title} style={{ marginBottom: 16 }}>
+      <h4 style={headingStyle}>{section.title}</h4>
+      <p style={{ margin: 0 }}>
+        {section.lines.map((line, i) => (
+          <span key={i}>{i > 0 && <br />}{line.href ? <a href={line.href} style={{ color: "#37352F", fontWeight: 600 }}>{line.text}</a> : line.text}</span>
+        ))}
+      </p>
+    </div>
+  ));
+}
+
+export const ImpressumModal = ({ onClose }) => (
+  <LegalModal title="Impressum" onClose={onClose}><ImpressumContent /></LegalModal>
+);
 
 export const TermsModal = ({ onClose }) => (
   <LegalModal title="Terms of Use" onClose={onClose}><TermsContent /></LegalModal>

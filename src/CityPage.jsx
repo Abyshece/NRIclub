@@ -1,18 +1,23 @@
 import { useEffect, useState } from "react";
 import * as api from "./supabaseApi";
 import FlagIcon from "./FlagIcon";
-import PublicShell, { INK, MUTED, SAFFRON, GREEN, NAVY, section, primaryBtn, AMBASSADOR_MAIL } from "./PublicShell";
+import PublicShell, { Phrases, useCanonical, INK, MUTED, NAVY, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, AMBASSADOR_MAIL, whatsappShare } from "./PublicShell";
 import { ESSENTIALS } from "./content/essentials";
 import { CITIES } from "./content/cities";
+import { findCity } from "./content/findCity";
+import { TRUST_LINE } from "./content/home";
 import { slug, HOME_TITLE } from "./content/slug";
 
 // ============================================================================
 // PUBLIC CITY PAGE (nriclub.app/city/<city>): what NRIClub has in one city,
 // for people who aren't members yet. It shows counts only, never names or
-// posts; members who open the same address get the city's group.
+// posts; members who open the same address get the city's group. Until a
+// group has a few members it says so, instead of showing zeros.
 // ============================================================================
 
-const titleCase = (s) => s.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+const titleCase = (s) => s.replace(/(^|[\s-])(\p{L})/gu, (_, p, c) => p + (c === "ß" ? c : c.toLocaleUpperCase()));
+// Below this many members the page says the group is just starting.
+const SHOW_COUNTS_FROM = 5;
 
 const Stat = ({ value, label, color }) => (
   <div style={{ flex: "1 1 140px", padding: "18px 16px", borderRadius: 14, border: "1px solid #ECEBE8", background: "#FCFCFB", textAlign: "center" }}>
@@ -25,11 +30,13 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
   const [summary, setSummary] = useState(null);
   const [cities, setCities] = useState([]);
 
-  // The address can be "berlin", "new-york-city" or "Düsseldorf": find the
-  // city's real name in the known groups.
+  // The address can be "berlin", "new-york-city", "Düsseldorf" or another
+  // spelling ("munchen", "nyc"): find the city's real name in the groups.
   const key = slug(rawCity);
-  const known = cities.find((c) => slug(c.city) === key)?.city || CITIES.find((c) => slug(c) === key);
+  const known = findCity(rawCity, cities.map((c) => c.city));
   const city = known || titleCase(rawCity);
+  const citySlug = slug(city);
+  const cityPath = `/city/${citySlug || encodeURIComponent(city)}`;
 
   useEffect(() => {
     api.getPublicCities().then(setCities).catch(() => {});
@@ -41,6 +48,16 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
     return () => { gone = true; };
   }, [city]);
 
+  // Another spelling of a known city: show the city's own address, so a
+  // shared link is the one with the city's link preview.
+  useEffect(() => {
+    if (known && citySlug && citySlug !== key) {
+      try { window.history.replaceState(window.history.state, "", `/city/${citySlug}${window.location.search}${window.location.hash}`); } catch (e) {}
+    }
+  }, [known, citySlug, key]);
+
+  useCanonical(cityPath);
+
   useEffect(() => {
     document.title = `Indians in ${city} · NRIClub`;
     return () => { document.title = HOME_TITLE; };
@@ -49,7 +66,8 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
   const members = summary?.members || 0;
   const hasGroup = !!summary?.group;
   const noGroup = summary && !summary.error && !hasGroup;
-  const others = (cities.length ? cities.map((c) => c.city) : CITIES).filter((c) => slug(c) !== key).slice(0, 18);
+  const showCounts = hasGroup && members >= SHOW_COUNTS_FROM;
+  const others = (cities.length ? cities.map((c) => c.city) : CITIES).filter((c) => slug(c) !== citySlug).slice(0, 18);
 
   const hero = (
     <div style={{ ...section, paddingTop: "clamp(24px, 6vh, 56px)", paddingBottom: 48, textAlign: "center" }}>
@@ -59,23 +77,30 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
       <h1 style={{ fontSize: "clamp(36px, 6vw, 56px)", fontWeight: 800, lineHeight: 1.05, letterSpacing: "-0.04em", margin: "0 0 18px", overflowWrap: "anywhere" }}>Indians in {city}</h1>
       <p style={{ fontSize: "clamp(16px, 1.8vw, 18px)", lineHeight: 1.65, color: MUTED, maxWidth: 560, margin: "0 auto 28px" }}>
         {!noGroup
-          ? `Meet Indians who live in ${city}. Ask questions, find a room or a referral, discover desi places and celebrate festivals together.`
+          ? `Ask questions, find a room or a referral, discover desi places and celebrate festivals with Indians in ${city}.`
           : `There's no ${city} group yet. Join NRIClub and be one of the first: we'll set up the ${city} group for you.`}
       </p>
-      <button onClick={onJoin} style={primaryBtn}>{noGroup ? "Join NRIClub" : `Join Indians in ${city}`}</button>
-      <p style={{ fontSize: 13, color: "#9B9A97", marginTop: 12 }}>Free to join · Every member is verified</p>
+      <button onClick={onJoin} style={primaryBtn}>{noGroup ? "Join NRIClub free" : `Join Indians in ${city}`}</button>
+      <p style={{ fontSize: 14, color: MUTED, marginTop: 14 }}><Phrases text={TRUST_LINE} /></p>
     </div>
   );
 
   return (
-    <PublicShell onLogin={onLogin} hero={hero}>
-      {summary && hasGroup && (
+    <PublicShell onLogin={onLogin} onJoin={onJoin} hero={hero}>
+      {showCounts && (
         <section style={{ ...section, paddingTop: 8, paddingBottom: 40 }}>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-            <Stat value={members} label={members === 1 ? "member" : "members"} color={SAFFRON} />
+            <Stat value={members} label="members" color={SAFFRON_TEXT} />
             <Stat value={summary.events || 0} label={summary.events === 1 ? "event" : "events"} color={NAVY} />
-            <Stat value={summary.places || 0} label={summary.places === 1 ? "desi place" : "desi places"} color={GREEN} />
+            <Stat value={summary.places || 0} label={summary.places === 1 ? "desi place" : "desi places"} color={GREEN_TEXT} />
           </div>
+        </section>
+      )}
+      {hasGroup && !showCounts && (
+        <section style={{ ...section, paddingTop: 8, paddingBottom: 32 }}>
+          <p style={{ margin: 0, padding: "16px 18px", borderRadius: 14, border: "1px solid #ECEBE8", background: "#FCFCFB", fontSize: 15, lineHeight: 1.6 }}>
+            <strong>NRIClub {city} is just starting.</strong> Join now as one of its first members: the first members shape the group, its meetups and its list of desi places.
+          </p>
         </section>
       )}
 
@@ -110,7 +135,10 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
       <section style={{ ...section, paddingTop: 40, paddingBottom: 16, textAlign: "center" }}>
         <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 6px" }}>Bring Indians in {city} together</h2>
         <p style={{ fontSize: 14, color: MUTED, margin: "0 auto 14px", maxWidth: 520 }}>City ambassadors welcome newcomers and host the first meetups. It takes an hour or two a month.</p>
-        <a href={AMBASSADOR_MAIL} style={{ fontSize: 14, fontWeight: 600, color: INK }}>Become a city ambassador →</a>
+        <a href={AMBASSADOR_MAIL} style={{ display: "inline-block", padding: "10px 8px", fontSize: 14, fontWeight: 600, color: INK }}>Become a city ambassador →</a>
+        <p style={{ fontSize: 14, margin: "10px 0 0" }}>
+          <a href={whatsappShare(`Indians in ${city} on NRIClub, a free community for Indians abroad: https://nriclub.app${cityPath}`)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", padding: "10px 8px", fontWeight: 600, color: INK }}>Share the {city} page on WhatsApp</a>
+        </p>
       </section>
 
       {others.length > 0 && (
@@ -118,7 +146,7 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
           <h2 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 12px", color: MUTED }}>Other cities</h2>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {others.map((c) => (
-              <a key={c} href={`/city/${slug(c)}`} style={{ fontSize: 13, padding: "6px 12px", borderRadius: 999, border: "1px solid #E0E0DE", color: INK, textDecoration: "none" }}>{c}</a>
+              <a key={c} href={`/city/${slug(c)}`} style={{ display: "inline-flex", alignItems: "center", minHeight: 44, boxSizing: "border-box", fontSize: 14, padding: "0 16px", borderRadius: 999, border: "1px solid #C9C8C5", color: INK, textDecoration: "none" }}>{c}</a>
             ))}
           </div>
         </section>
