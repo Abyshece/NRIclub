@@ -850,7 +850,7 @@ const EmptyCard = ({ text, action, onAction }) => (
 // ============================================================================
 // POST CARD
 // ============================================================================
-const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked }) => {
+const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup }) => {
   const [liked, setLiked] = useState(initialLiked || false);
   const [likeCount, setLikeCount] = useState(post.likes || 0);
   const [showComments, setShowComments] = useState(false);
@@ -943,7 +943,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
               {author.profession} • {author.location}
             </div>
             <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 1 }}>From: {author.hometown}</div>
-            {post.groupName && (
+            {post.groupName && !hideGroup && (
               <div style={{ fontSize: 10, color: "#5B9CFF", marginTop: 3, display: "flex", alignItems: "center", gap: 3, fontWeight: 600 }}>
                 {Icons.users({ size: 10, stroke: "#5B9CFF" })} Posted in {post.groupName}
               </div>
@@ -1166,9 +1166,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [profileTab, setProfileTab] = useState("posts");
   const [chatTab, setChatTab] = useState("personal"); // 'personal' | 'marketplace'
   const [expandedEvent, setExpandedEvent] = useState(null);
-  const [eventLikes, setEventLikes] = useState({}); // {eventId: boolean}
-  const [eventComment, setEventComment] = useState("");
-  const [eventComments, setEventComments] = useState({}); // {eventId: [{user, text, time}]}
   const [eventModal, setEventModal] = useState(false);
   const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
   const [eventPhoto, setEventPhoto] = useState(null); // { url, preview }
@@ -1195,6 +1192,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [groupMembers, setGroupMembers] = useState([]);
   const [groupRequestModal, setGroupRequestModal] = useState(false);
   const [newGroupCity, setNewGroupCity] = useState("");
+  const [groupRequestSent, setGroupRequestSent] = useState(false);
+  const [groupRequestError, setGroupRequestError] = useState("");
+  const [guidelinesOpen, setGuidelinesOpen] = useState({}); // {groupId: boolean}, unset = open only for visitors
   const [communityTab, setCommunityTab] = useState("feed");
   const [eventViewMode, setEventViewMode] = useState("all");
   const [eventSearch, setEventSearch] = useState("");
@@ -2350,6 +2350,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           const groupPosts = posts.filter((p) => p.groupId === selectedGroup.id);
           const thumbColors = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
           const sgColor = thumbColors[groups.findIndex((g) => g.id === selectedGroup.id) % thumbColors.length];
+          const guidelinesShown = guidelinesOpen[selectedGroup.id] ?? !selectedGroup.joined;
 
           return (
             <div style={{ maxWidth: 700, margin: "0 auto" }}>
@@ -2387,15 +2388,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     </button>
                   </div>
                   <div style={{ display: "flex", gap: 16, marginTop: 14, fontSize: 12, color: "#9B9A97" }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.users({ size: 14 })} {selectedGroup.joined ? (groups.filter(g => g.joined).length > 0 ? "You + others" : "1") : "0"} joined</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.users({ size: 14 })} {(selectedGroup.members || 0).toLocaleString()} members</span>
                     <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.shield({ size: 14 })} Admin Moderated</span>
                   </div>
 
-                  {/* Community Guidelines */}
-                  <div style={{ marginTop: 20, padding: "16px 18px", background: "#F7F7F5", borderRadius: 10, border: "1px solid #EDEDEB" }}>
-                    <h4 style={{ fontSize: 11, fontWeight: 800, color: "#37352F", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, display: "flex", alignItems: "center", gap: 6, fontFamily: font }}>
-                      {Icons.shield({ size: 13 })} Community Guidelines
-                    </h4>
+                  {/* Community Guidelines: one quiet line, open by default only for visitors */}
+                  <button onClick={() => setGuidelinesOpen(prev => ({ ...prev, [selectedGroup.id]: !guidelinesShown }))} aria-expanded={guidelinesShown}
+                    style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 14, background: "none", border: "none", padding: "8px 0", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#5F5E5B", fontFamily: font }}>
+                    {Icons.shield({ size: 13 })} Community guidelines <span style={{ display: "inline-block", transform: guidelinesShown ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>›</span>
+                  </button>
+                  {guidelinesShown && <div style={{ marginTop: 6, padding: "16px 18px", background: "#F7F7F5", borderRadius: 10, border: "1px solid #EDEDEB" }}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 20px" }}>
                       {[
                         "Be respectful and kind to all members. Harassment is not tolerated.",
@@ -2409,7 +2411,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </div>}
                 </div>
               </div>
 
@@ -2433,7 +2435,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
               {communityTab === "feed" ? (
                 <>
-                  {/* Community post box */}
+                  {/* Community post box (members only) */}
+                  {!selectedGroup.joined ? (
+                    <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                      <span style={{ fontSize: 14, color: "#5F5E5B", fontFamily: font }}>Join this group to post</span>
+                      <button onClick={() => toggleGroup(selectedGroup.id)} style={{ padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer", flexShrink: 0, border: "none", background: "#37352F", color: "#fff" }}>
+                        Join
+                      </button>
+                    </div>
+                  ) : (
                   <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "16px 20px", marginBottom: 20 }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                       <Avatar name={user.name} size={36} url={user.avatar_url} />
@@ -2444,10 +2454,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         onKeyDown={(e) => e.key === "Enter" && createPost()}
                       />
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
-                      <button style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>
-                        {Icons.image({ size: 14 })} Add Photo
-                      </button>
+                    <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
                       <button onClick={createPost} disabled={!newPost.trim()} style={{
                         padding: "7px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, fontFamily: font,
                         background: newPost.trim() ? "#37352F" : "#fff", color: newPost.trim() ? "#fff" : "#9B9A97", cursor: newPost.trim() ? "pointer" : "default",
@@ -2456,9 +2463,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       </button>
                     </div>
                   </div>
+                  )}
 
                   {groupPosts.length > 0 ? (
-                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />)
+                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} hideGroup />)
                   ) : (
                     <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                       No posts in this community yet. Be the first to say hello!
@@ -2497,13 +2505,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     outsideByCities[city].push(u);
                   });
                   const outsideCityNames = Object.keys(outsideByCities).sort();
-                  const MemberCard = ({ u, isLocal }) => (
+                  const MemberCard = ({ u }) => (
                     <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
                       <Avatar name={u.name} size={44} url={u.avatar_url} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name}</h4>
-                          {isLocal && <span style={{ fontSize: 9, fontWeight: 600, padding: "2px 6px", borderRadius: 4, background: "#E3FCEF", color: "#22A06B", border: "1px solid #B5E4CA" }}>LOCAL</span>}
                           <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 3,
                             background: isUserNRI(u) ? "#E3FCEF" : "#FFF3E0",
                             color: isUserNRI(u) ? "#22A06B" : "#E65100",
@@ -2515,10 +2522,33 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           {Icons.mapPin({ size: 10 })} {(u.location || "").split(",")[0] || "—"}
                         </div>
                       </div>
-                      <button onClick={() => handleSendNamaste(u.id)} disabled={sentNamaste.has(u.id) || u.id === user.id}
-                        style={{ padding: 8, borderRadius: "50%", border: "none", cursor: (sentNamaste.has(u.id) || u.id === user.id) ? "default" : "pointer", flexShrink: 0, background: (sentNamaste.has(u.id) || u.id === user.id) ? "#F0EFED" : "#37352F", color: (sentNamaste.has(u.id) || u.id === user.id) ? "#9B9A97" : "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {(sentNamaste.has(u.id) || u.id === user.id) ? Icons.check({ size: 16 }) : Icons.users({ size: 16 })}
-                      </button>
+                      {u.id === user.id ? (
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "#9B9A97", padding: "4px 10px", borderRadius: 6, background: "#F0EFED", flexShrink: 0, fontFamily: font }}>You</span>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            if (acceptedConnections.has(u.id)) { if (confirm(`Unfollow ${u.name}?`)) handleUnfollow(u.id); }
+                            else if (!sentNamaste.has(u.id)) handleSendNamaste(u.id);
+                          }}
+                          disabled={sentNamaste.has(u.id) && !acceptedConnections.has(u.id)}
+                          style={{
+                            padding: "7px 12px", borderRadius: 8, flexShrink: 0, whiteSpace: "nowrap",
+                            border: acceptedConnections.has(u.id) ? "1px solid #B5E4CA" : "none",
+                            fontSize: 12, fontWeight: 600, fontFamily: font, cursor: (sentNamaste.has(u.id) && !acceptedConnections.has(u.id)) ? "default" : "pointer",
+                            background: acceptedConnections.has(u.id) ? "#E3FCEF" : sentNamaste.has(u.id) ? "#F0EFED" : "#37352F",
+                            color: acceptedConnections.has(u.id) ? "#22A06B" : sentNamaste.has(u.id) ? "#9B9A97" : "#fff",
+                            display: "flex", alignItems: "center", gap: 5,
+                          }}
+                        >
+                          {acceptedConnections.has(u.id) ? (
+                            <>{Icons.check({ size: 13 })} Following</>
+                          ) : sentNamaste.has(u.id) ? (
+                            <>{Icons.check({ size: 13 })} Request sent</>
+                          ) : (
+                            <>{Icons.users({ size: 13 })} Namaste</>
+                          )}
+                        </button>
+                      )}
                     </div>
                   );
                   return (
@@ -2526,16 +2556,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       {localMembers.length > 0 && (
                         <>
                           <h4 style={{ fontSize: 13, fontWeight: 700, color: "#22A06B", marginBottom: 10, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.mapPin({ size: 14, stroke: "#22A06B" })} Living in {cityName} ({localMembers.length})</h4>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-                            {localMembers.map(u => <MemberCard key={u.id} u={u} isLocal={true} />)}
+                          <div className="members-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+                            {localMembers.map(u => <MemberCard key={u.id} u={u} />)}
                           </div>
                         </>
                       )}
                       {outsideCityNames.map(city => (
                         <div key={city} style={{ marginBottom: 16 }}>
                           <h4 style={{ fontSize: 13, fontWeight: 700, color: "#9B9A97", marginBottom: 10, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.mapPin({ size: 14, stroke: "#9B9A97" })} {city} ({outsideByCities[city].length})</h4>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                            {outsideByCities[city].map(u => <MemberCard key={u.id} u={u} isLocal={false} />)}
+                          <div className="members-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                            {outsideByCities[city].map(u => <MemberCard key={u.id} u={u} />)}
                           </div>
                         </div>
                       ))}
@@ -2553,37 +2583,31 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         // Groups List View
         const myGroups = groups.filter(g => g.joined);
         const groupTabList = groupTab === "my" ? myGroups.filter(g => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase())) : groups.filter((g) => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()));
+        // On All groups, the member's own city comes first.
+        const myCityGroupName = `indians in ${(user.location || "").split(",")[0].trim().toLowerCase()}`;
+        if (groupTab !== "my") groupTabList.sort((a, b) => (b.name.toLowerCase() === myCityGroupName) - (a.name.toLowerCase() === myCityGroupName));
+        // A search with no match can turn into a request for that city.
+        const searchedCity = groupSearchQuery.trim().replace(/^indians in\s+/i, "");
+        const openGroupRequest = (city) => { setNewGroupCity(city); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true); };
         const thumbColorsAll = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
 
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            {/* Header with Request New + Search */}
+            {/* Header with Search */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
               <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Groups</h2>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <button
-                  onClick={() => setGroupRequestModal(true)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 6,
-                    border: "1px solid #E0E0DE", background: "#fff", fontSize: 12, fontWeight: 600, color: "#37352F",
-                    cursor: "pointer", fontFamily: font,
-                  }}
-                >
-                  {Icons.plus({ size: 13 })} Request New
-                </button>
-                <div style={{ position: "relative" }}>
-                  <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>
-                    {Icons.search({ size: 14 })}
-                  </div>
-                  <input
-                    value={groupSearchQuery} onChange={(e) => setGroupSearchQuery(e.target.value)}
-                    placeholder="Search..."
-                    style={{
-                      padding: "7px 12px 7px 30px", fontSize: 12, border: "1px solid #E0E0DE",
-                      borderRadius: 6, background: "#fff", outline: "none", width: 160, fontFamily: font, color: "#37352F",
-                    }}
-                  />
+              <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+                <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>
+                  {Icons.search({ size: 14 })}
                 </div>
+                <input
+                  value={groupSearchQuery} onChange={(e) => setGroupSearchQuery(e.target.value)}
+                  placeholder="Search groups or cities…"
+                  style={{
+                    padding: "7px 12px 7px 30px", fontSize: 12, border: "1px solid #E0E0DE",
+                    borderRadius: 6, background: "#fff", outline: "none", width: "100%", fontFamily: font, color: "#37352F",
+                  }}
+                />
               </div>
             </div>
 
@@ -2626,14 +2650,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <h3 style={{ fontSize: 15, fontWeight: 600, color: "#37352F", fontFamily: font, marginBottom: 3 }}>{g.name}</h3>
-                        <span style={{ fontSize: 9, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", border: "1px solid #EDEDEB", padding: "2px 6px", borderRadius: 3 }}>
+                        {g.category !== "City" && <span style={{ fontSize: 9, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", border: "1px solid #EDEDEB", padding: "2px 6px", borderRadius: 3 }}>
                           {g.category}
-                        </span>
+                        </span>}
                       </div>
                     </div>
-                    <p style={{ fontSize: 12, color: "#9B9A97", lineHeight: 1.4, fontFamily: font, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                    {/* The default "Community for Indians living in X." only repeats the name */}
+                    {g.description && g.description !== `Community for Indians living in ${g.name.replace(/^Indians in /, "")}.` && <p style={{ fontSize: 12, color: "#9B9A97", lineHeight: 1.4, fontFamily: font, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                       {g.description}
-                    </p>
+                    </p>}
                     <div style={{ fontSize: 12, color: "#9B9A97", display: "flex", alignItems: "center", gap: 4 }}>
                       {Icons.users({ size: 13 })} {g.members.toLocaleString()} members
                     </div>
@@ -2665,6 +2690,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button onClick={() => setGroupSearchQuery("")} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", cursor: "pointer", marginTop: 8, fontSize: 13, fontFamily: font }}>
                   Clear Search
                 </button>
+                {searchedCity && (
+                  <>
+                    <br />
+                    <button onClick={() => openGroupRequest(searchedCity)} style={{ ...btnPrimary, marginTop: 14, maxWidth: "100%", overflowWrap: "anywhere" }}>
+                      {Icons.plus({ size: 14 })} Request "Indians in {searchedCity}"
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            {groupTabList.length > 0 && (
+              <div style={{ textAlign: "center", marginTop: 20, fontSize: 13, color: "#9B9A97", fontFamily: font }}>
+                Can't find your city?{" "}
+                <button onClick={() => openGroupRequest(newGroupCity)} style={{ background: "none", border: "none", padding: "8px 0", color: "#37352F", textDecoration: "underline", cursor: "pointer", fontSize: 13, fontFamily: font }}>
+                  Request a group
+                </button>
               </div>
             )}
           </div>
@@ -2674,7 +2715,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         const evtColors = ["#3D6B5A", "#5A4A3D", "#3D5A80", "#6B5B4E", "#4A6741"];
         const filteredEvents = orderEvents(events.filter((e) => {
           const matchesView = eventViewMode === "all" || rsvps.has(e.id);
-          const matchesCity = eventCityFilter === "All" || (e.location || "").includes(eventCityFilter);
+          const matchesCity = eventCityFilter === "All" || (e.city || "").split(",")[0].trim() === eventCityFilter || (e.location || "").includes(eventCityFilter);
           const q = eventSearch.trim().toLowerCase();
           const matchesSearch = !q || (e.title || "").toLowerCase().includes(q) || (e.description || "").toLowerCase().includes(q) || (e.location || "").toLowerCase().includes(q) || (e.organizer || "").toLowerCase().includes(q);
           return matchesView && matchesCity && matchesSearch;
@@ -2742,7 +2783,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     color: "#37352F", fontWeight: 500, cursor: "pointer", fontFamily: font, appearance: "none", outline: "none",
                   }}
                 >
-                  <option value="All">All</option>
+                  <option value="All">All cities</option>
                   {GLOBAL_CITIES.map((c) => <option key={c} value={c.split(",")[0]}>{c}</option>)}
                 </select>
                 <div style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9B9A97" }}>
@@ -2764,7 +2805,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               return (
                 <Fragment key={e.id}>
                 {e === firstPastEvent && <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", margin: "28px 0 14px", fontFamily: font }}>Past events</h4>}
-                <div className="event-card" style={{
+                <div className={e.image ? "event-card" : "event-card event-card-plain"} style={{
                   background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", overflow: "hidden",
                   display: "flex", flexDirection: "row", marginBottom: 16, transition: "box-shadow 0.15s",
                 }}
@@ -2844,14 +2885,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         >
                           {rsvps.has(e.id) ? "✓ Going" : "RSVP"}
                         </button>}
-                        {e.organizerId === user.id && <button onClick={async () => { if (confirm("Delete this event?")) { try { await api.deleteEvent(e.id); } catch(e2) {} setEvents(prev => prev.filter(x => x.id !== e.id)); } }} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", cursor: "pointer", color: "#DC2626" }}>{Icons.trash({ size: 14 })}</button>}
-                        <button onClick={() => setReportConfirm({ type: "event", id: e.id, name: e.title })} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 14 })}</button>
                       </div>
                     </div>
-                    {/* Like / Comment / Share */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 16, paddingTop: 12, borderTop: "1px solid #F0EFED", marginTop: 12 }}>
-                      <button onClick={() => setEventLikes(prev => ({ ...prev, [e.id]: !prev[e.id] }))} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: eventLikes[e.id] ? "#DC2626" : "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.heart({ size: 15, fill: eventLikes[e.id] ? "#DC2626" : "none", stroke: eventLikes[e.id] ? "#DC2626" : "currentColor" })} {eventLikes[e.id] ? "Liked" : "Like"}</button>
-                      <button onClick={() => setExpandedEvent(e)} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{Icons.message({ size: 15 })} Comment {eventComments[e.id]?.length ? `(${eventComments[e.id].length})` : ""}</button>
+                    {/* Report (and Delete for the host) / Share */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, paddingTop: 8, borderTop: "1px solid #F0EFED", marginTop: 12 }}>
+                      <button onClick={() => setReportConfirm({ type: "event", id: e.id, name: e.title })} aria-label="Report" title="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 8, display: "flex" }}>{Icons.flag({ size: 14 })}</button>
+                      {e.organizerId === user.id && <button onClick={async () => { if (confirm("Delete this event?")) { try { await api.deleteEvent(e.id); } catch(e2) {} setEvents(prev => prev.filter(x => x.id !== e.id)); } }} aria-label="Delete event" title="Delete event" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 8, display: "flex" }}>{Icons.trash({ size: 14 })}</button>}
                       <button onClick={() => {
                         const shareUrl = `${window.location.origin}${window.location.pathname}#event=${e.id}`;
                         const shareText = `${e.title}\n${eventDate(e)} at ${eventTime(e)}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
@@ -4247,11 +4286,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Expanded Event Modal */}
       {expandedEvent && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setExpandedEvent(null); setEventComment(""); }}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setExpandedEvent(null)}>
           <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 560, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={(ev) => ev.stopPropagation()}>
-            {/* Hero */}
-            <div style={{ height: 180, background: "linear-gradient(135deg, #7BA88A, #5A8070)", position: "relative", borderRadius: "18px 18px 0 0", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <button onClick={() => { setExpandedEvent(null); setEventComment(""); }} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {/* Hero: the event photo when there is one */}
+            <div style={{ height: 180, background: expandedEvent.image ? "#F0EFED" : "linear-gradient(135deg, #7BA88A, #5A8070)", position: "relative", borderRadius: "18px 18px 0 0", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {expandedEvent.image && <img src={expandedEvent.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0 }} />}
+              <button onClick={() => setExpandedEvent(null)} style={{ position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%", background: "rgba(0,0,0,0.4)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {Icons.x({ size: 16 })}
               </button>
               <div style={{ position: "absolute", bottom: 16, left: 16, background: "rgba(255,255,255,0.95)", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font }}>{eventDate(expandedEvent)}</div>
@@ -4263,46 +4303,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.clock({ size: 14 })} {eventTime(expandedEvent)}</span>
                 <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.mapPin({ size: 14 })} {expandedEvent.location}</span>
               </div>
+              {!isPastEvent(expandedEvent) && <button onClick={() => { toggleRsvp(expandedEvent.id); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px", marginBottom: 20, background: rsvps.has(expandedEvent.id) ? "#E3FCEF" : "#37352F", color: rsvps.has(expandedEvent.id) ? "#22A06B" : "#fff", border: rsvps.has(expandedEvent.id) ? "1px solid #B5E4CA" : "none" }}>
+                {rsvps.has(expandedEvent.id) ? "✓ Going" : "RSVP"}
+              </button>}
               <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, marginBottom: 20, fontFamily: font, whiteSpace: "pre-wrap" }}>{expandedEvent.description}</p>
               {expandedEvent.link && (
-                <a href={expandedEvent.link.startsWith("http") ? expandedEvent.link : `https://${expandedEvent.link}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 14, color: "#fff", padding: "12px", background: "#5B9CFF", borderRadius: 8, textDecoration: "none", fontWeight: 600, marginBottom: 16, fontFamily: font }}>
+                <a href={expandedEvent.link.startsWith("http") ? expandedEvent.link : `https://${expandedEvent.link}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 14, color: "#37352F", padding: "12px", background: "#fff", border: "1px solid #E0E0DE", borderRadius: 8, textDecoration: "none", fontWeight: 600, marginBottom: 16, fontFamily: font }}>
                   {Icons.link({ size: 15 })} Get Tickets / More Info
                 </a>
               )}
-              <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED", marginBottom: 14 }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>
-              {!isPastEvent(expandedEvent) && <button onClick={() => { toggleRsvp(expandedEvent.id); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px", background: rsvps.has(expandedEvent.id) ? "#E3FCEF" : "#37352F", color: rsvps.has(expandedEvent.id) ? "#22A06B" : "#fff", border: rsvps.has(expandedEvent.id) ? "1px solid #B5E4CA" : "none" }}>
-                {rsvps.has(expandedEvent.id) ? "✓ Going" : "RSVP"}
-              </button>}
-              
-              {/* Comments section */}
-              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #F0EFED" }}>
-                <h4 style={{ fontSize: 14, fontWeight: 700, color: "#37352F", marginBottom: 14, fontFamily: font }}>Comments ({(eventComments[expandedEvent.id] || []).length})</h4>
-                {(eventComments[expandedEvent.id] || []).map((c, i) => (
-                  <div key={i} style={{ display: "flex", gap: 10, marginBottom: 12, padding: "10px 12px", background: "#FAFAF8", borderRadius: 8 }}>
-                    <Avatar name={c.user} size={28} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{c.user}</span>
-                        <span style={{ fontSize: 10, color: "#9B9A97" }}>{c.time}</span>
-                      </div>
-                      <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 3, fontFamily: font, lineHeight: 1.5 }}>{c.text}</p>
-                    </div>
-                  </div>
-                ))}
-                <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                  <Avatar name={user.name} size={28} url={user.avatar_url} />
-                  <div style={{ flex: 1 }}>
-                    <textarea value={eventComment} onChange={(ev) => setEventComment(ev.target.value)} placeholder="Write a comment..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 50, resize: "none", boxSizing: "border-box" }} />
-                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
-                      <button disabled={!eventComment.trim()} onClick={() => {
-                        const newC = { user: user.name, text: eventComment, time: "Just now" };
-                        setEventComments(prev => ({ ...prev, [expandedEvent.id]: [...(prev[expandedEvent.id] || []), newC] }));
-                        setEventComment("");
-                      }} style={{ ...btnPrimary, padding: "6px 14px", fontSize: 12, opacity: eventComment.trim() ? 1 : 0.4 }}>Post</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED" }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>
             </div>
           </div>
         </div>
@@ -5084,24 +5094,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Request a new group</h3>
               <button onClick={() => setGroupRequestModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 18 })}</button>
             </div>
-            <div style={{ padding: 24 }}>
-              {/* Yellow info box */}
-              <div style={{
-                background: "#FFFDE7", border: "1px solid #FFF9C4", borderRadius: 8, padding: "16px 18px", marginBottom: 24,
-              }}>
-                <p style={{ fontSize: 14, fontWeight: 700, color: "#8D6E00", marginBottom: 6, fontFamily: font }}>Standard Naming Convention</p>
-                <p style={{ fontSize: 13, color: "#8D6E00", lineHeight: 1.55, fontFamily: font }}>
-                  All community groups follow the format: <b>"Indians in [City Name]"</b>. This helps everyone find their local community easily.
-                </p>
+            {groupRequestSent ? (
+              <div style={{ padding: 24 }}>
+                <p style={{ fontSize: 14, color: "#37352F", lineHeight: 1.55, marginBottom: 20, fontFamily: font }}>Thanks, an admin will review this.</p>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button onClick={() => { setGroupRequestModal(false); setGroupRequestSent(false); }} style={btnPrimary}>Done</button>
+                </div>
               </div>
-
+            ) : (() => {
+              const requestCity = newGroupCity.trim();
+              const existingGroup = requestCity ? groups.find(g => g.name.toLowerCase() === `indians in ${requestCity.toLowerCase()}`) : null;
+              const canSubmit = !!requestCity && !existingGroup;
+              return (
+            <div style={{ padding: 24 }}>
               {/* City Name input */}
-              <div style={{ marginBottom: 20 }}>
+              <div style={{ marginBottom: 24 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>
                   City Name
                 </label>
                 <input
-                  value={newGroupCity} onChange={(e) => setNewGroupCity(e.target.value)}
+                  value={newGroupCity} onChange={(e) => { setNewGroupCity(e.target.value); setGroupRequestError(""); }}
                   placeholder="e.g. Paris"
                   style={{
                     width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE",
@@ -5109,18 +5121,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   }}
                   autoFocus
                 />
-              </div>
-
-              {/* Preview */}
-              <div style={{ marginBottom: 24 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>
-                  Preview
-                </label>
-                <div style={{
-                  padding: "12px 14px", borderRadius: 8, background: "#F0EFED", fontSize: 14, color: "#9B9A97", fontWeight: 500, fontFamily: font,
-                }}>
-                  Indians in {newGroupCity || "..."}
-                </div>
+                {existingGroup ? (
+                  <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 8, fontFamily: font }}>
+                    {existingGroup.name} already exists.{" "}
+                    <button onClick={() => { setGroupRequestModal(false); setNewGroupCity(""); setGroupMembers([]); setCommunityTab("feed"); setSelectedGroup(existingGroup); }} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontSize: 13, fontFamily: font }}>
+                      Open it
+                    </button>
+                  </p>
+                ) : (
+                  <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 8, fontFamily: font, overflowWrap: "anywhere" }}>Your group will be called Indians in {requestCity || "…"}</p>
+                )}
+                {groupRequestError && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", marginTop: 8, fontFamily: font }}>{groupRequestError}</p>}
               </div>
 
               {/* Buttons */}
@@ -5130,29 +5141,31 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </button>
                 <button
                   onClick={async () => {
-                    if (!newGroupCity.trim()) return;
+                    if (!canSubmit) return;
+                    setGroupRequestError("");
                     try {
-                      await api.requestNewGroup(newGroupCity.trim());
-                      alert(`Your request to create "Indians in ${newGroupCity}" has been sent to the admin for approval.`);
+                      await api.requestNewGroup(requestCity);
+                      setGroupRequestSent(true);
+                      setNewGroupCity("");
                     } catch(e) {
-                      alert(isNetworkError(e) ? NETWORK_MESSAGE
-                        : /23505/.test(e.message || "") ? `There's already a community or a request for ${newGroupCity.trim()}.`
+                      setGroupRequestError(isNetworkError(e) ? NETWORK_MESSAGE
+                        : /23505/.test(e.message || "") ? `There's already a community or a request for ${requestCity}.`
                         : "Your request couldn't be sent. Please try again.");
                     }
-                    setNewGroupCity("");
-                    setGroupRequestModal(false);
                   }}
-                  disabled={!newGroupCity.trim()}
+                  disabled={!canSubmit}
                   style={{
                     padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600,
-                    background: newGroupCity.trim() ? "#37352F" : "#E8E7E4", color: newGroupCity.trim() ? "#fff" : "#9B9A97",
-                    cursor: newGroupCity.trim() ? "pointer" : "default", fontFamily: font,
+                    background: canSubmit ? "#37352F" : "#E8E7E4", color: canSubmit ? "#fff" : "#9B9A97",
+                    cursor: canSubmit ? "pointer" : "default", fontFamily: font,
                   }}
                 >
                   Submit Request
                 </button>
               </div>
             </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -5168,7 +5181,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ padding: 24 }}>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Event Title</label>
-                <input style={inputStyle} value={newEvent.title} onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="e.g. Diwali Night 2024" />
+                <input style={inputStyle} value={newEvent.title} onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="e.g. Diwali Night 2026" />
               </div>
               <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
                 <div>
@@ -5184,7 +5197,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Location / Venue</label>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.mapPin({ size: 14 })}</div>
-                  <input style={{ ...inputStyle, paddingLeft: 36 }} value={newEvent.location} onChange={(e) => setNewEvent({ ...newEvent, location: e.target.value })} placeholder="e.g. Central Park, NY" />
+                  <input style={{ ...inputStyle, paddingLeft: 36 }} value={newEvent.location} onChange={(e) => setNewEvent({ ...newEvent, location: e.target.value })} placeholder="e.g. Kulturbrauerei, Berlin" />
                 </div>
               </div>
               <div style={{ marginBottom: 20 }}>
@@ -5195,13 +5208,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </select>
               </div>
               <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
+                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newEvent.description} onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })} placeholder="Tell people what your event is about..." />
+              </div>
+              <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Ticket / Info Link (Optional)</label>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#9B9A97" }}>{Icons.link({ size: 14 })}</div>
                   <input style={{ ...inputStyle, paddingLeft: 36 }} value={newEvent.link} onChange={(e) => setNewEvent({ ...newEvent, link: e.target.value })} placeholder="https://eventbrite.com/..." />
                 </div>
               </div>
-              <div style={{ marginBottom: 20 }}>
+              <div style={{ marginBottom: 24 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Event Photo (Optional)</label>
                 {eventPhoto ? (
                   <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: "1px solid #E0E0DE" }}>
@@ -5221,13 +5238,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </label>
                 )}
               </div>
-              <div style={{ marginBottom: 24 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
-                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newEvent.description} onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })} placeholder="Tell people what your event is about..." />
-              </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => setEventModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button onClick={createEvent} disabled={!newEvent.title || !newEvent.date} style={{ ...btnPrimary, opacity: newEvent.title && newEvent.date ? 1 : 0.4 }}>Share Event</button>
+                <button onClick={createEvent} disabled={!newEvent.title || !newEvent.date} style={{ ...btnPrimary, opacity: newEvent.title && newEvent.date ? 1 : 0.4 }}>Host Event</button>
               </div>
             </div>
           </div>
@@ -5354,6 +5367,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           .mobile-nav { display: flex !important; }
           .nav-messages-btn { display: none !important; }
           .docs-grid, .market-grid, .network-grid, .groups-grid { grid-template-columns: 1fr !important; }
+          .members-grid { grid-template-columns: 1fr !important; }
         }
 
         @media (max-width: 600px) {
@@ -5364,7 +5378,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
           /* Event cards */
           .event-card { flex-direction: column !important; }
-          .event-card > div:first-child { height: 160px !important; width: 100% !important; min-width: unset !important; border-radius: 12px 12px 0 0 !important; }
+          .event-card > div:first-child { height: 160px !important; min-height: 0 !important; width: 100% !important; min-width: unset !important; border-radius: 12px 12px 0 0 !important; }
+          .event-card-plain > div:first-child { height: 56px !important; }
 
           /* Notification dropdown */
           .notif-dropdown { position: fixed !important; top: 64px !important; left: 12px !important; right: 12px !important; width: auto !important; max-height: 70vh !important; overflow-y: auto !important; }
