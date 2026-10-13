@@ -12,13 +12,12 @@ const SAME_PASSWORD_RE = /different from the old password|same_password/i;
 // Profile details a signup can carry in its metadata. An unfinished signup
 // from an earlier visit may have been made by someone else with this email,
 // so these start empty when it is resumed.
-const RESUMED_CLEAR = ["location", "hometown", "profession", "occupation_status", "years_abroad", "linkedin_url"];
+const RESUMED_CLEAR = ["location", "country_code", "hometown", "profession", "occupation_status", "years_abroad", "linkedin_url"];
 
 // The answers from the signup form, as the profile stores them.
-const answersFrom = (form, residency) => ({
+const answersFrom = (form) => ({
   name: form.name,
   marketing_consent: form.marketing,
-  country_code: residency === "india" ? "IN" : "",
 });
 
 // Runs step, and once more after a short pause if it fails (the first
@@ -33,14 +32,13 @@ const tryTwice = async (step) => {
   }
 };
 
-// Signup: where do you live -> name, email, password -> 6-digit email code.
+// Signup: name, email, password -> 6-digit email code.
 // Calls onComplete(user) once the code is verified, the account is set up
 // and the member is signed in; the app then asks for verification details
-// (Get verified).
-export default function SignUpFlow({ onComplete, onLogin }) {
-  const [step, setStep] = useState("residency"); // residency | account | code | stopped
+// (Get verified), including the country. onBack goes back to the landing page.
+export default function SignUpFlow({ onComplete, onLogin, onBack }) {
+  const [step, setStep] = useState("account"); // account | code | stopped
   const [stopMessage, setStopMessage] = useState(""); // why signup stopped (step "stopped")
-  const [residency, setResidency] = useState(null); // abroad | india
   const [form, setForm] = useState({ name: "", email: "", password: "", agree: false, marketing: false });
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null); // { text, existing }
@@ -55,7 +53,7 @@ export default function SignUpFlow({ onComplete, onLogin }) {
 
   const fieldRefs = { name: useRef(null), email: useRef(null), password: useRef(null), agree: useRef(null) };
   const submitErrorRef = useRef(null);
-  const focusOnAccountStep = useRef(null);
+  const focusOnAccountStep = useRef("name");
   const stopTitleRef = useRef(null);
 
   useEffect(() => {
@@ -118,12 +116,10 @@ export default function SignUpFlow({ onComplete, onLogin }) {
 
     setSubmitting(true);
     try {
-      // Only the name and country: the signup step ignores anything else,
-      // as anyone can sign up any address through the API. The marketing
-      // choice and the 18+/Terms tick are recorded once the code is
-      // confirmed (verifyCode).
+      // Only the name: the signup step ignores anything else, as anyone can
+      // sign up any address through the API. The marketing choice and the
+      // 18+/Terms tick are recorded once the code is confirmed (verifyCode).
       const metadata = { full_name: v.name };
-      if (residency === "india") metadata.country_code = "IN";
       const result = await api.signUp(v.email, v.password, metadata);
       if (isExistingAccountResponse(result)) throw new Error("already exists");
       // An unfinished signup from an earlier visit comes back with its old
@@ -132,7 +128,7 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       const lastSent = Math.max(Date.parse(u?.confirmation_sent_at) || 0, Date.parse(u?.updated_at) || 0);
       const resumed = !!u?.created_at && lastSent - Date.parse(u.created_at) > 30000;
       // A new account starts with marketing off.
-      setAccount({ email: v.email, password: v.password, resumed, answers: { ...answersFrom(v, residency), marketing_consent: false } });
+      setAccount({ email: v.email, password: v.password, resumed, answers: { ...answersFrom(v), marketing_consent: false } });
       setResendAt(Date.now() + RESEND_MS);
       setStep("code");
     } catch (err) {
@@ -167,7 +163,7 @@ export default function SignUpFlow({ onComplete, onLogin }) {
   // details are cleared; otherwise only the answers changed (by going back)
   // since this visit created the account.
   const profilePatch = () => {
-    const want = answersFrom(form, residency);
+    const want = answersFrom(form);
     if (account.resumed) {
       RESUMED_CLEAR.forEach((k) => { want[k] = ""; });
       return want;
@@ -266,50 +262,6 @@ export default function SignUpFlow({ onComplete, onLogin }) {
     </div>
   );
 
-  // ---- WHERE DO YOU LIVE ----
-  if (step === "residency") {
-    const choose = (r) => { setResidency(r); setStep("account"); focusOnAccountStep.current = "name"; };
-    const optionStyle = { padding: "18px 24px", borderRadius: 12, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all 0.15s", fontFamily: FONT };
-    const hoverOn = (e) => { e.currentTarget.style.borderColor = "#37352F"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; };
-    const hoverOff = (e) => { e.currentTarget.style.borderColor = "#E0E0DE"; e.currentTarget.style.boxShadow = "none"; };
-    return page(
-      <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
-        <div style={{ width: 56, height: 56, borderRadius: 16, background: "#37352F", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", color: "#fff" }}>
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" /></svg>
-        </div>
-        <h2 style={{ fontSize: 24, fontWeight: 700, color: COLORS.text, margin: "0 0 8px" }}>Where do you live?</h2>
-        <p style={{ fontSize: 14, color: COLORS.helper, margin: "0 0 32px" }}>This helps us personalize your experience on NRIClub.</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 320, margin: "0 auto" }}>
-          <button type="button" onClick={() => choose("abroad")} style={optionStyle} onMouseOver={hoverOn} onMouseOut={hoverOff}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 42, height: 42, borderRadius: 10, background: "#E3FCEF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22A06B" strokeWidth="2" aria-hidden="true"><path d="M22 2L11 13" /><path d="M22 2l-7 20-4-9-9-4z" /></svg>
-              </div>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: COLORS.text }}>I live outside India</div>
-                <div style={{ fontSize: 12, color: COLORS.helper, marginTop: 2 }}>NRI, student abroad, or recently moved</div>
-              </div>
-            </div>
-          </button>
-          <button type="button" onClick={() => choose("india")} style={optionStyle} onMouseOver={hoverOn} onMouseOut={hoverOff}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 42, height: 42, borderRadius: 10, background: "#FFF3E0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E65100" strokeWidth="2" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><path d="M9 22V12h6v10" /></svg>
-              </div>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: COLORS.text }}>I live in India</div>
-                <div style={{ fontSize: 12, color: COLORS.helper, marginTop: 2 }}>Connect with NRIs for advice & support</div>
-              </div>
-            </div>
-          </button>
-        </div>
-        <p style={{ fontSize: 13, color: COLORS.helper, marginTop: 24 }}>
-          Already have an account? <button type="button" onClick={() => onLogin()} style={linkButtonStyle}>Log in</button>
-        </p>
-      </div>
-    );
-  }
-
   // ---- SIGNUP STOPPED (email confirmed, but the member must log in) ----
   if (step === "stopped") {
     return page(
@@ -343,7 +295,7 @@ export default function SignUpFlow({ onComplete, onLogin }) {
   const inlineLink = { ...linkButtonStyle, fontWeight: 500, color: "#3D5A9F" };
   return page(
     <div style={{ maxWidth: 460, width: "100%" }}>
-      <button type="button" onClick={() => setStep("residency")} style={{ ...linkButtonStyle, textDecoration: "none", fontWeight: 500, color: COLORS.helper, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
+      <button type="button" onClick={onBack} style={{ ...linkButtonStyle, textDecoration: "none", fontWeight: 500, color: COLORS.helper, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
         <span aria-hidden="true">←</span> Back
       </button>
       <div style={{ textAlign: "center", marginBottom: 32 }}>
