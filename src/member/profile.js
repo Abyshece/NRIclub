@@ -103,16 +103,23 @@ export function cityFromGroupName(name) {
 
 // Same rule as private.normalize_linkedin() in the database: a personal
 // profile link, with or without https://, www., a country subdomain, a
-// trailing slash or a query string.
+// trailing slash or a query string. The name can't hold an escape of a
+// control character, a space, / ? # or % itself, nor a % that doesn't start
+// an escape (LINKEDIN_BAD_ESCAPE).
 const LINKEDIN_PROFILE = /^(?:https?:\/\/)?(?:[a-z]{2,3}\.)?(?:www\.)?linkedin\.com\/in\/([a-z0-9%_.-]{3,100})\/?(?:[?#].*)?$/i;
+const LINKEDIN_BAD_ESCAPE = /%(?![0-9a-f]{2})|%(?:[01][0-9a-f]|2[035f]|3f|7f)/i;
+const matchesLinkedinProfile = (v) => {
+  const m = LINKEDIN_PROFILE.exec(v);
+  return !!m && !LINKEDIN_BAD_ESCAPE.test(m[1]);
+};
 
-export const isLinkedinProfile = (value) => LINKEDIN_PROFILE.test((value || "").trim());
+export const isLinkedinProfile = (value) => matchesLinkedinProfile((value || "").trim());
 
 // A sentence for the member, or null when the link is a valid profile link.
 export function linkedinProblem(value) {
   const v = (value || "").trim();
   if (!v) return "Add your LinkedIn profile link, or choose “I don't have LinkedIn” below.";
-  if (LINKEDIN_PROFILE.test(v)) return null;
+  if (matchesLinkedinProfile(v)) return null;
   if (/lnkd\.in/i.test(v)) {
     return "Short lnkd.in links don't work. Open your profile on LinkedIn and copy the full link (linkedin.com/in/…).";
   }

@@ -24,8 +24,10 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
   // In India: country 'IN', or no country yet and never lived abroad.
   const isIndia = user.countryCode === "IN" || (!user.countryCode && user.isNRI === false);
   const hasNoteOnly = !user.linkedinUrl && !!user.verificationNote;
-  // Accounts from before signup asked for 18+ and the Terms, or that accepted
-  // an earlier version of the Terms, confirm them here.
+  // Accounts with no 18+ and Terms record (from before signup asked for them,
+  // or whose signup stopped before they were recorded, e.g. one finished
+  // with "Forgot password?"), or that accepted an earlier version of the
+  // Terms, confirm them here.
   const needsTerms = !user.ageConfirmedAt || !user.termsAcceptedAt || user.termsVersion !== TERMS_VERSION;
 
   const [country, setCountry] = useState(isIndia ? "IN" : user.countryCode || "");

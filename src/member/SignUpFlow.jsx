@@ -118,13 +118,11 @@ export default function SignUpFlow({ onComplete, onLogin }) {
 
     setSubmitting(true);
     try {
-      const metadata = {
-        full_name: v.name,
-        age_confirmed: true,
-        terms_version: TERMS_VERSION,
-        gdpr_consent: true,
-        marketing_consent: v.marketing,
-      };
+      // Only the name and country: the signup step ignores anything else,
+      // as anyone can sign up any address through the API. The marketing
+      // choice and the 18+/Terms tick are recorded once the code is
+      // confirmed (verifyCode).
+      const metadata = { full_name: v.name };
       if (residency === "india") metadata.country_code = "IN";
       const result = await api.signUp(v.email, v.password, metadata);
       if (isExistingAccountResponse(result)) throw new Error("already exists");
@@ -133,7 +131,8 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       const u = result?.user ?? result;
       const lastSent = Math.max(Date.parse(u?.confirmation_sent_at) || 0, Date.parse(u?.updated_at) || 0);
       const resumed = !!u?.created_at && lastSent - Date.parse(u.created_at) > 30000;
-      setAccount({ email: v.email, password: v.password, resumed, answers: answersFrom(v, residency) });
+      // A new account starts with marketing off.
+      setAccount({ email: v.email, password: v.password, resumed, answers: { ...answersFrom(v, residency), marketing_consent: false } });
       setResendAt(Date.now() + RESEND_MS);
       setStep("code");
     } catch (err) {
@@ -180,6 +179,14 @@ export default function SignUpFlow({ onComplete, onLogin }) {
     return patch;
   };
 
+  // Puts this visit's answers in place (profilePatch) and records the 18+ and
+  // Terms tick, with the session the code gave. Both can be sent again.
+  const setUpAccount = async () => {
+    const patch = profilePatch();
+    if (Object.keys(patch).length) await api.updateProfile(patch);
+    await api.acceptTerms(TERMS_VERSION);
+  };
+
   const verifyCode = async (code) => {
     const email = account.email;
     // Wrong or expired codes throw here and CodeEntry says so. The session is
@@ -204,21 +211,25 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       // An unfinished signup from an earlier visit keeps that visit's
       // password (as does going back and changing it here), and that visit
       // may not have been this person. Set the one typed now before anything
-      // else.
+      // else. A resumed signup gets this visit's answers first as well (and
+      // again below): if the tab is closed once the new password is saved
+      // but before its answer arrives, the account mustn't keep the earlier
+      // visit's details.
+      if (account.resumed) await tryTwice(setUpAccount).catch(() => {});
       if (account.resumed || account.password !== form.password) {
         if (!(await replacePassword().then(() => true, () => false))) {
-          // Still put this visit's answers in place, so the account doesn't
-          // keep the earlier visit's details after a password reset.
-          await api.updateProfile(profilePatch()).catch(() => {});
+          // Still put this visit's answers and the 18+/Terms tick in place,
+          // so the account doesn't keep the earlier visit's details after a
+          // password reset.
+          await setUpAccount().catch(() => {});
           await giveUp("We couldn't save your password, so we've signed you out to keep your account safe. On the login page, choose “Forgot password?” to set a new one.");
           return;
         }
       }
 
       // Then this visit's answers replace what an earlier visit left in the
-      // profile, before anything reads it.
-      const patch = profilePatch();
-      if (Object.keys(patch).length && !(await tryTwice(() => api.updateProfile(patch)).then(() => true, () => false))) {
+      // profile, and the 18+/Terms tick is recorded, before anything reads it.
+      if (!(await tryTwice(setUpAccount).then(() => true, () => false))) {
         await giveUp("We couldn't finish setting up your account, so we've signed you out to keep it safe. Please log in with your email and the password you just chose, then check your details.");
         return;
       }

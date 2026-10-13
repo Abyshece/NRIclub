@@ -3598,9 +3598,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             {n.type === "request" && (
                               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                                 <button onClick={async () => {
-                                  // Accept the connection request
+                                  // Accept the connection request. If that doesn't work, the request
+                                  // stays here: the database refuses (42501) members who can't take
+                                  // part yet, such as members held for review.
                                   if (n.reference_id) {
-                                    try { await api.respondToNamaste(n.reference_id, true); } catch(e) {}
+                                    try { await api.respondToNamaste(n.reference_id, true); }
+                                    catch (e) {
+                                      alert(isNetworkError(e) ? NETWORK_MESSAGE
+                                        : /42501/.test(e.message || "") ? "You can accept this once your membership is confirmed."
+                                        : "This request couldn't be accepted. Please try again.");
+                                      return;
+                                    }
                                   }
                                   // Add to followers
                                   if (n.actor) {

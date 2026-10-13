@@ -724,8 +724,8 @@ export async function updateProfile(updates) {
 
 // Submit (or correct) verification details. Either linkedinUrl or a note of
 // at least 20 characters is required; the server validates and normalises.
-// acceptTerms records "18 or older" and the Terms for accounts that never
-// confirmed them at signup.
+// acceptTerms records "18 or older" and the Terms (as acceptTerms below does)
+// for accounts that never confirmed them at signup.
 export async function submitVerification({ city, countryCode, location, linkedinUrl = "", note = "", voucher = "", profession = null, acceptTerms = false }) {
   return restCall("POST", "/rest/v1/rpc/submit_verification", {
     p_city: city, p_country_code: countryCode, p_location: location,
@@ -734,8 +734,10 @@ export async function submitVerification({ city, countryCode, location, linkedin
   });
 }
 
-// Records "18 or older" and the Terms for members who haven't confirmed them
-// (older accounts). version must be the current one (TERMS_VERSION); returns it.
+// Records "18 or older" and the Terms (with consent to the Privacy Policy):
+// at signup once the email code is confirmed, and for members who haven't
+// confirmed them (older accounts). version must be the current one
+// (TERMS_VERSION); returns it.
 export async function acceptTerms(version) {
   return restCall("POST", "/rest/v1/rpc/accept_terms", { p_version: version });
 }
@@ -1514,11 +1516,24 @@ export async function adminDeleteGroup(groupId) {
 // a panel that's out of date can't overwrite another admin's decision.
 // Returns the reports that changed: none means they were already handled
 // (or this account is no longer an admin); reload to see the latest.
+// Removing content or blocking claims the reports this way first, so it only
+// goes ahead if some are still open.
 export async function adminSetReportStatus(reportIds, status) {
   if (status !== "reviewed" && status !== "resolved") throw new Error(`Unknown report status: ${status}`);
   const ids = (Array.isArray(reportIds) ? reportIds : [reportIds]).filter((id) => UUID.test(id || ""));
   if (!ids.length) throw new Error("No reports to update.");
   const rows = await restCall("PATCH", `/rest/v1/reports?id=in.(${ids.join(",")})&status=eq.pending`, { status }, { Prefer: "return=representation" });
+  return Array.isArray(rows) ? rows : [];
+}
+
+// Opens reports again that adminSetReportStatus just claimed with status,
+// when the action they were claimed for failed. Only reports still in that
+// status change (other admins only change open ones). Returns them.
+export async function adminReopenReports(reportIds, status) {
+  if (status !== "reviewed" && status !== "resolved") throw new Error(`Unknown report status: ${status}`);
+  const ids = reportIds.filter((id) => UUID.test(id || ""));
+  if (!ids.length) return [];
+  const rows = await restCall("PATCH", `/rest/v1/reports?id=in.(${ids.join(",")})&status=eq.${status}`, { status: "pending" }, { Prefer: "return=representation" });
   return Array.isArray(rows) ? rows : [];
 }
 
