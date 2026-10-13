@@ -37,7 +37,14 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
   const [useLinkedin, setUseLinkedin] = useState(!hasNoteOnly);
   const [linkedin, setLinkedin] = useState(user.linkedinUrl || "");
   const [note, setNote] = useState(user.verificationNote || "");
-  const [voucher, setVoucher] = useState(user.voucher || "");
+  // Who invited them, if they came through a member's invite link.
+  const invitedBy = (() => {
+    try {
+      const inv = JSON.parse(localStorage.getItem("nriclub_invite") || "null");
+      return inv && inv.id ? `Invited by ${inv.from || "a member"} (member ${inv.id})` : "";
+    } catch (e) { return ""; }
+  })();
+  const [voucher, setVoucher] = useState(user.voucher || invitedBy);
   const [profession, setProfession] = useState(user.profession || "");
   const [agree, setAgree] = useState(false);
   const [errors, setErrors] = useState({});
@@ -145,7 +152,7 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
       location: `${cityName}, ${countryName(country)}`,
       linkedinUrl: useLinkedin ? linkedin.trim() : "",
       note: useLinkedin ? "" : note.trim(),
-      voucher: useLinkedin ? "" : voucher.trim(),
+      voucher: useLinkedin ? invitedBy : voucher.trim(),
       profession: profession.trim(),
       acceptTerms: needsTerms,
     };

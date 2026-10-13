@@ -988,13 +988,51 @@ export async function getMyRsvps() {
 // MESSAGES
 // ============================================================================
 
+// Conversations the member deleted from their list: id -> when. Such a
+// conversation comes back only with messages sent after that.
+const hiddenAt = new Map();
+
 export async function getConversations() {
   if (!currentUser) return [];
-  const data = await restCall("GET", `/rest/v1/conversations?or=(participant_1.eq.${currentUser.id},participant_2.eq.${currentUser.id})&select=*,p1:participant_1(id,name,avatar_url),p2:participant_2(id,name,avatar_url)&order=last_message_at.desc`);
-  return (data || []).map(c => ({
-    ...c,
-    otherUser: c.participant_1 === currentUser.id ? c.p2 : c.p1,
-  }));
+  const [data, hides] = await Promise.all([
+    restCall("GET", `/rest/v1/conversations?or=(participant_1.eq.${currentUser.id},participant_2.eq.${currentUser.id})&select=*,p1:participant_1(id,name,avatar_url),p2:participant_2(id,name,avatar_url)&order=last_message_at.desc`),
+    restCall("GET", `/rest/v1/conversation_hides?user_id=eq.${currentUser.id}&select=conversation_id,hidden_at`).catch(() => null),
+  ]);
+  if (hides) {
+    hiddenAt.clear();
+    hides.forEach(h => hiddenAt.set(h.conversation_id, h.hidden_at));
+  }
+  return (data || [])
+    .filter(c => !hiddenAt.has(c.id) || new Date(c.last_message_at) > new Date(hiddenAt.get(c.id)))
+    .map(c => ({
+      ...c,
+      otherUser: c.participant_1 === currentUser.id ? c.p2 : c.p1,
+    }));
+}
+
+// "Delete conversation": removes it from this member's list only.
+export async function hideConversation(conversationId) {
+  if (!currentUser) throw new Error("Not logged in");
+  const rows = await restCall("POST", "/rest/v1/conversation_hides?on_conflict=user_id,conversation_id",
+    { user_id: currentUser.id, conversation_id: conversationId },
+    { Prefer: "resolution=merge-duplicates,return=representation" });
+  hiddenAt.set(conversationId, rows?.[0]?.hidden_at || new Date().toISOString());
+}
+
+// Unread messages per conversation: { conversation id: count }.
+export async function getUnreadCounts() {
+  if (!currentUser) return {};
+  const rows = await restCall("GET", `/rest/v1/messages?read=eq.false&sender_id=neq.${currentUser.id}&select=conversation_id,created_at&limit=1000`);
+  const counts = {};
+  (rows || []).forEach(r => {
+    const h = hiddenAt.get(r.conversation_id);
+    if (!h || new Date(r.created_at) > new Date(h)) counts[r.conversation_id] = (counts[r.conversation_id] || 0) + 1;
+  });
+  return counts;
+}
+
+export async function markConversationRead(conversationId) {
+  return restCall("POST", "/rest/v1/rpc/mark_conversation_read", { p_conversation: conversationId });
 }
 
 export async function getOrCreateConversation(otherUserId) {
@@ -1011,7 +1049,9 @@ export async function getOrCreateConversation(otherUserId) {
 }
 
 export async function getMessages(conversationId) {
-  return restCall("GET", `/rest/v1/messages?conversation_id=eq.${conversationId}&select=*,sender:sender_id(id,name,avatar_url)&order=created_at.asc`);
+  const rows = await restCall("GET", `/rest/v1/messages?conversation_id=eq.${conversationId}&select=*,sender:sender_id(id,name,avatar_url)&order=created_at.asc`);
+  const h = hiddenAt.get(conversationId);
+  return h && rows ? rows.filter(m => new Date(m.created_at) > new Date(h)) : rows;
 }
 
 export async function sendMessage(conversationId, content) {

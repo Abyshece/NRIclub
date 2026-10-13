@@ -948,6 +948,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [convos, setConvos] = useState([]);
   const [convosLoaded, setConvosLoaded] = useState(false);
   const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
+  // Unread messages per conversation, and in all ({ conversation id: count }).
+  const [unreadCounts, setUnreadCounts] = useState({});
+  const unreadTotal = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
   const lastSeenMsgRef = useRef(null); // Track last seen conversation state
   const lastVerificationNotifRef = useRef(null); // Newest unread verification decision seen
   const pollCountRef = useRef(0);
@@ -1549,6 +1552,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       try {
         // Poll for new conversations/messages
         const dbConvos = canBrowse ? await api.getConversations() : [];
+        if (canBrowse) api.getUnreadCounts().then(c => setUnreadCounts(view === "messages" && selectedConvoRef.current ? { ...c, [selectedConvoRef.current]: 0 } : c)).catch(() => {});
         if (dbConvos && dbConvos.length) {
           const newConvos = dbConvos.map(c => ({
             id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
@@ -1607,10 +1611,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(interval);
   }, [view, canBrowse]);
 
+  // The open conversation (for the 5-second poll above), kept read.
+  const selectedConvoRef = useRef(selectedConvo);
+  selectedConvoRef.current = view === "messages" ? selectedConvo : null;
+  const markRead = (id) => {
+    setUnreadCounts(prev => (prev[id] ? { ...prev, [id]: 0 } : prev));
+    api.markConversationRead(id).catch(() => {});
+  };
+  useEffect(() => { if (canBrowse) api.getUnreadCounts().then(setUnreadCounts).catch(() => {}); }, [canBrowse]);
+
   // Realtime messages via WebSocket + fast fallback polling
   useEffect(() => {
     if (view !== "messages" || !selectedConvo) return;
     setHasUnreadMessages(false);
+    markRead(selectedConvo);
     
     // Subscribe to realtime inserts
     api.subscribeToMessages(selectedConvo, (record) => {
@@ -1632,6 +1646,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       try {
         const msgs = await api.getMessages(selectedConvo);
         if (msgs && msgs.length !== lastCount) {
+          if (lastCount) markRead(selectedConvo);
           lastCount = msgs.length;
           setChatMessages(p => ({ ...p, [selectedConvo]: msgs.map(m => ({
             id: m.id, text: m.content,
@@ -1737,6 +1752,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     apply(newJoined);
     try { if (g?.joined) await api.leaveGroup(id); else await api.joinGroup(id); } catch (e) { apply(!newJoined); }
   };
+
+  // Invite link: opens the site with who invited them, which Get verified
+  // passes on to the admins ("Can vouch").
+  const inviteLink = `${window.location.origin}/?invite=${user.id}&from=${encodeURIComponent((user.name || "").split(" ")[0])}`;
+  const inviteText = `I'm on NRIClub, a members-only community for Indians living abroad. Join me: ${inviteLink}`;
+
+  // A new member's first day: their city's group, joined for them once, and
+  // a welcome card with people nearby (until they dismiss it or follow someone).
+  const welcomeCity = (user.city || (user.location || "").split(",")[0] || "").trim();
+  const cityGroup = welcomeCity ? groups.find(g => (g.name || "").toLowerCase() === `indians in ${welcomeCity.toLowerCase()}`) : null;
+  const welcomeKey = `nriclub_welcome_done_${user.id}`;
+  const [welcomeDone, setWelcomeDone] = useState(() => { try { return !!localStorage.getItem(welcomeKey); } catch (e) { return true; } });
+  const dismissWelcome = () => { setWelcomeDone(true); try { localStorage.setItem(welcomeKey, "1"); } catch (e) {} };
+  useEffect(() => {
+    if (!canBrowse || !listsLoaded || !cityGroup || cityGroup.joined) return;
+    const key = `nriclub_city_group_${user.id}`;
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch (e) { return; }
+    toggleGroup(cityGroup.id);
+  }, [canBrowse, listsLoaded, cityGroup?.id]);
+  const nearbyMembers = welcomeCity ? networkUsers.filter(u => u.id !== user.id && (u.location || "").toLowerCase().startsWith(welcomeCity.toLowerCase())).slice(0, 5) : [];
 
   const createHelp = async () => {
     if (!newHelp.title || !newHelp.description) return;
@@ -1896,6 +1931,32 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         }).sort((a, b) => feedSort === "popular" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0));
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
+            {/* Welcome: a new member's first steps */}
+            {!welcomeDone && myFollowing.length === 0 && (
+              <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 20px 16px", marginBottom: 20, position: "relative" }}>
+                <button onClick={dismissWelcome} aria-label="Close" style={{ position: "absolute", top: 10, right: 10, padding: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 16 })}</button>
+                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font, marginBottom: 4 }}>Welcome to NRIClub, {(user.name || "").split(" ")[0] || "friend"}! 🙏</h3>
+                <p style={{ fontSize: 13, color: "#6B6A67", fontFamily: font, lineHeight: 1.5, marginBottom: 14 }}>
+                  {cityGroup ? <>You're in <button onClick={() => { setGroupMembers([]); setSelectedGroup(cityGroup); setView("groups"); }} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontFamily: font, fontSize: 13 }}>{cityGroup.name}</button>. Say hello to people near you:</> : "Say hello to a few members to get started:"}
+                </p>
+                {nearbyMembers.length > 0 ? nearbyMembers.map(u => (
+                  <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
+                    <button type="button" onClick={() => openMember(u.id)} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+                      <Avatar name={u.name} size={36} url={u.avatar_url} />
+                      <span style={{ minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
+                        <span style={{ display: "block", fontSize: 11, color: "#9B9A97", fontFamily: font }}>{u.profession}</span>
+                      </span>
+                    </button>
+                    <button onClick={() => handleSendNamaste(u.id)} disabled={sentNamaste.has(u.id) || acceptedConnections.has(u.id)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: sentNamaste.has(u.id) ? "#9B9A97" : "#37352F", fontSize: 12, fontWeight: 600, cursor: sentNamaste.has(u.id) ? "default" : "pointer", fontFamily: font, flexShrink: 0 }}>{sentNamaste.has(u.id) || acceptedConnections.has(u.id) ? "Sent" : "🙏 Namaste"}</button>
+                  </div>
+                )) : <button onClick={() => setView("network")} style={{ ...btnPrimary, fontSize: 13, padding: "9px 16px" }}>Find members</button>}
+                <div style={{ borderTop: "1px solid #F0EFED", marginTop: 12, paddingTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: "#6B6A67", fontFamily: font }}>Know other Indians abroad?</span>
+                  <button onClick={() => setSettingsModal("invite")} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: font, textDecoration: "underline" }}>Invite a friend</button>
+                </div>
+              </div>
+            )}
             {/* Complete your profile (mobile; the left column has it on desktop) */}
             <div className="nc-mobile-only">
               <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} collapseAfter={2} style={{ marginBottom: 20 }} />
@@ -3225,7 +3286,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                         <div style={{ position: "relative" }}>
                           <Avatar name={c.name} size={36} url={c.avatar_url} />
-                          {c.unread ? <span style={{ position: "absolute", top: 0, right: 0, width: 8, height: 8, background: "#DC2626", borderRadius: "50%", border: "2px solid #fff" }}>{""}</span> : null}
+                          {unreadCounts[c.id] > 0 && selectedConvo !== c.id
+                            ? <span style={{ position: "absolute", top: -4, right: -6, minWidth: 18, height: 18, padding: "0 5px", background: "#DC2626", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 9, border: "2px solid #fff", display: "flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>{unreadCounts[c.id] > 9 ? "9+" : unreadCounts[c.id]}</span>
+                            : c.unread ? <span style={{ position: "absolute", top: 0, right: 0, width: 8, height: 8, background: "#DC2626", borderRadius: "50%", border: "2px solid #fff" }}>{""}</span> : null}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
@@ -3263,6 +3326,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             </button>
                             <button onClick={() => { setReportConfirm({ type: "user", id: activeConvo.otherUserId, name: activeConvo.name }); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
                               {Icons.flag({ size: 14 })} Report User
+                            </button>
+                            <button onClick={async () => {
+                              setChatSettings(false);
+                              if (!confirm(`Delete this conversation? It's removed from your list; ${activeConvo.name} keeps their copy.`)) return;
+                              try {
+                                await api.hideConversation(activeConvo.id);
+                                setConvos(prev => prev.filter(c => c.id !== activeConvo.id));
+                                setChatMessages(p => { const n = { ...p }; delete n[activeConvo.id]; return n; });
+                                setUnreadCounts(prev => { const n = { ...prev }; delete n[activeConvo.id]; return n; });
+                                setSelectedConvo(null);
+                              } catch (e) { alert(isNetworkError(e) ? NETWORK_MESSAGE : "Couldn't delete the conversation. Please try again."); }
+                            }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontFamily: font, borderTop: "1px solid #F0EFED" }}>
+                              {Icons.trash({ size: 14 })} Delete conversation
                             </button>
                           </div>
                         </>
@@ -3676,7 +3752,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               onMouseOver={(e) => (e.currentTarget.style.background = "#F0EFED")}
               onMouseOut={(e) => (e.currentTarget.style.background = view === "messages" ? "#F0EFED" : "none")}>
               {Icons.message({ size: 20 })}
-              {hasUnreadMessages ? <span style={{ position: "absolute", top: 5, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
+              {unreadTotal > 0 && view !== "messages"
+                ? <span style={{ position: "absolute", top: 0, right: 0, minWidth: 16, height: 16, padding: "0 4px", background: "#E25555", color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 8, border: "1.5px solid #fff", display: "flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>{unreadTotal > 9 ? "9+" : unreadTotal}</span>
+                : hasUnreadMessages ? <span style={{ position: "absolute", top: 5, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
             </button>
             {/* Settings gear */}
             <div style={{ position: "relative" }}>
@@ -3691,6 +3769,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setSettingsOpen(false)} />
                   <div className="settings-dropdown" style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 220, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "6px 0" }}>
                     {[
+                      { key: "invite", icon: Icons.share, label: "Invite a friend" },
                       { key: "account", icon: Icons.user, label: "Account Settings" },
                       { key: "privacy", icon: Icons.shield, label: "Privacy & Safety" },
                       { key: "notifications", icon: Icons.bell, label: "Email Notifications" },
@@ -4074,7 +4153,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         {[
           { v: "home", icon: Icons.home, label: "Home" },
           { v: "network", icon: Icons.search, label: "Find" },
-          { v: "messages", icon: Icons.message, label: "Messages", notif: hasUnreadMessages },
+          { v: "messages", icon: Icons.message, label: "Messages", notif: hasUnreadMessages || unreadTotal > 0 },
           { v: "groups", icon: Icons.users, label: "Groups" },
           { v: "profile", icon: Icons.user, label: "Profile" },
         ].map((item) => (
@@ -4540,6 +4619,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8" }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Invite a friend */}
+      {settingsModal === "invite" && (
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setSettingsModal(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 400, padding: 24, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 34, marginBottom: 8 }} aria-hidden="true">🙏</div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>Invite a friend</h3>
+            <p style={{ fontSize: 13, color: "#6B6A67", marginBottom: 20, lineHeight: 1.5, fontFamily: font }}>Know Indians living abroad? Send them your link. When they sign up, our team sees that you invited them.</p>
+            <a href={`https://wa.me/?text=${encodeURIComponent(inviteText)}`} target="_blank" rel="noopener noreferrer" onClick={() => setSettingsModal(null)} style={{ ...btnPrimary, width: "100%", justifyContent: "center", textDecoration: "none", background: "#25D366", boxSizing: "border-box", marginBottom: 10 }}>Share on WhatsApp</a>
+            <button onClick={async () => { try { await navigator.clipboard.writeText(inviteLink); alert("Link copied!"); } catch (e) { prompt("Copy your invite link:", inviteLink); } }} style={{ width: "100%", padding: "11px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Copy link</button>
           </div>
         </div>
       )}
@@ -5586,6 +5678,17 @@ export default function App() {
   // Leave the signed-in screens if the session ends by itself (revoked,
   // expired, or another tab signed out or signed in as someone else).
   useEffect(() => { api.onSessionEnded(() => window.location.reload()); }, []);
+  // An invite link (?invite=<member id>&from=<first name>): remembered for
+  // Get verified, then taken out of the address bar.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const inviter = q.get("invite");
+    if (!inviter) return;
+    if (/^[0-9a-f-]{36}$/i.test(inviter)) {
+      try { localStorage.setItem("nriclub_invite", JSON.stringify({ id: inviter, from: (q.get("from") || "").slice(0, 40) })); } catch (e) {}
+    }
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch (e) {}
+  }, []);
 
   const isAdminRoute = () => {
     const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
