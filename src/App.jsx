@@ -93,6 +93,46 @@ const eventDay = (e) => {
   const t = new Date(eventDate(e)).getTime();
   return Number.isNaN(t) ? null : t;
 };
+// An event's start and end for calendars: its date and, when it can be
+// read, its time (two hours long); otherwise the whole day.
+const calendarRange = (e) => {
+  const day = eventDay(e);
+  if (day === null) return null;
+  const t = /(\d{1,2})[:.](\d{2})\s*(am|pm)?/i.exec(eventTime(e) || "");
+  if (!t) return { start: new Date(day), allDay: true };
+  let h = Number(t[1]);
+  if (t[3]) h = (h % 12) + (/pm/i.test(t[3]) ? 12 : 0);
+  const start = new Date(day);
+  start.setHours(h, Number(t[2]), 0, 0);
+  return { start, end: new Date(start.getTime() + 2 * 3600 * 1000), allDay: false };
+};
+const calStamp = (d, allDay) => {
+  const p = (n) => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+  return allDay ? date : `${date}T${p(d.getHours())}${p(d.getMinutes())}00`;
+};
+const googleCalendarUrl = (e) => {
+  const r = calendarRange(e);
+  if (!r) return null;
+  const end = r.allDay ? new Date(r.start.getTime() + 86400000) : r.end;
+  const q = new URLSearchParams({ action: "TEMPLATE", text: e.title || "Event", dates: `${calStamp(r.start, r.allDay)}/${calStamp(end, r.allDay)}`, details: e.description || "", location: e.location || "" });
+  return `https://calendar.google.com/calendar/render?${q}`;
+};
+const downloadIcs = (e) => {
+  const r = calendarRange(e);
+  if (!r) return;
+  const esc = (v) => String(v || "").replace(/[\\,;]/g, (c) => "\\" + c).replace(/\n/g, "\\n");
+  const end = r.allDay ? new Date(r.start.getTime() + 86400000) : r.end;
+  const val = r.allDay ? ";VALUE=DATE" : "";
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//NRIClub//Events//EN", "BEGIN:VEVENT",
+    `UID:${e.id}@nriclub`, `DTSTAMP:${calStamp(new Date(), false)}`, `DTSTART${val}:${calStamp(r.start, r.allDay)}`, `DTEND${val}:${calStamp(end, r.allDay)}`,
+    `SUMMARY:${esc(e.title)}`, `DESCRIPTION:${esc(e.description)}`, `LOCATION:${esc(e.location)}`, "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+  const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = `${(e.title || "event").replace(/[^\w -]/g, "").slice(0, 40) || "event"}.ics`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 const isPastEvent = (e) => {
   const t = eventDay(e);
   return t !== null && t < new Date().setHours(0, 0, 0, 0);
@@ -1803,6 +1843,36 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  // An opened group shows its own latest posts (not only those among the
+  // newest on the whole site) and its members from the start.
+  useEffect(() => {
+    if (!selectedGroup?.id || !canBrowse) return;
+    const gid = selectedGroup.id;
+    api.getPosts(30, gid).then(rows => {
+      const fresh = (rows || []).map(p => toPost(p, groups));
+      setPosts(prev => {
+        const have = new Set(prev.map(p => p.id));
+        const add = fresh.filter(p => !have.has(p.id));
+        return add.length ? [...prev, ...add] : prev;
+      });
+    }).catch(() => {});
+    api.getGroupMembers(gid).then(members => {
+      if (members && members.length) setGroupMembers(members.map(m => ({
+        id: m.profiles?.id || m.user_id, name: m.profiles?.name || "User",
+        profession: m.profiles?.profession || "", location: m.profiles?.location || "",
+        avatar_url: m.profiles?.avatar_url || "", yearsAbroad: "", linkedinUrl: "",
+      })));
+    }).catch(() => {});
+  }, [selectedGroup?.id, canBrowse]);
+
+  // Who's going to the open event.
+  const [eventAttendees, setEventAttendees] = useState({ id: null, list: [] });
+  useEffect(() => {
+    const id = expandedEvent?.id;
+    if (!id || !canBrowse || String(id).startsWith("e_")) return;
+    api.getEventAttendees(id).then(list => setEventAttendees({ id, list })).catch(() => {});
+  }, [expandedEvent?.id, canBrowse, rsvps]);
+
   // A member's profile page; your own name opens your own profile.
   const openMember = (id) => {
     if (!id) return;
@@ -2263,7 +2333,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       case "groups":
         if (selectedGroup) {
-          const groupPosts = posts.filter((p) => p.groupId === selectedGroup.id);
+          const groupPosts = posts.filter((p) => p.groupId === selectedGroup.id && !blockedIds.has(p.userId)).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
           const thumbColors = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
           const sgColor = thumbColors[groups.findIndex((g) => g.id === selectedGroup.id) % thumbColors.length];
           const guidelinesShown = guidelinesOpen[selectedGroup.id] ?? !selectedGroup.joined;
@@ -2348,6 +2418,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </button>
                 ))}
               </div>
+
+              {/* Members at a glance */}
+              {communityTab === "feed" && groupMembers.length > 0 && (
+                <button onClick={() => setCommunityTab("members")} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: "#fff", border: "1px solid #E8E7E4", borderRadius: 12, padding: "10px 14px", marginBottom: 16, cursor: "pointer", fontFamily: font }}>
+                  <span style={{ display: "flex" }}>
+                    {groupMembers.slice(0, 6).map((m, i) => (
+                      <span key={m.id} style={{ marginLeft: i ? -8 : 0, borderRadius: "50%", border: "2px solid #fff", display: "flex" }}><Avatar name={m.name} size={28} url={m.avatar_url} /></span>
+                    ))}
+                  </span>
+                  <span style={{ fontSize: 13, color: "#37352F", fontWeight: 600 }}>{groupMembers.length} {groupMembers.length === 1 ? "member" : "members"}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 12, color: "#9B9A97" }}>See all ›</span>
+                </button>
+              )}
 
               {communityTab === "feed" ? (
                 <>
@@ -2876,14 +2959,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       case "help":
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font, display: "flex", alignItems: "center", gap: 8 }}>
-                  {Icons.help({ size: 22, stroke: "#E25555" })} Community Help
-                </h2>
-                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Ask questions, share advice, and help fellow Indians.</p>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Ask & Guides</h2>
+                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Ask the community, or read guides written by members.</p>
               </div>
-              <button onClick={() => setHelpModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>Ask for Help</button>
+              {"help" === "help"
+                ? <button onClick={() => setHelpModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>Ask a question</button>
+                : <button onClick={() => setDocModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Write a guide</button>}
+            </div>
+            <div role="tablist" style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8, marginBottom: 20, width: "fit-content" }}>
+              {[{ k: "help", l: "Questions" }, { k: "docs", l: "Guides" }].map(t => (
+                <button key={t.k} role="tab" aria-selected={"help" === t.k} onClick={() => { setSelectedDoc(null); setView(t.k); }} style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: "help" === t.k ? "#fff" : "transparent", color: "help" === t.k ? "#37352F" : "#9B9A97", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: "help" === t.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{t.l}</button>
+              ))}
             </div>
             {helpRequests.map((h) => (
               <div key={h.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px", marginBottom: 14 }}>
@@ -2958,7 +3046,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* Back to the list */}
               <div style={{ padding: "14px 20px", borderBottom: "1px solid #F0EFED" }}>
                 <button onClick={() => setSelectedDoc(null)} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#9B9A97", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: font, fontWeight: 500 }}>
-                  {Icons.chevronLeft({ size: 16 })} All docs
+                  {Icons.chevronLeft({ size: 16 })} All guides
                 </button>
               </div>
               {/* Article content */}
@@ -3036,12 +3124,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         });
         return (
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Community Docs</h2>
-                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Essential guides and tips for your city.</p>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Ask & Guides</h2>
+                <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Ask the community, or read guides written by members.</p>
               </div>
-              <button onClick={() => setDocModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Create Doc</button>
+              {"docs" === "help"
+                ? <button onClick={() => setHelpModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>Ask a question</button>
+                : <button onClick={() => setDocModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Write a guide</button>}
+            </div>
+            <div role="tablist" style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8, marginBottom: 20, width: "fit-content" }}>
+              {[{ k: "help", l: "Questions" }, { k: "docs", l: "Guides" }].map(t => (
+                <button key={t.k} role="tab" aria-selected={"docs" === t.k} onClick={() => { setSelectedDoc(null); setView(t.k); }} style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: "docs" === t.k ? "#fff" : "transparent", color: "docs" === t.k ? "#37352F" : "#9B9A97", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: "docs" === t.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{t.l}</button>
+              ))}
             </div>
             {/* Search Bar */}
             <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
@@ -3606,9 +3701,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <button style={navBtn("network")} onClick={() => setView("network")}>Find</button>
             <button style={navBtn("groups")} onClick={() => { setView("groups"); setSelectedGroup(null); }}>Groups</button>
             <button style={navBtn("events")} onClick={() => setView("events")}>Events</button>
-            <button style={navBtn("docs")} onClick={() => setView("docs")}>Docs</button>
+            <button style={navBtn(view === "docs" ? "docs" : "help")} onClick={() => setView("help")}>Ask & Guides</button>
             <button style={navBtn("market")} onClick={() => setView("market")}>Market</button>
-            <button style={navBtn("help")} onClick={() => setView("help")}>Help</button>
           </div>
 
           {/* Right side icons */}
@@ -3826,9 +3920,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               { v: "network", icon: Icons.search, label: "Find" },
               { v: "groups", icon: Icons.users, label: "Groups" },
               { v: "events", icon: Icons.calendar, label: "Events" },
-              { v: "docs", icon: Icons.file, label: "Docs" },
+              { v: "help", icon: Icons.help, label: "Ask & Guides" },
               { v: "market", icon: Icons.shop, label: "Market" },
-              { v: "help", icon: Icons.help, label: "Help" },
               { v: "messages", icon: Icons.message, label: "Messages" },
               { v: "profile", icon: Icons.user, label: "Profile" },
             ].map((item) => (
@@ -4301,13 +4394,40 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {!isPastEvent(expandedEvent) && <button onClick={() => { toggleRsvp(expandedEvent.id); }} style={{ ...btnPrimary, width: "100%", justifyContent: "center", padding: "12px", marginBottom: 20, background: rsvps.has(expandedEvent.id) ? "#E3FCEF" : "#37352F", color: rsvps.has(expandedEvent.id) ? "#22A06B" : "#fff", border: rsvps.has(expandedEvent.id) ? "1px solid #B5E4CA" : "none" }}>
                 {rsvps.has(expandedEvent.id) ? "✓ Going" : "RSVP"}
               </button>}
+              {!isPastEvent(expandedEvent) && calendarRange(expandedEvent) && (
+                <div style={{ display: "flex", justifyContent: "center", gap: 16, flexWrap: "wrap", margin: "-8px 0 20px", fontSize: 13, fontFamily: font }}>
+                  <span style={{ color: "#9B9A97" }}>{Icons.calendar({ size: 13 })} Add to calendar:</span>
+                  <a href={googleCalendarUrl(expandedEvent)} target="_blank" rel="noopener noreferrer" style={{ color: "#37352F", fontWeight: 600 }}>Google</a>
+                  <button onClick={() => downloadIcs(expandedEvent)} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontSize: 13, fontFamily: font }}>Apple / Outlook</button>
+                </div>
+              )}
+              {eventAttendees.id === expandedEvent.id && eventAttendees.list.length > 0 && (() => {
+                const going = [...eventAttendees.list].sort((a, b) => (b.id === user.id) - (a.id === user.id) || acceptedConnections.has(b.id) - acceptedConnections.has(a.id));
+                const known = going.filter(g => acceptedConnections.has(g.id)).length;
+                return (
+                  <div style={{ marginBottom: 20 }}>
+                    <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, fontFamily: font }}>
+                      Who's going · {going.length}{known ? ` (${known} you follow)` : ""}
+                    </h4>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                      {going.slice(0, 12).map(g => (
+                        <button key={g.id} onClick={() => { if (g.id !== user.id) { setExpandedEvent(null); openMember(g.id); } }} title={g.name} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, width: 58, background: "none", border: "none", padding: 0, cursor: g.id === user.id ? "default" : "pointer" }}>
+                          <Avatar name={g.name} size={40} url={g.avatar_url} />
+                          <span style={{ fontSize: 11, color: "#5F5E5B", fontFamily: font, maxWidth: 58, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.id === user.id ? "You" : (g.name || "").split(" ")[0]}</span>
+                        </button>
+                      ))}
+                      {going.length > 12 && <span style={{ alignSelf: "center", fontSize: 12, color: "#9B9A97", fontFamily: font }}>+{going.length - 12} more</span>}
+                    </div>
+                  </div>
+                );
+              })()}
               <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.7, marginBottom: 20, fontFamily: font, whiteSpace: "pre-wrap" }}>{expandedEvent.description}</p>
               {expandedEvent.link && (
                 <a href={expandedEvent.link.startsWith("http") ? expandedEvent.link : `https://${expandedEvent.link}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 14, color: "#37352F", padding: "12px", background: "#fff", border: "1px solid #E0E0DE", borderRadius: 8, textDecoration: "none", fontWeight: 600, marginBottom: 16, fontFamily: font }}>
                   {Icons.link({ size: 15 })} Get Tickets / More Info
                 </a>
               )}
-              <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED" }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>
+              {expandedEvent.organizer && <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED" }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>}
             </div>
           </div>
         </div>
