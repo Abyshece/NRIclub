@@ -29,4 +29,4 @@ export const FEATURED_GUIDES = [
 // add the founder's line, e.g. { name: "Asha Rao", city: "Berlin", since: 2016 }.
 export const FOUNDER = null;
 
-export const SHARE_TEXT = "NRIClub: a free community for Indians abroad, with a group for every city and free guides on passports, OCI, NRE/NRO accounts and taxes. Our team checks every new member. https://nriclub.app";
+export const SHARE_TEXT = "NRIClub: a free community for Indians abroad, with city groups around the world and free guides on passports, OCI, NRE/NRO accounts and taxes. Our team checks every new member. https://nriclub.app";

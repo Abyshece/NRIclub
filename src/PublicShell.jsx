@@ -41,7 +41,7 @@ export function PublicNav({ onLogin, onJoin, maxWidth = 1100 }) {
   const btn = { fontSize: 14, fontWeight: 600, minHeight: 44, padding: "0 16px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
   return (
     <header style={{ position: "sticky", top: 0, zIndex: 20, background: "#fff", borderBottom: "1px solid #F0EFED" }}>
-      <style>{`@media (max-width: 359px) { .pub-logo-text { display: none; } }`}</style>
+      <style>{`html { scroll-padding-top: 72px; } @media (max-width: 359px) { .pub-logo-text { display: none; } }`}</style>
       <nav aria-label="NRIClub" style={{ ...section, maxWidth, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 10, paddingBottom: 10 }}>
         <a href="/" aria-label="NRIClub home" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: INK, minHeight: 44 }}>
           <FlagIcon size={30} />

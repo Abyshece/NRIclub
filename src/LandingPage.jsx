@@ -94,7 +94,7 @@ const FEATURES = [
     icon: icon(["M3 10.5L12 3l9 7.5", "M5 9v12h14V9", "M10 21v-6h4v6"]) },
   { title: "Job referrals", text: "Members refer each other at the companies they work for.", color: GREEN,
     icon: icon(["M4 7h16a1 1 0 011 1v11a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1z", "M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2", "M3 13h18"]) },
-  { title: "Ask anything", text: "From visas to where to buy atta. The best answer is marked, and urgent questions show local emergency numbers.", color: NAVY,
+  { title: "Ask anything", text: "From visas to where to buy atta. The person who asked can mark the best answer, and urgent questions show emergency numbers and how to reach the Indian embassy.", color: NAVY,
     icon: icon(["M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z", "M9 9h6", "M9 13h4"]) },
   { title: "Desi places", text: "Groceries, restaurants and temples, plus doctors, tax advisers and lawyers who speak your language.", color: SAFFRON,
     icon: icon(["M12 21s-7-6.2-7-11.5a7 7 0 0114 0C19 14.8 12 21 12 21z", "M12 12a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"]) },
@@ -108,13 +108,13 @@ const FEATURES = [
 const REASONS = [
   ["Real people", "A person on our team checks every new member."],
   ["Your number stays private", "Message members inside NRIClub. We never ask for your phone number."],
-  ["Answers don't get lost", "The best answer to each question is marked, so the next person finds it."],
+  ["Answers don't get lost", "The person who asked can mark the best answer, so the next person finds it."],
   ["Everything in one place", "Rooms, referrals, questions, desi places, events and guides for your city."],
 ];
 
 const STEPS = [
   { title: "Join free", text: "Your name, email and a password. No phone number and no app store: NRIClub works in your browser and can sit on your home screen." },
-  { title: "Get checked", text: "Paste your LinkedIn. No LinkedIn? Write a few words about yourself and name a member who knows you. A person on our team checks it, usually within a day; meanwhile you can join groups and say hello." },
+  { title: "Get checked", text: "Paste your LinkedIn. No LinkedIn? Write a sentence on how you're connected to the community, like your university or employer. If a member knows you, you can name them too. A person on our team checks it, usually within a day; meanwhile you can join groups and say hello." },
   { title: "Meet your city", text: "Join your city's group, plus your language group, Indian students abroad or the parents' corner." },
 ];
 
@@ -197,11 +197,13 @@ export default function LandingPage({ onJoin, onLogin }) {
         @keyframes lp-pulse { 0% { transform: scale(0.8); opacity: 1; } 100% { transform: scale(2.2); opacity: 0; } }
         .lp-skyline path { vector-effect: non-scaling-stroke; }
         .lp-hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 40px; align-items: center; }
+        .lp-lead { margin-left: 0; margin-right: 0; }
         .lp-card { padding: 24px; border-radius: 14px; border: 1px solid #ECEBE8; background: #FCFCFB; }
         .lp-card-icon { width: 42px; height: 42px; margin-bottom: 16px; }
         @media (max-width: 860px) {
           .lp-hero { grid-template-columns: 1fr; text-align: center; }
           .lp-hero-actions { justify-content: center; }
+          .lp-lead { margin-left: auto; margin-right: auto; }
         }
         @media (max-width: 600px) {
           .lp-map { display: none !important; }
@@ -226,7 +228,7 @@ export default function LandingPage({ onJoin, onLogin }) {
               <h1 id="lp-title" style={{ fontSize: "clamp(38px, 6vw, 62px)", fontWeight: 800, lineHeight: 1.05, letterSpacing: "-0.04em", margin: "0 0 20px" }}>
                 One home for<br />Indians abroad.
               </h1>
-              <p style={{ fontSize: "clamp(16px, 1.8vw, 19px)", lineHeight: 1.65, color: MUTED, maxWidth: 520, margin: "0 0 32px", marginInline: "inherit" }}>
+              <p className="lp-lead" style={{ fontSize: "clamp(16px, 1.8vw, 19px)", lineHeight: 1.65, color: MUTED, maxWidth: 520, marginTop: 0, marginBottom: 32 }}>
                 {HOME_LEAD}
               </p>
               <div className="lp-hero-actions" style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
@@ -249,7 +251,7 @@ export default function LandingPage({ onJoin, onLogin }) {
               list="lp-city-list" enterKeyHint="go" autoComplete="off" required maxLength={100}
               style={{ flex: 1, minWidth: 0, minHeight: 48, padding: "0 14px", borderRadius: 10, border: "1px solid #8F8E8B", fontSize: 16, fontFamily: "inherit", color: INK, background: "#fff" }} />
             <datalist id="lp-city-list">{allCities.map((c) => <option key={c} value={c} />)}</datalist>
-            <button type="submit" style={{ ...primaryBtn, minHeight: 48, padding: "0 22px", fontSize: 15 }}>Find</button>
+            <button type="submit" style={{ ...primaryBtn, minHeight: 48, padding: "0 16px", fontSize: 15 }}>Find</button>
           </form>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 760, margin: "0 auto" }}>
             {chips.map((c) => (

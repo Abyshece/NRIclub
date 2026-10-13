@@ -427,6 +427,14 @@ export default function App() {
       setAuthState("link-expired");
       return;
     }
+    // Join free or Log in tapped on the homepage's text before the app had
+    // loaded (see vite.config.js): open that now.
+    const start = window.nriStart;
+    window.nriStart = null;
+    if ((start === "signup" || start === "login") && startsSignedOut()) {
+      setAuthState(start);
+      return;
+    }
     restoreSession();
   }, []);
 

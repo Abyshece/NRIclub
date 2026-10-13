@@ -70,7 +70,7 @@ Their notice boards and newsletters reach families who are not on social media.
 >
 > Namaste [Name],
 >
-> I'm [your name] from NRIClub (nriclub.app), a free online community for Indians abroad. Members are verified, and each city has its own group where people help each other: newcomers, parents visiting, families looking for a room or a job referral.
+> I'm [your name] from NRIClub (nriclub.app), a free online community for Indians abroad. Our team checks every new member, and each city has its own group where people help each other: newcomers, parents visiting, families looking for a room or a job referral.
 >
 > We'd be grateful if you could mention us in your newsletter or on your notice board, or let us list your [festival] celebration on our Events page so more people can come.
 >
@@ -83,7 +83,7 @@ Their notice boards and newsletters reach families who are not on social media.
 
 > 🇮🇳 New to [City]? Indians in [City] help each other on NRIClub.
 > Ask questions · Rooms and referrals · Desi places · Festivals
-> Free and verified: nriclub.app/city/[city]
+> Free · Our team checks every new member · nriclub.app/city/[city]
 
 ---
 
@@ -101,7 +101,7 @@ Their notice boards and newsletters reach families who are not on social media.
 
 > Far from home, never alone. 🇮🇳
 > One home for Indians abroad: your city's group, desi places, festivals and help from people who've been there.
-> Free and verified → nriclub.app
+> Free · Our team checks every new member → nriclub.app
 
 **Before a festival (two to three weeks ahead):**
 

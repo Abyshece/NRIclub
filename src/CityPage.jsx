@@ -36,6 +36,7 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
   const known = findCity(rawCity, cities.map((c) => c.city));
   const city = known || titleCase(rawCity);
   const citySlug = slug(city);
+  const cityPath = `/city/${citySlug || encodeURIComponent(city)}`;
 
   useEffect(() => {
     api.getPublicCities().then(setCities).catch(() => {});
@@ -54,6 +55,16 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
       try { window.history.replaceState(window.history.state, "", `/city/${citySlug}${window.location.search}${window.location.hash}`); } catch (e) {}
     }
   }, [known, citySlug, key]);
+
+  // The page's own address for search engines, also for groups newer than
+  // the build (their pages come from the app's plain page, with none).
+  useEffect(() => {
+    let link = document.querySelector('link[rel="canonical"]');
+    const before = link?.getAttribute("href");
+    if (!link) { link = document.createElement("link"); link.rel = "canonical"; document.head.appendChild(link); }
+    link.setAttribute("href", `https://nriclub.app${cityPath}`);
+    return () => { if (before) link.setAttribute("href", before); else link.remove(); };
+  }, [cityPath]);
 
   useEffect(() => {
     document.title = `Indians in ${city} · NRIClub`;
@@ -134,7 +145,7 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
         <p style={{ fontSize: 14, color: MUTED, margin: "0 auto 14px", maxWidth: 520 }}>City ambassadors welcome newcomers and host the first meetups. It takes an hour or two a month.</p>
         <a href={AMBASSADOR_MAIL} style={{ display: "inline-block", padding: "10px 8px", fontSize: 14, fontWeight: 600, color: INK }}>Become a city ambassador →</a>
         <p style={{ fontSize: 14, margin: "10px 0 0" }}>
-          <a href={whatsappShare(`Indians in ${city} on NRIClub, a free community for Indians abroad: https://nriclub.app/city/${citySlug}`)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", padding: "10px 8px", fontWeight: 600, color: INK }}>Share the {city} page on WhatsApp</a>
+          <a href={whatsappShare(`Indians in ${city} on NRIClub, a free community for Indians abroad: https://nriclub.app${cityPath}`)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", padding: "10px 8px", fontWeight: 600, color: INK }}>Share the {city} page on WhatsApp</a>
         </p>
       </section>
 
