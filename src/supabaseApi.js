@@ -978,6 +978,12 @@ export async function toggleRsvp(eventId) {
   }
 }
 
+// Who's going to an event (with their name and photo).
+export async function getEventAttendees(eventId) {
+  const rows = await restCall("GET", `/rest/v1/event_rsvps?event_id=eq.${encodeURIComponent(eventId)}&select=user_id,profiles:user_id(id,name,avatar_url)&limit=200`);
+  return (rows || []).map(r => r.profiles).filter(Boolean);
+}
+
 export async function getMyRsvps() {
   if (!currentUser) return [];
   const data = await restCall("GET", `/rest/v1/event_rsvps?user_id=eq.${currentUser.id}&select=event_id`);
