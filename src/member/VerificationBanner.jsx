@@ -24,7 +24,7 @@ export function VerificationBanner({ user, onUpdateDetails }) {
               told no more than that. */}
           {user.reviewFlag
             ? <>Thanks, {firstName(user.name)}! Our team will check your membership before you can take part. This usually takes a day.</>
-            : <>Thanks, {firstName(user.name)}! We're reviewing your profile, usually within 24 hours.</>}
+            : <>Thanks, {firstName(user.name)}! We're reviewing your profile, usually within 24 hours. Meanwhile, add a photo, join groups and say hello.</>}
         </p>
       </div>
     );
