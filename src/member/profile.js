@@ -28,6 +28,12 @@ export function mapProfile(p) {
     linkedin_verified: !!p.linkedin_verified,
     ambassadorCity: p.ambassador_city || "",
     askMeAbout: p.ask_me_about || "",
+    mentorOpen: !!p.mentor_open,
+    mentorAreas: p.mentor_areas || "",
+    menteeOpen: !!p.mentee_open,
+    menteeNeeds: p.mentee_needs || "",
+    // Until the 2026-10-18 database update, profiles have no mentoring.
+    hasMentoring: Object.prototype.hasOwnProperty.call(p, "mentor_open"),
     // Until the 2026-10-17 database update, profiles have no topics.
     hasTopics: Object.prototype.hasOwnProperty.call(p, "ask_me_about"),
     verificationStatus: p.verification_status || "incomplete",
