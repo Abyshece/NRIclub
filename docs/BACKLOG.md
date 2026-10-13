@@ -1,8 +1,9 @@
 # Backlog
 
 Issues found while auditing the code for Phase 1 that are outside its scope
-(security and data), and the parts of the Phase 1 review (2026-10-12) that
-were left for later, grouped by the phase that will handle them.
+(security and data), and the parts of the Phase 1 review (2026-10-12) and
+of the review of its fixes (2026-10-13) that were left for later, grouped by
+the phase that will handle them.
 
 ## Phase 2: restructure
 
@@ -14,7 +15,8 @@ were left for later, grouped by the phase that will handle them.
   `localStorage`; move to `@supabase/supabase-js` session handling.
 - Password-reset links use the implicit flow: the sign-in tokens travel in
   the link itself. The site keeps them in memory only, says which account
-  the new password is for and ends that session afterwards, but anyone can
+  the new password is for, ends that session afterwards and fills in the
+  login email only if this browser asked for the reset, but anyone can
   still build such a link with their own tokens. Switch to the PKCE flow
   (the link carries a one-time code that only the browser which asked for
   the reset can use) together with the supabase-js move.
@@ -62,14 +64,22 @@ were left for later, grouped by the phase that will handle them.
 - The admin panel's **Members** list loads the newest 1,000 members (it says
   when the list is cut, and search and the Blocked filter only cover those);
   add paging and search on the server.
+- The admin panel's **Reports** page loads every open report, but only the
+  newest 200 handled ones (it says how many there are in all); add paging
+  or search on the server for older handled reports.
 - Reports store the kind of content in the reason prefix (`[DOC]` …) and bug
   reports share the reports table; add a content type column / bug table.
+- `user_settings.marketing_emails` is no longer read or written by the site
+  (marketing consent is `profile_private.marketing_consent`), and it's
+  FALSE by default for everyone, so it says nothing about consent. Drop the
+  column, and never build a mailing list from it.
 - Marketplace photos are a JSON string in `image_url`; event dates are free
   text.
 
 ## Phase 5: launch readiness
 
-- Deleting an account doesn't delete the user's uploaded images in Storage.
+- Deleting an account doesn't delete the user's uploaded images in Storage
+  (their folder is named after the account id).
 - Signup reveals whether an email already has an account.
 - Rejected and blocked members can still file reports (on purpose, so they
   can report bugs); add a per-member rate limit.
@@ -84,8 +94,26 @@ were left for later, grouped by the phase that will handle them.
 - Email members about verification decisions (in-app notifications exist;
   email needs SMTP or an Edge Function).
 - Members waiting for review (pending) can see and do everything approved
-  members can, so new members aren't stuck while they wait. Decide whether
-  that stays once sign-ups grow.
+  members can, so new members aren't stuck while they wait (except members
+  held for review because they matched a rejected or blocked account).
+  Decide whether that stays once sign-ups grow.
+- Matching against rejected and blocked accounts happens only at signup
+  (email address) and when a member sends their details (email address and
+  LinkedIn link), so nobody can try links one by one on their own profile.
+  A link changed later (for example after approval, which puts the member
+  back in review) isn't matched. Show admins in the review queue whether a
+  member's current link matches a moderation record, without telling the
+  member.
+- Resuming someone else's unfinished signup: the site now keeps the new
+  session in memory until the password is replaced and the earlier visit's
+  details are cleared, so nobody is left signed in half-way. If the tab is
+  closed after the code is entered but before the new password is saved,
+  the confirmed account still has the earlier visit's password (its owner
+  uses "Forgot password?"). Closing that gap needs the server, e.g. an
+  Edge Function that sets the password when the code is confirmed. The
+  signup step only stores the name and country an earlier visit sent (the
+  same tab replaces both), so no LinkedIn link, hometown or job from it
+  survives.
 - Vercel wasn't part of the Phase 1 review: check its settings, old preview
   deployments, and whether Vercel Analytics needs the cookie banner's
   consent. Add security headers, including a Content-Security-Policy whose
@@ -93,7 +121,15 @@ were left for later, grouped by the phase that will handle them.
   already refuses outside photo links for new posts, profiles, events and
   listings, but older rows may still have them).
 - Test in Safari (including on iPhone) and Firefox, and with a screen
-  reader; the Phase 1 review used Chromium only.
+  reader; the reviews used Chromium only. Include going Back to the site
+  after signing out (pages the browser restores from its cache).
+- Check on the live project what the reviews could only test against a
+  local stand-in for Supabase Auth: a "Set a new password" page left open
+  for more than an hour still saves the new password (Supabase answers with
+  403 `bad_jwt` once the link's session expires, and the site then renews
+  it), and that a member who changes their email address (with *Secure
+  email change* on) has the new address in the admin panel once they
+  confirm it.
 - **Legal review** before inviting the public:
   - The Terms of Use text is a plain-language draft.
   - Consent at signup: every signup is stored with `gdpr_consent = true`
@@ -103,8 +139,34 @@ were left for later, grouped by the phase that will handle them.
     stop recording `gdpr_consent` from the Terms tick, or add a real,
     unticked consent box, and align the Privacy Policy. Not changed in the
     code yet.
-  - The moderation record kept after a rejected or blocked member deletes
-    their account (`private.moderation_record`: hashed email, LinkedIn link,
-    decision, admin's note): confirm the legal basis (legitimate interest,
-    Art. 6(1)(f)), set a retention period with a clean-up job, and decide
-    whether the admin's note may be kept.
+  - The moderation record kept when a member is rejected or blocked, also
+    after they delete their account (`private.moderation_record`, described
+    in the Privacy Policy, section 5). It holds a keyed hash of the email
+    address (SHA-256 with a secret key, `moderation_salt` in
+    `private.app_config`): it can't be turned back into the address, but
+    anyone with the key, such as someone with full database access, can
+    check whether an address they already know matches, so it is still
+    personal data. It also holds the LinkedIn profile name from the link
+    the account had when the admin decided, the decision, its date and the
+    admin's note. The account id is removed when the account is deleted.
+    It's checked when someone signs up (email address), sends their
+    verification details (email address and LinkedIn link) or is moved back
+    into review by an admin. Confirm the legal basis (legitimate interest,
+    Art. 6(1)(f)) and that a keyed hash is enough, set a retention period
+    with a clean-up job, and decide whether the admin's note may be kept.
+  - Right of access: "Download my data" has the member's own data,
+    including their verification history with the messages they were sent
+    and the notes their own changes left (such as their name and LinkedIn
+    before a change), but not the notes admins wrote about them nor their
+    moderation record. The Privacy Policy (section 4) says those are
+    available on request from `privacy@nriclub.app`, and such a request
+    must be answered within a month. Confirm that's enough, or add admins'
+    notes to the export with other people's names removed.
+  - If the Terms change after the review, give them a new version in both
+    places, which must always match: `TERMS_VERSION` in
+    `src/member/LegalModals.jsx` and `private.current_terms_version()` in
+    the database (in a new migration). Apply the migration, then deploy the
+    site straight away: from the migration on, every member has to accept
+    the new version before they can take part again, and only the new site
+    can ask them (the "Before you continue" screen). Accepting records the
+    new version and the date.

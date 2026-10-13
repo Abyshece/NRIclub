@@ -5,7 +5,7 @@
 | Path | What it is |
 |------|-----------|
 | `supabase/migrations/20261012000000_nriclub_schema.sql` | The whole database: tables, security policies, triggers, storage buckets, realtime |
-| `supabase/migrations/20261013000000_review_fixes.sql` | Fixes from the Phase 1 review, applied after the schema above |
+| `supabase/migrations/20261013000000_review_fixes.sql` | Fixes from the Phase 1 review and from the review of those fixes, applied after the schema above |
 | `supabase/seed.sql` | Starter data for a new project: the city communities, with no members (no example events) |
 | `supabase/tests/` | Automated security tests for the database (see "Testing the database") |
 | `supabase/oneoff/` | One-time scripts for the existing project (already applied ones are documented there) |
@@ -31,6 +31,12 @@ links members save must point there, inside their own folder:
 INSERT INTO private.app_config (key, value)
 VALUES ('storage_public_url', 'https://<project-ref>.supabase.co/storage/v1/object/public/');
 ```
+
+The review-fixes migration also makes a secret key for the records it keeps
+of rejected and blocked members (`moderation_salt` in `private.app_config`;
+they hold the email address only in a coded form made with this key). Never
+change or delete it: those people would no longer be recognised if they
+sign up again.
 
 **The existing NRI+ project** (`uzzkdmybsbwknpsucuvv`) was moved to this schema
 with the one-off script in `supabase/oneoff/2026-10-12-phase1-live-reset/`
@@ -144,6 +150,8 @@ With two member accounts and one admin account:
 - [ ] Sign up → receive the 6-digit code → it fills in and submits by itself → **Get verified** (city + LinkedIn, or "I don't have LinkedIn") → dashboard with the "we're reviewing your profile" banner
 - [ ] Admin panel → **Verification**: open the new member, check the LinkedIn link, **Ask for more info** → the member sees the message and updates their details → **Approve** → the member's banner disappears and the Verified badge shows
 - [ ] Reject a test member with a reason → they see the "We couldn't verify your membership" screen and can't post or see other members
+- [ ] Delete that rejected test account from its screen, then sign up again with the same email address → Get verified says "Our team will check your membership before you can take part" → send the details → the feed stays empty → the admin panel shows them as **Held for review**, with the earlier rejection, its date and any admin note → **Approve** → they can take part
+- [ ] Reject a test signup that hasn't sent its details (Verification → **Incomplete**) → open it under Rejected → **Move back to unfinished** → it's back under Incomplete, and the member sees Get verified again
 - [ ] A member who joined before Phase 1 signs in → "Before you continue" asks once for 18+ and the Terms → then the dashboard
 - [ ] Log out → log back in; a wrong password is rejected
 - [ ] **Forgot password?** → the email link opens "Set a new password" for that account → afterwards you log in with the new password
@@ -180,7 +188,10 @@ Launch tasks from the Phase 1 review (2026-10-12):
       someone reads (the site, the Terms and the Privacy Policy send people
       there).
 - [ ] The Terms of Use and Privacy Policy have had their legal review
-      (`docs/BACKLOG.md`, Phase 5).
+      (`docs/BACKLOG.md`, Phase 5). If the Terms text changes, its version
+      changes in two places at once: `TERMS_VERSION` in
+      `src/member/LegalModals.jsx` and `private.current_terms_version()` in
+      the database (BACKLOG says how).
 
 ## Testing the database
 
@@ -222,6 +233,18 @@ read anything by design.
 
 **"This account does not have admin access" in the admin panel:** the account
 isn't in `public.admins` (Step 3).
+
+**A new member sees "Our team will check your membership before you can
+take part" and an empty feed:** their email address or LinkedIn link matched
+a member who was rejected or blocked. Admin panel → **Verification** shows
+them as **Held for review**, with what they matched and any note on the
+earlier decision. Approve them if they're genuine.
+
+**Every member sees "Before you continue" again, or members suddenly see an
+empty feed:** the Terms version on the site (`TERMS_VERSION` in
+`src/member/LegalModals.jsx`) and in the database
+(`private.current_terms_version()`) must be the same. After a Terms change,
+apply the database change and deploy the site straight after it.
 
 **Signup code email not arriving, or "We couldn't create your account":**
 without custom SMTP (Step 2.2), Supabase only emails your own team's

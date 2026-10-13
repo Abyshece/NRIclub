@@ -5,8 +5,9 @@
 --
 -- Run each numbered part as its own query: the Supabase SQL editor only
 -- shows the result of the last statement it runs. Parts 1 and 2 change data
--- and are safe to run again; parts 3 and 4 only read; part 5 is a reminder
--- and is commented out.
+-- and are safe to run again. Parts 3, 4 and 5 only read; each has a change
+-- under it, commented out, that you run as its own query after checking the
+-- list. Part 6 is a reminder and is commented out.
 -- ============================================================================
 
 
@@ -42,7 +43,11 @@ FROM public.events x, base;
 
 
 -- ----------------------------------------------------------------------------
--- 2. Bring stored data up to date.
+-- 2. Bring stored counts up to date. Safe to run again, at any time.
+--    (Marketing consent isn't touched here or anywhere else: each member
+--    keeps the choice they gave, in profile_private.marketing_consent.
+--    user_settings.marketing_emails is FALSE by default for everyone, so it
+--    says nothing about consent; nothing reads it any more.)
 -- ----------------------------------------------------------------------------
 
 -- 2a. Community member counts = the real number of members. The old seed
@@ -58,23 +63,15 @@ FROM (SELECT e2.id, (SELECT count(*)::int FROM public.event_rsvps r WHERE r.even
       FROM public.events e2) c
 WHERE c.id = e.id AND e.attendees_count <> c.n;
 
--- 2c. Marketing emails switched off in Settings while the old site was
---     still live. The old site saved that switch in user_settings, which the
---     new site no longer reads; the member's consent is profile_private.
---     Run this the same day as the migration (it looks back one day).
-UPDATE public.profile_private pp SET marketing_consent = FALSE
-WHERE pp.marketing_consent
-  AND EXISTS (SELECT 1 FROM public.user_settings s
-              WHERE s.user_id = pp.id AND NOT s.marketing_emails
-                AND s.updated_at > NOW() - INTERVAL '1 day');
-
 
 -- ----------------------------------------------------------------------------
 -- 3. Approval audit (read only). Members the Phase 1 reset marked
 --    "approved" with no decision on record. Before the reset any member could
 --    switch on the old "LinkedIn verified" flag on their own profile, and the
 --    reset turned that flag into "approved", so no admin may ever have looked
---    at these members. Re-check each one: README.md says how.
+--    at these members. Re-check each one: README.md says how. A rejection
+--    here can be undone: the migration gave these members a submission
+--    date, so a rejected one can still be moved back to pending.
 -- ----------------------------------------------------------------------------
 SELECT p.id, p.name, pp.email, p.linkedin_url, pp.reviewed_at
 FROM public.profile_private pp
@@ -96,27 +93,62 @@ ORDER BY p.name;
 -- ----------------------------------------------------------------------------
 -- 4. Names copied from email addresses (read only). Expected: no rows (the
 --    migration emptied these names). A name like this came from an account
---    made outside the site's signup, not from the member.
+--    made outside the site's signup, not from the member. A name the member
+--    typed when signing up (kept in their signup details as full_name or
+--    name) is theirs, even one like "rahul" for rahul@gmail.com: it isn't
+--    listed and stays as it is.
 -- ----------------------------------------------------------------------------
 SELECT p.id, p.name, pp.email, p.created_at
 FROM public.profiles p
 JOIN public.profile_private pp ON pp.id = p.id
 WHERE p.name <> '' AND NULLIF(BTRIM(COALESCE(pp.email, '')), '') IS NOT NULL
-  AND (lower(p.name) = lower(BTRIM(pp.email)) OR p.name = LEFT(SPLIT_PART(BTRIM(pp.email), '@', 1), 200));
+  AND (lower(p.name) = lower(BTRIM(pp.email)) OR p.name = LEFT(SPLIT_PART(BTRIM(pp.email), '@', 1), 200))
+  AND NOT EXISTS (SELECT 1 FROM auth.users u
+                  WHERE u.id = p.id AND (BTRIM(COALESCE(u.raw_user_meta_data ->> 'full_name', '')) <> ''
+                                         OR BTRIM(COALESCE(u.raw_user_meta_data ->> 'name', '')) <> ''));
 
 -- If it does list someone, empty those names with:
 --
 -- UPDATE public.profiles p SET name = ''
 -- FROM public.profile_private pp
 -- WHERE pp.id = p.id AND p.name <> '' AND NULLIF(BTRIM(COALESCE(pp.email, '')), '') IS NOT NULL
---   AND (lower(p.name) = lower(BTRIM(pp.email)) OR p.name = LEFT(SPLIT_PART(BTRIM(pp.email), '@', 1), 200));
+--   AND (lower(p.name) = lower(BTRIM(pp.email)) OR p.name = LEFT(SPLIT_PART(BTRIM(pp.email), '@', 1), 200))
+--   AND NOT EXISTS (SELECT 1 FROM auth.users u
+--                   WHERE u.id = p.id AND (BTRIM(COALESCE(u.raw_user_meta_data ->> 'full_name', '')) <> ''
+--                                          OR BTRIM(COALESCE(u.raw_user_meta_data ->> 'name', '')) <> ''));
 --
 -- How many members have no name at all:
 --   SELECT count(*) FROM public.profiles WHERE name = '';
 
 
 -- ----------------------------------------------------------------------------
--- 5. REMINDER, do not run now: drop the Phase 1 backup ON OR BEFORE
+-- 5. The old seed's three example events (read only). The seed the site
+--    started with added "Holi Festival 2026", "Networking Night: Tech" and
+--    "Bollywood Movie Night", dated March and April 2026, from organisers
+--    that don't exist on NRIClub ("NYC Desi Club" ...). Members can't
+--    delete them and the admin panel has no list of events, so delete them
+--    here. Expected: exactly these 3 rows, with no organiser account.
+-- ----------------------------------------------------------------------------
+SELECT e.id, e.title, e.date, e.organizer_name, e.attendees_count,
+  (SELECT count(*) FROM public.event_rsvps r WHERE r.event_id = e.id) AS rsvps
+FROM public.events e
+WHERE e.organizer_id IS NULL
+  AND e.title IN ('Holi Festival 2026', 'Networking Night: Tech', 'Bollywood Movie Night')
+ORDER BY e.title;
+
+-- If it lists those 3 events and nothing else, delete them (with any RSVPs
+-- to them): copy this into a new query, remove the "-- " at the start of
+-- each line and run it. It shows the events it deleted. If the list above
+-- has anything else, don't run it: ask your developer.
+--
+-- DELETE FROM public.events
+-- WHERE organizer_id IS NULL
+--   AND title IN ('Holi Festival 2026', 'Networking Night: Tech', 'Bollywood Movie Night')
+-- RETURNING id, title;
+
+
+-- ----------------------------------------------------------------------------
+-- 6. REMINDER, do not run now: drop the Phase 1 backup ON OR BEFORE
 --    2026-11-11. It still holds copies of members who have since deleted
 --    their account, and the Privacy Policy promises their data is erased
 --    within 30 days of deletion. Once dropped it can't be brought back.
