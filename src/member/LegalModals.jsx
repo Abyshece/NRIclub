@@ -56,6 +56,11 @@ const para = { margin: "0 0 16px" };
 // DRAFT: plain-language Terms of Use written for the product. It has NOT been
 // reviewed by a lawyer and must get legal review before launch (together with
 // TERMS_VERSION below, which signup stores with each member).
+// TERMS_VERSION must always equal private.current_terms_version() in the
+// database (migration 20261013000000_review_fixes.sql): change both together,
+// the database one in a new migration. Members whose accepted version is a
+// different one see the Terms screen again and can't take part until they
+// accept the current one (accept_terms only records the database's version).
 export const TERMS_VERSION = "2026-10";
 
 // The Privacy Policy can be opened from inside the Terms, so it can be read
@@ -110,15 +115,17 @@ export function PrivacyContent() {
       <h4 style={h4}>3. Legal Basis (GDPR Art. 6)</h4>
       <p style={para}>We process your data based on: your explicit consent (Art. 6(1)(a)), performance of our service contract (Art. 6(1)(b)), and our legitimate interest in operating the platform (Art. 6(1)(f)).</p>
       <h4 style={h4}>4. Your Rights</h4>
-      <p style={para}>Under GDPR, you have the right to: access your personal data, rectify inaccurate data, request erasure ("right to be forgotten"), restrict processing, data portability (export your data), object to processing, and withdraw consent at any time. You can exercise these rights from your Account Settings.</p>
+      <p style={para}>Under GDPR, you have the right to: access your personal data, rectify inaccurate data, request erasure ("right to be forgotten"), restrict processing, data portability (export your data), object to processing, and withdraw consent at any time. You can exercise these rights from your Account Settings, where “Download my data” gives you a copy of what your account holds. Notes our team wrote about you (for example while checking your membership) and the moderation record described below aren't in that file; you can ask for them at privacy@nriclub.app.</p>
       <h4 style={h4}>5. Data Retention</h4>
       <p style={para}>We retain your data for as long as your account is active. Upon account deletion, all personal data is permanently erased within 30 days.</p>
       {/* LEGAL REVIEW NEEDED: the moderation record (private.moderation_record,
           migration 20261013000000_review_fixes.sql) is kept after the account
           is deleted. Confirm the legal basis (legitimate interest, Art.
           6(1)(f)), set a retention period, and decide whether the admin's
-          note may be kept in it. */}
-      <p style={para}>One exception: if our team rejected or blocked an account, we keep a minimal record so the same person can't simply sign up again. It holds a scrambled (hashed) form of the email address that can't be turned back into the address, the LinkedIn profile link if one was given, and our decision with its date and our note on it. We only use it to flag a new signup that matches it for a closer review.</p>
+          note may be kept in it. Also confirm that a keyed hash of the
+          email address is enough, and whether admins' notes about a member
+          must be in "Download my data" instead of on request (section 4). */}
+      <p style={para}>One exception: if our team rejected or blocked an account, we keep a minimal record so the same person can't simply sign up again. It holds a coded form of the email address (and of any address the account changes to afterwards), the LinkedIn profile link the account had when we decided (if there was one), and our decision with its date and any note we made on it. The email address itself isn't kept: the coded form is made with a secret key, so we can only check whether an address we already know matches it. The record is linked to the account until the account is deleted, and then that link is removed. We use the record only when someone signs up, sends their verification details or is moved back into review by our team: if their email address or LinkedIn link matches it, our team checks their membership before they can take part.</p>
       <h4 style={h4}>6. Data Sharing</h4>
       <p style={para}>We do not sell your personal data. Data is only shared with essential service providers (email delivery, hosting) under data processing agreements compliant with GDPR.</p>
       <h4 style={h4}>7. Contact</h4>

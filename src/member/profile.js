@@ -31,14 +31,16 @@ export function mapProfile(p) {
     // Private (owner and admins only), used to prefill "Update details".
     verificationNote: p.verification_note || "",
     voucher: p.voucher || "",
-    // "18 or older" and Terms acceptance; accounts without them confirm them
-    // in Get verified or on the Terms screen (TermsGate) before the dashboard.
+    // "18 or older" and Terms acceptance, and which version of the Terms was
+    // accepted. Accounts without them, or with another version than
+    // TERMS_VERSION (LegalModals), confirm them in Get verified or on the
+    // Terms screen (TermsGate) before the dashboard.
     ageConfirmedAt: p.age_confirmed_at || null,
     termsAcceptedAt: p.terms_accepted_at || null,
     termsVersion: p.terms_version || "",
-    // Set by the server when the email or LinkedIn link matches an account
-    // that was rejected or blocked (e.g. "previously blocked"): the member
-    // can't use NRIClub until an admin approves them. Never shown as is.
+    // "held" (set by the server) while an admin checks the member before
+    // they can take part; "" otherwise. It says nothing about why, and the
+    // screens say no more than that either.
     reviewFlag: p.review_flag || "",
     marketingConsent: !!p.marketing_consent,
     status: p.status || "active",
@@ -153,6 +155,12 @@ export function authErrorMessage(err) {
   if (wait) return `For security, please wait ${wait[1]} seconds and try again.`;
   if (msg.includes("rate limit") || msg.includes("too many")) {
     return "Too many attempts. Please wait a few minutes and try again.";
+  }
+  // Supabase refuses a "new" password that is the current one ("New password
+  // should be different from the old password.", same_password); checked
+  // before the general password rule below, which it would also match.
+  if (msg.includes("same_password") || msg.includes("different from the old password")) {
+    return "That's already your password. Choose a different one.";
   }
   if (msg.includes("weak") || msg.includes("pwned") || msg.includes("easy to guess")) {
     return "That password is too easy to guess. Please choose a different one.";

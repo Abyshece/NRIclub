@@ -14,6 +14,11 @@ let currentUser = null;
 // the session ending by itself). A token refresh that finishes under a newer
 // generation keeps nothing, so signing out during a refresh sticks.
 let sessionGeneration = 0;
+// A session this tab keeps in memory only (verifyOtp with persist: false,
+// while signup finishes setting the account up): { refreshToken }. Requests
+// use it, but a reload or another tab never sees it until adoptSession()
+// saves it. null when this tab's session, if any, is the stored one.
+let memorySession = null;
 
 // Builds from before the NRIclub rename kept the session under indin_* keys,
 // and an old signup fallback cached the plain password in indin_profile_cache.
@@ -47,6 +52,7 @@ function endSession({ clearStorage }) {
   sessionGeneration += 1;
   accessToken = null;
   currentUser = null;
+  memorySession = null;
   if (clearStorage) clearStoredSession();
   if (hadUser && sessionEndedHandler) sessionEndedHandler();
 }
@@ -60,12 +66,18 @@ function clearStoredSession() {
 
 // A new session for this tab (and every other tab: storage is shared). A
 // reset link that was left unfinished is dropped, so updatePassword can't
-// reach that account any more.
-function saveSession(data) {
+// reach that account any more. persist: false keeps it in this tab's memory
+// only (see memorySession).
+function saveSession(data, { persist = true } = {}) {
   if (recovery) cancelRecovery();
   sessionGeneration += 1;
   accessToken = data.access_token;
   currentUser = data.user;
+  if (!persist) {
+    memorySession = { refreshToken: data.refresh_token || null };
+    return;
+  }
+  memorySession = null;
   localStorage.setItem(TOKEN_KEY, data.access_token);
   if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
   else localStorage.removeItem(REFRESH_KEY);
@@ -75,14 +87,29 @@ function storedToken() {
   try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
 }
 
-// The user id inside an access token (a JWT), or null.
-function tokenUserId(token) {
+function storedRefreshToken() {
+  try { return localStorage.getItem(REFRESH_KEY); } catch { return null; }
+}
+
+// The claims inside an access token (a JWT), or {}.
+function tokenClaims(token) {
   try {
     const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(payload)).sub || null;
+    return JSON.parse(atob(payload)) || {};
   } catch {
-    return null;
+    return {};
   }
+}
+
+// The user id inside an access token, or null.
+function tokenUserId(token) {
+  return tokenClaims(token).sub || null;
+}
+
+// The Supabase Auth session an access token belongs to (it stays the same
+// across refreshes), or null.
+function tokenSessionId(token) {
+  return tokenClaims(token).session_id || null;
 }
 
 // Ends a session on the server (this browser only). keepalive lets it finish
@@ -97,11 +124,12 @@ function logoutOnServer(token) {
 }
 
 // Another tab signed out, or signed in as someone else: this tab's session is
-// over too. The same member's refreshed token is simply picked up.
+// over too. The same member's refreshed token is simply picked up. A session
+// kept in memory was never in storage, so other tabs can't end it.
 try {
   window.addEventListener("storage", (e) => {
     if (e.storageArea !== localStorage || (e.key !== null && e.key !== TOKEN_KEY)) return;
-    if (!currentUser) return;
+    if (!currentUser || memorySession) return;
     const token = storedToken();
     if (token && tokenUserId(token) === currentUser.id) {
       accessToken = token;
@@ -174,7 +202,9 @@ export async function signUp(email, password, metadata = {}) {
   return data;
 }
 
-export async function signIn(email, password) {
+// persist: false keeps the session in this tab's memory only, as for
+// verifyOtp.
+export async function signIn(email, password, { persist = true } = {}) {
   const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
@@ -182,22 +212,50 @@ export async function signIn(email, password) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error_description || data.msg || "Login failed");
-  saveSession(data);
+  saveSession(data, { persist });
   return data;
 }
 
 // Signs out this browser only; other devices stay signed in. The tab is
 // signed out at once; the server is told in the background, so callers never
-// wait on the network.
+// wait on the network. A session kept in memory was never stored, so storage
+// (and a session other tabs may keep there) is left alone.
 export async function signOut() {
-  const token = accessToken || storedToken();
+  const inMemoryOnly = !!memorySession;
+  const token = accessToken || (inMemoryOnly ? null : storedToken());
   const refreshing = refreshInFlight;
   sessionGeneration += 1;
   accessToken = null;
   currentUser = null;
-  clearStoredSession();
+  memorySession = null;
+  if (!inMemoryOnly) clearStoredSession();
   unsubscribeFromMessages();
   endServerSession(token, refreshing);
+}
+
+// Saves the session verifyOtp (or signIn) kept in memory with persist: false,
+// once signup has finished setting the account up: from now on it lasts
+// across reloads and other tabs share it. Rejects if that session has ended
+// in the meantime.
+export async function adoptSession() {
+  if (!memorySession) {
+    if (currentUser && accessToken) return true; // already saved
+    throw new Error("Your session has ended. Please log in.");
+  }
+  localStorage.setItem(TOKEN_KEY, accessToken);
+  if (memorySession.refreshToken) localStorage.setItem(REFRESH_KEY, memorySession.refreshToken);
+  else localStorage.removeItem(REFRESH_KEY);
+  memorySession = null;
+  return true;
+}
+
+// Drops a session kept in memory (persist: false) that signup couldn't
+// finish: it's signed out on the server (in the background) and forgotten,
+// so nothing half-done stays signed in. It was never stored, so a reload
+// starts signed out. A session that was already saved is signed out as usual.
+export async function discardSession() {
+  if (!memorySession && !accessToken) return;
+  return signOut();
 }
 
 async function endServerSession(token, refreshing) {
@@ -209,6 +267,12 @@ async function endServerSession(token, refreshing) {
   if (renewed && renewed !== token) logoutOnServer(renewed);
 }
 
+// Which address this browser last asked a reset link for, and when:
+// { email, at }. Only then may the login form be filled in with the address
+// a reset link was for; a link someone else made must not fill in theirs.
+const RESET_REQUEST_KEY = "nriclub_reset_requested";
+const RESET_REQUEST_MS = 24 * 60 * 60 * 1000;
+
 export async function resetPassword(email) {
   const redirectTo = encodeURIComponent(window.location.origin + window.location.pathname);
   const res = await fetch(`${SUPABASE_URL}/auth/v1/recover?redirect_to=${redirectTo}`, {
@@ -217,10 +281,26 @@ export async function resetPassword(email) {
     body: JSON.stringify({ email }),
   });
   if (!res.ok) {
-    const err = await res.json();
+    const err = await res.json().catch(() => ({}));
     throw new Error(err.message || err.msg || "Failed to send reset email");
   }
+  try {
+    localStorage.setItem(RESET_REQUEST_KEY, JSON.stringify({ email: String(email).trim().toLowerCase(), at: Date.now() }));
+  } catch {}
   return true;
+}
+
+// True if this browser asked for a reset link for email (any case) in the
+// last 24 hours.
+export function resetWasRequestedFor(email) {
+  try {
+    const asked = JSON.parse(localStorage.getItem(RESET_REQUEST_KEY) || "null");
+    const age = Date.now() - Number(asked?.at);
+    return !!email && typeof asked?.email === "string" && asked.email === String(email).trim().toLowerCase()
+      && age >= 0 && age < RESET_REQUEST_MS;
+  } catch {
+    return false;
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -310,21 +390,30 @@ function expiredLinkError() {
   return err;
 }
 
+// The access token was refused as expired or invalid: 401, or (as Supabase
+// Auth answers an expired token) 403 with error_code "bad_jwt".
+function isRefusedToken(res, data) {
+  return res.status === 401 || data.error_code === "bad_jwt" || /\bbad_jwt\b|invalid jwt/i.test(data.msg || data.message || "");
+}
+
 // An Auth API call made with the reset link's session. Renews that session
-// (in memory) if the page was left open past the hour.
-async function recoveryRequest(method, path, body = null, fallback = "Something went wrong. Please try again.") {
+// (in memory) if the page was left open past the hour; the link has expired
+// only if its token is still refused after that. signal can cut the call
+// short (updatePassword's time limit).
+async function recoveryRequest(method, path, body = null, fallback = "Something went wrong. Please try again.", signal = undefined) {
   if (!recovery) throw expiredLinkError();
   const send = async () => {
     const res = await fetch(`${SUPABASE_URL}${path}`, {
       method,
       headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${recovery.accessToken}` },
       body: body ? JSON.stringify(body) : undefined,
+      signal,
     });
     return { res, data: await res.json().catch(() => ({})) };
   };
   let { res, data } = await send();
-  if (res.status === 401 && await renewRecovery()) ({ res, data } = await send());
-  if (res.status === 401 || ["session_not_found", "user_not_found", "bad_jwt"].includes(data.error_code)) {
+  if (isRefusedToken(res, data) && await renewRecovery(signal)) ({ res, data } = await send());
+  if (isRefusedToken(res, data) || ["session_not_found", "user_not_found"].includes(data.error_code)) {
     recovery = null;
     throw expiredLinkError();
   }
@@ -332,23 +421,23 @@ async function recoveryRequest(method, path, body = null, fallback = "Something 
   return data;
 }
 
-async function renewRecovery() {
+// Swaps the link's refresh token for a new session, in memory. false when
+// the refresh token no longer works (the link has expired); a network error
+// or a timeout is thrown instead, so it isn't mistaken for an expired link.
+async function renewRecovery(signal) {
   const current = recovery;
   if (!current?.refreshToken) return false;
-  try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
-      body: JSON.stringify({ refresh_token: current.refreshToken }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.access_token || recovery !== current) return false;
-    current.accessToken = data.access_token;
-    current.refreshToken = data.refresh_token || null;
-    return true;
-  } catch {
-    return false;
-  }
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+    body: JSON.stringify({ refresh_token: current.refreshToken }),
+    signal,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.access_token || recovery !== current) return false;
+  current.accessToken = data.access_token;
+  current.refreshToken = data.refresh_token || null;
+  return true;
 }
 
 // Who the reset link is for, so the page can say which account gets the new
@@ -370,24 +459,44 @@ export function cancelRecovery() {
   logoutOnServer(token);
 }
 
+// A password change that gets no answer fails after this long, so a hung
+// request goes down the caller's "try again" path instead of waiting forever.
+const PASSWORD_TIMEOUT_MS = 15000;
+
 // After a reset link: sets the new password for the link's account, then ends
 // the link's session and returns { email } so the member can sign in with the
-// new password. Otherwise: changes the signed-in member's password.
+// new password (fill the login form in with it only if
+// resetWasRequestedFor(email): someone else may have made the link, for their
+// own account). Otherwise: changes the signed-in member's password (the
+// session may be one kept in memory, during signup). Either way it throws if
+// there's no answer within 15 seconds; the change may still have gone
+// through, so trying again is safe (Supabase then says it's the same password).
 export async function updatePassword(password) {
-  if (recovery) {
-    const user = await recoveryRequest("PUT", "/auth/v1/user", { password }, "Couldn't update your password.");
-    cancelRecovery();
-    return { email: user.email || "" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PASSWORD_TIMEOUT_MS);
+  try {
+    if (recovery) {
+      const user = await recoveryRequest("PUT", "/auth/v1/user", { password }, "Couldn't update your password.", controller.signal);
+      cancelRecovery();
+      return { email: user.email || "" };
+    }
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ password }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Couldn't update your password.");
+    if (data.id && data.id === currentUser?.id) currentUser = data;
+    return data;
+  } catch (err) {
+    // Worded so the site's network-error check (profile.js) recognises it.
+    if (controller.signal.aborted) throw new Error("Network request failed: no answer after 15 seconds.");
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ password }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Couldn't update your password.");
-  currentUser = data;
-  return data;
 }
 
 // Emails a 6-digit code to an existing account (used to confirm an email
@@ -404,7 +513,11 @@ export async function sendOtp(email) {
   }
 }
 
-export async function verifyOtp(email, token) {
+// persist: false keeps the new session in this tab's memory only: requests
+// use it, but a reload or another tab never sees it. Signup uses this to
+// finish setting the account up first, then calls adoptSession() to save it,
+// or discardSession() if that fails.
+export async function verifyOtp(email, token, { persist = true } = {}) {
   const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
@@ -412,7 +525,7 @@ export async function verifyOtp(email, token) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Invalid OTP");
-  if (data.access_token) saveSession(data);
+  if (data.access_token) saveSession(data, { persist });
   return data;
 }
 
@@ -431,7 +544,11 @@ export async function refreshSession() {
 
 async function doRefreshSession() {
   const generation = sessionGeneration;
-  const refresh = localStorage.getItem(REFRESH_KEY);
+  // A session kept in memory refreshes there; a stored one is every tab's.
+  const inMemory = memorySession;
+  const refresh = inMemory ? inMemory.refreshToken : storedRefreshToken();
+  // Whose session this tab has (at startup only the token says).
+  const ownerId = currentUser?.id || tokenUserId(accessToken);
   if (!refresh) {
     // Signed out in another tab (or storage was cleared): the session is over.
     endSession({ clearStorage: false });
@@ -451,6 +568,20 @@ async function doRefreshSession() {
   const tokens = res.ok && data.access_token ? data : null;
   // Signed out, or signed in again, while this was running: keep nothing.
   if (generation !== sessionGeneration) return { session: null, tokens };
+  if (inMemory && memorySession === inMemory) {
+    // Not saved yet (signup is still finishing): only this tab has it.
+    if (!tokens) {
+      if (res.status >= 400 && res.status < 500) endSession({ clearStorage: false });
+      return { session: null, tokens: null };
+    }
+    inMemory.refreshToken = data.refresh_token || null;
+    accessToken = data.access_token;
+    currentUser = data.user;
+    return { session: data, tokens };
+  }
+  // Storage no longer holds the refresh token this started with: another tab
+  // signed out, signed in or refreshed first. Neither write nor clear it.
+  if (storedRefreshToken() !== refresh) return keepStoredSession(tokens, ownerId);
   if (!tokens) {
     // Revoked, expired or already-used refresh token: the session is over.
     if (res.status >= 400 && res.status < 500) endSession({ clearStorage: true });
@@ -469,8 +600,36 @@ async function doRefreshSession() {
   return { session: data, tokens };
 }
 
+// After a refresh that another tab overtook (see above). Nothing from the
+// refresh is kept. Its new session belongs to nobody, so it's ended on the
+// server, unless the other tab refreshed the very same session first (both
+// then hold it). This tab carries on with the stored session if it is the
+// same member's, and ends otherwise.
+function keepStoredSession(tokens, ownerId) {
+  const stored = storedToken();
+  const storedSession = tokenSessionId(stored);
+  if (tokens && !(storedSession && storedSession === tokenSessionId(tokens.access_token))) {
+    logoutOnServer(tokens.access_token);
+  }
+  if (stored && ownerId && tokenUserId(stored) === ownerId) {
+    accessToken = stored;
+    const user = currentUser || (tokens?.user?.id === ownerId ? tokens.user : null);
+    if (!user) return { session: null, tokens: null }; // getSession checks the stored token itself
+    currentUser = user;
+    return { session: { access_token: stored, refresh_token: storedRefreshToken(), user }, tokens };
+  }
+  endSession({ clearStorage: false });
+  return { session: null, tokens };
+}
+
 export async function getSession() {
-  const token = localStorage.getItem(TOKEN_KEY);
+  // A session kept in memory (signup finishing) is this tab's session.
+  if (memorySession) return currentUser ? { user: currentUser, access_token: accessToken } : null;
+  return checkStoredSession(true);
+}
+
+async function checkStoredSession(retry) {
+  const token = storedToken();
   if (!token) return null;
   const generation = sessionGeneration;
   accessToken = token;
@@ -490,6 +649,9 @@ export async function getSession() {
   if (!refreshed && generation === sessionGeneration) {
     accessToken = null;
     currentUser = null;
+    // Another tab renewed the same member's session meanwhile: use that one.
+    const now = storedToken();
+    if (retry && now && now !== token && tokenUserId(now) === tokenUserId(token)) return checkStoredSession(false);
   }
   return refreshed;
 }
@@ -524,6 +686,18 @@ export async function getMyProfile() {
   if (!privateRows?.[0]) throw new Error("Couldn't load your account details. Please try again.");
   const { id, created_at, updated_at, ...privateFields } = privateRows[0];
   return { ...profile, email: currentUser.email, ...privateFields };
+}
+
+// The fields that decide what the member may do, for the regular status
+// check: one small read, and it doesn't count as activity (no last_active).
+// Compare with what's shown and call getMyProfile only if something changed.
+const MY_STATUS_FIELDS = "verification_status,status,review_flag,terms_version,age_confirmed_at,terms_accepted_at";
+
+export async function refreshMyStatus() {
+  if (!currentUser) return null;
+  const rows = await restCall("GET", `/rest/v1/profile_private?id=eq.${currentUser.id}&select=${MY_STATUS_FIELDS}`);
+  if (!rows?.[0]) throw new Error("Couldn't load your account details. Please try again.");
+  return rows[0];
 }
 
 export async function updateProfile(updates) {
@@ -1165,18 +1339,49 @@ function adminMember(row) {
   };
 }
 
+// A GET sent with "Prefer: count=exact": { rows, total }.
+async function getCounted(path) {
+  const res = await restRequest("GET", path, null, { Prefer: "count=exact" });
+  const text = await res.text();
+  return { rows: text ? JSON.parse(text) : [], total: totalFrom(res) };
+}
+
+// Every open report (bug reports included), however many there are: the
+// server returns at most 1,000 rows per request, so they come in pages, by
+// id, so one handled meanwhile can't push another out of the pages.
+const REPORTS_PAGE = 1000;
+
+async function getAllPendingReports() {
+  const path = `/rest/v1/reports?select=*&status=eq.pending&order=id.asc&limit=${REPORTS_PAGE}`;
+  const first = await getCounted(path);
+  const rows = [...first.rows];
+  let page = first.rows;
+  // A short page is the last one, unless the server capped it below the
+  // total it reported.
+  while (page.length && (page.length === REPORTS_PAGE || (first.total !== null && rows.length < first.total))) {
+    page = (await restCall("GET", `${path}&id=gt.${page[page.length - 1].id}`)) || [];
+    rows.push(...page);
+  }
+  return rows;
+}
+
+// Handled reports stay on record, so only the newest are loaded.
+export const HANDLED_REPORTS_SHOWN = 200;
+const BUG_REASON = encodeURIComponent("[BUG]*");
+
 // users holds the newest 1,000 members; usersTotal is how many there are.
+// reports holds every open report plus the newest 200 handled member reports
+// (handledReportsTotal is how many there are) and the newest 200 handled bug
+// reports (handledBugsTotal); newest first.
 export async function adminGetDashboardData() {
   const get = (path) => restCall("GET", path);
-  const getMembers = async () => {
-    const res = await restRequest("GET", `/rest/v1/profiles?${ADMIN_MEMBER_SELECT}&order=created_at.desc&limit=1000`, null, { Prefer: "count=exact" });
-    const text = await res.text();
-    return { rows: text ? JSON.parse(text) : [], total: totalFrom(res) };
-  };
-  const [members, groups, reports, posts, docs, events, helpRequests, marketItems] = await Promise.all([
-    getMembers(),
+  const handled = `/rest/v1/reports?select=*&status=neq.pending&order=created_at.desc&limit=${HANDLED_REPORTS_SHOWN}`;
+  const [members, groups, pendingReports, handledReports, handledBugs, posts, docs, events, helpRequests, marketItems] = await Promise.all([
+    getCounted(`/rest/v1/profiles?${ADMIN_MEMBER_SELECT}&order=created_at.desc&limit=1000`),
     get("/rest/v1/groups?select=*&order=members_count.desc"),
-    get("/rest/v1/reports?select=*&order=created_at.desc"),
+    getAllPendingReports(),
+    getCounted(`${handled}&reason=not.like.${BUG_REASON}`),
+    getCounted(`${handled}&reason=like.${BUG_REASON}`),
     get("/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200"),
     get("/rest/v1/docs?select=id,title,excerpt,user_id&order=created_at.desc&limit=100"),
     get("/rest/v1/events?select=id,title,description,date,organizer_id&order=created_at.desc&limit=100"),
@@ -1184,11 +1389,21 @@ export async function adminGetDashboardData() {
     get("/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100"),
   ]);
   const users = (members.rows || []).map(adminMember);
+  // One list, newest first, each report once (one may have been handled
+  // between the requests).
+  const reports = [];
+  const seen = new Set();
+  [...handledReports.rows, ...handledBugs.rows, ...pendingReports].forEach((r) => {
+    if (!seen.has(r.id)) { seen.add(r.id); reports.push(r); }
+  });
+  reports.sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
   return {
     users,
     usersTotal: members.total ?? users.length,
     groups: groups || [],
-    reports: reports || [],
+    reports,
+    handledReportsTotal: handledReports.total ?? handledReports.rows.length,
+    handledBugsTotal: handledBugs.total ?? handledBugs.rows.length,
     posts: posts || [],
     docs: docs || [],
     events: events || [],
@@ -1262,14 +1477,18 @@ export async function adminVerificationQueue(statuses = ["pending"]) {
   return restCall("POST", "/rest/v1/rpc/admin_verification_queue", { p_statuses: statuses });
 }
 
-// decision: "approved" | "needs_info" | "rejected" | "pending" (reopen/undo).
-// needs_info and rejected require a message, which the member sees.
-// expected = { name, linkedinUrl } as the admin saw them: the database refuses
-// the decision if the member has changed either since.
+// decision: "approved" | "needs_info" | "rejected" | "pending" (reopen/undo)
+// | "incomplete" (a rejected member who never sent their details goes back
+// to unfinished). needs_info and rejected require a message, which the
+// member sees.
+// expected = { name, linkedinUrl, status } as the admin saw them: the
+// database refuses the decision if the member's name, LinkedIn or
+// verification status has changed since (its message says so; reload them).
 export async function adminReviewMember(memberId, decision, message = "", adminNote = "", expected = null) {
   const body = { p_member: memberId, p_decision: decision, p_message: message, p_admin_note: adminNote };
   if (expected?.name != null) body.p_expected_name = expected.name;
   if (expected?.linkedinUrl != null) body.p_expected_linkedin = expected.linkedinUrl;
+  if (expected?.status != null) body.p_expected_status = expected.status;
   return restCall("POST", "/rest/v1/rpc/review_member", body);
 }
 
@@ -1291,12 +1510,16 @@ export async function adminDeleteGroup(groupId) {
 
 // Marks reports as handled ("reviewed": dismissed, "resolved": acted on).
 // They stay on record and show under Handled. Takes one id or several (every
-// report about the same item).
+// report about the same item). Only reports that are still open change, so
+// a panel that's out of date can't overwrite another admin's decision.
+// Returns the reports that changed: none means they were already handled
+// (or this account is no longer an admin); reload to see the latest.
 export async function adminSetReportStatus(reportIds, status) {
   if (status !== "reviewed" && status !== "resolved") throw new Error(`Unknown report status: ${status}`);
   const ids = (Array.isArray(reportIds) ? reportIds : [reportIds]).filter((id) => UUID.test(id || ""));
   if (!ids.length) throw new Error("No reports to update.");
-  return adminWrite("PATCH", `/rest/v1/reports?id=in.(${ids.join(",")})`, { status });
+  const rows = await restCall("PATCH", `/rest/v1/reports?id=in.(${ids.join(",")})&status=eq.pending`, { status }, { Prefer: "return=representation" });
+  return Array.isArray(rows) ? rows : [];
 }
 
 // Deletes a report for good (no record is kept); handling a report uses

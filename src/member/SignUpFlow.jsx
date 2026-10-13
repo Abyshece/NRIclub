@@ -3,7 +3,7 @@ import * as api from "../supabaseApi";
 import CodeEntry from "./CodeEntry";
 import { TermsModal, PrivacyModal, TERMS_VERSION } from "./LegalModals";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, GlobeTile, ArrowRight, helperStyle, fieldErrorStyle } from "./ui";
-import { mapProfile, authErrorMessage, isExistingAccountResponse, isExistingAccountError, NETWORK_MESSAGE, isNetworkError } from "./profile";
+import { mapProfile, authErrorMessage, isExistingAccountResponse, isExistingAccountError } from "./profile";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const RESEND_MS = 60 * 1000;
@@ -14,11 +14,29 @@ const SAME_PASSWORD_RE = /different from the old password|same_password/i;
 // so these start empty when it is resumed.
 const RESUMED_CLEAR = ["location", "hometown", "profession", "occupation_status", "years_abroad", "linkedin_url"];
 
-const withUserMessage = (userMessage) => Object.assign(new Error(userMessage), { userMessage });
+// The answers from the signup form, as the profile stores them.
+const answersFrom = (form, residency) => ({
+  name: form.name,
+  marketing_consent: form.marketing,
+  country_code: residency === "india" ? "IN" : "",
+});
+
+// Runs step, and once more after a short pause if it fails (the first
+// failure may be a dropped connection or a request that got no answer).
+// Resolves to step's result, or rejects with the second failure.
+const tryTwice = async (step) => {
+  try {
+    return await step();
+  } catch {
+    await new Promise((r) => setTimeout(r, 800));
+    return step();
+  }
+};
 
 // Signup: where do you live -> name, email, password -> 6-digit email code.
-// Calls onComplete(user) once the code is verified and the member is signed
-// in; the app then asks for verification details (Get verified).
+// Calls onComplete(user) once the code is verified, the account is set up
+// and the member is signed in; the app then asks for verification details
+// (Get verified).
 export default function SignUpFlow({ onComplete, onLogin }) {
   const [step, setStep] = useState("residency"); // residency | account | code | stopped
   const [stopMessage, setStopMessage] = useState(""); // why signup stopped (step "stopped")
@@ -29,8 +47,9 @@ export default function SignUpFlow({ onComplete, onLogin }) {
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [modal, setModal] = useState(null); // "terms" | "privacy"
-  // The account created during this visit ({ email }), so going back to fix
-  // something doesn't create a second account for the same address.
+  // The account created during this visit ({ email, password, resumed,
+  // answers }: the password and answers it was created with), so going back
+  // to fix something doesn't create a second account for the same address.
   const [account, setAccount] = useState(null);
   const [resendAt, setResendAt] = useState(0);
 
@@ -114,7 +133,7 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       const u = result?.user ?? result;
       const lastSent = Math.max(Date.parse(u?.confirmation_sent_at) || 0, Date.parse(u?.updated_at) || 0);
       const resumed = !!u?.created_at && lastSent - Date.parse(u.created_at) > 30000;
-      setAccount({ email: v.email, password: v.password, resumed });
+      setAccount({ email: v.email, password: v.password, resumed, answers: answersFrom(v, residency) });
       setResendAt(Date.now() + RESEND_MS);
       setStep("code");
     } catch (err) {
@@ -128,19 +147,15 @@ export default function SignUpFlow({ onComplete, onLogin }) {
   };
 
   // Sets the password typed in this visit, trying twice. Supabase saying
-  // it's already that password counts as done.
-  const replacePassword = async () => {
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      try {
-        await api.updatePassword(form.password);
-        return true;
-      } catch (err) {
-        if (SAME_PASSWORD_RE.test(err?.message || "")) return true;
-        if (attempt === 1) await new Promise((r) => setTimeout(r, 800));
-      }
+  // it's already that password counts as done (also when the first attempt
+  // went through but its answer never came).
+  const replacePassword = () => tryTwice(async () => {
+    try {
+      await api.updatePassword(form.password);
+    } catch (err) {
+      if (!SAME_PASSWORD_RE.test(err?.message || "")) throw err;
     }
-    return false;
-  };
+  });
 
   // Ends signup on a screen that explains why and sends the member to log in.
   const stop = (message) => {
@@ -148,28 +163,39 @@ export default function SignUpFlow({ onComplete, onLogin }) {
     setStep("stopped");
   };
 
-  // The profile changes that bring it in line with this visit's answers
-  // (they differ if the member went back and edited them, or signed up
-  // before). db is the stored profile; without it every answer is sent.
-  const profilePatch = (db) => {
-    const want = { name: form.name, marketing_consent: form.marketing };
-    if (residency === "india") want.country_code = "IN";
-    else if (account.resumed || db?.country_code === "IN") want.country_code = "";
-    if (account.resumed) RESUMED_CLEAR.forEach((k) => { want[k] = ""; });
+  // The profile changes that bring the account in line with this visit's
+  // answers. A resumed signup gets all of them, and the earlier visit's
+  // details are cleared; otherwise only the answers changed (by going back)
+  // since this visit created the account.
+  const profilePatch = () => {
+    const want = answersFrom(form, residency);
+    if (account.resumed) {
+      RESUMED_CLEAR.forEach((k) => { want[k] = ""; });
+      return want;
+    }
     const patch = {};
     for (const [k, v] of Object.entries(want)) {
-      const stored = k === "marketing_consent" ? !!db?.[k] : db?.[k] || "";
-      if (!db || stored !== v) patch[k] = v;
+      if (account.answers[k] !== v) patch[k] = v;
     }
     return patch;
   };
 
   const verifyCode = async (code) => {
     const email = account.email;
-    // Wrong or expired codes throw here and CodeEntry says so.
-    let session = await api.verifyOtp(email, code);
+    // Wrong or expired codes throw here and CodeEntry says so. The session is
+    // kept in this tab's memory only until the account is set up below: if a
+    // step fails, or the tab is reloaded or closed half-way, nobody is left
+    // signed in to an account that may still have an earlier visit's
+    // password or details.
+    let session = await api.verifyOtp(email, code, { persist: false });
+    // The code is used up now, so every way out below ends signed out, on
+    // the "please log in" screen, unless all the steps work.
+    const giveUp = async (message) => {
+      await api.discardSession().catch(() => {});
+      stop(message);
+    };
     try {
-      if (!session?.access_token) session = await api.signIn(email, form.password).catch(() => null);
+      if (!session?.access_token) session = await api.signIn(email, form.password, { persist: false }).catch(() => null);
       if (!session?.access_token) {
         stop("We couldn't sign you in. Please log in with your email and password. If your password doesn't work, choose “Forgot password?” to set a new one.");
         return;
@@ -178,39 +204,41 @@ export default function SignUpFlow({ onComplete, onLogin }) {
       // An unfinished signup from an earlier visit keeps that visit's
       // password (as does going back and changing it here), and that visit
       // may not have been this person. Set the one typed now before anything
-      // else; if that fails, sign out rather than leave the old one working.
+      // else.
       if (account.resumed || account.password !== form.password) {
-        if (!(await replacePassword())) {
-          // Still put this visit's name and answers in place, so the account
-          // doesn't keep the earlier visit's details after a password reset.
-          await api.updateProfile(profilePatch(null)).catch(() => {});
-          await api.signOut().catch(() => {});
-          stop("We couldn't save your password, so we've signed you out to keep your account safe. On the login page, choose “Forgot password?” to set a new one.");
+        if (!(await replacePassword().then(() => true, () => false))) {
+          // Still put this visit's answers in place, so the account doesn't
+          // keep the earlier visit's details after a password reset.
+          await api.updateProfile(profilePatch()).catch(() => {});
+          await giveUp("We couldn't save your password, so we've signed you out to keep your account safe. On the login page, choose “Forgot password?” to set a new one.");
           return;
         }
       }
 
-      let db = await api.getMyProfile();
-      if (!db) {
-        await new Promise((r) => setTimeout(r, 800));
-        db = await api.getMyProfile();
+      // Then this visit's answers replace what an earlier visit left in the
+      // profile, before anything reads it.
+      const patch = profilePatch();
+      if (Object.keys(patch).length && !(await tryTwice(() => api.updateProfile(patch)).then(() => true, () => false))) {
+        await giveUp("We couldn't finish setting up your account, so we've signed you out to keep it safe. Please log in with your email and the password you just chose, then check your details.");
+        return;
       }
-      if (!db) throw withUserMessage("Your email is confirmed, but we couldn't load your profile. Please log in.");
 
-      const patch = profilePatch(db);
-      if (Object.keys(patch).length) {
-        try {
-          await api.updateProfile(patch);
-        } catch {
-          // Keep showing the earlier visit's details as empty, so Get
-          // verified doesn't offer them; the rest stays as stored.
-          Object.keys(patch).forEach((k) => { if (!(account.resumed && RESUMED_CLEAR.includes(k))) delete patch[k]; });
-        }
+      const db = await tryTwice(async () => {
+        const profile = await api.getMyProfile();
+        if (!profile) throw new Error("Profile not found");
+        return profile;
+      }).catch(() => null);
+      if (!db) {
+        await giveUp("Your account is ready, but we couldn't load your profile, so we've signed you out. Please log in with your email and the password you just chose.");
+        return;
       }
-      onComplete(mapProfile({ ...db, ...patch }));
-    } catch (err) {
-      if (err.userMessage) throw err;
-      throw withUserMessage(isNetworkError(err) ? NETWORK_MESSAGE : "Your email is confirmed, but something went wrong signing you in. Please log in.");
+
+      // Only now is the session saved, so it lasts across reloads and tabs.
+      await api.adoptSession();
+      onComplete(mapProfile(db));
+    } catch {
+      // E.g. the session ended meanwhile (adoptSession).
+      await giveUp("Something went wrong signing you in, so we've signed you out. Please log in with your email and the password you just chose.");
     }
   };
 

@@ -5,13 +5,16 @@ import { AccountFooter } from "./AccountActions";
 import { FONT, COLORS, ErrorBox, primaryButtonStyle, linkButtonStyle, helperStyle, fieldErrorStyle, ArrowRight } from "./ui";
 import { mapProfile, apiErrorMessage } from "./profile";
 
-// One-time screen before the dashboard for members who never confirmed
-// they're 18 or older and accepted the Terms of Use (accounts from before
-// signup asked, or made outside the site). The database doesn't count them
-// as active members until they do. Same look as Get verified; they can also
-// sign out, download their data or delete their account from here.
+// Screen before the dashboard for members who never confirmed they're 18 or
+// older and accepted the Terms of Use (accounts from before signup asked, or
+// made outside the site), or who accepted an earlier version of the Terms
+// than TERMS_VERSION. The database doesn't count them as active members
+// until they do. Same look as Get verified; they can also sign out, download
+// their data or delete their account from here.
 // Calls onDone(updatedUser) once the server has recorded it.
 export default function TermsGate({ user, onDone, onSignOut }) {
+  // Accepted before, but an earlier version: the Terms have changed since.
+  const termsChanged = !!user.ageConfirmedAt && !!user.termsAcceptedAt && user.termsVersion !== TERMS_VERSION;
   const [agree, setAgree] = useState(false);
   const [error, setError] = useState("");
   const [submitError, setSubmitError] = useState("");
@@ -45,7 +48,7 @@ export default function TermsGate({ user, onDone, onSignOut }) {
     try { updated = mapProfile(await api.getMyProfile()); } catch {}
     const now = new Date().toISOString();
     const sameTerms = user.termsAcceptedAt && user.termsVersion === version;
-    onDone(updated && updated.ageConfirmedAt && updated.termsAcceptedAt ? updated : {
+    onDone(updated && updated.ageConfirmedAt && updated.termsAcceptedAt && updated.termsVersion === version ? updated : {
       ...user, ageConfirmedAt: user.ageConfirmedAt || now,
       termsAcceptedAt: sameTerms ? user.termsAcceptedAt : now, termsVersion: version,
     });
@@ -65,7 +68,9 @@ export default function TermsGate({ user, onDone, onSignOut }) {
           </div>
           <h2 style={{ fontSize: 28, fontWeight: 700, color: COLORS.text, letterSpacing: "-0.03em", margin: "0 0 8px" }}>Before you continue</h2>
           <p style={{ color: COLORS.helper, fontSize: 15, lineHeight: 1.55, margin: 0 }}>
-            To keep using NRIClub, please confirm you're 18 or older and accept our Terms of Use. You only need to do this once.
+            {termsChanged
+              ? "We've updated our Terms of Use. To keep using NRIClub, please read them and accept the new version."
+              : "To keep using NRIClub, please confirm you're 18 or older and accept our Terms of Use."}
           </p>
         </div>
 

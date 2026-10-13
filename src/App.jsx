@@ -7,7 +7,7 @@ import CodeEntry from "./member/CodeEntry";
 import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner";
 import ProfileChecklist, { missingProfileItems, useProfileCardDismissed } from "./member/ProfileChecklist";
 import TermsGate from "./member/TermsGate";
-import { TermsContent, PrivacyContent, TermsModal, PrivacyModal } from "./member/LegalModals";
+import { TermsContent, PrivacyContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
 import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
@@ -1097,6 +1097,10 @@ const BlockedOverlay = ({ onSignOut, font }) => {
   );
 };
 
+// The fields of the user object (mapProfile) that decide what the member may
+// do: the ones api.refreshMyStatus reads.
+const STATUS_FIELDS = ["verificationStatus", "status", "reviewFlag", "termsVersion", "ageConfirmedAt", "termsAcceptedAt"];
+
 const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [view, setView] = useState("home");
   const [posts, setPosts] = useState([]);
@@ -1319,26 +1323,33 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   // Why another member can't get a message from this one, in plain words, or
-  // null. Their "Receive messages" setting is checked first so the reason
-  // can be given; the database has the final say.
+  // null. Only what can't change behind this page's back is checked here:
+  // the member's own blocks and a "Nobody" setting. "Connections only" is
+  // left to the database, which knows about a Namaste accepted since the
+  // page loaded; messageErrorText explains its refusal.
   const messageBlockedReason = async (otherUserId) => {
     if (blockedIds.has(otherUserId)) return "You've blocked this member. You can unblock them in Settings → Blocked Users.";
     try {
       const targetSettings = await api.getOtherUserSettings(otherUserId);
       if (targetSettings?.receive_messages === "Nobody") return "This user is not accepting messages.";
-      // Connected = a Namaste request either of them sent was accepted.
-      const connected = acceptedConnections.has(otherUserId) || myFollowers.some(f => f?.id === otherUserId);
-      if (targetSettings?.receive_messages === "Connections Only" && !connected) {
-        return "This user only accepts messages from connections. Send a Namaste request first.";
-      }
     } catch (e) {}
     return null;
   };
 
-  // A message or new conversation the database refused, in plain words.
-  const messageErrorText = (e) => isNetworkError(e) ? NETWORK_MESSAGE
-    : /42501/.test(e?.message || "") ? "You can't send messages to this member right now."
-    : "Your message couldn't be sent. Please try again.";
+  // A message or new conversation the database refused, in plain words. A
+  // refusal (42501) from a member who takes messages from connections only
+  // means the two aren't connected (yet).
+  const messageErrorText = async (e, otherUserId) => {
+    if (isNetworkError(e)) return NETWORK_MESSAGE;
+    if (!/42501/.test(e?.message || "")) return "Your message couldn't be sent. Please try again.";
+    try {
+      const targetSettings = otherUserId ? await api.getOtherUserSettings(otherUserId) : null;
+      if (targetSettings?.receive_messages === "Connections Only") {
+        return "This user only accepts messages from connections. Send a Namaste request first.";
+      }
+    } catch (x) {}
+    return "You can't send messages to this member right now.";
+  };
 
   // Opens the conversation with another member (starting one if needed) in
   // Messages. Says why instead when they don't take messages from this member.
@@ -1356,7 +1367,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       setView("messages");
       return true;
     } catch (e) {
-      alert(messageErrorText(e));
+      alert(await messageErrorText(e, other.id));
       return false;
     }
   };
@@ -1552,6 +1563,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     } catch (e) { return null; }
   };
 
+  // The user as shown now, for the timers below (their effects don't re-run
+  // when the profile changes).
+  const userRef = useRef(user);
+  userRef.current = user;
+
+  // The regular status check: reads only the fields that decide what the
+  // member may do (api.refreshMyStatus, which doesn't count as activity) and
+  // reloads the whole profile only if one of them changed.
+  const checkMyStatus = async () => {
+    try {
+      const row = await api.refreshMyStatus();
+      if (!row) return;
+      const latest = mapProfile(row);
+      if (STATUS_FIELDS.some(k => latest[k] !== userRef.current[k])) refreshMyProfile();
+    } catch (e) {}
+  };
+
   // Live polling for messages and notifications (every 5 seconds)
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -1605,10 +1633,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             reloaded = true;
           }
         }
-        // A block or unblock leaves no notification: re-read the member's own
+        // A block or unblock leaves no notification: check the member's own
         // status about once a minute as well.
         pollCountRef.current += 1;
-        if (!reloaded && pollCountRef.current % 12 === 0) refreshMyProfile();
+        if (!reloaded && pollCountRef.current % 12 === 0) checkMyStatus();
       } catch (e) {}
     }, 5000);
     return () => clearInterval(interval);
@@ -3217,7 +3245,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             // Take the message back out and give the text back.
             setChatMessages(p => ({ ...p, [convoId]: (p[convoId] || []).filter(m => m.id !== msg.id) }));
             setChatInput(prev => prev || text);
-            alert(messageErrorText(e));
+            alert(await messageErrorText(e, otherUser?.otherUserId));
             return;
           }
           // Update convo list
@@ -4281,8 +4309,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button onClick={() => setSelectedMarketItem(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
                 <button onClick={async () => {
                   if (!contactMsg.trim()) return;
+                  const sellerId = selectedMarketItem.user_id;
                   try {
-                    const sellerId = selectedMarketItem.user_id;
                     if (!sellerId || sellerId === user.id) {
                       alert("You can't contact the seller of this listing.");
                       return;
@@ -4323,7 +4351,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     }
                   } catch (e) {
                     // Keep the message so it can be sent again.
-                    alert(messageErrorText(e));
+                    alert(await messageErrorText(e, sellerId));
                     return;
                   }
                 }} style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6 }}>{Icons.send({ size: 14 })} Send Message</button>
@@ -5613,7 +5641,7 @@ const ExpiredLinkPage = ({ onContinue }) => {
 export default function App() {
   const [authState, setAuthState] = useState("loading");
   const [user, setUser] = useState(null);
-  const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead"
+  const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead" or a reset this browser asked for
   const [loginNotice, setLoginNotice] = useState(""); // e.g. after a new password
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
@@ -5741,17 +5769,20 @@ export default function App() {
     restoreSession();
   }, []);
 
-  // After a new password: log in with it (the email filled in).
+  // After a new password: log in with it. The email is filled in only if this
+  // browser asked for the reset link: someone else may have made the link,
+  // for their own account, so their address must not be offered.
   const handlePasswordReset = (email) => {
     const notice = "Your password has been changed. Log in with your new password.";
+    const knownEmail = email && api.resetWasRequestedFor(email) ? email : "";
     if (isAdminRoute()) {
-      setAdminEmail(email || "");
+      setAdminEmail(knownEmail);
       setAdminErr("");
       setAdminNotice(notice);
       setAuthState("admin-login");
       return;
     }
-    setLoginEmail(email || "");
+    setLoginEmail(knownEmail);
     setLoginNotice(notice);
     setAuthState("login");
   };
@@ -5834,12 +5865,14 @@ export default function App() {
       // In this order: blocked members only see the blocked card (whatever
       // their verification status); members who haven't given their
       // verification details do that first; then anyone who hasn't confirmed
-      // they're 18+ and accepted the Terms. Rejected members see the
-      // rejected card in the dashboard (a Terms screen would be pointless).
-      // The dashboard loads nothing behind a blocked or rejected card.
+      // they're 18+ and accepted the current Terms (TERMS_VERSION: the
+      // database doesn't count them as active members until they have).
+      // Rejected members see the rejected card in the dashboard (a Terms
+      // screen would be pointless). The dashboard loads nothing behind a
+      // blocked or rejected card.
       if (user.status === "blocked") return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
       if (user.verificationStatus === "incomplete") return <GetVerified user={user} onDone={setUser} onSignOut={handleLogout} />;
-      if (user.verificationStatus !== "rejected" && (!user.ageConfirmedAt || !user.termsAcceptedAt)) {
+      if (user.verificationStatus !== "rejected" && (!user.ageConfirmedAt || !user.termsAcceptedAt || user.termsVersion !== TERMS_VERSION)) {
         return <TermsGate user={user} onDone={setUser} onSignOut={handleLogout} />;
       }
       return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;

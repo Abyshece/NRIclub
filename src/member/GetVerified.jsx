@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
-import { TermsModal, PrivacyModal } from "./LegalModals";
+import { TermsModal, PrivacyModal, TERMS_VERSION } from "./LegalModals";
 import { AccountFooter } from "./AccountActions";
 import { VERIFICATION_BANNER_ID } from "./VerificationBanner";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, helperStyle, fieldErrorStyle } from "./ui";
@@ -24,8 +24,9 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
   // In India: country 'IN', or no country yet and never lived abroad.
   const isIndia = user.countryCode === "IN" || (!user.countryCode && user.isNRI === false);
   const hasNoteOnly = !user.linkedinUrl && !!user.verificationNote;
-  // Accounts from before signup asked for 18+ and the Terms confirm them here.
-  const needsTerms = !user.ageConfirmedAt || !user.termsAcceptedAt;
+  // Accounts from before signup asked for 18+ and the Terms, or that accepted
+  // an earlier version of the Terms, confirm them here.
+  const needsTerms = !user.ageConfirmedAt || !user.termsAcceptedAt || user.termsVersion !== TERMS_VERSION;
 
   const [country, setCountry] = useState(isIndia ? "IN" : user.countryCode || "");
   const [city, setCity] = useState(user.city || (user.location || "").split(",")[0].trim());
@@ -161,7 +162,11 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
       ...user, city: details.city, countryCode: country, location: details.location, linkedinUrl: details.linkedinUrl,
       verificationNote: details.note, voucher: details.voucher, profession: details.profession,
       verificationStatus: "pending", verificationMessage: "", isNRI: country !== "IN",
-      ageConfirmedAt: user.ageConfirmedAt || now, termsAcceptedAt: user.termsAcceptedAt || now,
+      ...(needsTerms && {
+        ageConfirmedAt: user.ageConfirmedAt || now,
+        termsAcceptedAt: (user.termsVersion === TERMS_VERSION && user.termsAcceptedAt) || now,
+        termsVersion: TERMS_VERSION,
+      }),
     });
   };
 
@@ -190,8 +195,11 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
           <h2 id="gv-title" ref={titleRef} tabIndex={-1} style={{ fontSize: 28, fontWeight: 700, color: COLORS.text, letterSpacing: "-0.03em", margin: "0 0 8px", outline: "none" }}>Get verified</h2>
           <p style={{ color: COLORS.helper, fontSize: 15, lineHeight: 1.55, margin: 0 }}>
             NRIClub is for real people only, so our team checks every new member.{" "}
-            {/* Members flagged for review (user.reviewFlag) wait for approval. */}
-            {user.reviewFlag ? "It takes a minute, and you can use NRIClub once we've approved your profile." : "It takes a minute, and you can use NRIClub while we review."}
+            {/* A member held for review (user.reviewFlag) waits for approval;
+                they're told no more than that. */}
+            {user.reviewFlag
+              ? "It takes a minute to fill in. Our team will check your membership before you can take part. This usually takes a day."
+              : "It takes a minute, and you can use NRIClub while we review."}
           </p>
         </div>
 

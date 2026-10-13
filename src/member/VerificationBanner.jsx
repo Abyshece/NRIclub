@@ -20,9 +20,10 @@ export function VerificationBanner({ user, onUpdateDetails }) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
         </div>
         <p style={{ fontSize: 13, color: "#1E40AF", margin: 0, fontFamily: font, lineHeight: 1.5 }}>
-          {/* A member flagged for review can't use NRIClub until approved. */}
+          {/* A member held for review can't take part until approved; they're
+              told no more than that. */}
           {user.reviewFlag
-            ? <>Thanks, {firstName(user.name)}! We're reviewing your profile. You can use NRIClub once it's approved.</>
+            ? <>Thanks, {firstName(user.name)}! Our team will check your membership before you can take part. This usually takes a day.</>
             : <>Thanks, {firstName(user.name)}! We're reviewing your profile, usually within 24 hours.</>}
         </p>
       </div>
