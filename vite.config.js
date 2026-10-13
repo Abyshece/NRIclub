@@ -21,7 +21,8 @@ function publicPages() {
     name: 'nriclub-public-pages',
     apply: 'build',
     configResolved(config) { outDir = path.resolve(config.root, config.build.outDir); },
-    closeBundle() {
+    // After the bundle (and index.html) is written; never on a failed build.
+    writeBundle() {
       const shell = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
       const page = (route, title, description, body) => {
         // Function replacements, so a "$" in a title is kept as it is.

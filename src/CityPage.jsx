@@ -4,7 +4,7 @@ import FlagIcon from "./FlagIcon";
 import PublicShell, { INK, MUTED, SAFFRON, GREEN, NAVY, section, primaryBtn, AMBASSADOR_MAIL } from "./PublicShell";
 import { ESSENTIALS } from "./content/essentials";
 import { CITIES } from "./content/cities";
-import { slug } from "./content/slug";
+import { slug, HOME_TITLE } from "./content/slug";
 
 // ============================================================================
 // PUBLIC CITY PAGE (nriclub.app/city/<city>): what NRIClub has in one city,
@@ -42,9 +42,8 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
   }, [city]);
 
   useEffect(() => {
-    const title = document.title;
     document.title = `Indians in ${city} · NRIClub`;
-    return () => { document.title = title; };
+    return () => { document.title = HOME_TITLE; };
   }, [city]);
 
   const members = summary?.members || 0;

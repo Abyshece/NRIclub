@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import PublicShell, { INK, MUTED, SAFFRON, section, primaryBtn } from "./PublicShell";
 import { ESSENTIALS } from "./content/essentials";
 import { guideBlocks } from "./content/guideBlocks";
+import { HOME_TITLE } from "./content/slug";
 
 // ============================================================================
 // PUBLIC GUIDES: nriclub.app/guides (the list) and /guides/<slug> (one
@@ -21,10 +22,9 @@ export default function GuidePage({ slug, onJoin, onLogin }) {
   const guide = slug ? ESSENTIALS.find((g) => g.slug === slug) : null;
 
   useEffect(() => {
-    const title = document.title;
     document.title = guide ? `${guide.title} · NRIClub` : "NRI essentials guides · NRIClub";
     window.scrollTo(0, 0);
-    return () => { document.title = title; };
+    return () => { document.title = HOME_TITLE; };
   }, [guide]);
 
   const join = (

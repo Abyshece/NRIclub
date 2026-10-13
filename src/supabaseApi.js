@@ -960,7 +960,9 @@ export async function pinGroupPost(groupId, postId) {
 
 // The ambassadors of a city (name and photo).
 export async function getCityAmbassadors(city) {
-  const q = String(city || "").replace(/[%_*,()]/g, "");
+  // ilike without wildcards: "%" and "*" become "_" (one character), so
+  // only this city matches, brackets and commas included.
+  const q = String(city || "").trim().replace(/[%_*\\]/g, "_");
   if (!q) return [];
   return (await restCall("GET", `/rest/v1/profiles?ambassador_city=ilike.${encodeURIComponent(q)}&select=id,name,avatar_url&limit=5`)) || [];
 }
@@ -1169,10 +1171,20 @@ export async function createHelpRequest({ urgent = false, ...req }) {
   try {
     return await send({ ...req, urgent: true });
   } catch (e) {
-    // Before the database knows about urgent questions: post it as High.
-    if (/urgent/.test(e.message || "") && /PGRST204|column/i.test(e.message || "")) return send(req);
+    // Before the database knows about urgent questions: post it as High,
+    // and say that no alerts went out (rows.alertsOff).
+    if (/urgent/.test(e.message || "") && /PGRST204|column/i.test(e.message || "")) {
+      const rows = await send(req);
+      return Object.assign(rows || [], { alertsOff: true });
+    }
     throw e;
   }
+}
+
+// One question (with the asker), e.g. from a notification.
+export async function getHelpRequest(id) {
+  const rows = await restCall("GET", `/rest/v1/help_requests?id=eq.${encodeURIComponent(id)}&select=*,profiles:user_id(id,name,avatar_url)`);
+  return rows?.[0] || null;
 }
 
 // The asker's best answer (null to clear it).

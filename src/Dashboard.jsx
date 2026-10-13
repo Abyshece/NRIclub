@@ -10,7 +10,7 @@ import { TermsContent, PrivacyContent, TermsModal, PrivacyModal, TERMS_VERSION }
 import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
-import { slug } from "./content/slug";
+import { slug, HOME_TITLE } from "./content/slug";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
 
@@ -611,6 +611,14 @@ const TopicChips = ({ text, max = 5, onPick, center }) => {
 const PLACE_KINDS = ["Grocery", "Restaurant", "Temple", "Shop", "Doctor", "Tax & accounts", "Lawyer", "Driving school", "Other"];
 const PRO_KINDS = ["Doctor", "Tax & accounts", "Lawyer", "Driving school"];
 const PLACE_ICON = { Grocery: "🛒", Restaurant: "🍛", Temple: "🛕", Shop: "🛍️", Doctor: "🩺", "Tax & accounts": "🧾", Lawyer: "⚖️", "Driving school": "🚗" };
+
+// A question as the Ask page uses it (responses: the answer count, if known).
+const toHelp = (h, responses) => ({
+  id: h.id, userId: h.user_id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status,
+  city: h.city || "", urgent: !!h.urgent || h.urgency === "High", bestResponseId: h.best_response_id || null,
+  user: h.profiles?.name || "User", avatar: h.profiles?.avatar_url || "", timestamp: new Date(h.created_at).getTime(),
+  responses: responses ?? (h.responses_count || 0),
+});
 
 // The small sign on a notification's avatar, by type.
 const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋" };
@@ -1350,7 +1358,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       if (dbHelp && dbHelp.length) {
         const counts = {};
         (allResponses || []).forEach(r => { counts[r.request_id] = (counts[r.request_id] || 0) + 1; });
-        setHelpRequests(dbHelp.map(h => ({ id: h.id, userId: h.user_id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status, city: h.city || "", urgent: !!h.urgent || h.urgency === "High", bestResponseId: h.best_response_id || null, user: h.profiles?.name || "User", avatar: h.profiles?.avatar_url || "", timestamp: new Date(h.created_at).getTime(), responses: allResponses ? (counts[h.id] || 0) : (h.responses_count || 0) })));
+        setHelpRequests(dbHelp.map(h => toHelp(h, allResponses ? (counts[h.id] || 0) : undefined)));
       }
       // Followers and following ("Following" = I sent the request and they accepted)
       if (conns && conns.length) {
@@ -1823,35 +1831,42 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // Open questions from members in the member's city (urgent first), for Home.
   const helpNearbyCity = (user.city || (user.location || "").split(",")[0] || "").trim();
   const helpNearby = helpNearbyCity ? helpRequests
-    .filter(h => h.userId !== user.id && (h.city || "").toLowerCase() === helpNearbyCity.toLowerCase() && !h.bestResponseId && h.status !== "Resolved" && Date.now() - h.timestamp < 30 * 86400000)
+    .filter(h => h.userId !== user.id && !blockedIds.has(h.userId) && (h.city || "").toLowerCase() === helpNearbyCity.toLowerCase() && !h.bestResponseId && h.status !== "Resolved" && Date.now() - h.timestamp < 30 * 86400000)
     .sort((a, b) => (b.urgent - a.urgent) || (b.timestamp - a.timestamp)).slice(0, 3) : [];
   const nearbyMembers = welcomeCity ? networkUsers.filter(u => u.id !== user.id && (u.location || "").toLowerCase().startsWith(welcomeCity.toLowerCase())).slice(0, 5) : [];
 
   const createHelp = async () => {
-    if (!newHelp.title || !newHelp.description) return;
+    if (!newHelp.title.trim() || !newHelp.description.trim()) return;
     const h = {
       id: "h_" + Date.now(), ...newHelp, user: user.name, avatar: user.avatar_url || "", userId: user.id,
       timestamp: Date.now(), responses: 0, status: "Open", city: user.city || "", bestResponseId: null,
     };
+    const draft = newHelp;
     setHelpRequests([h, ...helpRequests]);
     setNewHelp({ title: "", description: "", category: "General", urgent: false });
     setHelpModal(false);
     try {
-      const r = await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgent ? "High" : "Low", urgent: newHelp.urgent });
+      const r = await api.createHelpRequest({ title: draft.title, description: draft.description, category: draft.category, urgency: draft.urgent ? "High" : "Low", urgent: draft.urgent });
       // Swap the temporary id for the saved one so responses and delete work.
       if (r?.[0]) setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, id: r[0].id, userId: user.id, city: r[0].city ?? x.city } : x));
+      if (draft.urgent && r?.alertsOff) alert("Your question is posted and marked urgent, but alerts to members in your city aren't switched on yet. If it's an emergency, call the local emergency number, or message members in your city group directly.");
     } catch (e) {
       setHelpRequests(prev => prev.filter(x => x.id !== h.id));
-      alert(isNetworkError(e) ? NETWORK_MESSAGE
-        : /one urgent question a day/i.test(e.message || "") ? "You can post one urgent question a day. Post this one without “Urgent”, or ask your city's ambassador directly."
-        : "Your question couldn't be posted. Please try again.");
+      if (/one urgent question a day/i.test(e.message || "")) {
+        // Keep what they wrote, so they can post it without "Urgent".
+        setNewHelp({ ...draft, urgent: false });
+        setHelpModal(true);
+        alert("You can post one urgent question a day. Post this one without “Urgent”, or message your city's ambassador directly.");
+        return;
+      }
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your question couldn't be posted. Please try again.");
     }
   };
 
   // Opens a help request and loads its responses the first time.
-  const openHelp = async (h) => {
+  const openHelp = async (h, { force = false } = {}) => {
     setSelectedHelp(h.id);
-    if (!helpResponses[h.id]) {
+    if (force || !helpResponses[h.id]) {
       try {
         const resp = await api.getHelpResponses(h.id);
         if (resp) {
@@ -1869,13 +1884,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   }, [view, canBrowse, user.id]);
 
   // Opens Ask at one question (from a notification or Home).
-  const openQuestion = (id) => {
-    const h = helpRequests.find(x => x.id === id);
+  // The question is read again, so a new answer or a question posted after
+  // the page loaded (e.g. an urgent one) is there.
+  const openQuestion = async (id) => {
     setSelectedDoc(null);
     setHelpFilter("all");
     setView("help");
-    if (!h) return;
-    openHelp(h);
+    let h = helpRequests.find(x => x.id === id);
+    try {
+      const row = await api.getHelpRequest(id);
+      if (row) {
+        h = toHelp(row);
+        setHelpRequests(prev => prev.some(x => x.id === id) ? prev.map(x => x.id === id ? { ...x, ...h } : x) : [h, ...prev]);
+      }
+    } catch (e) {}
+    if (!h) { alert("This question isn't available any more."); return; }
+    openHelp(h, { force: true });
     setTimeout(() => document.querySelector(`[data-help-id="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
   };
 
@@ -1939,11 +1963,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const placesCity = selectedGroup?.category === "City" ? (selectedGroup.name || "").replace(/^Indians in /i, "") : null;
   useEffect(() => { setPlaceKind("All"); }, [placesCity]);
   useEffect(() => { api.isAdmin().then(setIsAdminUser).catch(() => {}); }, []);
+  useEffect(() => { document.title = HOME_TITLE; }, []);
   // A city group: its ambassadors, and its pinned post even if it's older
   // than the posts already loaded.
   useEffect(() => {
     if (!placesCity || !canBrowse) return;
-    api.getCityAmbassadors(placesCity).then(list => setCityAmbassadors({ city: placesCity, list })).catch(() => setCityAmbassadors({ city: placesCity, list: [] }));
+    let gone = false;
+    api.getCityAmbassadors(placesCity)
+      .then(list => { if (!gone) setCityAmbassadors({ city: placesCity, list }); })
+      .catch(() => { if (!gone) setCityAmbassadors({ city: placesCity, list: [] }); });
+    return () => { gone = true; };
   }, [placesCity, canBrowse]);
   useEffect(() => {
     const pid = selectedGroup?.pinnedPostId;
@@ -2047,7 +2076,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       updates.linkedin_url = linkedinUrl;
     }
     const topics = topicList(editProfile.askMeAbout).join(", ");
-    if (topics !== (user.askMeAbout || "")) updates.ask_me_about = topics;
+    if (user.hasTopics && topics !== (user.askMeAbout || "")) updates.ask_me_about = topics;
     if (isUserNRI(user)) {
       updates.hometown = trim(editProfile.hometown);
       updates.years_abroad = editProfile.yearsAbroad || "";
@@ -2107,9 +2136,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const renderContent = () => {
     switch (view) {
       case "home":
+        const pinnedIds = new Set(groups.map(g => g.pinnedPostId).filter(Boolean));
         const feedPosts = posts.filter(p => {
           // Hide blocked users' posts
           if (blockedIds.has(p.userId)) return false;
+          // A group's pinned "Start here" post is shown at the top of its group.
+          if (pinnedIds.has(p.id)) return false;
           const a = p.author || {};
           if (feedFilters.hometown && !(a.hometown || "").toLowerCase().includes(feedFilters.hometown.toLowerCase()) && !(a.location || "").toLowerCase().includes(feedFilters.hometown.toLowerCase())) return false;
           if (feedFilters.occupation !== "All" && a.occupation_status !== feedFilters.occupation) return false;
@@ -2654,14 +2686,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   const city = (selectedGroup.name || "").replace(/^Indians in /i, "");
                   const list = places.city === city ? places.list : [];
                   const kindsHere = PLACE_KINDS.filter(k => list.some(pl => pl.kind === k));
-                  const sorted = [...list].filter(pl => placeKind === "All" || pl.kind === placeKind).sort((a, b) => b.recs.length - a.recs.length);
+                  const kindFilter = kindsHere.length > 1 && kindsHere.includes(placeKind) ? placeKind : "All";
+                  const sorted = [...list].filter(pl => kindFilter === "All" || pl.kind === kindFilter).sort((a, b) => b.recs.length - a.recs.length);
                   return (
                     <div>
                       <p style={{ fontSize: 13, color: "#6B6A67", fontFamily: font, marginBottom: 12 }}>Indian groceries, restaurants and temples in {city}, and doctors, tax advisers and lawyers who know our needs, recommended by members.</p>
                       {kindsHere.length > 1 && (
                         <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 10 }}>
                           {["All", ...kindsHere].map(k => (
-                            <button key={k} onClick={() => setPlaceKind(k)} aria-pressed={placeKind === k} style={{ flexShrink: 0, padding: "5px 12px", borderRadius: 16, border: "1px solid " + (placeKind === k ? "#37352F" : "#E0E0DE"), background: placeKind === k ? "#37352F" : "#fff", color: placeKind === k ? "#fff" : "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{k === "All" ? "All" : `${PLACE_ICON[k] || "📍"} ${k}`}</button>
+                            <button key={k} onClick={() => setPlaceKind(k)} aria-pressed={kindFilter === k} style={{ flexShrink: 0, padding: "5px 12px", borderRadius: 16, border: "1px solid " + (kindFilter === k ? "#37352F" : "#E0E0DE"), background: kindFilter === k ? "#37352F" : "#fff", color: kindFilter === k ? "#fff" : "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{k === "All" ? "All" : `${PLACE_ICON[k] || "📍"} ${k}`}</button>
                           ))}
                         </div>
                       )}
@@ -2683,7 +2716,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           </div>
                         );
                       })}
-                      {sorted.length === 0 && <EmptyCard text={list.length ? `No ${placeKind.toLowerCase()} places yet. Add one below.` : `No places in ${city} yet. Add the first one!`} />}
+                      {sorted.length === 0 && <EmptyCard text={`No places in ${city} yet. Add the first one!`} />}
                       <div style={{ background: "#FAFAF8", border: "1px dashed #E0E0DE", borderRadius: 12, padding: 14, marginTop: 14 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font, marginBottom: 8 }}>Add a place</div>
                         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", gap: 8, marginBottom: 8 }}>
@@ -3215,7 +3248,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             {/* All / Still open / Answered */}
             {(() => {
               const answered = (h) => !!h.bestResponseId || h.status === "Resolved";
-              const shown = helpRequests.filter(h => helpFilter === "all" || (helpFilter === "answered" ? answered(h) : !answered(h)));
+              const shown = helpRequests.filter(h => !blockedIds.has(h.userId) && (helpFilter === "all" || (helpFilter === "answered" ? answered(h) : !answered(h))));
               return (
                 <>
                   <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
@@ -3910,7 +3943,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 )}
               </div>
               {user.ambassadorCity && <div style={{ marginTop: 12 }}><AmbassadorBadge city={user.ambassadorCity} /></div>}
-              {user.askMeAbout
+              {!user.hasTopics ? null : user.askMeAbout
                 ? <div style={{ marginTop: 14 }}><p style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Ask me about</p><TopicChips text={user.askMeAbout} center /></div>
                 : <button type="button" onClick={() => openProfileEditor("askMeAbout")} style={{ marginTop: 14, background: "none", border: "1px dashed #C7D2FE", borderRadius: 20, padding: "5px 12px", fontSize: 12, color: "#3730A3", cursor: "pointer", fontFamily: font }}>+ Add what people can ask you about</button>}
               {myHelped > 0 && <p style={{ fontSize: 13, color: "#1A7F52", fontWeight: 600, marginTop: 12, fontFamily: font }}>🙏 You've helped {myHelped === 1 ? "1 member" : `${myHelped} members`}</p>}
@@ -5673,7 +5706,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <input type="checkbox" checked={!!newHelp.urgent} onChange={(e) => setNewHelp({ ...newHelp, urgent: e.target.checked })} style={{ marginTop: 3 }} />
                 <span style={{ fontSize: 13, color: "#37352F", lineHeight: 1.5 }}>
                   <strong>🚨 This is urgent</strong>
-                  <span style={{ display: "block", fontSize: 12, color: "#6B6A67" }}>A hospital visit, a lost passport, a death in the family. Members in {user.city || "your city"} and its ambassador get a notification. One urgent question a day.</span>
+                  <span style={{ display: "block", fontSize: 12, color: "#6B6A67" }}>A hospital visit, a lost passport, a death in the family. {user.verificationStatus === "approved" ? `Members in ${user.city || "your city"} and its ambassador get a notification.` : "Once you're verified, urgent questions also alert members in your city."} One urgent question a day.</span>
                 </span>
               </label>
               {newHelp.urgent && <div style={{ marginBottom: 20 }}><EmergencyHelp /></div>}
@@ -5724,7 +5757,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {abroad && textField("hometown", "Hometown in India", "e.g. Pune, Maharashtra")}
                 {abroad && selectField("yearsAbroad", "Years abroad", "When did you move abroad?", YEARS_OPTIONS)}
                 {selectField("occupationStatus", "Status", "Choose your status", OCCUPATION_TYPES)}
-                {textField("askMeAbout", "Ask me about", "e.g. Blue Card, moving with kids, buying a flat", {
+                {user.hasTopics && textField("askMeAbout", "Ask me about", "e.g. Blue Card, moving with kids, buying a flat", {
                   input: { maxLength: 300 },
                   help: "Up to 5 topics you can help with, separated by commas. Members can find you by them.",
                 })}

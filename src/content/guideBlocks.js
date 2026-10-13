@@ -13,7 +13,9 @@ export function guideBlocks(text) {
       continue;
     }
     list = null;
-    const heading = line.length <= 60 && /[A-Z]/.test(line) && line === line.toUpperCase();
+    // A trailing "(Non-Resident External)" doesn't stop a heading being one.
+    const head = line.replace(/\s*\(.*\)\s*$/, "");
+    const heading = line.length <= 60 && /[A-Z]/.test(head) && head === head.toUpperCase();
     blocks.push({ type: heading ? "h" : "p", text: line });
   }
   return blocks;

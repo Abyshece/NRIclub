@@ -28,6 +28,8 @@ export function mapProfile(p) {
     linkedin_verified: !!p.linkedin_verified,
     ambassadorCity: p.ambassador_city || "",
     askMeAbout: p.ask_me_about || "",
+    // Until the 2026-10-17 database update, profiles have no topics.
+    hasTopics: Object.prototype.hasOwnProperty.call(p, "ask_me_about"),
     verificationStatus: p.verification_status || "incomplete",
     verificationMessage: p.verification_message || "",
     // Private (owner and admins only), used to prefill "Update details".

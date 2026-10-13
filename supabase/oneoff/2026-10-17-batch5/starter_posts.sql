@@ -1,16 +1,19 @@
 -- A pinned "Start here" post from the NRIClub team in every city group that
--- has members (written in the name of the first admin). Run it after the
--- Batch 5 file. Safe to run again later, when more cities have members:
--- groups that already have a pinned post are left alone, and an ambassador
--- can pin their own post instead at any time.
+-- has members (written in the name of the first admin). It shows at the top
+-- of its group, not in everyone's Home feed. Run it after the Batch 5 file.
+-- Safe to run again later, when more cities have members: groups that
+-- already have a pinned post, or already got this welcome post, are left
+-- alone, and an ambassador can pin their own post instead at any time.
 WITH admin AS (
   SELECT a.user_id FROM public.admins a JOIN public.profiles p ON p.id = a.user_id
   ORDER BY a.created_at LIMIT 1
 ),
 target AS (
-  SELECT g.id, substr(g.name, 12) AS city FROM public.groups g
+  SELECT g.id, substr(g.name, 12) AS city FROM public.groups g, admin
   WHERE g.is_approved AND g.category = 'City' AND g.name LIKE 'Indians in %'
     AND g.pinned_post_id IS NULL AND g.members_count > 0
+    AND NOT EXISTS (SELECT 1 FROM public.posts x
+                    WHERE x.group_id = g.id AND x.user_id = admin.user_id AND x.content LIKE 'Welcome to Indians in %')
 ),
 ins AS (
   INSERT INTO public.posts (user_id, content, group_id)

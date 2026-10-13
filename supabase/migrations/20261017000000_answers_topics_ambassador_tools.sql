@@ -4,9 +4,11 @@
 --
 --   * Ask: the asker marks the best answer (the question then counts as
 --     answered); members thank helpful answers (public.answer_thanks);
---     urgent questions alert members of the asker's city and its ambassador
---     (one urgent question per member a day). Questions keep the asker's
---     city, so open questions can be shown to members nearby.
+--     urgent questions from verified members alert members of the asker's
+--     city and its ambassador (one urgent question per member a day, counted
+--     in private.urgent_log so deleting the question doesn't reset it).
+--     Questions keep the asker's city, so open questions can be shown to
+--     members nearby.
 --   * Notifications the database sends by itself: an answer to your
 --     question, a thank-you, your answer chosen as the best, someone going
 --     to your event, an urgent question in your city, and (for ambassadors)
@@ -33,14 +35,27 @@ ALTER TABLE public.notifications
     'like', 'comment', 'request', 'event', 'group', 'trending', 'message', 'verification',
     'answer', 'thanks', 'best', 'rsvp', 'urgent', 'member'));
 
--- Sends one notification, unless it's to yourself or one of the two blocked
--- the other. Used by the triggers below (never by members directly).
+-- Sends one notification, unless it's to yourself, one of the two blocked
+-- the other, the recipient can't take part (blocked, rejected or held, as
+-- in private.is_active_member), or the same notification (person, kind,
+-- sender, question/event/group) was already sent: thanking, going or
+-- joining again doesn't notify again. Used by the triggers below (never
+-- by members directly).
 CREATE FUNCTION private.notify(p_user UUID, p_type TEXT, p_actor UUID, p_text TEXT, p_ref UUID)
 RETURNS VOID LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$
   INSERT INTO public.notifications (user_id, type, actor_id, text, reference_id)
   SELECT p_user, p_type, p_actor, LEFT(p_text, 1000), p_ref
   WHERE p_user IS NOT NULL AND p_user IS DISTINCT FROM p_actor
-    AND (p_actor IS NULL OR NOT private.is_blocked_between(p_actor, p_user));
+    AND (p_actor IS NULL OR NOT private.is_blocked_between(p_actor, p_user))
+    AND EXISTS (
+      SELECT 1 FROM public.profile_private pp
+      WHERE pp.id = p_user AND pp.status = 'active'
+        AND pp.verification_status IN ('pending', 'needs_info', 'approved')
+        AND (pp.review_flag = '' OR pp.verification_status = 'approved'))
+    AND NOT EXISTS (
+      SELECT 1 FROM public.notifications n
+      WHERE n.user_id = p_user AND n.type = p_type
+        AND n.actor_id IS NOT DISTINCT FROM p_actor AND n.reference_id IS NOT DISTINCT FROM p_ref);
 $$;
 
 -- "Your question" in a notification: the title, shortened.
@@ -73,6 +88,15 @@ CREATE TRIGGER protect_columns BEFORE INSERT OR UPDATE ON public.help_requests
     '{"responses_count": 0, "status": "Open", "best_response_id": null}',
     'user_id', 'responses_count', 'created_at', 'city', 'urgent');
 
+-- Urgent questions per member, kept when the question is deleted, so the
+-- one-a-day limit can't be reset. Only the database itself reads it.
+CREATE TABLE private.urgent_log (
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_urgent_log_user ON private.urgent_log (user_id, sent_at DESC);
+REVOKE ALL ON private.urgent_log FROM PUBLIC;
+
 -- New question: the city is the asker's own; one urgent question a day.
 -- Best answer: it must be an answer to this question, and the question's
 -- status follows it (Resolved with a best answer, Open without).
@@ -81,11 +105,14 @@ RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
     NEW.city := COALESCE((SELECT p.city FROM public.profiles p WHERE p.id = NEW.user_id), '');
-    IF NEW.urgent AND EXISTS (
-      SELECT 1 FROM public.help_requests h
-      WHERE h.user_id = NEW.user_id AND h.urgent AND h.created_at > NOW() - INTERVAL '1 day'
-    ) THEN
-      RAISE EXCEPTION 'You can post one urgent question a day.' USING ERRCODE = '42501';
+    IF NEW.urgent THEN
+      -- Two urgent questions sent at the same moment are checked one by one.
+      PERFORM pg_advisory_xact_lock(hashtext('nriclub-urgent:' || NEW.user_id::text));
+      IF EXISTS (SELECT 1 FROM private.urgent_log u
+                 WHERE u.user_id = NEW.user_id AND u.sent_at > NOW() - INTERVAL '1 day') THEN
+        RAISE EXCEPTION 'You can post one urgent question a day.' USING ERRCODE = '42501';
+      END IF;
+      INSERT INTO private.urgent_log (user_id) VALUES (NEW.user_id);
     END IF;
     RETURN NEW;
   END IF;
@@ -103,26 +130,28 @@ $$;
 CREATE TRIGGER check_help_request BEFORE INSERT OR UPDATE ON public.help_requests
   FOR EACH ROW EXECUTE FUNCTION private.check_help_request();
 
--- Urgent question: members of the asker's city group and the city's
--- ambassadors hear about it (at most 500 people).
+-- Urgent question from a verified member: the city's ambassadors and the
+-- members of the asker's city group (the 500 who joined most recently)
+-- hear about it.
 CREATE FUNCTION private.notify_urgent_question()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE
-  asker TEXT := COALESCE((SELECT p.name FROM public.profiles p WHERE p.id = NEW.user_id), 'A member');
 BEGIN
-  IF NOT NEW.urgent OR NEW.city = '' THEN
+  IF NOT NEW.urgent OR NEW.city = '' OR NOT EXISTS (
+    SELECT 1 FROM public.profile_private pp WHERE pp.id = NEW.user_id AND pp.verification_status = 'approved'
+  ) THEN
     RETURN NULL;
   END IF;
   PERFORM private.notify(r.user_id, 'urgent', NEW.user_id,
     'needs urgent help in ' || NEW.city || ': ' || private.short_title(NEW.title), NEW.id)
   FROM (
-    SELECT gm.user_id FROM public.group_members gm
-    JOIN public.groups g ON g.id = gm.group_id
-    WHERE g.is_approved AND lower(g.name) = private.city_group_name(NEW.city)
+    SELECT p.id AS user_id FROM public.profiles p
+    WHERE p.ambassador_city <> '' AND private.city_group_name(p.ambassador_city) = private.city_group_name(NEW.city)
     UNION
-    SELECT p.id FROM public.profiles p
-    WHERE p.ambassador_city <> '' AND lower(p.ambassador_city) = lower(btrim(NEW.city))
-    LIMIT 500
+    (SELECT gm.user_id FROM public.group_members gm
+     JOIN public.groups g ON g.id = gm.group_id
+     WHERE g.is_approved AND lower(g.name) = private.city_group_name(NEW.city)
+     ORDER BY gm.joined_at DESC
+     LIMIT 500)
   ) r;
   RETURN NULL;
 END;
@@ -135,6 +164,9 @@ CREATE FUNCTION private.notify_best_answer()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
   IF NEW.best_response_id IS NOT NULL AND NEW.best_response_id IS DISTINCT FROM OLD.best_response_id THEN
+    DELETE FROM public.notifications n
+    WHERE n.type = 'best' AND n.actor_id = NEW.user_id AND n.reference_id = NEW.id
+      AND n.user_id IS DISTINCT FROM (SELECT r.user_id FROM public.help_responses r WHERE r.id = NEW.best_response_id);
     PERFORM private.notify(r.user_id, 'best', NEW.user_id,
       'chose your answer as the best answer: ' || private.short_title(NEW.title), NEW.id)
     FROM public.help_responses r WHERE r.id = NEW.best_response_id;
@@ -144,6 +176,18 @@ END;
 $$;
 CREATE TRIGGER notify_best_answer AFTER UPDATE OF best_response_id ON public.help_requests
   FOR EACH ROW EXECUTE FUNCTION private.notify_best_answer();
+
+-- A deleted question takes its notifications with it.
+CREATE FUNCTION private.forget_question_notifications()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  DELETE FROM public.notifications n
+  WHERE n.reference_id = OLD.id AND n.type IN ('answer', 'thanks', 'best', 'urgent');
+  RETURN NULL;
+END;
+$$;
+CREATE TRIGGER forget_question_notifications AFTER DELETE ON public.help_requests
+  FOR EACH ROW EXECUTE FUNCTION private.forget_question_notifications();
 
 -- A new answer: the asker hears about it.
 CREATE FUNCTION private.notify_new_answer()
@@ -222,9 +266,7 @@ $$;
 CREATE FUNCTION private.notify_rsvp()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-  -- Going, not going, going again: one notification, not three.
-  DELETE FROM public.notifications n
-  WHERE n.type = 'rsvp' AND n.actor_id = NEW.user_id AND n.reference_id = NEW.event_id;
+  -- Going, not going, going again: private.notify sends it once.
   PERFORM private.notify(e.organizer_id, 'rsvp', NEW.user_id,
     'is going to ' || private.short_title(e.title), e.id)
   FROM public.events e WHERE e.id = NEW.event_id;
@@ -321,9 +363,11 @@ ON CONFLICT (name) DO NOTHING;
 -- ---------------------------------------------------------------------------
 -- CITY PAGES: find a city by its address form too ("new-york")
 -- ---------------------------------------------------------------------------
+-- Same as slug() on the site: accents dropped ("Düsseldorf" -> "dusseldorf").
 CREATE FUNCTION private.slug(p_text TEXT)
 RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT btrim(regexp_replace(lower(COALESCE(p_text, '')), '[^[:alnum:]]+', '-', 'g'), '-');
+  SELECT btrim(regexp_replace(lower(regexp_replace(normalize(COALESCE(p_text, ''), NFKD), '[\u0300-\u036f]', '', 'g')),
+    '[^a-z0-9]+', '-', 'g'), '-');
 $$;
 
 CREATE OR REPLACE FUNCTION public.city_summary(p_city TEXT)
@@ -452,8 +496,9 @@ $$;
 REVOKE ALL ON FUNCTION private.notify(UUID, TEXT, UUID, TEXT, UUID), private.short_title(TEXT),
   private.city_group_name(TEXT), private.check_help_request(), private.notify_urgent_question(),
   private.notify_best_answer(), private.notify_new_answer(), private.update_thanks_count(),
-  private.notify_rsvp(), private.notify_new_city_member(), private.slug(TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION private.check_help_request(), private.notify_urgent_question(),
+  private.notify_rsvp(), private.notify_new_city_member(), private.slug(TEXT),
+  private.forget_question_notifications() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION private.forget_question_notifications(), private.check_help_request(), private.notify_urgent_question(),
   private.notify_best_answer(), private.notify_new_answer(), private.update_thanks_count(),
   private.notify_rsvp(), private.notify_new_city_member() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION private.notify(UUID, TEXT, UUID, TEXT, UUID), private.short_title(TEXT),
