@@ -939,15 +939,30 @@ export async function getGroupMembers(groupId) {
   return restCall("GET", `/rest/v1/group_members?group_id=eq.${groupId}&select=*,profiles:user_id(id,name,avatar_url,profession,location)`);
 }
 
-export async function requestNewGroup(cityName) {
+// A new city group ("Indians in Paris") or university group ("Indians at
+// TU Munich"), which an admin approves.
+export async function requestNewGroup(name, kind = "City") {
   if (!currentUser) throw new Error("Not logged in");
+  const uni = kind === "University";
   return restCall("POST", "/rest/v1/groups", {
-    name: `Indians in ${cityName}`,
-    description: `Community for Indians living in ${cityName}.`,
-    category: "City",
+    name: uni ? `Indians at ${name}` : `Indians in ${name}`,
+    description: uni ? `For Indian students and alumni of ${name}.` : `Community for Indians living in ${name}.`,
+    category: uni ? "University" : "City",
     created_by: currentUser.id,
     is_approved: false,
   }, { Prefer: "return=representation" });
+}
+
+// Pins one of a group's posts at the top (null unpins).
+export async function pinGroupPost(groupId, postId) {
+  return restCall("POST", "/rest/v1/rpc/pin_group_post", { p_group: groupId, p_post: postId });
+}
+
+// The ambassadors of a city (name and photo).
+export async function getCityAmbassadors(city) {
+  const q = String(city || "").replace(/[%_*,()]/g, "");
+  if (!q) return [];
+  return (await restCall("GET", `/rest/v1/profiles?ambassador_city=ilike.${encodeURIComponent(q)}&select=id,name,avatar_url&limit=5`)) || [];
 }
 
 // ============================================================================
@@ -983,9 +998,9 @@ export async function getPlaces(city) {
   const rows = await restCall("GET", `/rest/v1/places?city=ilike.${encodeURIComponent(city)}&select=*,place_recommendations(user_id)&order=created_at.desc&limit=200`);
   return (rows || []).map(p => ({ ...p, recs: (p.place_recommendations || []).map(r => r.user_id) }));
 }
-export async function addPlace({ city, name, kind, address, note }) {
+export async function addPlace({ city, name, kind, address, note, languages = "" }) {
   if (!currentUser) throw new Error("Not logged in");
-  const rows = await restCall("POST", "/rest/v1/places", { city, name, kind, address, note, created_by: currentUser.id }, { Prefer: "return=representation" });
+  const rows = await restCall("POST", "/rest/v1/places", { city, name, kind, address, note, ...(languages ? { languages } : {}), created_by: currentUser.id }, { Prefer: "return=representation" });
   return rows?.[0];
 }
 export async function deletePlace(id) {
@@ -1147,12 +1162,45 @@ export async function getHelpRequests() {
   return restCall("GET", "/rest/v1/help_requests?select=*,profiles:user_id(id,name,avatar_url)&order=created_at.desc");
 }
 
-export async function createHelpRequest(req) {
+export async function createHelpRequest({ urgent = false, ...req }) {
   if (!currentUser) throw new Error("Not logged in");
-  return restCall("POST", "/rest/v1/help_requests", {
-    ...req,
-    user_id: currentUser.id,
-  }, { Prefer: "return=representation" });
+  const send = (body) => restCall("POST", "/rest/v1/help_requests", { ...body, user_id: currentUser.id }, { Prefer: "return=representation" });
+  if (!urgent) return send(req);
+  try {
+    return await send({ ...req, urgent: true });
+  } catch (e) {
+    // Before the database knows about urgent questions: post it as High.
+    if (/urgent/.test(e.message || "") && /PGRST204|column/i.test(e.message || "")) return send(req);
+    throw e;
+  }
+}
+
+// The asker's best answer (null to clear it).
+export async function setBestAnswer(requestId, responseId) {
+  if (!currentUser) throw new Error("Not logged in");
+  const rows = await restCall("PATCH", `/rest/v1/help_requests?id=eq.${encodeURIComponent(requestId)}&user_id=eq.${currentUser.id}`, { best_response_id: responseId }, { Prefer: "return=representation" });
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error("Not changed");
+  return rows[0];
+}
+
+// 🙏 Thanks for an answer (on = false takes it back).
+export async function thankAnswer(responseId, on) {
+  if (!currentUser) throw new Error("Not logged in");
+  if (on) return restCall("POST", "/rest/v1/answer_thanks", { response_id: responseId, user_id: currentUser.id });
+  return restCall("DELETE", `/rest/v1/answer_thanks?response_id=eq.${encodeURIComponent(responseId)}&user_id=eq.${currentUser.id}`);
+}
+
+// Which of these answers the member has thanked (ids).
+export async function getMyThanks(responseIds) {
+  if (!currentUser || !responseIds.length) return [];
+  const rows = await restCall("GET", `/rest/v1/answer_thanks?user_id=eq.${currentUser.id}&response_id=in.(${responseIds.map(encodeURIComponent).join(",")})&select=response_id`);
+  return (rows || []).map(r => r.response_id);
+}
+
+// How many members thanked this member for an answer.
+export async function getHelpedCount(memberId) {
+  const n = await restCall("POST", "/rest/v1/rpc/member_helped_count", { p_member: memberId });
+  return Number(n) || 0;
 }
 
 export async function getHelpResponses(requestId) {
@@ -1582,6 +1630,11 @@ async function adminWrite(method, path, body = null) {
 // adminReviewMember.
 export async function adminSetMemberStatus(userId, status) {
   return adminWrite("PATCH", `/rest/v1/profile_private?id=eq.${userId}`, { status });
+}
+
+// Members and activity per city group (admins only).
+export async function adminCityStats() {
+  return (await restCall("POST", "/rest/v1/rpc/admin_city_stats", {})) || [];
 }
 
 // Makes a member the NRIClub ambassador for a city ('' to stop).

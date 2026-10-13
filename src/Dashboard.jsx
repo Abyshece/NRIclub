@@ -10,6 +10,7 @@ import { TermsContent, PrivacyContent, TermsModal, PrivacyModal, TERMS_VERSION }
 import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
+import { slug } from "./content/slug";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
 
@@ -592,6 +593,36 @@ const LoginPage = ({ onComplete, onSignUp, onBack, initialEmail = "", notice = "
 
 // The dashed card shown in place of a list that came up empty, with one way
 // back to everything when filters or a search hid it.
+// "Ask me about": the topics a member can help with (comma-separated, up to 5).
+const topicList = (text) => [...new Set((text || "").split(",").map(t => t.trim().replace(/\s+/g, " ").slice(0, 40)).filter(Boolean))].slice(0, 5);
+const TopicChips = ({ text, max = 5, onPick, center }) => {
+  const topics = topicList(text).slice(0, max);
+  if (!topics.length) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: center ? "center" : "flex-start" }}>
+      {topics.map(t => onPick
+        ? <button key={t} type="button" onClick={(e) => { e.stopPropagation(); onPick(t); }} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, border: "1px solid #C7D2FE", background: "#EEF2FF", color: "#3730A3", cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>{t}</button>
+        : <span key={t} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, border: "1px solid #C7D2FE", background: "#EEF2FF", color: "#3730A3", fontFamily: "'DM Sans', sans-serif" }}>{t}</span>)}
+    </div>
+  );
+};
+
+// Desi places: what members can add, and their signs.
+const PLACE_KINDS = ["Grocery", "Restaurant", "Temple", "Shop", "Doctor", "Tax & accounts", "Lawyer", "Driving school", "Other"];
+const PRO_KINDS = ["Doctor", "Tax & accounts", "Lawyer", "Driving school"];
+const PLACE_ICON = { Grocery: "🛒", Restaurant: "🍛", Temple: "🛕", Shop: "🛍️", Doctor: "🩺", "Tax & accounts": "🧾", Lawyer: "⚖️", "Driving school": "🚗" };
+
+// The small sign on a notification's avatar, by type.
+const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋" };
+
+// For urgent questions: who to call first, and the Indian embassy's help.
+const EmergencyHelp = () => (
+  <div role="note" style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, padding: "10px 12px", fontSize: 12, color: "#7F1D1D", lineHeight: 1.6, fontFamily: "'DM Sans', sans-serif" }}>
+    <strong>In an emergency, call the local emergency number first:</strong> 112 in Europe, 911 in the US and Canada, 999 in the UK, 000 in Australia, 111 in New Zealand.
+    <br />Help from India: <a href="https://madad.gov.in" target="_blank" rel="noopener noreferrer" style={{ color: "#7F1D1D", fontWeight: 600 }}>MADAD consular help</a> · <a href="https://www.mea.gov.in/indian-missions-abroad-new.htm" target="_blank" rel="noopener noreferrer" style={{ color: "#7F1D1D", fontWeight: 600 }}>Find your Indian embassy or consulate</a>
+  </div>
+);
+
 const EmptyCard = ({ text, action, onAction }) => (
   <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: "'DM Sans', sans-serif" }}>
     <p>{text}</p>
@@ -609,6 +640,7 @@ const EmptyCard = ({ text, action, onAction }) => (
 //   /  /find  /groups[/id]  /events[/id]  /help  /docs[/id]  /market[/id]
 //   /messages[/conversation id]  /profile  /u/<member id>  /post/<post id>
 //   /city/<city> (the public city page's address; members get its group)
+//   /guides[/<slug>] (the public guides; members get them in Guides)
 const parsePath = (path, selfId) => {
   const [, a = "", b = ""] = (path || "/").split("/");
   let id = "";
@@ -625,11 +657,12 @@ const parsePath = (path, selfId) => {
     case "u": return id && id !== selfId ? { view: "member", member: id } : { view: id ? "profile" : "network" };
     case "post": return { view: "home", post: id || null };
     case "city": return { view: "groups", pending: id ? { kind: "city", id } : null };
+    case "guides": return { view: "docs", pending: id ? { kind: "guide", id } : null };
     default: return { view: "home" };
   }
 };
 
-const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup, onOpenProfile }) => {
+const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup, onOpenProfile, pinned, onPin }) => {
   const [liked, setLiked] = useState(initialLiked || false);
   const [likeCount, setLikeCount] = useState(post.likes || 0);
   const [showComments, setShowComments] = useState(false);
@@ -712,6 +745,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
 
   return (
     <div data-post-id={post.id} style={{ ...cardStyle, position: "relative", opacity: isReported ? 0.4 : 1 }}>
+      {pinned && <div style={{ fontSize: 11, fontWeight: 700, color: "#C2410C", letterSpacing: "0.04em", marginBottom: 10 }}>📌 PINNED · START HERE</div>}
       {isReported && <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.6)", borderRadius: 14, zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}><span style={{ background: "#FEF2F2", color: "#DC2626", padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>Reported — Under Review</span></div>}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 12 }}>
@@ -732,7 +766,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
           </div>
         </div>
         <div style={{ position: "relative" }}>
-          <button onClick={() => setShowMenu(!showMenu)} style={{ background: "none", border: "none", cursor: "pointer", padding: 10, margin: -6, color: "#5F5E5B" }}>
+          <button onClick={() => setShowMenu(!showMenu)} aria-label="Post options" aria-expanded={showMenu} style={{ background: "none", border: "none", cursor: "pointer", padding: 10, margin: -6, color: "#5F5E5B" }}>
             {Icons.dots({ size: 16 })}
           </button>
           {showMenu && (
@@ -742,6 +776,11 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
                 <button onClick={copyLink} disabled={String(post.id).startsWith("p_")} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, whiteSpace: "nowrap" }}>
                   {linkCopied ? <>{Icons.check({ size: 14 })} Link copied</> : <>{Icons.link({ size: 14 })} Copy link</>}
                 </button>
+                {onPin && !String(post.id).startsWith("p_") && (
+                  <button onClick={() => { setShowMenu(false); onPin(pinned ? null : post.id); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, textAlign: "left" }}>
+                    📌 {pinned ? "Unpin" : "Pin to top"}
+                  </button>
+                )}
                 {isOwner && onDelete ? (
                   <button onClick={() => { onDelete(post.id); setShowMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#E00", fontSize: 13 }}>
                     {Icons.trash({ size: 14 })} Delete
@@ -966,7 +1005,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [selectedHelp, setSelectedHelp] = useState(null);
   const [helpResponse, setHelpResponse] = useState("");
   const [helpResponses, setHelpResponses] = useState({});
-  const [newHelp, setNewHelp] = useState({ title: "", description: "", category: "General", urgency: "Low" });
+  const [helpFilter, setHelpFilter] = useState("all"); // all | open | answered
+  const [myHelped, setMyHelped] = useState(0);
+  const [myThanks, setMyThanks] = useState(() => new Set()); // answers I thanked
+  const [newHelp, setNewHelp] = useState({ title: "", description: "", category: "General", urgent: false });
   const [profileModal, setProfileModal] = useState(false);
   const [editProfile, setEditProfile] = useState({ ...user });
   const [profileFocus, setProfileFocus] = useState(null); // field to focus when Edit Profile opens
@@ -1132,7 +1174,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     if (blockedIds.has(u.id)) return false;
     const matchesSearch = networkSearch === "" ||
       u.name.toLowerCase().includes(networkSearch.toLowerCase()) ||
-      u.profession.toLowerCase().includes(networkSearch.toLowerCase());
+      u.profession.toLowerCase().includes(networkSearch.toLowerCase()) ||
+      (u.askMeAbout || "").toLowerCase().includes(networkSearch.toLowerCase());
     const matchesCity = networkCityFilter === "All" || u.location.includes(networkCityFilter);
     const matchesHometown = networkHometownFilter === "All" || u.hometown.includes(networkHometownFilter);
     return matchesSearch && matchesCity && matchesHometown;
@@ -1173,7 +1216,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         setNetworkUsers(dbUsers.map(u => ({
           id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
           hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
-          linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "", createdAt: u.created_at || "", ambassadorCity: u.ambassador_city || "",
+          linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "", createdAt: u.created_at || "", ambassadorCity: u.ambassador_city || "", askMeAbout: u.ask_me_about || "",
           avatar_url: u.avatar_url || "",
           followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
         })));
@@ -1297,7 +1340,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         safe(api.getMyConnections()), safe(api.getSentNamastes()), safe(api.getDocs()), safe(api.getBlockedUsers()),
         safe(api.getNotifications()), safe(api.getMarketItems()),
       ]);
-      const loadedGroups = (dbGroups || []).map(g => ({ id: g.id, name: g.name, description: g.description, members: g.members_count, category: g.category, joined: (myGids || []).includes(g.id) }));
+      const loadedGroups = (dbGroups || []).map(g => ({ id: g.id, name: g.name, description: g.description, members: g.members_count, category: g.category, pinnedPostId: g.pinned_post_id || null, joined: (myGids || []).includes(g.id) }));
       setGroups(loadedGroups);
       setPosts((dbPosts || []).map(p => toPost(p, loadedGroups)));
       if (myLikes && myLikes.length) setLikedPostIds(new Set(myLikes.map(l => l.post_id)));
@@ -1307,7 +1350,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       if (dbHelp && dbHelp.length) {
         const counts = {};
         (allResponses || []).forEach(r => { counts[r.request_id] = (counts[r.request_id] || 0) + 1; });
-        setHelpRequests(dbHelp.map(h => ({ id: h.id, userId: h.user_id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status, user: h.profiles?.name || "User", timestamp: new Date(h.created_at).getTime(), responses: allResponses ? (counts[h.id] || 0) : (h.responses_count || 0) })));
+        setHelpRequests(dbHelp.map(h => ({ id: h.id, userId: h.user_id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status, city: h.city || "", urgent: !!h.urgent || h.urgency === "High", bestResponseId: h.best_response_id || null, user: h.profiles?.name || "User", avatar: h.profiles?.avatar_url || "", timestamp: new Date(h.created_at).getTime(), responses: allResponses ? (counts[h.id] || 0) : (h.responses_count || 0) })));
       }
       // Followers and following ("Following" = I sent the request and they accepted)
       if (conns && conns.length) {
@@ -1438,22 +1481,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   useEffect(() => {
     if (!pendingRoute || !canBrowse) return;
     const { kind, id } = pendingRoute;
-    const list = kind === "group" || kind === "city" ? groups : kind === "event" ? events : kind === "doc" ? docs : marketItems;
-    const item = kind === "city"
-      ? list.find(x => (x.name || "").toLowerCase() === `indians in ${id}`.toLowerCase())
+    const list = kind === "group" || kind === "city" ? groups : kind === "event" ? events : kind === "doc" || kind === "guide" ? docs : marketItems;
+    const item = kind === "city" ? list.find(x => x.category === "City" && slug(x.name) === slug(`Indians in ${id}`))
+      : kind === "guide" ? list.find(x => x.category === "Essentials" && slug(x.title) === id)
       : list.find(x => String(x.id) === id);
     if (!item && !listsLoaded) return;
     if (!item) {
-      try { window.history.replaceState(null, "", kind === "group" || kind === "city" ? "/groups" : kind === "event" ? "/events" : kind === "doc" ? "/docs" : "/market"); } catch (e) {}
+      try { window.history.replaceState(null, "", kind === "group" || kind === "city" ? "/groups" : kind === "event" ? "/events" : kind === "doc" || kind === "guide" ? "/docs" : "/market"); } catch (e) {}
       setPendingRoute(null);
       return;
     }
     setPendingRoute(null);
     // A city address becomes the group's own, so Back doesn't reopen it.
     if (kind === "city") { try { window.history.replaceState(null, "", `/groups/${item.id}`); } catch (e) {} }
+    if (kind === "guide") { try { window.history.replaceState(null, "", `/docs/${item.id}`); } catch (e) {} }
     if (kind === "group" || kind === "city") { setGroupMembers([]); setSelectedGroup(item); }
     else if (kind === "event") setExpandedEvent(item);
-    else if (kind === "doc") setSelectedDoc(item);
+    else if (kind === "doc" || kind === "guide") setSelectedDoc(item);
     else setExpandedMarketItem(item);
   }, [pendingRoute, canBrowse, groups, events, docs, marketItems, listsLoaded]);
 
@@ -1776,24 +1820,31 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch (e) { return; }
     toggleGroup(cityGroup.id);
   }, [canBrowse, listsLoaded, cityGroup?.id]);
+  // Open questions from members in the member's city (urgent first), for Home.
+  const helpNearbyCity = (user.city || (user.location || "").split(",")[0] || "").trim();
+  const helpNearby = helpNearbyCity ? helpRequests
+    .filter(h => h.userId !== user.id && (h.city || "").toLowerCase() === helpNearbyCity.toLowerCase() && !h.bestResponseId && h.status !== "Resolved" && Date.now() - h.timestamp < 30 * 86400000)
+    .sort((a, b) => (b.urgent - a.urgent) || (b.timestamp - a.timestamp)).slice(0, 3) : [];
   const nearbyMembers = welcomeCity ? networkUsers.filter(u => u.id !== user.id && (u.location || "").toLowerCase().startsWith(welcomeCity.toLowerCase())).slice(0, 5) : [];
 
   const createHelp = async () => {
     if (!newHelp.title || !newHelp.description) return;
     const h = {
-      id: "h_" + Date.now(), ...newHelp, user: user.name,
-      timestamp: Date.now(), responses: 0, status: "Open",
+      id: "h_" + Date.now(), ...newHelp, user: user.name, avatar: user.avatar_url || "", userId: user.id,
+      timestamp: Date.now(), responses: 0, status: "Open", city: user.city || "", bestResponseId: null,
     };
     setHelpRequests([h, ...helpRequests]);
-    setNewHelp({ title: "", description: "", category: "General", urgency: "Low" });
+    setNewHelp({ title: "", description: "", category: "General", urgent: false });
     setHelpModal(false);
     try {
-      const r = await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgency });
+      const r = await api.createHelpRequest({ title: newHelp.title, description: newHelp.description, category: newHelp.category, urgency: newHelp.urgent ? "High" : "Low", urgent: newHelp.urgent });
       // Swap the temporary id for the saved one so responses and delete work.
-      if (r?.[0]) setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, id: r[0].id, userId: user.id } : x));
+      if (r?.[0]) setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, id: r[0].id, userId: user.id, city: r[0].city ?? x.city } : x));
     } catch (e) {
       setHelpRequests(prev => prev.filter(x => x.id !== h.id));
-      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your request couldn't be posted. Please try again.");
+      alert(isNetworkError(e) ? NETWORK_MESSAGE
+        : /one urgent question a day/i.test(e.message || "") ? "You can post one urgent question a day. Post this one without “Urgent”, or ask your city's ambassador directly."
+        : "Your question couldn't be posted. Please try again.");
     }
   };
 
@@ -1803,8 +1854,55 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!helpResponses[h.id]) {
       try {
         const resp = await api.getHelpResponses(h.id);
-        if (resp) setHelpResponses(prev => ({ ...prev, [h.id]: resp.map(r => ({ id: r.id, text: r.content, user: r.profiles?.name || "User", time: new Date(r.created_at).getTime() })) }));
+        if (resp) {
+          setHelpResponses(prev => ({ ...prev, [h.id]: resp.map(r => ({ id: r.id, userId: r.user_id, text: r.content, user: r.profiles?.name || "User", avatar: r.profiles?.avatar_url || "", thanks: r.thanks_count || 0, time: new Date(r.created_at).getTime() })) }));
+          const mine = await api.getMyThanks(resp.map(r => r.id)).catch(() => []);
+          if (mine.length) setMyThanks(prev => new Set([...prev, ...mine]));
+        }
       } catch(e) {}
+    }
+  };
+
+  useEffect(() => {
+    if (view !== "profile" || !canBrowse) return;
+    api.getHelpedCount(user.id).then(setMyHelped).catch(() => {});
+  }, [view, canBrowse, user.id]);
+
+  // Opens Ask at one question (from a notification or Home).
+  const openQuestion = (id) => {
+    const h = helpRequests.find(x => x.id === id);
+    setSelectedDoc(null);
+    setHelpFilter("all");
+    setView("help");
+    if (!h) return;
+    openHelp(h);
+    setTimeout(() => document.querySelector(`[data-help-id="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+  };
+
+  // The asker picks the answer that helped (again to undo).
+  const chooseBestAnswer = async (h, responseId) => {
+    const next = h.bestResponseId === responseId ? null : responseId;
+    const before = { bestResponseId: h.bestResponseId, status: h.status };
+    setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, bestResponseId: next, status: next ? "Resolved" : "Open" } : x));
+    try { await api.setBestAnswer(h.id, next); }
+    catch (e) {
+      setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, ...before } : x));
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "That didn't work. Please try again.");
+    }
+  };
+
+  // 🙏 Thanks for an answer (again to take it back).
+  const thankAnswer = async (requestId, r) => {
+    const on = !myThanks.has(r.id);
+    const flip = (yes) => {
+      setMyThanks(prev => { const n = new Set(prev); if (yes) n.add(r.id); else n.delete(r.id); return n; });
+      setHelpResponses(prev => ({ ...prev, [requestId]: (prev[requestId] || []).map(x => x.id === r.id ? { ...x, thanks: Math.max(0, (x.thanks || 0) + (yes ? 1 : -1)) } : x) }));
+    };
+    flip(on);
+    try { await api.thankAnswer(r.id, on); }
+    catch (e) {
+      flip(!on);
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "That didn't work. Please try again.");
     }
   };
 
@@ -1832,8 +1930,36 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
   // Desi places for the open city group (Places tab).
   const [places, setPlaces] = useState({ city: null, list: [] });
-  const [newPlace, setNewPlace] = useState({ name: "", kind: "Grocery", address: "", note: "" });
+  const [newPlace, setNewPlace] = useState({ name: "", kind: "Grocery", address: "", note: "", languages: "" });
+  const [placeKind, setPlaceKind] = useState("All"); // filter in the Places tab
+  const [groupKind, setGroupKind] = useState("all"); // filter on the Groups page
+  const [newGroupKind, setNewGroupKind] = useState("City"); // City | University, when requesting a group
+  const [cityAmbassadors, setCityAmbassadors] = useState({ city: "", list: [] });
+  const [isAdminUser, setIsAdminUser] = useState(false);
   const placesCity = selectedGroup?.category === "City" ? (selectedGroup.name || "").replace(/^Indians in /i, "") : null;
+  useEffect(() => { setPlaceKind("All"); }, [placesCity]);
+  useEffect(() => { api.isAdmin().then(setIsAdminUser).catch(() => {}); }, []);
+  // A city group: its ambassadors, and its pinned post even if it's older
+  // than the posts already loaded.
+  useEffect(() => {
+    if (!placesCity || !canBrowse) return;
+    api.getCityAmbassadors(placesCity).then(list => setCityAmbassadors({ city: placesCity, list })).catch(() => setCityAmbassadors({ city: placesCity, list: [] }));
+  }, [placesCity, canBrowse]);
+  useEffect(() => {
+    const pid = selectedGroup?.pinnedPostId;
+    if (!pid || !canBrowse || posts.some(p => p.id === pid)) return;
+    api.getPost(pid).then(row => { if (row) setPosts(prev => prev.some(p => p.id === row.id) ? prev : [...prev, toPost(row, groups)]); }).catch(() => {});
+  }, [selectedGroup?.pinnedPostId, canBrowse]);
+  const canPinIn = (g) => !!g && g.category === "City" && (isAdminUser || (!!user.ambassadorCity && `indians in ${user.ambassadorCity}`.toLowerCase() === (g.name || "").toLowerCase()));
+  const pinPost = async (g, postId) => {
+    try {
+      await api.pinGroupPost(g.id, postId);
+      setGroups(prev => prev.map(x => x.id === g.id ? { ...x, pinnedPostId: postId } : x));
+      setSelectedGroup(prev => prev && prev.id === g.id ? { ...prev, pinnedPostId: postId } : prev);
+    } catch (e) {
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "That post couldn't be pinned. Please try again.");
+    }
+  };
   useEffect(() => {
     if (!placesCity || communityTab !== "places" || !canBrowse) return;
     api.getPlaces(placesCity).then(list => setPlaces({ city: placesCity, list })).catch(() => setPlaces({ city: placesCity, list: [] }));
@@ -1842,9 +1968,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     const name = newPlace.name.trim();
     if (!name) return;
     try {
-      const row = await api.addPlace({ city, name, kind: newPlace.kind, address: newPlace.address.trim(), note: newPlace.note.trim() });
+      const row = await api.addPlace({ city, name, kind: newPlace.kind, address: newPlace.address.trim(), note: newPlace.note.trim(), languages: PRO_KINDS.includes(newPlace.kind) ? newPlace.languages.trim() : "" });
       if (row) setPlaces(prev => ({ city, list: [{ ...row, recs: [] }, ...(prev.city === city ? prev.list : [])] }));
-      setNewPlace({ name: "", kind: newPlace.kind, address: "", note: "" });
+      setNewPlace({ name: "", kind: newPlace.kind, address: "", note: "", languages: "" });
     } catch (e) {
       alert(isNetworkError(e) ? NETWORK_MESSAGE : /42501|row-level/.test(e.message || "") ? "Places can be added once your membership is confirmed." : "Couldn't add the place. Please try again.");
     }
@@ -1882,12 +2008,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     setMemberPage(prev => (prev && prev.id === memberId ? prev : { id: memberId }));
     (async () => {
       try {
-        const [profile, rows, groupIds] = await Promise.all([
+        const [profile, rows, groupIds, helped] = await Promise.all([
           api.getProfile(memberId), api.getUserPosts(memberId).catch(() => []), api.getUserGroupIds(memberId).catch(() => []),
+          api.getHelpedCount(memberId).catch(() => 0),
         ]);
         if (gone) return;
         setMemberPage(profile
-          ? { id: memberId, profile, posts: (rows || []).map(p => toPost(p, groups)), groupIds }
+          ? { id: memberId, profile, posts: (rows || []).map(p => toPost(p, groups)), groupIds, helped }
           : { id: memberId, error: "This member isn't available." });
       } catch (e) {
         if (!gone) setMemberPage({ id: memberId, error: isNetworkError(e) ? NETWORK_MESSAGE : "We couldn't load this profile. Please try again." });
@@ -1919,6 +2046,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       if (linkedinError) { setProfileErrors({ linkedinUrl: linkedinError }); return; }
       updates.linkedin_url = linkedinUrl;
     }
+    const topics = topicList(editProfile.askMeAbout).join(", ");
+    if (topics !== (user.askMeAbout || "")) updates.ask_me_about = topics;
     if (isUserNRI(user)) {
       updates.hometown = trim(editProfile.hometown);
       updates.years_abroad = editProfile.yearsAbroad || "";
@@ -1937,7 +2066,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     try { refreshed = mapProfile(await api.getMyProfile()); } catch (e) {}
     onUserUpdate(refreshed || {
       ...user, location: updates.location, profession: updates.profession, linkedinUrl: updates.linkedin_url ?? user.linkedinUrl,
-      occupationStatus: updates.occupation_status,
+      occupationStatus: updates.occupation_status, askMeAbout: updates.ask_me_about ?? user.askMeAbout,
       ...(updates.hometown !== undefined ? { hometown: updates.hometown, yearsAbroad: updates.years_abroad } : {}),
     });
     setProfileSaving(false);
@@ -2044,6 +2173,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
             )}
+            {/* Can you help? Open questions from members in the same city */}
+            {helpNearby.length > 0 && (
+              <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "16px 18px", marginBottom: 16, fontFamily: font }}>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#37352F" }}>Can you help?</h3>
+                <p style={{ fontSize: 12, color: "#6B6A67", marginBottom: 8 }}>Questions from members in {helpNearbyCity}.</p>
+                {helpNearby.map(h => (
+                  <button key={h.id} onClick={() => openQuestion(h.id)} style={{ display: "flex", width: "100%", alignItems: "center", gap: 10, padding: "9px 0", background: "none", border: "none", borderTop: "1px solid #F0EFED", cursor: "pointer", textAlign: "left", fontFamily: font }}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#37352F", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.urgent && "🚨 "}{h.title}</span>
+                      <span style={{ fontSize: 11, color: "#9B9A97" }}>{h.user} · {h.responses === 1 ? "1 answer" : `${h.responses || 0} answers`}</span>
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F", flexShrink: 0 }}>Answer →</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Complete your profile (mobile; the left column has it on desktop) */}
             <div className="nc-mobile-only">
               <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} collapseAfter={2} style={{ marginBottom: 20 }} />
@@ -2132,7 +2278,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   type="text"
                   value={networkSearch}
                   onChange={(e) => setNetworkSearch(e.target.value)}
-                  placeholder="Search by name, profession, or keyword..."
+                  placeholder="Search by name, profession or topic, e.g. Blue Card"
                   style={{
                     width: "100%", padding: "12px 16px 12px 40px", borderRadius: 8,
                     border: "1px solid #E0E0DE", fontSize: 14, background: "#FAFAF8",
@@ -2240,7 +2386,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       </div>
 
                       {/* Profession */}
-                      <p style={{ fontSize: 13, color: "#5F5E5B", marginBottom: 14, fontFamily: font }}>{u.profession}</p>
+                      <p style={{ fontSize: 13, color: "#5F5E5B", marginBottom: u.askMeAbout ? 8 : 14, fontFamily: font }}>{u.profession}</p>
+                      {u.askMeAbout && <div style={{ marginBottom: 12 }}><TopicChips text={u.askMeAbout} max={3} center onPick={(t) => setNetworkSearch(t)} /></div>}
 
                       {/* Location pills */}
                       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 6, marginBottom: 6 }}>
@@ -2396,6 +2543,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.users({ size: 14 })} {(selectedGroup.members || 0).toLocaleString()} members</span>
                     <span style={{ display: "flex", alignItems: "center", gap: 5 }}>{Icons.shield({ size: 14 })} Admin Moderated</span>
                   </div>
+                  {selectedGroup.category === "City" && cityAmbassadors.city === placesCity && cityAmbassadors.list.length > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap", fontSize: 12, color: "#5F5E5B", fontFamily: font }}>
+                      <span style={{ fontWeight: 700, color: "#000080" }}>{cityAmbassadors.list.length === 1 ? "City ambassador:" : "City ambassadors:"}</span>
+                      {cityAmbassadors.list.map(a => (
+                        <button key={a.id} onClick={() => a.id === user.id ? setView("profile") : openMember(a.id)} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#EEF2FF", border: "1px solid #C7D2FE", borderRadius: 20, padding: "2px 10px 2px 2px", cursor: "pointer", fontSize: 12, color: "#37352F", fontFamily: font }}>
+                          <Avatar name={a.name} size={20} url={a.avatar_url} /> {a.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Community Guidelines: one quiet line, open by default only for visitors */}
                   <button onClick={() => setGuidelinesOpen(prev => ({ ...prev, [selectedGroup.id]: !guidelinesShown }))} aria-expanded={guidelinesShown}
@@ -2484,7 +2641,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   )}
 
                   {groupPosts.length > 0 ? (
-                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} hideGroup onOpenProfile={openMember} />)
+                    [...groupPosts].sort((a, b) => (b.id === selectedGroup.pinnedPostId) - (a.id === selectedGroup.pinnedPostId)).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} hideGroup onOpenProfile={openMember} pinned={p.id === selectedGroup.pinnedPostId} onPin={canPinIn(selectedGroup) ? (id) => pinPost(selectedGroup, id) : null} />)
                   ) : (
                     <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                       No posts in this community yet. Be the first to say hello!
@@ -2496,18 +2653,27 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 (() => {
                   const city = (selectedGroup.name || "").replace(/^Indians in /i, "");
                   const list = places.city === city ? places.list : [];
-                  const sorted = [...list].sort((a, b) => b.recs.length - a.recs.length);
+                  const kindsHere = PLACE_KINDS.filter(k => list.some(pl => pl.kind === k));
+                  const sorted = [...list].filter(pl => placeKind === "All" || pl.kind === placeKind).sort((a, b) => b.recs.length - a.recs.length);
                   return (
                     <div>
-                      <p style={{ fontSize: 13, color: "#6B6A67", fontFamily: font, marginBottom: 14 }}>Indian groceries, restaurants, temples and shops in {city}, recommended by members.</p>
+                      <p style={{ fontSize: 13, color: "#6B6A67", fontFamily: font, marginBottom: 12 }}>Indian groceries, restaurants and temples in {city}, and doctors, tax advisers and lawyers who know our needs, recommended by members.</p>
+                      {kindsHere.length > 1 && (
+                        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 10 }}>
+                          {["All", ...kindsHere].map(k => (
+                            <button key={k} onClick={() => setPlaceKind(k)} aria-pressed={placeKind === k} style={{ flexShrink: 0, padding: "5px 12px", borderRadius: 16, border: "1px solid " + (placeKind === k ? "#37352F" : "#E0E0DE"), background: placeKind === k ? "#37352F" : "#fff", color: placeKind === k ? "#fff" : "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{k === "All" ? "All" : `${PLACE_ICON[k] || "📍"} ${k}`}</button>
+                          ))}
+                        </div>
+                      )}
                       {sorted.map(pl => {
                         const mine = pl.recs.includes(user.id);
                         return (
                           <div key={pl.id} style={{ background: "#fff", border: "1px solid #E8E7E4", borderRadius: 12, padding: "12px 14px", marginBottom: 10, display: "flex", gap: 12, alignItems: "flex-start" }}>
-                            <div style={{ fontSize: 22, lineHeight: 1 }} aria-hidden="true">{{ Grocery: "🛒", Restaurant: "🍛", Temple: "🛕", Shop: "🛍️" }[pl.kind] || "📍"}</div>
+                            <div style={{ fontSize: 22, lineHeight: 1 }} aria-hidden="true">{PLACE_ICON[pl.kind] || "📍"}</div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font }}>{pl.name} <span style={{ fontSize: 11, fontWeight: 500, color: "#9B9A97" }}>· {pl.kind}</span></div>
                               {pl.address && <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(pl.name + ", " + pl.address)}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#5F5E5B", fontFamily: font }}>{pl.address}</a>}
+                              {pl.languages && <div style={{ fontSize: 12, color: "#3730A3", marginTop: 3, fontFamily: font }}>🗣️ Speaks {pl.languages}</div>}
                               {pl.note && <p style={{ fontSize: 13, color: "#5F5E5B", margin: "4px 0 0", fontFamily: font, overflowWrap: "anywhere" }}>{pl.note}</p>}
                             </div>
                             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
@@ -2517,15 +2683,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           </div>
                         );
                       })}
-                      {sorted.length === 0 && <EmptyCard text={`No places in ${city} yet. Add the first one!`} />}
+                      {sorted.length === 0 && <EmptyCard text={list.length ? `No ${placeKind.toLowerCase()} places yet. Add one below.` : `No places in ${city} yet. Add the first one!`} />}
                       <div style={{ background: "#FAFAF8", border: "1px dashed #E0E0DE", borderRadius: 12, padding: 14, marginTop: 14 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font, marginBottom: 8 }}>Add a place</div>
                         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", gap: 8, marginBottom: 8 }}>
                           <input style={inputStyle} placeholder="Name, e.g. Spice Bazaar" value={newPlace.name} maxLength={200} onChange={e => setNewPlace({ ...newPlace, name: e.target.value })} />
                           <select style={{ ...inputStyle, cursor: "pointer" }} value={newPlace.kind} onChange={e => setNewPlace({ ...newPlace, kind: e.target.value })}>
-                            {["Grocery", "Restaurant", "Temple", "Shop", "Other"].map(k => <option key={k}>{k}</option>)}
+                            {PLACE_KINDS.map(k => <option key={k}>{k}</option>)}
                           </select>
                         </div>
+                        {PRO_KINDS.includes(newPlace.kind) && <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="Languages they speak, e.g. Hindi, Tamil" value={newPlace.languages} maxLength={100} onChange={e => setNewPlace({ ...newPlace, languages: e.target.value })} />}
                         <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="Address or area (optional)" value={newPlace.address} maxLength={300} onChange={e => setNewPlace({ ...newPlace, address: e.target.value })} />
                         <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="Why you recommend it (optional)" value={newPlace.note} maxLength={500} onChange={e => setNewPlace({ ...newPlace, note: e.target.value })} />
                         <button onClick={() => addNewPlace(city)} disabled={!newPlace.name.trim()} style={{ ...btnPrimary, fontSize: 13, padding: "9px 16px", opacity: newPlace.name.trim() ? 1 : 0.5 }}>Add place</button>
@@ -2644,13 +2811,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
         // Groups List View
         const myGroups = groups.filter(g => g.joined);
-        const groupTabList = groupTab === "my" ? myGroups.filter(g => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase())) : groups.filter((g) => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()));
+        const kindOf = (g) => g.category === "City" || g.category === "Language" || g.category === "University" ? g.category : "Other";
+        const kindsPresent = ["City", "Language", "University", "Other"].filter(k => groups.some(g => kindOf(g) === k));
+        const groupTabList = (groupTab === "my" ? myGroups : groups).filter((g) => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()) && (groupKind === "all" || kindOf(g) === groupKind));
         // On All groups, the member's own city comes first.
         const myCityGroupName = `indians in ${(user.location || "").split(",")[0].trim().toLowerCase()}`;
         if (groupTab !== "my") groupTabList.sort((a, b) => (b.name.toLowerCase() === myCityGroupName) - (a.name.toLowerCase() === myCityGroupName));
         // A search with no match can turn into a request for that city.
         const searchedCity = groupSearchQuery.trim().replace(/^indians in\s+/i, "");
-        const openGroupRequest = (city) => { setNewGroupCity(city); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true); };
+        const openGroupRequest = (city) => { setNewGroupCity(city); setNewGroupKind("City"); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true); };
         const thumbColorsAll = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
 
         return (
@@ -2683,6 +2852,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </button>
               ))}
             </div>
+
+            {/* Kind of group */}
+            {kindsPresent.length > 1 && (
+              <div style={{ display: "flex", gap: 6, marginTop: -8, marginBottom: 18, overflowX: "auto", paddingBottom: 2 }}>
+                {[["all", "All"], ...kindsPresent.map(k => [k, { City: "🏙️ Cities", Language: "🗣️ Languages", University: "🎓 Students", Other: "✨ More" }[k]])].map(([k, l]) => (
+                  <button key={k} onClick={() => setGroupKind(k)} aria-pressed={groupKind === k} style={{ flexShrink: 0, padding: "6px 14px", borderRadius: 20, border: "1px solid " + (groupKind === k ? "#37352F" : "#E0E0DE"), background: groupKind === k ? "#37352F" : "#fff", color: groupKind === k ? "#fff" : "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{l}</button>
+                ))}
+              </div>
+            )}
 
             {/* 2-column grid of community cards */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="groups-grid">
@@ -3034,69 +3212,104 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button key={t.k} role="tab" aria-selected={"help" === t.k} onClick={() => { setSelectedDoc(null); setView(t.k); }} style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: "help" === t.k ? "#fff" : "transparent", color: "help" === t.k ? "#37352F" : "#9B9A97", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: "help" === t.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{t.l}</button>
               ))}
             </div>
-            {helpRequests.map((h) => (
-              <div key={h.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 24px", marginBottom: 14 }}>
+            {/* All / Still open / Answered */}
+            {(() => {
+              const answered = (h) => !!h.bestResponseId || h.status === "Resolved";
+              const shown = helpRequests.filter(h => helpFilter === "all" || (helpFilter === "answered" ? answered(h) : !answered(h)));
+              return (
+                <>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+                    {[{ k: "all", l: "All" }, { k: "open", l: "Still open" }, { k: "answered", l: "Answered" }].map(f => (
+                      <button key={f.k} onClick={() => setHelpFilter(f.k)} aria-pressed={helpFilter === f.k} style={{ padding: "6px 14px", borderRadius: 20, border: "1px solid " + (helpFilter === f.k ? "#37352F" : "#E0E0DE"), background: helpFilter === f.k ? "#37352F" : "#fff", color: helpFilter === f.k ? "#fff" : "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{f.l}</button>
+                    ))}
+                  </div>
+                  {shown.map((h) => {
+                    const isMine = h.userId === user.id;
+                    const answers = [...(helpResponses[h.id] || [])].sort((a, b) => (b.id === h.bestResponseId) - (a.id === h.bestResponseId));
+                    return (
+              <div key={h.id} data-help-id={h.id} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${h.urgent && !answered(h) ? "#FECACA" : "#E8E7E4"}`, padding: "20px 24px", marginBottom: 14, scrollMarginTop: 80 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 4, background: h.urgency === "High" ? "#FEE" : h.urgency === "Medium" ? "#FFF3E0" : "#E3FCEF", color: h.urgency === "High" ? "#DC2626" : h.urgency === "Medium" ? "#E65100" : "#22A06B", border: `1px solid ${h.urgency === "High" ? "#FECACA" : h.urgency === "Medium" ? "#FFE0B2" : "#B5E4CA"}` }}>
-                      {h.urgency} Priority
-                    </span>
-                    <span style={{ fontSize: 11, color: "#9B9A97" }}>· {h.category}</span>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
+                    {h.urgent && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 4, background: "#FEF2F2", color: "#DC2626", border: "1px solid #FECACA" }}>🚨 Urgent</span>}
+                    {answered(h)
+                      ? <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 4, background: "#E3FCEF", color: "#1A7F52", border: "1px solid #ABF5D1" }}>✓ Answered</span>
+                      : <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 4, background: "#F7F6F3", color: "#6B6A67", border: "1px solid #ECEBE8" }}>Still open</span>}
+                    <span style={{ fontSize: 11, color: "#9B9A97" }}>{h.category}{h.city ? ` · ${h.city}` : ""}</span>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
-                    {h.userId === user.id && <button onClick={async () => { if (confirm("Delete this help request?")) { try { await api.deleteHelpRequest(h.id); } catch(e) {} setHelpRequests(prev => prev.filter(x => x.id !== h.id)); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 14 })}</button>}
-                    <button onClick={async () => { setReportConfirm({ type: "help", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
+                    {isMine && <button aria-label="Delete question" onClick={async () => { if (confirm("Delete this question?")) { try { await api.deleteHelpRequest(h.id); } catch(e) {} setHelpRequests(prev => prev.filter(x => x.id !== h.id)); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 14 })}</button>}
+                    <button aria-label="Report" onClick={async () => { setReportConfirm({ type: "help", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
                   </div>
                 </div>
                 <h3 onClick={() => openHelp(h)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font, cursor: "pointer" }}>{h.title}</h3>
-                <p onClick={() => openHelp(h)} style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical", cursor: "pointer" }}>{h.description}</p>
+                <p onClick={() => openHelp(h)} style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical", cursor: "pointer", whiteSpace: "pre-wrap" }}>{h.description}</p>
+                {h.urgent && selectedHelp === h.id && <div style={{ margin: "10px 0" }}><EmergencyHelp /></div>}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Avatar name={h.user} size={24} />
+                  <button type="button" onClick={() => h.userId && h.userId !== user.id ? openMember(h.userId) : null} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: h.userId && !isMine ? "pointer" : "default" }}>
+                    <Avatar name={h.user} size={24} url={h.avatar} />
                     <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{h.user} · {timeAgo(h.timestamp)}</span>
-                  </div>
-                  <button onClick={() => { if (selectedHelp === h.id) setSelectedHelp(null); else openHelp(h); }} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>{Icons.message({ size: 14 })} {!h.responses ? "Reply" : h.responses === 1 ? "1 response" : `${h.responses} responses`}</button>
+                  </button>
+                  <button onClick={() => { if (selectedHelp === h.id) setSelectedHelp(null); else openHelp(h); }} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>
+                    {Icons.message({ size: 14 })} {h.responses === 1 ? "1 answer" : `${h.responses || 0} answers`}
+                  </button>
                 </div>
                 {selectedHelp === h.id && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
-                    {/* Existing responses */}
-                    {(helpResponses[h.id] || []).map((r, ri) => (
-                      <div key={r.id || ri} style={{ display: "flex", gap: 10, marginBottom: 14, padding: "10px 12px", background: "#FAFAF8", borderRadius: 8 }}>
-                        <Avatar name={r.user} size={28} />
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{r.user}</span>
-                            <span style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{timeAgo(r.time)}</span>
+                    {isMine && answers.length > 0 && !h.bestResponseId && <p style={{ fontSize: 12, color: "#6B6A67", marginBottom: 10, fontFamily: font }}>Did an answer help? Mark it as the best answer, so others find it too.</p>}
+                    {answers.map((r, ri) => {
+                      const best = r.id === h.bestResponseId;
+                      const own = r.userId === user.id;
+                      return (
+                      <div key={r.id || ri} style={{ display: "flex", gap: 10, marginBottom: 12, padding: "10px 12px", background: best ? "#F0FBF5" : "#FAFAF8", border: best ? "1px solid #ABF5D1" : "1px solid transparent", borderRadius: 8 }}>
+                        <button type="button" onClick={() => r.userId && !own ? openMember(r.userId) : null} aria-label={r.user} style={{ background: "none", border: "none", padding: 0, cursor: r.userId && !own ? "pointer" : "default", alignSelf: "flex-start" }}><Avatar name={r.user} size={28} url={r.avatar} /></button>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{r.user}{best && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: "#1A7F52" }}>✓ Best answer</span>}</span>
+                            <span style={{ fontSize: 10, color: "#9B9A97", fontFamily: font, flexShrink: 0 }}>{timeAgo(r.time)}</span>
                           </div>
-                          <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 4, lineHeight: 1.5, fontFamily: font }}>{r.text}</p>
+                          <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 4, lineHeight: 1.5, fontFamily: font, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{r.text}</p>
+                          {typeof r.id === "string" && (
+                            <div style={{ display: "flex", gap: 12, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
+                              {own
+                                ? (r.thanks > 0 && <span style={{ fontSize: 12, color: "#6B6A67", fontFamily: font }}>🙏 {r.thanks === 1 ? "1 thanks" : `${r.thanks} thanks`}</span>)
+                                : <button onClick={() => thankAnswer(h.id, r)} aria-pressed={myThanks.has(r.id)} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, border: "1px solid " + (myThanks.has(r.id) ? "#37352F" : "#E0E0DE"), background: myThanks.has(r.id) ? "#37352F" : "#fff", color: myThanks.has(r.id) ? "#fff" : "#5F5E5B", cursor: "pointer", fontFamily: font }}>🙏 Thanks{r.thanks > 0 ? ` · ${r.thanks}` : ""}</button>}
+                              {isMine && !own && <button onClick={() => chooseBestAnswer(h, r.id)} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, border: "1px solid #ABF5D1", background: best ? "#fff" : "#E3FCEF", color: "#1A7F52", cursor: "pointer", fontFamily: font, fontWeight: 600 }}>{best ? "Undo best answer" : "✓ Best answer"}</button>}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     {/* Write new response */}
                     <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                       <Avatar name={user.name} size={28} url={user.avatar_url} />
                       <div style={{ flex: 1 }}>
-                        <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder="Write a response to help..." maxLength={TEXT_LIMIT} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 60, resize: "none", boxSizing: "border-box" }} />
+                        <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder={isMine ? "Add more details..." : "Share what you know..."} maxLength={TEXT_LIMIT} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, resize: "vertical", minHeight: 60, boxSizing: "border-box" }} />
                         <CharCount value={helpResponse} />
                         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                           <button disabled={!helpResponse.trim()} onClick={async () => {
                             const text = helpResponse;
-                            try { await api.addHelpResponse(h.id, text); } catch(e) {
-                              alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your response couldn't be posted. Please try again.");
+                            let saved = null;
+                            try { saved = (await api.addHelpResponse(h.id, text))?.[0] || null; } catch(e) {
+                              alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your answer couldn't be posted. Please try again.");
                               return;
                             }
                             setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, responses: (x.responses || 0) + 1 } : x));
-                            setHelpResponses(prev => ({ ...prev, [h.id]: [...(prev[h.id] || []), { id: Date.now(), text, user: user.name, time: Date.now() }] }));
+                            setHelpResponses(prev => ({ ...prev, [h.id]: [...(prev[h.id] || []), { id: saved?.id || Date.now(), userId: user.id, text, user: user.name, avatar: user.avatar_url || "", thanks: 0, time: Date.now() }] }));
                             setHelpResponse("");
-                          }} style={{ ...btnPrimary, padding: "7px 16px", fontSize: 12, opacity: helpResponse.trim() ? 1 : 0.4 }}>Post Response</button>
+                          }} style={{ ...btnPrimary, padding: "7px 16px", fontSize: 12, opacity: helpResponse.trim() ? 1 : 0.4 }}>{isMine ? "Post" : "Post answer"}</button>
                         </div>
                       </div>
                     </div>
                   </div>
                 )}
               </div>
-            ))}
-            {listsLoaded && helpRequests.length === 0 && <EmptyCard text="No requests yet. Ask the first question." />}
+                    );
+                  })}
+                  {listsLoaded && shown.length === 0 && <EmptyCard text={helpRequests.length === 0 ? "No questions yet. Ask the first one." : helpFilter === "open" ? "Every question has an answer. 🙏" : "No answered questions yet."} />}
+                </>
+              );
+            })()}
           </div>
         );
 
@@ -3593,6 +3806,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   {m.years_abroad && <span style={chip}>{m.years_abroad} abroad</span>}
                 </div>
                 {m.bio && <p style={{ fontSize: 14, color: "#37352F", lineHeight: 1.6, margin: "16px auto 0", maxWidth: 480, fontFamily: font, overflowWrap: "anywhere" }}>{m.bio}</p>}
+                {m.ask_me_about && (
+                  <div style={{ marginTop: 16 }}>
+                    <p style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Ask me about</p>
+                    <TopicChips text={m.ask_me_about} center onPick={(t) => { setNetworkSearch(t); setView("network"); }} />
+                  </div>
+                )}
+                {mp.helped > 0 && <p style={{ fontSize: 13, color: "#1A7F52", fontWeight: 600, marginTop: 12, fontFamily: font }}>🙏 Helped {mp.helped === 1 ? "1 member" : `${mp.helped} members`}</p>}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "16px 0 0", fontSize: 13, fontFamily: font }}>
                   <span><b style={{ color: "#37352F" }}>{counts.followers || 0}</b> <span style={{ color: "#9B9A97" }}>{counts.followers === 1 ? "follower" : "followers"}</span></span>
                   <span style={{ color: "#D4D4D2" }}>·</span>
@@ -3690,6 +3910,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 )}
               </div>
               {user.ambassadorCity && <div style={{ marginTop: 12 }}><AmbassadorBadge city={user.ambassadorCity} /></div>}
+              {user.askMeAbout
+                ? <div style={{ marginTop: 14 }}><p style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Ask me about</p><TopicChips text={user.askMeAbout} center /></div>
+                : <button type="button" onClick={() => openProfileEditor("askMeAbout")} style={{ marginTop: 14, background: "none", border: "1px dashed #C7D2FE", borderRadius: 20, padding: "5px 12px", fontSize: 12, color: "#3730A3", cursor: "pointer", fontFamily: font }}>+ Add what people can ask you about</button>}
+              {myHelped > 0 && <p style={{ fontSize: 13, color: "#1A7F52", fontWeight: 600, marginTop: 12, fontFamily: font }}>🙏 You've helped {myHelped === 1 ? "1 member" : `${myHelped} members`}</p>}
               {user.linkedin_verified && (
                 <div style={{ marginTop: 16 }}>
                   <span style={{ fontSize: 12, color: "#1A7F52", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
@@ -3786,7 +4010,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
             {/* Notification Bell */}
             <div style={{ position: "relative" }}>
-              <button onClick={() => { setNotifOpen(!notifOpen); setSettingsOpen(false); }}
+              <button onClick={() => { setNotifOpen(!notifOpen); setSettingsOpen(false); }} aria-label="Notifications" aria-expanded={notifOpen}
                 style={{ background: "none", border: "none", cursor: "pointer", padding: 6, color: "#9B9A97", position: "relative", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
                 onMouseOver={(e) => (e.currentTarget.style.background = "#F0EFED")}
                 onMouseOut={(e) => (e.currentTarget.style.background = "none")}>
@@ -3824,6 +4048,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             }
                           } else if (n.type === "request") {
                             // Don't navigate for requests - they have Accept/Ignore buttons
+                          } else if (["answer", "thanks", "best", "urgent", "rsvp", "member"].includes(n.type)) {
+                            setNotifOpen(false);
+                            Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+                            if (n.type === "rsvp") {
+                              const ev = events.find(e => e.id === n.reference_id);
+                              setView("events");
+                              if (ev) setExpandedEvent(ev);
+                            } else if (n.type === "member") {
+                              if (n.actor_id) openMember(n.actor_id);
+                            } else if (n.reference_id) {
+                              openQuestion(n.reference_id);
+                            }
                           } else if (n.type === "event") {
                             setView("events");
                             setNotifOpen(false);
@@ -3848,6 +4085,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                                 <Avatar name={n.actor} size={36} />
                                 {n.type === "like" && <div style={{ position: "absolute", bottom: -2, left: -2, width: 16, height: 16, borderRadius: "50%", background: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{Icons.heart({ size: 8, fill: "#fff", stroke: "#fff" })}</div>}
                                 {n.type === "comment" && <div style={{ position: "absolute", bottom: -2, left: -2, width: 16, height: 16, borderRadius: "50%", background: "#22C55E", display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{Icons.message({ size: 8, stroke: "#fff" })}</div>}
+                                {NOTIF_BADGE[n.type] && <div aria-hidden="true" style={{ position: "absolute", bottom: -3, left: -3, width: 18, height: 18, borderRadius: "50%", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, boxShadow: "0 0 0 1px #E8E7E4" }}>{NOTIF_BADGE[n.type]}</div>}
                               </div>
                             ) : (
                               <div style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: n.type === "event" ? "#FFF3E0" : n.type === "group" ? "#EDF4FF" : "#F0EFED", color: n.type === "event" ? "#E65100" : n.type === "group" ? "#5B9CFF" : "#5F5E5B" }}>
@@ -5256,18 +5494,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             ) : (() => {
               const requestCity = newGroupCity.trim();
-              const existingGroup = requestCity ? groups.find(g => g.name.toLowerCase() === `indians in ${requestCity.toLowerCase()}`) : null;
+              const uni = newGroupKind === "University";
+              const requestName = uni ? `Indians at ${requestCity}` : `Indians in ${requestCity}`;
+              const existingGroup = requestCity ? groups.find(g => g.name.toLowerCase() === requestName.toLowerCase()) : null;
               const canSubmit = !!requestCity && !existingGroup;
               return (
             <div style={{ padding: 24 }}>
-              {/* City Name input */}
+              {/* A city or a university */}
+              <div role="radiogroup" aria-label="Kind of group" style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8, marginBottom: 18, width: "fit-content" }}>
+                {[["City", "🏙️ A city"], ["University", "🎓 A university"]].map(([k, l]) => (
+                  <button key={k} role="radio" aria-checked={newGroupKind === k} onClick={() => { setNewGroupKind(k); setGroupRequestError(""); }} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: newGroupKind === k ? "#fff" : "transparent", color: newGroupKind === k ? "#37352F" : "#6B6A67", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{l}</button>
+                ))}
+              </div>
+              {/* City or university name */}
               <div style={{ marginBottom: 24 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>
-                  City Name
+                  {uni ? "University" : "City Name"}
                 </label>
                 <input
                   value={newGroupCity} onChange={(e) => { setNewGroupCity(e.target.value); setGroupRequestError(""); }}
-                  placeholder="e.g. Paris"
+                  placeholder={uni ? "e.g. TU Munich" : "e.g. Paris"}
                   style={{
                     width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE",
                     fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F", fontFamily: font, boxSizing: "border-box",
@@ -5282,7 +5528,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     </button>
                   </p>
                 ) : (
-                  <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 8, fontFamily: font, overflowWrap: "anywhere" }}>Your group will be called Indians in {requestCity || "…"}</p>
+                  <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 8, fontFamily: font, overflowWrap: "anywhere" }}>Your group will be called {uni ? "Indians at" : "Indians in"} {requestCity || "…"}</p>
                 )}
                 {groupRequestError && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", marginTop: 8, fontFamily: font }}>{groupRequestError}</p>}
               </div>
@@ -5297,12 +5543,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     if (!canSubmit) return;
                     setGroupRequestError("");
                     try {
-                      await api.requestNewGroup(requestCity);
+                      await api.requestNewGroup(requestCity, newGroupKind);
                       setGroupRequestSent(true);
                       setNewGroupCity("");
                     } catch(e) {
                       setGroupRequestError(isNetworkError(e) ? NETWORK_MESSAGE
-                        : /23505/.test(e.message || "") ? `There's already a community or a request for ${requestCity}.`
+                        : /23505/.test(e.message || "") ? `There's already a group or a request for ${requestCity}.`
                         : "Your request couldn't be sent. Please try again.");
                     }
                   }}
@@ -5405,7 +5651,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setHelpModal(false)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Ask for Help</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Ask a question</h3>
               <button onClick={() => setHelpModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
@@ -5413,27 +5659,27 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
                 <input style={inputStyle} value={newHelp.title} onChange={(e) => setNewHelp({ ...newHelp, title: e.target.value })} placeholder="Summarize your need..." />
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
-                  <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.category} onChange={(e) => setNewHelp({ ...newHelp, category: e.target.value })}>
-                    {["General", "Housing", "Health", "Legal/Visa", "Education", "Jobs", "Travel"].map((c) => <option key={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Priority</label>
-                  <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.urgency} onChange={(e) => setNewHelp({ ...newHelp, urgency: e.target.value })}>
-                    {["Low", "Medium", "High"].map((u) => <option key={u}>{u}</option>)}
-                  </select>
-                </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
+                <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.category} onChange={(e) => setNewHelp({ ...newHelp, category: e.target.value })}>
+                  {["General", "Housing", "Health", "Legal/Visa", "Education", "Jobs", "Travel", "Money & tax", "Family"].map((c) => <option key={c}>{c}</option>)}
+                </select>
               </div>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
                 <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newHelp.description} onChange={(e) => setNewHelp({ ...newHelp, description: e.target.value })} placeholder="Provide details..." />
               </div>
+              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: newHelp.urgent ? 10 : 20, cursor: "pointer", fontFamily: font }}>
+                <input type="checkbox" checked={!!newHelp.urgent} onChange={(e) => setNewHelp({ ...newHelp, urgent: e.target.checked })} style={{ marginTop: 3 }} />
+                <span style={{ fontSize: 13, color: "#37352F", lineHeight: 1.5 }}>
+                  <strong>🚨 This is urgent</strong>
+                  <span style={{ display: "block", fontSize: 12, color: "#6B6A67" }}>A hospital visit, a lost passport, a death in the family. Members in {user.city || "your city"} and its ambassador get a notification. One urgent question a day.</span>
+                </span>
+              </label>
+              {newHelp.urgent && <div style={{ marginBottom: 20 }}><EmergencyHelp /></div>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setHelpModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>
-                <button onClick={createHelp} disabled={!newHelp.title || !newHelp.description} style={{ ...btnPrimary, opacity: newHelp.title && newHelp.description ? 1 : 0.4 }}>Post Request</button>
+                <button onClick={createHelp} disabled={!newHelp.title || !newHelp.description} style={{ ...btnPrimary, opacity: newHelp.title && newHelp.description ? 1 : 0.4 }}>Post question</button>
               </div>
             </div>
           </div>
@@ -5478,6 +5724,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {abroad && textField("hometown", "Hometown in India", "e.g. Pune, Maharashtra")}
                 {abroad && selectField("yearsAbroad", "Years abroad", "When did you move abroad?", YEARS_OPTIONS)}
                 {selectField("occupationStatus", "Status", "Choose your status", OCCUPATION_TYPES)}
+                {textField("askMeAbout", "Ask me about", "e.g. Blue Card, moving with kids, buying a flat", {
+                  input: { maxLength: 300 },
+                  help: "Up to 5 topics you can help with, separated by commas. Members can find you by them.",
+                })}
                 {textField("linkedinUrl", "LinkedIn profile", "linkedin.com/in/your-name", {
                   input: { inputMode: "url", autoCapitalize: "none", spellCheck: false },
                   help: user.verificationStatus === "approved" ? "Changing your LinkedIn sends your profile back for a quick review." : null,

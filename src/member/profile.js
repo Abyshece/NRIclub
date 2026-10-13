@@ -27,6 +27,7 @@ export function mapProfile(p) {
     // Verified badge, whether the member was approved via LinkedIn or not.
     linkedin_verified: !!p.linkedin_verified,
     ambassadorCity: p.ambassador_city || "",
+    askMeAbout: p.ask_me_about || "",
     verificationStatus: p.verification_status || "incomplete",
     verificationMessage: p.verification_message || "",
     // Private (owner and admins only), used to prefill "Update details".

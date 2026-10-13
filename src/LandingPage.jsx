@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import * as api from "./supabaseApi";
 import FlagIcon from "./FlagIcon";
+import { slug } from "./content/slug";
 import { TermsModal, PrivacyModal } from "./member/LegalModals";
 
 // ============================================================================
@@ -111,7 +112,7 @@ const STEPS = [
 
 // Shown until the live list of city groups loads (or if it can't).
 const POPULAR_CITIES = ["London", "Toronto", "New York", "Dubai", "Singapore", "Sydney", "Berlin", "San Francisco", "Melbourne", "Frankfurt", "Amsterdam", "Auckland"];
-const cityHref = (city) => `/city/${encodeURIComponent(city)}`;
+const cityHref = (city) => `/city/${slug(city) || encodeURIComponent(city)}`;
 
 const ArrowRight = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -268,6 +269,8 @@ export default function LandingPage({ onJoin, onLogin }) {
       <footer style={{ ...section, borderTop: "1px solid #F0EFED", paddingTop: 22, paddingBottom: 30, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, fontSize: 13, color: MUTED }}>
         <Logo />
         <div>
+          <a href="/guides" style={{ ...footerLink, display: "inline-block" }}>NRI guides</a>
+          <span aria-hidden="true"> · </span>
           <button type="button" onClick={() => setLegal("terms")} style={footerLink}>Terms of Use</button>
           <span aria-hidden="true"> · </span>
           <button type="button" onClick={() => setLegal("privacy")} style={footerLink}>Privacy Policy</button>

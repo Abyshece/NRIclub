@@ -17,11 +17,22 @@ const GetVerified = lazy(() => import("./member/GetVerified"));
 const TermsGate = lazy(() => import("./member/TermsGate"));
 const AdminPanel = lazy(() => import("./admin/AdminPanel"));
 const CityPage = lazy(() => import("./CityPage"));
+const GuidePage = lazy(() => import("./GuidePage"));
 
-// The city in a public city page's address (/city/<city>), or "".
-const cityInPath = () => {
-  const m = /^\/city\/([^/]+)/.exec(window.location.pathname);
-  try { return m ? decodeURIComponent(m[1]).replace(/[-_+]+/g, " ").trim().slice(0, 100) : ""; } catch (e) { return ""; }
+// A public page's address: /city/<city>, /guides or /guides/<slug>.
+const publicPage = () => {
+  const path = window.location.pathname;
+  const city = /^\/city\/([^/]+)/.exec(path);
+  if (city) {
+    try {
+      const name = decodeURIComponent(city[1]).replace(/[-_+]+/g, " ").trim().slice(0, 100);
+      if (name) return { kind: "city", city: name };
+    } catch (e) {}
+    return null;
+  }
+  const guide = /^\/guides(?:\/([a-z0-9-]+))?\/?$/.exec(path);
+  if (guide) return { kind: "guide", slug: guide[1] || "" };
+  return null;
 };
 
 const LoadingScreen = () => (
@@ -488,10 +499,12 @@ export default function App() {
     if (authState === "link-expired") return <ExpiredLinkPage onContinue={() => restoreSession("login")} />;
     if (authState === "admin" && isAdmin) return <AdminPanel onLogout={handleAdminLogout} />;
     const landing = () => {
-      const city = cityInPath();
-      return city
-        ? <CityPage city={city} onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />
-        : <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
+      const page = publicPage();
+      const join = () => setAuthState("signup");
+      const login = () => setAuthState("login");
+      if (page?.kind === "city") return <CityPage city={page.city} onJoin={join} onLogin={login} />;
+      if (page?.kind === "guide") return <GuidePage slug={page.slug} onJoin={join} onLogin={login} />;
+      return <LandingPage onJoin={join} onLogin={login} />;
     };
     if (authState === "landing") return landing();
     if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
