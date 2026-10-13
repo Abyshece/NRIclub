@@ -1584,6 +1584,11 @@ export async function adminSetMemberStatus(userId, status) {
   return adminWrite("PATCH", `/rest/v1/profile_private?id=eq.${userId}`, { status });
 }
 
+// Makes a member the NRIClub ambassador for a city ('' to stop).
+export async function adminSetAmbassador(userId, city) {
+  return adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}`, { ambassador_city: city });
+}
+
 // Members waiting for a decision (or any other verification statuses), with
 // everything needed to decide: email, LinkedIn or note, voucher, duplicates.
 export async function adminVerificationQueue(statuses = ["pending"]) {
@@ -1663,4 +1668,12 @@ export async function adminDeleteContent(table, id) {
 
 export async function adminNotify(userId, type, text) {
   return restCall("POST", "/rest/v1/notifications", { user_id: userId, type, text });
+}
+
+// ---- Public city pages (work without signing in; counts only) ----
+export async function getCitySummary(city) {
+  return restCall("POST", "/rest/v1/rpc/city_summary", { p_city: city });
+}
+export async function getPublicCities() {
+  return (await restCall("POST", "/rest/v1/rpc/public_cities", {})) || [];
 }

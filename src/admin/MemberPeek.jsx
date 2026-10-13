@@ -52,7 +52,7 @@ function CheckMark({ ok }) {
 
 export default function MemberPeek({
   member, loadingDetails = false, index = 0, total = 1,
-  onClose, onPrev, onNext, onDecision, onSetStatus,
+  onClose, onPrev, onNext, onDecision, onSetStatus, onSetAmbassador,
 }) {
   const [composer, setComposer] = useState(null); // null | "needs_info" | "rejected"
   const [message, setMessage] = useState("");
@@ -61,6 +61,7 @@ export default function MemberPeek({
   const [error, setError] = useState("");
   const [confirmBlock, setConfirmBlock] = useState(false);
   const [blockError, setBlockError] = useState("");
+  const [ambassadorDraft, setAmbassadorDraft] = useState(null); // null = not editing
   const peekRef = useRef(null);
   const textRef = useRef(null);
   const idRef = useRef(member.id);
@@ -69,7 +70,7 @@ export default function MemberPeek({
   useEffect(() => {
     idRef.current = member.id;
     setComposer(null); setMessage(""); setNote(""); setBusy(""); setError("");
-    setConfirmBlock(false); setBlockError("");
+    setConfirmBlock(false); setBlockError(""); setAmbassadorDraft(null);
     peekRef.current?.focus({ preventScroll: true });
     peekRef.current?.querySelector(".adm-peek-body")?.scrollTo?.(0, 0);
   }, [member.id]);
@@ -234,6 +235,22 @@ export default function MemberPeek({
               {member.submitted_at
                 ? <>{formatDate(member.submitted_at, { time: true })}<span className="adm-faint adm-small">{ago(member.submitted_at)}</span></>
                 : <span className="adm-faint">Not yet</span>}
+            </Prop>
+          )}
+          {onSetAmbassador && (
+            <Prop icon="flag" label="Ambassador">
+              {ambassadorDraft === null ? (
+                <>
+                  {member.ambassador_city || <span className="adm-faint">—</span>}
+                  <Button variant="ghost" size="sm" onClick={() => setAmbassadorDraft(member.ambassador_city || placeLabel(member).split(",")[0] || "")}>{member.ambassador_city ? "Change" : "Make ambassador"}</Button>
+                </>
+              ) : (
+                <form onSubmit={(e) => { e.preventDefault(); const city = ambassadorDraft.trim(); run("ambassador", () => onSetAmbassador(member, city)).then((ok) => { if (ok) setAmbassadorDraft(null); }); }} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <input value={ambassadorDraft} onChange={(e) => setAmbassadorDraft(e.target.value)} placeholder="City (empty to remove)" aria-label="Ambassador city" maxLength={100} style={{ padding: "5px 8px", border: "1px solid #E0E0DE", borderRadius: 6, fontSize: 13, fontFamily: "inherit", minWidth: 0, flex: 1 }} />
+                  <Button variant="primary" size="sm" type="submit" disabled={busy === "ambassador"}>Save</Button>
+                  <Button variant="ghost" size="sm" type="button" onClick={() => setAmbassadorDraft(null)}>Cancel</Button>
+                </form>
+              )}
             </Prop>
           )}
           {member.reviewed_at ? <Prop icon="checkCircle" label="Last reviewed">{formatDate(member.reviewed_at, { time: true })}</Prop> : null}

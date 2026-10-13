@@ -16,6 +16,13 @@ const SignUpFlow = lazy(() => import("./member/SignUpFlow"));
 const GetVerified = lazy(() => import("./member/GetVerified"));
 const TermsGate = lazy(() => import("./member/TermsGate"));
 const AdminPanel = lazy(() => import("./admin/AdminPanel"));
+const CityPage = lazy(() => import("./CityPage"));
+
+// The city in a public city page's address (/city/<city>), or "".
+const cityInPath = () => {
+  const m = /^\/city\/([^/]+)/.exec(window.location.pathname);
+  try { return m ? decodeURIComponent(m[1]).replace(/[-_+]+/g, " ").trim().slice(0, 100) : ""; } catch (e) { return ""; }
+};
 
 const LoadingScreen = () => (
   <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
@@ -480,7 +487,13 @@ export default function App() {
     }
     if (authState === "link-expired") return <ExpiredLinkPage onContinue={() => restoreSession("login")} />;
     if (authState === "admin" && isAdmin) return <AdminPanel onLogout={handleAdminLogout} />;
-    if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
+    const landing = () => {
+      const city = cityInPath();
+      return city
+        ? <CityPage city={city} onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />
+        : <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
+    };
+    if (authState === "landing") return landing();
     if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
     if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
     if (authState === "authenticated" && user) {
@@ -499,7 +512,7 @@ export default function App() {
       }
       return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
     }
-    return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
+    return landing();
   })();
 
   return (

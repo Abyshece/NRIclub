@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import * as api from "./supabaseApi";
 import FlagIcon from "./FlagIcon";
 import { TermsModal, PrivacyModal } from "./member/LegalModals";
 
@@ -108,6 +109,10 @@ const STEPS = [
   { title: "Connect", text: "Find your city, your people and your place." },
 ];
 
+// Shown until the live list of city groups loads (or if it can't).
+const POPULAR_CITIES = ["London", "Toronto", "New York", "Dubai", "Singapore", "Sydney", "Berlin", "San Francisco", "Melbourne", "Frankfurt", "Amsterdam", "Auckland"];
+const cityHref = (city) => `/city/${encodeURIComponent(city)}`;
+
 const ArrowRight = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
@@ -133,6 +138,11 @@ const section = { width: "100%", maxWidth: 1100, margin: "0 auto", padding: "0 2
 
 export default function LandingPage({ onJoin, onLogin }) {
   const [legal, setLegal] = useState(null); // "terms" | "privacy"
+  const [cities, setCities] = useState(POPULAR_CITIES);
+  const [cityQuery, setCityQuery] = useState("");
+  useEffect(() => {
+    api.getPublicCities().then((rows) => { if (rows.length >= 6) setCities(rows.slice(0, 12).map((r) => r.city)); }).catch(() => {});
+  }, []);
   const footerLink = { background: "none", border: "none", padding: 4, cursor: "pointer", color: MUTED, fontSize: 13, fontFamily: "inherit", textDecoration: "underline" };
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: INK, fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", overflowX: "hidden" }}>
@@ -204,6 +214,25 @@ export default function LandingPage({ onJoin, onLogin }) {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* FIND YOUR CITY */}
+      <section style={{ ...section, paddingTop: 8, paddingBottom: 80, textAlign: "center" }}>
+        <div style={{ ...eyebrow, color: NAVY }}>Find your city</div>
+        <h2 style={h2}>Indians near you.</h2>
+        <form onSubmit={(e) => { e.preventDefault(); const c = cityQuery.trim(); if (c) window.location.href = cityHref(c); }} style={{ display: "flex", gap: 8, maxWidth: 420, margin: "8px auto 18px" }}>
+          <input value={cityQuery} onChange={(e) => setCityQuery(e.target.value)} placeholder="Your city, e.g. Munich" aria-label="Your city" maxLength={100}
+            style={{ flex: 1, minWidth: 0, padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 15, fontFamily: "inherit", outline: "none" }} />
+          <button type="submit" style={{ ...primaryBtn, padding: "12px 18px", fontSize: 15 }}>Go</button>
+        </form>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 720, margin: "0 auto" }}>
+          {cities.map((c) => (
+            <a key={c} href={cityHref(c)} style={{ fontSize: 14, padding: "7px 14px", borderRadius: 999, border: "1px solid #E0E0DE", color: INK, textDecoration: "none", background: "#fff" }}>{c}</a>
+          ))}
+        </div>
+        <p style={{ fontSize: 14, color: MUTED, marginTop: 22 }}>
+          Want to bring Indians in your city together? <a href={"mailto:support@nriclub.app?subject=" + encodeURIComponent("I'd like to be a city ambassador")} style={{ color: INK, fontWeight: 600 }}>Become a city ambassador</a>
+        </p>
       </section>
 
       {/* HOW IT WORKS */}

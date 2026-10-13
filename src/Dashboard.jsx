@@ -9,6 +9,7 @@ import ProfileChecklist, { setupSteps, useProfileCardDismissed } from "./member/
 import { TermsContent, PrivacyContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
 import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { rateLimiter } from "./rateLimiter";
+import { upcomingFestival } from "./festivals";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
 
@@ -163,6 +164,11 @@ const isNewMember = (createdAt) => !!createdAt && Date.now() - new Date(createdA
 const NewBadge = () => (
   <span title="Joined in the last 30 days" style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em", background: "#FFF3E0", color: "#C2410C", border: "1px solid #FED7AA" }}>NEW</span>
 );
+
+// A city ambassador: welcomes newcomers and runs the city's group and events.
+const AmbassadorBadge = ({ city }) => city ? (
+  <span title={`NRIClub ambassador for ${city}`} style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em", background: "#EEF2FF", color: "#000080", border: "1px solid #C7D2FE", whiteSpace: "nowrap" }}>AMBASSADOR · {city.toUpperCase()}</span>
+) : null;
 
 // Market categories as members see them, and what each one asks for.
 const MARKET_LABELS = { Housing: "Housing & roommates", Referrals: "Job referrals", Travel: "Travel companion" };
@@ -602,6 +608,7 @@ const EmptyCard = ({ text, action, onAction }) => (
 // can be shared and the browser's Back and Forward buttons work.
 //   /  /find  /groups[/id]  /events[/id]  /help  /docs[/id]  /market[/id]
 //   /messages[/conversation id]  /profile  /u/<member id>  /post/<post id>
+//   /city/<city> (the public city page's address; members get its group)
 const parsePath = (path, selfId) => {
   const [, a = "", b = ""] = (path || "/").split("/");
   let id = "";
@@ -617,6 +624,7 @@ const parsePath = (path, selfId) => {
     case "profile": return { view: "profile" };
     case "u": return id && id !== selfId ? { view: "member", member: id } : { view: id ? "profile" : "network" };
     case "post": return { view: "home", post: id || null };
+    case "city": return { view: "groups", pending: id ? { kind: "city", id } : null };
     default: return { view: "home" };
   }
 };
@@ -1165,7 +1173,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         setNetworkUsers(dbUsers.map(u => ({
           id: u.id, name: u.name, profession: u.profession || "", location: u.location || "",
           hometown: u.hometown || "", yearsAbroad: u.years_abroad || "", linkedinUrl: u.linkedin_url || "",
-          linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "", createdAt: u.created_at || "",
+          linkedin_verified: !!u.linkedin_verified, countryCode: u.country_code || "", createdAt: u.created_at || "", ambassadorCity: u.ambassador_city || "",
           avatar_url: u.avatar_url || "",
           followers: connCounts[u.id]?.followers || 0, following: connCounts[u.id]?.following || 0,
         })));
@@ -1430,16 +1438,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   useEffect(() => {
     if (!pendingRoute || !canBrowse) return;
     const { kind, id } = pendingRoute;
-    const list = kind === "group" ? groups : kind === "event" ? events : kind === "doc" ? docs : marketItems;
-    const item = list.find(x => String(x.id) === id);
+    const list = kind === "group" || kind === "city" ? groups : kind === "event" ? events : kind === "doc" ? docs : marketItems;
+    const item = kind === "city"
+      ? list.find(x => (x.name || "").toLowerCase() === `indians in ${id}`.toLowerCase())
+      : list.find(x => String(x.id) === id);
     if (!item && !listsLoaded) return;
     if (!item) {
-      try { window.history.replaceState(null, "", kind === "group" ? "/groups" : kind === "event" ? "/events" : kind === "doc" ? "/docs" : "/market"); } catch (e) {}
+      try { window.history.replaceState(null, "", kind === "group" || kind === "city" ? "/groups" : kind === "event" ? "/events" : kind === "doc" ? "/docs" : "/market"); } catch (e) {}
       setPendingRoute(null);
       return;
     }
     setPendingRoute(null);
-    if (kind === "group") { setGroupMembers([]); setSelectedGroup(item); }
+    // A city address becomes the group's own, so Back doesn't reopen it.
+    if (kind === "city") { try { window.history.replaceState(null, "", `/groups/${item.id}`); } catch (e) {} }
+    if (kind === "group" || kind === "city") { setGroupMembers([]); setSelectedGroup(item); }
     else if (kind === "event") setExpandedEvent(item);
     else if (kind === "doc") setSelectedDoc(item);
     else setExpandedMarketItem(item);
@@ -1727,6 +1739,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const welcomeKey = `nriclub_welcome_done_${user.id}`;
   const [welcomeDone, setWelcomeDone] = useState(() => { try { return !!localStorage.getItem(welcomeKey); } catch (e) { return true; } });
   const dismissWelcome = () => { setWelcomeDone(true); try { localStorage.setItem(welcomeKey, "1"); } catch (e) {} };
+  // A festival coming up in the next three weeks: find a celebration or host one.
+  const [festival] = useState(() => upcomingFestival());
+  const festivalKey = festival ? `nriclub_festival_${festival.date}` : "";
+  const [festivalHidden, setFestivalHidden] = useState(() => { try { return !festivalKey || !!localStorage.getItem(festivalKey); } catch (e) { return false; } });
+  const hideFestival = () => { setFestivalHidden(true); try { localStorage.setItem(festivalKey, "1"); } catch (e) {} };
   // "Introduce yourself": a ready-made first post for the city group.
   const introKey = `nriclub_intro_done_${user.id}`;
   const [introDone, setIntroDone] = useState(() => { try { return !!localStorage.getItem(introKey); } catch (e) { return false; } });
@@ -1980,6 +1997,18 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         }).sort((a, b) => feedSort === "popular" ? (b.likes || 0) - (a.likes || 0) : (b.timestamp || 0) - (a.timestamp || 0));
         return (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
+            {festival && !festivalHidden && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "linear-gradient(90deg, rgba(255,153,51,0.10), rgba(19,136,8,0.07))", border: "1px solid #F3E3CF", borderRadius: 14, padding: "12px 14px", marginBottom: 16, fontFamily: font }}>
+                <span style={{ fontSize: 24 }} aria-hidden="true">{festival.emoji}</span>
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <p style={{ fontSize: 14, fontWeight: 700, color: "#37352F" }}>{festival.daysLeft === 0 ? `Happy ${festival.name}!` : `${festival.name} is on ${festival.when}`}</p>
+                  <p style={{ fontSize: 12, color: "#6B6A67" }}>Celebrate with Indians near you.</p>
+                </div>
+                <button onClick={() => { setEventSearch(festival.search); setView("events"); }} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 12, fontWeight: 600, color: "#37352F", cursor: "pointer", fontFamily: font }}>Find one</button>
+                <button onClick={() => { setNewEvent(prev => ({ ...prev, title: `${festival.name} celebration`, date: festival.date })); setEventModal(true); }} style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: "#37352F", fontSize: 12, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Host one</button>
+                <button onClick={hideFestival} aria-label="Hide" style={{ padding: 4, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 14 })}</button>
+              </div>
+            )}
             {/* Welcome: a new member's first steps */}
             {!welcomeDone && (myFollowing.length === 0 || !introDone) && (
               <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 20px 16px", marginBottom: 20, position: "relative" }}>
@@ -2196,6 +2225,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 14, marginBottom: 2, flexWrap: "wrap", justifyContent: "center" }}>
                         <h3 onClick={() => openMember(u.id)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font, cursor: "pointer" }}>{u.name}</h3>
                         {isNewMember(u.createdAt) && <NewBadge />}
+                        <AmbassadorBadge city={u.ambassadorCity} />
                         {u.linkedin_verified && (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="#22C55E" stroke="none" role="img" aria-label="Verified member">
                             <title>Verified member</title>
@@ -3548,6 +3578,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>{m.name || "Member"}</h2>
                   {isNewMember(m.created_at) && <NewBadge />}
+                  <AmbassadorBadge city={m.ambassador_city} />
                   {m.linkedin_verified && (
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E" role="img" aria-label="Verified member"><title>Verified member</title><path d="M12 2l2.4 2.2 3.3-.4.9 3.2 2.9 1.7-1.2 3.1 1.2 3.1-2.9 1.7-.9 3.2-3.3-.4L12 22l-2.4-2.2-3.3.4-.9-3.2-2.9-1.7L3.7 12 2.5 8.9l2.9-1.7.9-3.2 3.3.4z"/><path d="M8.5 12.5l2.2 2.2 4.8-4.8" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                   )}
@@ -3658,6 +3689,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </span>
                 )}
               </div>
+              {user.ambassadorCity && <div style={{ marginTop: 12 }}><AmbassadorBadge city={user.ambassadorCity} /></div>}
               {user.linkedin_verified && (
                 <div style={{ marginTop: 16 }}>
                   <span style={{ fontSize: 12, color: "#1A7F52", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
