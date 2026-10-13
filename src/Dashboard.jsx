@@ -1334,6 +1334,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // Set once everything below has loaded, so an empty list can say so
   // instead of looking blank while it loads.
   const [listsLoaded, setListsLoaded] = useState(false);
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
 
   // Load data on mount, and again if the member may browse after all (e.g.
   // a rejection was undone). Locked members load nothing. All requests go
@@ -1341,16 +1342,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   useEffect(() => {
     if (!canBrowse) return;
     (async () => {
-      const safe = (promise) => promise.catch(e => { console.error("Load failed:", e?.message || e); return null; });
-      const [dbPosts, dbGroups, myGids, myLikes, myReports, dbEvents, myR, dbHelp, allResponses, conns, sentData, dbDocs, blocked, dbNotifs, dbMarket] = await Promise.all([
-        safe(api.getPosts()), safe(api.getGroups()), safe(api.getMyGroupIds()), safe(api.getUserLikes()), safe(api.getMyReports()),
+      // A request that hasn't answered in 20 seconds counts as failed, so one
+      // slow list can't keep the others from showing.
+      const safe = (promise) => Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timed out")), 20000)),
+      ]).catch(e => { console.error("Load failed:", e?.message || e); return null; });
+      const core = Promise.all([safe(api.getPosts()), safe(api.getGroups()), safe(api.getMyGroupIds())]);
+      const rest = Promise.all([
+        safe(api.getUserLikes()), safe(api.getMyReports()),
         safe(api.getEvents()), safe(api.getMyRsvps()), safe(api.getHelpRequests()), safe(api.getHelpResponses(null)),
         safe(api.getMyConnections()), safe(api.getSentNamastes()), safe(api.getDocs()), safe(api.getBlockedUsers()),
         safe(api.getNotifications()), safe(api.getMarketItems()),
       ]);
+      // Groups and posts show as soon as they're here.
+      const [dbPosts, dbGroups, myGids] = await core;
       const loadedGroups = (dbGroups || []).map(g => ({ id: g.id, name: g.name, description: g.description, members: g.members_count, category: g.category, pinnedPostId: g.pinned_post_id || null, joined: (myGids || []).includes(g.id) }));
       setGroups(loadedGroups);
       setPosts((dbPosts || []).map(p => toPost(p, loadedGroups)));
+      setGroupsLoaded(true);
+      const [myLikes, myReports, dbEvents, myR, dbHelp, allResponses, conns, sentData, dbDocs, blocked, dbNotifs, dbMarket] = await rest;
       if (myLikes && myLikes.length) setLikedPostIds(new Set(myLikes.map(l => l.post_id)));
       if (myReports && myReports.length) setReportedIds(new Set(myReports.filter(r => r.reported_post_id).map(r => r.reported_post_id)));
       setEvents((dbEvents || []).map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
@@ -2956,13 +2967,18 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               ))}
             </div>
 
-            {groupTabList.length === 0 && (
+            {groupTabList.length === 0 && !groupsLoaded && (
+              <div role="status" style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, fontFamily: font }}>Loading groups…</div>
+            )}
+            {groupTabList.length === 0 && groupsLoaded && (
               <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", color: "#9B9A97", fontSize: 14, fontFamily: font }}>
-                No groups found.
-                <br />
-                <button onClick={() => setGroupSearchQuery("")} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", cursor: "pointer", marginTop: 8, fontSize: 13, fontFamily: font }}>
-                  Clear Search
-                </button>
+                {groups.length === 0 ? "Groups couldn't be loaded. Please reload the page." : "No groups found."}
+                {(groupSearchQuery || groupKind !== "all") && (<>
+                  <br />
+                  <button onClick={() => { setGroupSearchQuery(""); setGroupKind("all"); }} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", cursor: "pointer", marginTop: 8, fontSize: 13, fontFamily: font }}>
+                    Clear Search
+                  </button>
+                </>)}
                 {searchedCity && (
                   <>
                     <br />
