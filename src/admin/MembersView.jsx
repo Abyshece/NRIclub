@@ -232,6 +232,13 @@ export default function MembersView({ users, total = users.length, blockedTotal 
     });
   };
 
+  const setAmbassador = async (m, city) => {
+    await api.adminSetAmbassador(m.id, city);
+    touch(m.id);
+    onMemberChange(m.id, { ambassador_city: city });
+    showToast({ text: city ? `${shortName(m.name)} is now the ambassador for ${city}` : `${shortName(m.name)} is no longer an ambassador` });
+  };
+
   const setStatus = async (m, status) => {
     await api.adminSetMemberStatus(m.id, status);
     touch(m.id);
@@ -360,6 +367,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
           onNext={openIndex >= 0 && openIndex < filtered.length - 1 ? () => setOpenId(filtered[openIndex + 1].id) : null}
           onDecision={decide}
           onSetStatus={setStatus}
+          onSetAmbassador={setAmbassador}
         />
       )}
 
