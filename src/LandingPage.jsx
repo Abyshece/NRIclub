@@ -96,8 +96,8 @@ const FEATURES = [
     icon: icon(["M3 9h18", "M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z", "M8 2v4", "M16 2v4"]) },
   { title: "Guides from members", text: "Visas, housing, jobs and taxes, explained by those who live there.", color: SAFFRON,
     icon: icon(["M4 19.5A2.5 2.5 0 016.5 17H20", "M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"]) },
-  { title: "Marketplace", text: "Buy, sell and rent among people you can trust.", color: GREEN,
-    icon: icon(["M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z", "M3 6h18", "M16 10a4 4 0 01-8 0"]) },
+  { title: "Private messages", text: "Talk one to one with members, safely and without sharing your number.", color: GREEN,
+    icon: icon(["M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"]) },
   { title: "Verified members", text: "Every member is checked, so you know who you're talking to.", color: NAVY,
     icon: icon(["M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z", "M9 12l2 2 4-4"]) },
 ];

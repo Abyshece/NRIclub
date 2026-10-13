@@ -561,7 +561,30 @@ const EmptyCard = ({ text, action, onAction }) => (
 // ============================================================================
 // POST CARD
 // ============================================================================
-const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup }) => {
+// The page an address points at. Every page has its own address, so links
+// can be shared and the browser's Back and Forward buttons work.
+//   /  /find  /groups[/id]  /events[/id]  /help  /docs[/id]  /market[/id]
+//   /messages[/conversation id]  /profile  /u/<member id>  /post/<post id>
+const parsePath = (path, selfId) => {
+  const [, a = "", b = ""] = (path || "/").split("/");
+  let id = "";
+  try { id = decodeURIComponent(b); } catch (e) {}
+  switch (a) {
+    case "find": return { view: "network" };
+    case "groups": return { view: "groups", pending: id ? { kind: "group", id } : null };
+    case "events": return { view: "events", pending: id ? { kind: "event", id } : null };
+    case "help": return { view: "help" };
+    case "docs": return { view: "docs", pending: id ? { kind: "doc", id } : null };
+    case "market": return { view: "market", pending: id ? { kind: "market", id } : null };
+    case "messages": return { view: "messages", convo: id || null };
+    case "profile": return { view: "profile" };
+    case "u": return id && id !== selfId ? { view: "member", member: id } : { view: id ? "profile" : "network" };
+    case "post": return { view: "home", post: id || null };
+    default: return { view: "home" };
+  }
+};
+
+const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup, onOpenProfile }) => {
   const [liked, setLiked] = useState(initialLiked || false);
   const [likeCount, setLikeCount] = useState(post.likes || 0);
   const [showComments, setShowComments] = useState(false);
@@ -575,7 +598,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
   // Copies a link that opens this post (see the shared-link check in the
   // Dashboard). Without clipboard access the link is shown to copy by hand.
   const copyLink = async () => {
-    const url = `${window.location.origin}${window.location.pathname}#post=${post.id}`;
+    const url = `${window.location.origin}/post/${post.id}`;
     try {
       await navigator.clipboard.writeText(url);
     } catch (e) {
@@ -647,13 +670,15 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
       {isReported && <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.6)", borderRadius: 14, zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}><span style={{ background: "#FEF2F2", color: "#DC2626", padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>Reported — Under Review</span></div>}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 12 }}>
-          <Avatar name={author.name || "User"} size={40} url={author.avatar_url} />
+          <button type="button" onClick={() => onOpenProfile?.(post.userId)} aria-label={`${author.name || "Member"}'s profile`} style={{ background: "none", border: "none", padding: 0, cursor: onOpenProfile ? "pointer" : "default", alignSelf: "flex-start" }}>
+            <Avatar name={author.name || "User"} size={40} url={author.avatar_url} />
+          </button>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 14, color: "#37352F" }}>{author.name}</div>
+            <div onClick={() => onOpenProfile?.(post.userId)} style={{ fontWeight: 600, fontSize: 14, color: "#37352F", cursor: onOpenProfile ? "pointer" : "default" }}>{author.name}</div>
             <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>
               {author.profession} • {author.location}
             </div>
-            <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 1 }}>From: {author.hometown}</div>
+            {author.hometown && <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 1 }}>From: {author.hometown}</div>}
             {post.groupName && !hideGroup && (
               <div style={{ fontSize: 10, color: "#5B9CFF", marginTop: 3, display: "flex", alignItems: "center", gap: 3, fontWeight: 600 }}>
                 {Icons.users({ size: 10, stroke: "#5B9CFF" })} Posted in {post.groupName}
@@ -855,7 +880,11 @@ const BlockedOverlay = ({ onSignOut, font }) => {
 const STATUS_FIELDS = ["verificationStatus", "status", "reviewFlag", "termsVersion", "ageConfirmedAt", "termsAcceptedAt"];
 
 const Dashboard = ({ user, onLogout, onUserUpdate }) => {
-  const [view, setView] = useState("home");
+  const [startRoute] = useState(() => parsePath(window.location.pathname, user?.id));
+  const [view, setView] = useState(startRoute.view);
+  // A group, event, doc or listing the address points at, opened once the
+  // lists have loaded.
+  const [pendingRoute, setPendingRoute] = useState(startRoute.pending || null);
   const [posts, setPosts] = useState([]);
   const [likedPostIds, setLikedPostIds] = useState(new Set());
   const [events, setEvents] = useState([]);
@@ -864,7 +893,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [myFollowers, setMyFollowers] = useState([]);
   const [myFollowing, setMyFollowing] = useState([]);
   const [followModal, setFollowModal] = useState(null);
-  const [profilePreview, setProfilePreview] = useState(null);
+  // The member whose profile page is open (view "member").
+  const [memberId, setMemberId] = useState(startRoute.member || null);
+  const [memberPage, setMemberPage] = useState(null); // { id, profile, posts, groupIds, error }
   const [acceptedConnections, setAcceptedConnections] = useState(new Set());
   const [newPost, setNewPost] = useState("");
   const [createPostModal, setCreatePostModal] = useState(null); // "text" while "Create a post" is open
@@ -911,7 +942,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [eventSearch, setEventSearch] = useState("");
   const [eventCityFilter, setEventCityFilter] = useState("All");
   // Messages state
-  const [selectedConvo, setSelectedConvo] = useState(null);
+  const [selectedConvo, setSelectedConvo] = useState(startRoute.convo || null);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState({});
   const [convos, setConvos] = useState([]);
@@ -1356,7 +1387,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // Until then it stays in the address bar, so it still works after logging in.
   const readSharedLink = () => {
     const m = /^#(post|event)=([\w-]+)$/.exec(window.location.hash);
-    return m ? { kind: m[1], id: m[2] } : null;
+    if (m) return { kind: m[1], id: m[2] };
+    const p = /^\/post\/([\w-]+)$/.exec(window.location.pathname);
+    return p ? { kind: "post", id: p[1] } : null;
   };
   const [sharedLink, setSharedLink] = useState(readSharedLink);
   useEffect(() => {
@@ -1371,7 +1404,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     const event = kind === "event" && events.find(e => String(e.id) === id);
     if (!post && !event && !listsLoaded) return;
     setSharedLink(null);
-    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
+    try { window.history.replaceState(null, "", window.location.pathname.startsWith("/post/") ? "/" : window.location.pathname + window.location.search); } catch (e) {}
     if (kind === "event") {
       if (event) { setView("events"); setExpandedEvent(event); }
       else alert("This event isn't available any more.");
@@ -1390,6 +1423,64 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       highlightPost(id);
     })();
   }, [sharedLink, canBrowse, posts, events, listsLoaded]);
+
+  // The address of what's on screen. Moving to another page adds a browser
+  // history entry; Back and Forward move between them.
+  const currentPath = (() => {
+    if (expandedEvent) return `/events/${expandedEvent.id}`;
+    if (expandedMarketItem) return `/market/${expandedMarketItem.id}`;
+    switch (view) {
+      case "network": return "/find";
+      case "groups": return selectedGroup ? `/groups/${selectedGroup.id}` : "/groups";
+      case "events": return "/events";
+      case "help": return "/help";
+      case "docs": return selectedDoc ? `/docs/${selectedDoc.id}` : "/docs";
+      case "market": return "/market";
+      case "messages": return selectedConvo ? `/messages/${selectedConvo}` : "/messages";
+      case "profile": return "/profile";
+      case "member": return memberId ? `/u/${memberId}` : "/find";
+      default: return "/";
+    }
+  })();
+  useEffect(() => {
+    if (pendingRoute || sharedLink) return; // still opening what the address points at
+    if (window.location.pathname !== currentPath) {
+      try { window.history.pushState(null, "", currentPath); } catch (e) {}
+    }
+  }, [currentPath, pendingRoute, sharedLink]);
+  useEffect(() => {
+    const onPop = () => {
+      const r = parsePath(window.location.pathname, user.id);
+      setExpandedEvent(null);
+      setExpandedMarketItem(null);
+      setSelectedGroup(null);
+      setSelectedDoc(null);
+      setSelectedConvo(r.convo || null);
+      if (r.member) setMemberId(r.member);
+      setPendingRoute(r.pending || null);
+      if (r.post) setSharedLink({ kind: "post", id: r.post });
+      setView(r.view);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  useEffect(() => {
+    if (!pendingRoute || !canBrowse) return;
+    const { kind, id } = pendingRoute;
+    const list = kind === "group" ? groups : kind === "event" ? events : kind === "doc" ? docs : marketItems;
+    const item = list.find(x => String(x.id) === id);
+    if (!item && !listsLoaded) return;
+    if (!item) {
+      try { window.history.replaceState(null, "", kind === "group" ? "/groups" : kind === "event" ? "/events" : kind === "doc" ? "/docs" : "/market"); } catch (e) {}
+      setPendingRoute(null);
+      return;
+    }
+    setPendingRoute(null);
+    if (kind === "group") { setGroupMembers([]); setSelectedGroup(item); }
+    else if (kind === "event") setExpandedEvent(item);
+    else if (kind === "doc") setSelectedDoc(item);
+    else setExpandedMarketItem(item);
+  }, [pendingRoute, canBrowse, groups, events, docs, marketItems, listsLoaded]);
 
   // Load the member's own settings (also while a member flagged for review
   // waits for approval, so saving them never overwrites them with defaults).
@@ -1677,6 +1768,34 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  // A member's profile page; your own name opens your own profile.
+  const openMember = (id) => {
+    if (!id) return;
+    if (id === user.id) { setView("profile"); return; }
+    setMemberId(id);
+    setView("member");
+    window.scrollTo(0, 0);
+  };
+  useEffect(() => {
+    if (view !== "member" || !memberId || !canBrowse) return;
+    let gone = false;
+    setMemberPage(prev => (prev && prev.id === memberId ? prev : { id: memberId }));
+    (async () => {
+      try {
+        const [profile, rows, groupIds] = await Promise.all([
+          api.getProfile(memberId), api.getUserPosts(memberId).catch(() => []), api.getUserGroupIds(memberId).catch(() => []),
+        ]);
+        if (gone) return;
+        setMemberPage(profile
+          ? { id: memberId, profile, posts: (rows || []).map(p => toPost(p, groups)), groupIds }
+          : { id: memberId, error: "This member isn't available." });
+      } catch (e) {
+        if (!gone) setMemberPage({ id: memberId, error: isNetworkError(e) ? NETWORK_MESSAGE : "We couldn't load this profile. Please try again." });
+      }
+    })();
+    return () => { gone = true; };
+  }, [view, memberId, canBrowse]);
+
   const openProfileEditor = (focusField = null) => {
     setEditProfile({ ...user });
     setProfileErrors({});
@@ -1838,7 +1957,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {/* Feed List */}
             {feedPosts.length > 0 ? feedPosts.map((p) => (
-              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />
+              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onOpenProfile={openMember} />
             )) : (feedFiltered || feedPostType !== "all") ? (
               <EmptyCard text="No posts match these filters." action="Clear filters" onAction={() => { setFeedFilters(noFeedFilters); setFeedPostType("all"); }} />
             ) : listsLoaded && (
@@ -1949,12 +2068,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         {Icons.flag({ size: 14 })}
                       </button>
 
-                      {/* Avatar */}
-                      <Avatar name={u.name} size={76} url={u.avatar_url} />
+                      {/* Avatar (opens their profile) */}
+                      <button type="button" onClick={() => openMember(u.id)} aria-label={`${u.name}'s profile`} style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}>
+                        <Avatar name={u.name} size={76} url={u.avatar_url} />
+                      </button>
 
                       {/* Name + verified badge + NRI badge */}
                       <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 14, marginBottom: 2, flexWrap: "wrap", justifyContent: "center" }}>
-                        <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>{u.name}</h3>
+                        <h3 onClick={() => openMember(u.id)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font, cursor: "pointer" }}>{u.name}</h3>
                         {u.linkedin_verified && (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="#22C55E" stroke="none" role="img" aria-label="Verified member">
                             <title>Verified member</title>
@@ -2200,7 +2321,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   )}
 
                   {groupPosts.length > 0 ? (
-                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} hideGroup />)
+                    groupPosts.map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} hideGroup onOpenProfile={openMember} />)
                   ) : (
                     <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                       No posts in this community yet. Be the first to say hello!
@@ -2241,10 +2362,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   const outsideCityNames = Object.keys(outsideByCities).sort();
                   const MemberCard = ({ u }) => (
                     <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-                      <Avatar name={u.name} size={44} url={u.avatar_url} />
+                      <button type="button" onClick={() => openMember(u.id)} aria-label={`${u.name}'s profile`} style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}>
+                        <Avatar name={u.name} size={44} url={u.avatar_url} />
+                      </button>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name}</h4>
+                          <h4 onClick={() => openMember(u.id)} style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font, cursor: "pointer" }}>{u.name}</h4>
                           <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 3,
                             background: isUserNRI(u) ? "#E3FCEF" : "#FFF3E0",
                             color: isUserNRI(u) ? "#22A06B" : "#E65100",
@@ -2626,7 +2749,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <button onClick={() => setReportConfirm({ type: "event", id: e.id, name: e.title })} aria-label="Report" title="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 8, display: "flex" }}>{Icons.flag({ size: 14 })}</button>
                       {e.organizerId === user.id && <button onClick={async () => { if (confirm("Delete this event?")) { try { await api.deleteEvent(e.id); } catch(e2) {} setEvents(prev => prev.filter(x => x.id !== e.id)); } }} aria-label="Delete event" title="Delete event" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 8, display: "flex" }}>{Icons.trash({ size: 14 })}</button>}
                       <button onClick={() => {
-                        const shareUrl = `${window.location.origin}${window.location.pathname}#event=${e.id}`;
+                        const shareUrl = `${window.location.origin}/events/${e.id}`;
                         const shareText = `${e.title}\n${eventDate(e)} at ${eventTime(e)}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
                         if (navigator.share) navigator.share({ title: e.title, text: shareText, url: e.link || shareUrl }).catch(() => {});
                         else { navigator.clipboard.writeText(shareText); alert("Event details copied to clipboard!"); }
@@ -3124,8 +3247,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ padding: "12px 18px", borderBottom: "1px solid #E8E7E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                       <button className="msg-back" onClick={() => setSelectedConvo(null)} aria-label="Back to conversations" style={{ background: "none", border: "none", cursor: "pointer", color: "#5F5E5B", padding: 8, margin: "-8px 0 -8px -8px", fontSize: 22, lineHeight: 1 }}>‹</button>
-                      <Avatar name={activeConvo.name} size={32} url={activeConvo.avatar_url} />
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeConvo.name}</div>
+                      <button type="button" onClick={() => activeConvo.otherUserId && openMember(activeConvo.otherUserId)} style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+                        <Avatar name={activeConvo.name} size={32} url={activeConvo.avatar_url} />
+                        <span style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeConvo.name}</span>
+                      </button>
                     </div>
                     <div style={{ position: "relative" }}>
                       <button onClick={() => setChatSettings(!chatSettings)} aria-label="Chat options" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.dots({ size: 18 })}</button>
@@ -3183,6 +3308,81 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           </div>
           </div>
         );
+
+      case "member": {
+        const mp = memberPage && memberPage.id === memberId ? memberPage : null;
+        const m = mp?.profile;
+        const counts = networkUsers.find(u => u.id === memberId) || {};
+        const following = acceptedConnections.has(memberId);
+        const sent = sentNamaste.has(memberId);
+        const shared = m ? groups.filter(g => g.joined && (mp.groupIds || []).includes(g.id)) : [];
+        const chip = { fontSize: 12, color: "#5F5E5B", background: "#F0EFED", padding: "4px 12px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4 };
+        return (
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            <button onClick={() => window.history.length > 1 ? window.history.back() : setView("network")} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#9B9A97", background: "none", border: "none", cursor: "pointer", padding: "0 0 14px", fontFamily: font, fontWeight: 500 }}>
+              {Icons.chevronLeft({ size: 16 })} Back
+            </button>
+            {!mp || (!m && !mp.error) ? (
+              <EmptyCard text="Loading the profile…" />
+            ) : mp.error ? (
+              <EmptyCard text={mp.error} action="Find members" onAction={() => setView("network")} />
+            ) : (<>
+              <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "28px 24px", textAlign: "center", position: "relative", marginBottom: 20 }}>
+                <button onClick={() => setReportConfirm({ type: "user", id: m.id, name: m.name })} aria-label="Report" style={{ position: "absolute", top: 12, right: 12, padding: 8, background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", display: "flex" }}>{Icons.flag({ size: 14 })}</button>
+                <div style={{ display: "flex", justifyContent: "center" }}><Avatar name={m.name || "Member"} size={96} url={m.avatar_url} /></div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
+                  <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>{m.name || "Member"}</h2>
+                  {m.linkedin_verified && (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E" role="img" aria-label="Verified member"><title>Verified member</title><path d="M12 2l2.4 2.2 3.3-.4.9 3.2 2.9 1.7-1.2 3.1 1.2 3.1-2.9 1.7-.9 3.2-3.3-.4L12 22l-2.4-2.2-3.3.4-.9-3.2-2.9-1.7L3.7 12 2.5 8.9l2.9-1.7.9-3.2 3.3.4z"/><path d="M8.5 12.5l2.2 2.2 4.8-4.8" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  )}
+                  {(m.country_code || m.location) && (
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em", background: isUserNRI(m) ? "#E3FCEF" : "#FFF3E0", color: isUserNRI(m) ? "#22A06B" : "#E65100" }}>{isUserNRI(m) ? "NRI" : "IN"}</span>
+                  )}
+                </div>
+                {m.profession && <p style={{ fontSize: 14, color: "#5F5E5B", marginTop: 4, fontFamily: font }}>{m.profession}</p>}
+                <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                  {m.location && <span style={chip}>{Icons.mapPin({ size: 11 })} Lives in {m.location.split(",")[0]}</span>}
+                  {m.hometown && <span style={chip}>{Icons.globe({ size: 11 })} From {m.hometown.split(",")[0]}</span>}
+                  {m.years_abroad && <span style={chip}>{m.years_abroad} abroad</span>}
+                </div>
+                {m.bio && <p style={{ fontSize: 14, color: "#37352F", lineHeight: 1.6, margin: "16px auto 0", maxWidth: 480, fontFamily: font, overflowWrap: "anywhere" }}>{m.bio}</p>}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "16px 0 0", fontSize: 13, fontFamily: font }}>
+                  <span><b style={{ color: "#37352F" }}>{counts.followers || 0}</b> <span style={{ color: "#9B9A97" }}>{counts.followers === 1 ? "follower" : "followers"}</span></span>
+                  <span style={{ color: "#D4D4D2" }}>·</span>
+                  <span><b style={{ color: "#37352F" }}>{counts.following || 0}</b> <span style={{ color: "#9B9A97" }}>following</span></span>
+                  {m.linkedin_url && (<>
+                    <span style={{ color: "#D4D4D2" }}>·</span>
+                    <a href={m.linkedin_url} target="_blank" rel="noopener noreferrer" style={{ color: "#0077B5", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>{Icons.linkedin({ size: 13, stroke: "#0077B5" })} LinkedIn</a>
+                  </>)}
+                </div>
+                <div style={{ display: "flex", gap: 10, marginTop: 22, justifyContent: "center", flexWrap: "wrap" }}>
+                  <button onClick={() => { if (following) { if (confirm(`Unfollow ${m.name}?`)) handleUnfollow(m.id); } else if (!sent) handleSendNamaste(m.id); }} disabled={sent && !following}
+                    style={{ ...btnPrimary, minWidth: 140, justifyContent: "center", background: following ? "#E3FCEF" : sent ? "#F0EFED" : "#37352F", color: following ? "#22A06B" : sent ? "#9B9A97" : "#fff", border: following ? "1px solid #B5E4CA" : "none", cursor: sent && !following ? "default" : "pointer" }}>
+                    {following ? "✓ Following" : sent ? "Namaste sent" : "🙏 Namaste"}
+                  </button>
+                  <button onClick={() => openChatWith({ id: m.id, name: m.name, avatar_url: m.avatar_url })} style={{ padding: "10px 18px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font, fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                    {Icons.message({ size: 14 })} Message
+                  </button>
+                </div>
+              </div>
+              {shared.length > 0 && (
+                <div style={{ marginBottom: 20 }}>
+                  <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, fontFamily: font }}>Groups you share</h4>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {shared.map(g => (
+                      <button key={g.id} onClick={() => { setGroupMembers([]); setSelectedGroup(g); setView("groups"); }} style={{ ...chip, border: "1px solid #E8E7E4", background: "#fff", cursor: "pointer", fontFamily: font, padding: "6px 12px" }}>{Icons.users({ size: 12 })} {g.name}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, fontFamily: font }}>Recent posts</h4>
+              {mp.posts.length > 0
+                ? mp.posts.filter(p => !blockedIds.has(p.userId)).map(p => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />)
+                : <EmptyCard text={`${(m.name || "This member").split(" ")[0]} hasn't posted yet.`} />}
+            </>)}
+          </div>
+        );
+      }
 
       case "profile":
         return (
@@ -3269,7 +3469,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             {profileTab === "posts" ? (
               posts.filter((p) => p.userId === user.id).length > 0 ? (
-                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />)
+                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onOpenProfile={openMember} />)
               ) : (
                 <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                   You haven't posted anything yet.
@@ -3330,7 +3530,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <button style={navBtn("network")} onClick={() => setView("network")}>Find</button>
             <button style={navBtn("groups")} onClick={() => { setView("groups"); setSelectedGroup(null); }}>Groups</button>
             <button style={navBtn("events")} onClick={() => setView("events")}>Events</button>
-            <button style={navBtn("trending")} onClick={() => setView("trending")}>Trending</button>
             <button style={navBtn("docs")} onClick={() => setView("docs")}>Docs</button>
             <button style={navBtn("market")} onClick={() => setView("market")}>Market</button>
             <button style={navBtn("help")} onClick={() => setView("help")}>Help</button>
@@ -3548,7 +3747,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               { v: "network", icon: Icons.search, label: "Find" },
               { v: "groups", icon: Icons.users, label: "Groups" },
               { v: "events", icon: Icons.calendar, label: "Events" },
-              { v: "trending", icon: Icons.trending, label: "Trending" },
               { v: "docs", icon: Icons.file, label: "Docs" },
               { v: "market", icon: Icons.shop, label: "Market" },
               { v: "help", icon: Icons.help, label: "Help" },
@@ -3843,7 +4041,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {!networkReady ? null : networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).length > 0 ? (<>
                   {networkUsers.filter(u => (u.location || "").toLowerCase().includes((user.location || "").split(",")[0].toLowerCase())).slice(0, 4).map(u => (
                     <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
-                      <Avatar name={u.name} size={32} url={u.avatar_url} />
+                      <button type="button" onClick={() => openMember(u.id)} aria-label={`${u.name}'s profile`} style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}>
+                        <Avatar name={u.name} size={32} url={u.avatar_url} />
+                      </button>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</div>
                         <div style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{u.profession}</div>
@@ -4465,7 +4665,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               ) : (
                 (followModal === "followers" ? myFollowers : myFollowing).map((u, i) => (
-                  <div key={u.id || i} onClick={() => { setFollowModal(null); setProfilePreview(networkUsers.find(x => x.id === u.id) || u); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED", cursor: "pointer" }}>
+                  <div key={u.id || i} onClick={() => { setFollowModal(null); openMember(u.id); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 24px", borderBottom: "1px solid #F0EFED", cursor: "pointer" }}>
                     <Avatar name={u.name || "User"} size={40} url={u.avatar_url} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{u.name || "User"}</div>
@@ -4481,72 +4681,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       )}
 
       {/* Profile Preview Modal */}
-      {profilePreview && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setProfilePreview(null)}>
-          <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 380, padding: "32px 28px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", position: "relative" }} onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setProfilePreview(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
-
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <Avatar name={profilePreview.name || "User"} size={80} url={profilePreview.avatar_url} />
-            </div>
-            {/* Name + NRI badge (as on Find cards; left out when residency is unknown) */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 14, flexWrap: "wrap" }}>
-              <h3 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", fontFamily: font }}>{profilePreview.name}</h3>
-              {(profilePreview.countryCode || profilePreview.location) && (
-                <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em",
-                  background: isUserNRI(profilePreview) ? "#E3FCEF" : "#FFF3E0",
-                  color: isUserNRI(profilePreview) ? "#22A06B" : "#E65100",
-                  border: `1px solid ${isUserNRI(profilePreview) ? "#B5E4CA" : "#FFE0B2"}`,
-                }}>{isUserNRI(profilePreview) ? "NRI" : "IN"}</span>
-              )}
-            </div>
-            <p style={{ fontSize: 14, color: "#5F5E5B", marginTop: 4, fontFamily: font }}>{profilePreview.profession || ""}</p>
-            
-            <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-              {(profilePreview.location || profilePreview.location) && (
-                <span style={{ fontSize: 12, color: "#5F5E5B", background: "#F0EFED", padding: "4px 12px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
-                  {Icons.mapPin({ size: 11 })} {(profilePreview.location || "").split(",")[0]}
-                </span>
-              )}
-              {(profilePreview.hometown) && (
-                <span style={{ fontSize: 12, color: "#5F5E5B", background: "#F0EFED", padding: "4px 12px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
-                  {Icons.globe({ size: 11 })} From {(profilePreview.hometown || "").split(",")[0]}
-                </span>
-              )}
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "16px 0", fontSize: 13, fontFamily: font }}>
-              <span><b style={{ color: "#37352F" }}>{profilePreview.followers || 0}</b> <span style={{ color: "#9B9A97" }}>{profilePreview.followers === 1 ? "follower" : "followers"}</span></span>
-              <span style={{ color: "#D4D4D2" }}>·</span>
-              <span><b style={{ color: "#37352F" }}>{profilePreview.following || 0}</b> <span style={{ color: "#9B9A97" }}>following</span></span>
-            </div>
-
-            {profilePreview.linkedinUrl && (
-              <div style={{ marginBottom: 16 }}>
-                <a href={profilePreview.linkedinUrl.startsWith("http") ? profilePreview.linkedinUrl : `https://${profilePreview.linkedinUrl}`} target="_blank" style={{ fontSize: 12, color: "#0077B5", textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                  {Icons.linkedin({ size: 14, stroke: "#0077B5" })} LinkedIn Profile
-                </a>
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-              <button onClick={() => { setProfilePreview(null); if (!acceptedConnections.has(profilePreview.id) && !sentNamaste.has(profilePreview.id)) handleSendNamaste(profilePreview.id); }}
-                disabled={sentNamaste.has(profilePreview.id) || acceptedConnections.has(profilePreview.id)}
-                style={{ flex: 1, padding: "10px", borderRadius: 8, border: acceptedConnections.has(profilePreview.id) ? "1px solid #B5E4CA" : "none", fontSize: 13, fontWeight: 600, cursor: (sentNamaste.has(profilePreview.id) || acceptedConnections.has(profilePreview.id)) ? "default" : "pointer",
-                  background: acceptedConnections.has(profilePreview.id) ? "#E3FCEF" : sentNamaste.has(profilePreview.id) ? "#F0EFED" : "#37352F",
-                  color: acceptedConnections.has(profilePreview.id) ? "#22A06B" : sentNamaste.has(profilePreview.id) ? "#9B9A97" : "#fff", fontFamily: font }}>
-                {acceptedConnections.has(profilePreview.id) ? "Following" : sentNamaste.has(profilePreview.id) ? "Sent" : "Namaste"}
-              </button>
-              <button onClick={async () => {
-                if (await openChatWith(profilePreview)) setProfilePreview(null);
-              }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>
-                {Icons.message({ size: 14 })} Message
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Report Confirmation Modal */}
       {reportConfirm && (
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportConfirm(null)}>
