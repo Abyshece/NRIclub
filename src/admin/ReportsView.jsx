@@ -70,7 +70,7 @@ export const targetKey = (r) => (isProfileReport(r) ? `profile:${r.reported_user
 
 const sameTarget = (a, b) => !isBugReport(b) && targetKey(a) === targetKey(b);
 
-export const personOf = (u) => (u ? { name: u.name, email: u.email } : null);
+export const personOf = (u) => (u ? { name: u.name, email: u.email, linkedin_url: u.linkedin_url || "" } : null);
 
 // A preview of reported content from its row (kind: post, doc, event, help
 // or market).
@@ -118,6 +118,8 @@ function ContentPreview({ r, lookup, onRetry }) {
       <div className="adm-preview">
         <div className="adm-preview-title">Profile: {r.reported_user.name || "Unnamed member"}</div>
         {r.reported_user.email && <div className="adm-preview-text">{r.reported_user.email}</div>}
+        {/* A block records this link if an admin never reviewed their details. */}
+        {r.reported_user.linkedin_url && <div className="adm-preview-text">LinkedIn: {r.reported_user.linkedin_url}</div>}
       </div>
     );
   }
@@ -136,8 +138,10 @@ function ContentPreview({ r, lookup, onRetry }) {
 }
 
 // handledTotal: how many handled member reports there are in all (only the
-// newest are loaded). onReload loads the panel's data again.
-export function ReportsView({ reports, setReports, handledTotal = 0, usersById, onMemberChange, showToast, onReload }) {
+// newest are loaded). onReload loads the panel's data again;
+// onReportsChange(ids) tells the panel which reports' status was just
+// changed here, so a reload that started earlier keeps them as they are now.
+export function ReportsView({ reports, setReports, handledTotal = 0, usersById, onMemberChange, onReportsChange, showToast, onReload }) {
   const [busyId, setBusyId] = useState(null);
   const [confirm, setConfirm] = useState(null); // { report, kind: "remove" | "block" }
   const [confirmError, setConfirmError] = useState("");
@@ -164,7 +168,7 @@ export function ReportsView({ reports, setReports, handledTotal = 0, usersById, 
     try {
       const row = await api.adminGetReportedItem(profile ? "profile" : kindOf(r), profile ? r.reported_user_id : r.reported_post_id);
       let patch = { missing: true };
-      if (row && profile) patch = { reported_user: { name: row.name, email: row.email, status: row.status } };
+      if (row && profile) patch = { reported_user: { name: row.name, email: row.email, linkedin_url: row.linkedin_url || "", status: row.status } };
       if (row && !profile) {
         const preview = contentPreview(kindOf(r), row);
         patch = { reportedContent: preview, contentAuthor: personOf(usersById[preview.authorId]) };
@@ -194,13 +198,19 @@ export function ReportsView({ reports, setReports, handledTotal = 0, usersById, 
     onReload?.();
   };
 
+  // The reports the server just marked as handled (rows it returned).
+  const showHandled = (changed) => {
+    onReportsChange?.(changed.map((x) => x.id));
+    setReports((prev) => markHandled(prev, changed));
+  };
+
   const dismiss = async (r) => {
     if (busyId) return;
     setBusyId(r.id);
     try {
       const changed = await api.adminSetReportStatus([r.id], "reviewed");
       if (changed.length) {
-        setReports((prev) => markHandled(prev, changed));
+        showHandled(changed);
         showToast({ text: "Report dismissed" });
       } else {
         alreadyHandled();
@@ -229,6 +239,25 @@ export function ReportsView({ reports, setReports, handledTotal = 0, usersById, 
     const ids = open.filter((x) => x.id === r.id || sameTarget(r, x)).map((x) => x.id);
     setBusyId(r.id);
     setConfirmError("");
+    // Close the reports first, as removed or blocked ("resolved"). Only
+    // reports that are still open change, so if another admin has handled
+    // them all (perhaps deciding to keep the item), nothing is done.
+    let claimed;
+    try {
+      claimed = await api.adminSetReportStatus(ids, "resolved");
+    } catch (e) {
+      setConfirmError(friendlyError(e));
+      setBusyId(null);
+      return;
+    }
+    if (!claimed.length) {
+      setConfirm(null);
+      setBusyId(null);
+      alreadyHandled();
+      return;
+    }
+    const claimedIds = claimed.map((x) => x.id);
+    onReportsChange?.(claimedIds);
     try {
       if (kind === "remove") await removeContent(r);
       if (kind === "block") {
@@ -238,30 +267,26 @@ export function ReportsView({ reports, setReports, handledTotal = 0, usersById, 
           ? { ...x, reported_user: { ...x.reported_user, status: "blocked" } } : x)));
       }
     } catch (e) {
-      setConfirmError(friendlyError(e));
+      // Nothing was removed or blocked: open the reports again.
+      const reopened = await api.adminReopenReports(claimedIds, "resolved").catch(() => []);
+      onReportsChange?.(claimedIds);
+      const one = claimedIds.length === 1;
+      const state = reopened.length === claimedIds.length
+        ? (one ? "The report is still open." : "The reports are still open.")
+        : (one ? "The report was closed anyway and couldn't be opened again." : "The reports were closed anyway and couldn't be opened again.");
+      const why = friendlyError(e);
+      setConfirmError(`${/[.!?]$/.test(why) ? why : `${why}.`} ${state}`);
       setBusyId(null);
       return;
     }
-    let changed;
-    try {
-      changed = await api.adminSetReportStatus(ids, "resolved");
-    } catch (e) {
-      const done = kind === "remove" ? `The ${CONTENT_NOUN[kindOf(r)]} was removed` : `${who} is blocked`;
-      setConfirmError(`${done}, but the report couldn't be closed: ${friendlyError(e)}`);
-      setBusyId(null);
-      return;
-    }
-    setReports((prev) => markHandled(prev, changed));
+    showHandled(claimed);
     setConfirm(null);
     setBusyId(null);
     const done = kind === "remove" ? "Content removed" : `Blocked ${who}`;
-    // Reports another admin handled meanwhile keep their decision.
-    if (changed.length < ids.length) {
-      const rest = ids.length - changed.length;
-      const others = changed.length === 0
-        ? (ids.length > 1 ? "The reports were" : "The report was")
-        : `${fmt(changed.length)} of ${fmt(ids.length)} reports closed; ${rest === 1 ? "the other was" : "the others were"}`;
-      showToast({ text: `${done}. ${others} already handled by someone else.` });
+    // Reports another admin handled first keep their decision.
+    if (claimed.length < ids.length) {
+      const rest = ids.length - claimed.length;
+      showToast({ text: `${done}. ${fmt(claimed.length)} of ${fmt(ids.length)} reports closed; ${rest === 1 ? "the other was" : "the others were"} already handled by someone else.` });
       onReload?.();
       return;
     }
@@ -357,8 +382,8 @@ function parseBug(r) {
 }
 
 // handledTotal: how many resolved bug reports there are in all (only the
-// newest are loaded). onReload loads the panel's data again.
-export function BugReportsView({ reports, setReports, handledTotal = 0, showToast, onReload }) {
+// newest are loaded). onReload and onReportsChange: as for ReportsView.
+export function BugReportsView({ reports, setReports, handledTotal = 0, onReportsChange, showToast, onReload }) {
   const [busyId, setBusyId] = useState(null);
   const [resolvedLimit, setResolvedLimit] = useState(HANDLED_PAGE);
   const open = reports.filter(isOpenBug);
@@ -371,6 +396,7 @@ export function BugReportsView({ reports, setReports, handledTotal = 0, showToas
     try {
       const changed = await api.adminSetReportStatus([r.id], "resolved");
       if (changed.length) {
+        onReportsChange?.(changed.map((x) => x.id));
         setReports((prev) => markHandled(prev, changed));
         showToast({ text: "Bug report resolved", icon: "check" });
       } else {

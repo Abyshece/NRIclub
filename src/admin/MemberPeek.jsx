@@ -250,6 +250,7 @@ export default function MemberPeek({
                 <span className="adm-linkedin-url">{member.linkedin_url}</span>
               </div>
               {noteText && <blockquote className="adm-quote" style={{ marginTop: 14 }}>{noteText}</blockquote>}
+              {member.verification_note === undefined && !loadingDetails && <p className="adm-faint" style={{ marginTop: 14 }}>Their details didn't load. Close and reopen to try again.</p>}
             </>
           ) : member.verification_note === undefined ? (
             <p className="adm-faint">{loadingDetails ? "Loading…" : "Their details didn't load. Close and reopen to try again."}</p>

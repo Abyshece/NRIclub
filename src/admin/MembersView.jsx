@@ -54,7 +54,9 @@ export default function MembersView({ users, total = users.length, blockedTotal 
 
   // The members list has the public profile; the review queue has the rest
   // (consents, explanation, duplicates, submission, hold). Load it for the
-  // member's status. Resolves when done (never rejects).
+  // member's status. Resolves with the rows when done (null on failure;
+  // never rejects).
+  const loadingRef = useRef({}); // status -> the load in progress
   const loadDetails = (status) => {
     fetchedStatuses.current.add(status);
     setLoadingDetails((l) => ({ ...l, [status]: true }));
@@ -62,7 +64,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
     // Rows are keyed by id, so keep them even if the admin has moved on, but
     // not over members decided on here while they loaded. On failure, forget
     // the status so the next open tries again.
-    return api.adminVerificationQueue([status])
+    const load = api.adminVerificationQueue([status])
       .then((rows) => {
         setDetails((d) => {
           const next = { ...d };
@@ -71,9 +73,16 @@ export default function MembersView({ users, total = users.length, blockedTotal 
           });
           return next;
         });
+        return rows || [];
       })
-      .catch(() => { fetchedStatuses.current.delete(status); })
-      .finally(() => { setLoadingDetails((l) => ({ ...l, [status]: false })); });
+      .catch(() => { fetchedStatuses.current.delete(status); return null; })
+      .finally(() => {
+        if (loadingRef.current[status] !== load) return;
+        delete loadingRef.current[status];
+        setLoadingDetails((l) => ({ ...l, [status]: false }));
+      });
+    loadingRef.current[status] = load;
+    return load;
   };
 
   useEffect(() => {
@@ -87,19 +96,29 @@ export default function MembersView({ users, total = users.length, blockedTotal 
   // decides on their details as they are now. If the name, LinkedIn link,
   // status or hold changed, load their review details again too (until
   // they're back the peek shows only what the members list has); full:
-  // load them again anyway (after a refused decision or an Undo).
+  // load them again anyway (after a refused decision or an Undo). With no
+  // details yet, wait for those loading for their status (since this
+  // refresh started), and load them again if the member isn't among them
+  // (their status changed after that list was loaded, e.g. in another tab,
+  // or the load failed).
   const refreshMember = async (id, { full = false } = {}) => {
     const mark = changes.current[id] || 0;
+    const loading = { ...loadingRef.current };
     let fresh = null;
     try { fresh = await api.adminGetReportedItem("profile", id); } catch { return; }
     if (!fresh || (changes.current[id] || 0) !== mark) return;
     const d = detailsRef.current[id];
+    const status = fresh.verification_status;
     onMemberChange(id, fresh);
-    const stale = !!d && (identityChanged(d, fresh) || d.verification_status !== fresh.verification_status
+    const stale = !!d && (identityChanged(d, fresh) || d.verification_status !== status
       || (d.review_flag || "") !== (fresh.review_flag || ""));
     if (stale) setDetails((prev) => { const next = { ...prev }; delete next[id]; return next; });
-    if (stale || full) await loadDetails(fresh.verification_status);
+    if (stale || full) await loadDetails(status);
     else if (d) patchDetails(id, memberFields(fresh));
+    else {
+      const rows = await (loading[status] || loadingRef.current[status]);
+      if (!rows?.some((r) => r.id === id)) await loadDetails(status);
+    }
   };
 
   // After the database refused a decision (or an Undo): show the member as

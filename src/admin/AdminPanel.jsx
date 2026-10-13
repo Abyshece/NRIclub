@@ -38,6 +38,20 @@ function enrichReports(data) {
   });
 }
 
+// The reports a reload loaded, except those changed here since it started
+// (changed(id)): they keep the status they have now (now: the list shown),
+// and stay listed if the reload missed them (read while they changed).
+function keepChangedReports(loaded, now, changed) {
+  const mine = new Map(now.filter((r) => changed(r.id)).map((r) => [r.id, r]));
+  const out = loaded.map((r) => {
+    const m = mine.get(r.id);
+    mine.delete(r.id);
+    return m && m.status !== r.status ? { ...r, status: m.status, handledHere: m.handledHere } : r;
+  });
+  if (!mine.size) return out;
+  return [...out, ...mine.values()].sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
+}
+
 export default function AdminPanel({ onLogout }) {
   const [page, setPage] = useState(null);
   const [users, setUsers] = useState([]);
@@ -59,29 +73,47 @@ export default function AdminPanel({ onLogout }) {
   usersRef.current = users;
   const countsTimer = useRef(null);
   const countsSeq = useRef(0);
+  const loadSeq = useRef(0);
+  // Counts the changes made here to each member and report, so a reload that
+  // started before one can't bring back what they looked like before it.
+  const memberChanges = useRef({});
+  const reportChanges = useRef({});
 
   const load = useCallback(async () => {
+    const req = ++loadSeq.current;
+    const memberMarks = { ...memberChanges.current };
+    const reportMarks = { ...reportChanges.current };
     setLoading(true);
     setLoadError("");
-    countsSeq.current += 1;
+    const countsMark = ++countsSeq.current;
     const [dash, queue, totals] = await Promise.allSettled([
       api.adminGetDashboardData(),
       api.adminVerificationQueue(["pending"]),
       api.adminCountMembers(),
     ]);
+    // A later reload has started: its answers are newer.
+    if (req !== loadSeq.current) return;
     let pendingCount = 0;
     if (queue.status === "fulfilled") {
       const rows = Array.isArray(queue.value) ? queue.value : [];
       queueCache.current.pending = { rows, at: Date.now() };
       pendingCount = rows.length;
     }
-    setMemberCounts(totals.status === "fulfilled" ? totals.value : null);
+    if (countsMark === countsSeq.current) setMemberCounts(totals.status === "fulfilled" ? totals.value : null);
     if (dash.status === "fulfilled") {
       const data = dash.value;
-      setUsers(data.users);
+      // Members and reports changed here since the reload started stay as
+      // they are now (the reload may have read them before the change).
+      const changedSince = (changes, marks) => (id) => (changes.current[id] || 0) !== (marks[id] || 0);
+      const memberChanged = changedSince(memberChanges, memberMarks);
+      const reportChanged = changedSince(reportChanges, reportMarks);
+      setUsers((prev) => {
+        const now = new Map(prev.filter((u) => memberChanged(u.id)).map((u) => [u.id, u]));
+        return data.users.map((u) => now.get(u.id) || u);
+      });
       setUsersTotal(data.usersTotal ?? data.users.length);
       setGroups(data.groups);
-      setReports(enrichReports(data));
+      setReports((prev) => keepChangedReports(enrichReports(data), prev, reportChanged));
       setHandledTotals({ reports: data.handledReportsTotal ?? 0, bugs: data.handledBugsTotal ?? 0 });
       if (queue.status !== "fulfilled") {
         pendingCount = totals.status === "fulfilled" ? totals.value.byStatus.pending : data.users.filter((u) => u.verification_status === "pending").length;
@@ -140,6 +172,7 @@ export default function AdminPanel({ onLogout }) {
   // (needed for members who aren't among the loaded ones), so the counts can
   // follow straight away.
   const onMemberChange = useCallback((id, patch, before = null) => {
+    memberChanges.current[id] = (memberChanges.current[id] || 0) + 1;
     const old = { ...(usersRef.current.find((u) => u.id === id) || {}), ...(before || {}) };
     setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
     const vsFrom = old.verification_status;
@@ -160,6 +193,11 @@ export default function AdminPanel({ onLogout }) {
     });
     refreshCounts();
   }, [refreshCounts]);
+
+  // The reports (ids) whose status this panel just changed on the server.
+  const onReportsChange = useCallback((ids) => {
+    ids.forEach((id) => { reportChanges.current[id] = (reportChanges.current[id] || 0) + 1; });
+  }, []);
 
   const usersById = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
   const countsExact = !!memberCounts;
@@ -212,9 +250,9 @@ export default function AdminPanel({ onLogout }) {
   } else if (page === "communities") {
     content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} />;
   } else if (page === "reports") {
-    content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} usersById={usersById} onMemberChange={onMemberChange} showToast={showToast} onReload={load} />;
+    content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
   } else if (page === "bugs") {
-    content = <BugReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} showToast={showToast} onReload={load} />;
+    content = <BugReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
   } else {
     content = <OverviewView users={users} membersTotal={membersTotal} blockedTotal={blockedTotal} counts={counts} openReports={openReports} pendingGroups={pendingGroups} onNavigate={go} />;
   }
