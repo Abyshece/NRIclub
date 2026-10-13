@@ -6,7 +6,9 @@ import GetVerified from "./member/GetVerified";
 import CodeEntry from "./member/CodeEntry";
 import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner";
 import ProfileChecklist, { missingProfileItems, useProfileCardDismissed } from "./member/ProfileChecklist";
-import { TermsContent } from "./member/LegalModals";
+import TermsGate from "./member/TermsGate";
+import { TermsContent, PrivacyContent, TermsModal, PrivacyModal } from "./member/LegalModals";
+import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 
 
@@ -84,6 +86,36 @@ const eventDate = (e) => {
   return new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 };
 const eventTime = (e) => (e.date || "").split("•")[1]?.trim() || e.time || "TBD";
+
+// A listing's photos are stored as a JSON list of image links (older ones as
+// a single link). Anything else gives no photos instead of breaking the page.
+const listingPhotos = (value) => {
+  if (!value || typeof value !== "string") return [];
+  let parsed;
+  try { parsed = JSON.parse(value); } catch (e) { parsed = [value]; }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(p => typeof p === "string" && /^https?:\/\//i.test(p));
+};
+
+// The tags stored with a post: its hashtags, each once, plus the
+// "__external__" marker for posts with a link. Kept within the database's
+// limits (30 tags, 1,500 characters in all) so a post can always be published.
+const EXTERNAL_TAG = "__external__";
+const postTags = (content, hasLink) => {
+  const tags = [];
+  let room = 30 - (hasLink ? 1 : 0);
+  let chars = 1500 - (hasLink ? EXTERNAL_TAG.length : 0);
+  for (const h of content.match(/#(\w+)/g) || []) {
+    const tag = h.slice(1);
+    if (!room) break;
+    if (tags.includes(tag) || tag.length > chars) continue;
+    tags.push(tag);
+    room -= 1;
+    chars -= tag.length;
+  }
+  if (hasLink) tags.push(EXTERNAL_TAG);
+  return tags;
+};
 
 const isUserNRI = (userOrLocation) => {
   // The country chosen when getting verified decides when it's known.
@@ -239,6 +271,16 @@ const InfoBanner = ({ text }) => (
   </div>
 );
 
+// Comments, chat messages, doc comments and help responses can be up to
+// 5,000 characters (the database's limit). The count shows once a text gets
+// close to it.
+const TEXT_LIMIT = 5000;
+const CharCount = ({ value, max = TEXT_LIMIT, style }) => (value || "").length < max - 500 ? null : (
+  <div style={{ fontSize: 11, color: value.length >= max ? "#DC2626" : "#9B9A97", textAlign: "right", marginTop: 4, fontFamily: "'DM Sans', sans-serif", ...style }}>
+    {value.length.toLocaleString("en-US")} / {max.toLocaleString("en-US")}
+  </div>
+);
+
 // ============================================================================
 // LANDING PAGE
 // ============================================================================
@@ -286,7 +328,10 @@ const LandingIcons = {
   ),
 };
 
-const LandingPage = ({ onJoin, onLogin }) => (
+const LandingPage = ({ onJoin, onLogin }) => {
+  const [legal, setLegal] = useState(null); // "terms" | "privacy"
+  const footerLink = { background: "none", border: "none", padding: 4, cursor: "pointer", color: "#6B6A67", fontSize: 12, fontFamily: "inherit", textDecoration: "underline" };
+  return (
   <div style={{
     minHeight: "100vh",
     display: "flex",
@@ -511,13 +556,24 @@ const LandingPage = ({ onJoin, onLogin }) => (
         </p>
       </div>
     </div>
+
+    {/* Footer: the Terms and the Privacy Policy, readable before signing up */}
+    <footer style={{ width: "100%", maxWidth: 900, padding: "0 1rem 32px", textAlign: "center", fontSize: 12, color: "#6B6A67" }}>
+      <button type="button" onClick={() => setLegal("terms")} style={footerLink}>Terms of Use</button>
+      <span aria-hidden="true"> · </span>
+      <button type="button" onClick={() => setLegal("privacy")} style={footerLink}>Privacy Policy</button>
+    </footer>
+    {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
+    {legal === "privacy" && <PrivacyModal onClose={() => setLegal(null)} />}
   </div>
-);
+  );
+};
 
 // ============================================================================
 // LOGIN PAGE
 // ============================================================================
-const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
+// notice: a confirmation to show above the form (e.g. after a new password).
+const LoginPage = ({ onComplete, onSignUp, initialEmail = "", notice = "" }) => {
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -706,6 +762,9 @@ const LoginPage = ({ onComplete, onSignUp, initialEmail = "" }) => {
           <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Log in to NRIClub</p>
         </div>
 
+        {notice && !error && (
+          <div role="status" style={{ padding: "12px 16px", background: "#E3FCEF", border: "1px solid #ABF5D1", borderRadius: 8, marginBottom: 16, fontSize: 13, lineHeight: 1.5, color: "#126B45", fontFamily: font }}>{notice}</div>
+        )}
         {error && (
           unconfirmed ? (
             <div role="alert" style={{ ...errorStyle, background: "#FFF8E6", border: "1px solid #FCE7B2", color: "#7A4D00" }}>
@@ -806,11 +865,17 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
     setNewComment("");
     try {
       await api.addComment(post.id, commentText);
-      if (post.userId && post.userId !== user?.id) {
-        const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
-        try { await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
-      }
-    } catch (e) {}
+    } catch (e) {
+      // Take the comment back out and give the text back.
+      setComments(prev => prev.filter(x => x.id !== c.id));
+      setNewComment(prev => prev || commentText);
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your comment couldn't be posted. Please try again.");
+      return;
+    }
+    if (post.userId && post.userId !== user?.id) {
+      const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
+      try { await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
+    }
   };
 
   const author = post.author || {};
@@ -929,13 +994,14 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
             <input
               value={newComment} onChange={(e) => setNewComment(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addComment()}
-              placeholder="Write a comment..."
+              placeholder="Write a comment..." maxLength={TEXT_LIMIT}
               style={{ flex: 1, padding: "8px 14px", borderRadius: 20, border: "1px solid #E8E7E4", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: "'DM Sans', sans-serif" }}
             />
             <button onClick={addComment} disabled={!newComment.trim()} style={{ padding: "8px", borderRadius: "50%", background: newComment.trim() ? "#37352F" : "#E8E7E4", border: "none", cursor: newComment.trim() ? "pointer" : "default", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {Icons.send({ size: 14 })}
             </button>
           </div>
+          <CharCount value={newComment} style={{ marginTop: -10, marginBottom: 12 }} />
           {comments.map((c) => (
             <div key={c.id} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
               <Avatar name={c.user} size={28} />
@@ -1001,6 +1067,36 @@ const BlockedUsersModal = ({ onClose, font }) => {
   );
 };
 
+// Full-screen card for blocked members. Settings can't be reached from here,
+// so the card also lets them download their data or delete their account.
+const BlockedOverlay = ({ onSignOut, font }) => {
+  const { busy, error, download, deleteAccount } = useAccountActions(onSignOut);
+  const link = { background: "none", border: "none", padding: 4, cursor: busy ? "default" : "pointer", color: "#5F5E5B", fontSize: 13, fontWeight: 500, textDecoration: "underline", fontFamily: font };
+  return (
+    <div data-lock-overlay style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div role="alertdialog" aria-modal="true" aria-label="Profile blocked" style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
+        <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
+        </div>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Profile Blocked</h2>
+        <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 20, fontFamily: font }}>
+          Your profile has been blocked by our admin team.
+        </p>
+        <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>
+          If you believe this is an error, please contact <a href="mailto:support@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>support@nriclub.app</a>.
+        </p>
+        <button onClick={onSignOut} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Sign Out</button>
+        <p style={{ margin: "16px 0 0", fontSize: 13, color: "#6B6A67", fontFamily: font }}>
+          <button type="button" onClick={download} aria-disabled={!!busy} style={link}>{busy === "download" ? "Preparing your data..." : "Download my data"}</button>
+          <span aria-hidden="true"> · </span>
+          <button type="button" onClick={deleteAccount} aria-disabled={!!busy} style={link}>{busy === "delete" ? "Deleting..." : "Delete my account"}</button>
+        </p>
+        {error && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", margin: "12px 0 0", lineHeight: 1.5, fontFamily: font }}>{error}</p>}
+      </div>
+    </div>
+  );
+};
+
 const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [view, setView] = useState("home");
   const [posts, setPosts] = useState([]);
@@ -1031,6 +1127,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [helpRequests, setHelpRequests] = useState([]);
   // "Update details" (an admin asked for more information) opens Get verified.
   const [verifyOpen, setVerifyOpen] = useState(false);
+  // Only while the admin's question is still open: a later decision closes it.
+  useEffect(() => { if (user.verificationStatus !== "needs_info") setVerifyOpen(false); }, [user.verificationStatus]);
   const [profileCardDismissed, dismissProfileCard] = useProfileCardDismissed(user.id);
   const [helpModal, setHelpModal] = useState(false);
   const [selectedHelp, setSelectedHelp] = useState(null);
@@ -1062,10 +1160,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
   const lastSeenMsgRef = useRef(null); // Track last seen conversation state
   const lastVerificationNotifRef = useRef(null); // Newest unread verification decision seen
+  const pollCountRef = useRef(0);
   const dashboardRef = useRef(null);
   // Rejected and blocked members only see a full-screen card: make
   // everything behind it unreachable (Tab, screen readers) and focus the card.
   const locked = user?.status === "blocked" || user?.verificationStatus === "rejected";
+  // Whether the database lets this member see other members and what they
+  // post (private.can_browse()): not while locked, and not while a member
+  // flagged for review waits for approval. Nothing is loaded until then.
+  const canBrowse = !locked && (!user?.reviewFlag || user?.verificationStatus === "approved");
   useEffect(() => {
     const root = dashboardRef.current;
     if (!locked || !root) return;
@@ -1088,7 +1191,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [notifications, setNotifications] = useState([]);
   const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
   const [privSettingsLoaded, setPrivSettingsLoaded] = useState(false);
-  const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: false });
+  // marketing mirrors the member's marketing consent (profile_private), the
+  // one place it is kept; email and push live in user_settings.
+  const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: !!user.marketingConsent });
+  const [notifSaving, setNotifSaving] = useState(false);
+  const [dataDownload, setDataDownload] = useState({ busy: false, error: "" });
+  const [legalTab, setLegalTab] = useState("terms"); // Settings > Terms & Policies: "terms" | "privacy"
+  // Opening a settings window shows what is stored now: the marketing
+  // choice, and the Terms first.
+  useEffect(() => {
+    if (settingsModal === "notifications") setNotifSettings(prev => ({ ...prev, marketing: !!user.marketingConsent }));
+    if (settingsModal === "terms") setLegalTab("terms");
+    if (settingsModal === "account") setDataDownload({ busy: false, error: "" });
+  }, [settingsModal]);
   const [accountName, setAccountName] = useState(user.name);
   // Filter modal state
   const [filterModalOpen, setFilterModalOpen] = useState(false);
@@ -1203,8 +1318,53 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     } catch(e) { console.error("Unfollow failed:", e); }
   };
 
-  // Load data on mount
+  // Why another member can't get a message from this one, in plain words, or
+  // null. Their "Receive messages" setting is checked first so the reason
+  // can be given; the database has the final say.
+  const messageBlockedReason = async (otherUserId) => {
+    if (blockedIds.has(otherUserId)) return "You've blocked this member. You can unblock them in Settings → Blocked Users.";
+    try {
+      const targetSettings = await api.getOtherUserSettings(otherUserId);
+      if (targetSettings?.receive_messages === "Nobody") return "This user is not accepting messages.";
+      // Connected = a Namaste request either of them sent was accepted.
+      const connected = acceptedConnections.has(otherUserId) || myFollowers.some(f => f?.id === otherUserId);
+      if (targetSettings?.receive_messages === "Connections Only" && !connected) {
+        return "This user only accepts messages from connections. Send a Namaste request first.";
+      }
+    } catch (e) {}
+    return null;
+  };
+
+  // A message or new conversation the database refused, in plain words.
+  const messageErrorText = (e) => isNetworkError(e) ? NETWORK_MESSAGE
+    : /42501/.test(e?.message || "") ? "You can't send messages to this member right now."
+    : "Your message couldn't be sent. Please try again.";
+
+  // Opens the conversation with another member (starting one if needed) in
+  // Messages. Says why instead when they don't take messages from this member.
+  const openChatWith = async (other) => {
+    const reason = await messageBlockedReason(other.id);
+    if (reason) { alert(reason); return false; }
+    try {
+      const convo = await api.getOrCreateConversation(other.id);
+      if (!convo) throw new Error("No conversation");
+      setConvos(prev => {
+        if (prev.find(c => c.id === convo.id)) return prev;
+        return [{ id: convo.id, name: other.name, otherUserId: other.id, avatar_url: other.avatar_url || "", lastMsg: "", time: "", unread: false }, ...prev];
+      });
+      setSelectedConvo(convo.id);
+      setView("messages");
+      return true;
+    } catch (e) {
+      alert(messageErrorText(e));
+      return false;
+    }
+  };
+
+  // Load data on mount, and again if the member may browse after all (e.g.
+  // a rejection was undone). Locked members load nothing.
   useEffect(() => {
+    if (!canBrowse) return;
     (async () => {
       try {
         const dbPosts = await api.getPosts().catch(e => { console.error("Failed to load posts:", e.message); return []; });
@@ -1313,30 +1473,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           }
         } catch(e) {}
 
-        // Load user settings from DB
-        try {
-          const dbSettings = await api.getUserSettings();
-          if (dbSettings) {
-            setPrivSettings({
-              visibility: dbSettings.profile_visibility || "Everyone",
-              onlineStatus: dbSettings.online_status !== false,
-              namasteRequests: dbSettings.namaste_requests || "Everyone",
-              receiveMessages: dbSettings.receive_messages || "Everyone",
-            });
-            setNotifSettings({
-              email: dbSettings.email_notifications !== false,
-              push: dbSettings.push_notifications !== false,
-              marketing: dbSettings.marketing_emails === true,
-            });
-            setPrivSettingsLoaded(true);
-          }
-        } catch (e) {}
-
         // Load notifications
         try {
           const dbNotifs = await api.getNotifications();
           if (dbNotifs && dbNotifs.length) {
-            lastVerificationNotifRef.current = dbNotifs.find(n => n.type === "verification" && !n.read)?.id || null;
+            // A decision made while the dashboard was loading: reload the status.
+            const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
+            if (decision && decision.id !== lastVerificationNotifRef.current) {
+              lastVerificationNotifRef.current = decision.id;
+              refreshMyProfile();
+            }
             setNotifications(dbNotifs.map(n => ({
               id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
               text: n.text, time: new Date(n.created_at).toLocaleString(),
@@ -1350,8 +1496,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           const dbMarket = await api.getMarketItems();
           if (dbMarket && dbMarket.length) {
             setMarketItems(dbMarket.map(m => {
-              let photos = [];
-              try { photos = JSON.parse(m.image_url || "[]"); } catch(e) { if (m.image_url) photos = [m.image_url]; }
+              const photos = listingPhotos(m.image_url);
               return { id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
             }));
           }
@@ -1361,7 +1506,41 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         setPosts([]); setGroups([]); setEvents([]);
       }
     })();
-  }, []);
+  }, [canBrowse]);
+
+  // Load the member's own settings (also while a member flagged for review
+  // waits for approval, so saving them never overwrites them with defaults).
+  useEffect(() => {
+    if (locked) return;
+    (async () => {
+      try {
+        const dbSettings = await api.getUserSettings();
+        if (dbSettings) {
+          setPrivSettings({
+            visibility: dbSettings.profile_visibility || "Everyone",
+            onlineStatus: dbSettings.online_status !== false,
+            namasteRequests: dbSettings.namaste_requests || "Everyone",
+            receiveMessages: dbSettings.receive_messages || "Everyone",
+          });
+          setNotifSettings(prev => ({
+            ...prev,
+            email: dbSettings.email_notifications !== false,
+            push: dbSettings.push_notifications !== false,
+          }));
+          setPrivSettingsLoaded(true);
+        }
+      } catch (e) {}
+    })();
+  }, [locked]);
+
+  // Locked while the dashboard is open: drop what other members posted, and
+  // load it again if the member may browse later.
+  useEffect(() => {
+    if (canBrowse) return;
+    setPosts([]); setGroups([]); setEvents([]); setHelpRequests([]); setDocs([]); setMarketItems([]);
+    setMyFollowers([]); setMyFollowing([]); setNetworkUsers([]); setNetworkLoaded(false);
+    setConvos([]); setConvosLoaded(false); setChatMessages({}); setSelectedConvo(null);
+  }, [canBrowse]);
 
   const refreshMyProfile = async () => {
     try {
@@ -1378,7 +1557,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     const interval = setInterval(async () => {
       try {
         // Poll for new conversations/messages
-        const dbConvos = await api.getConversations();
+        const dbConvos = canBrowse ? await api.getConversations() : [];
         if (dbConvos && dbConvos.length) {
           const newConvos = dbConvos.map(c => ({
             id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
@@ -1406,7 +1585,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             return newConvos;
           });
         }
+      } catch (e) {}
+      try {
         // Poll for new notifications
+        let reloaded = false;
         const dbNotifs = await api.getNotifications();
         if (dbNotifs && dbNotifs.length) {
           setNotifications(dbNotifs.map(n => ({
@@ -1414,17 +1596,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             text: n.text, time: new Date(n.created_at).toLocaleString(),
             read: n.read, reference_id: n.reference_id,
           })));
-          // An admin decided on this member's verification: reload their status.
+          // An admin decided on this member's verification (including moving
+          // them back to pending): reload their status.
           const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
           if (decision && decision.id !== lastVerificationNotifRef.current) {
             lastVerificationNotifRef.current = decision.id;
             refreshMyProfile();
+            reloaded = true;
           }
         }
+        // A block or unblock leaves no notification: re-read the member's own
+        // status about once a minute as well.
+        pollCountRef.current += 1;
+        if (!reloaded && pollCountRef.current % 12 === 0) refreshMyProfile();
       } catch (e) {}
     }, 5000);
     return () => clearInterval(interval);
-  }, [view]);
+  }, [view, canBrowse]);
 
   // Realtime messages via WebSocket + fast fallback polling
   useEffect(() => {
@@ -1470,13 +1658,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const createPost = async () => {
     if (!newPost.trim() && !postImage) return;
     const cleanContent = validateInput(newPost, 5000);
-    const tags = [];
-    const hashtags = cleanContent.match(/#(\w+)/g);
-    if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
     // Detect external URLs (TikTok, Instagram, YouTube, etc.)
     const urlMatch = newPost.match(/https?:\/\/[^\s]+/i);
     const externalUrl = urlMatch ? urlMatch[0] : null;
-    if (externalUrl) tags.push("__external__");
+    const tags = postTags(cleanContent, !!externalUrl);
     const groupName = selectedGroup ? selectedGroup.name : null;
     const groupId = selectedGroup ? selectedGroup.id : null;
     const imageUrl = postImage?.url || null;
@@ -1769,7 +1954,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       case "network":
         // Load users from DB on first visit
-        if (!networkLoaded) {
+        if (!networkLoaded && canBrowse) {
           setNetworkLoaded(true);
           (async () => {
             try {
@@ -1992,19 +2177,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             <>{Icons.users({ size: 14 })} Namaste</>
                           )}
                         </button>
-                        <button onClick={async () => {
-                          try {
-                            const convo = await api.getOrCreateConversation(u.id);
-                            if (convo) {
-                              setConvos(prev => {
-                                if (prev.find(c => c.id === convo.id)) return prev;
-                                return [{ id: convo.id, name: u.name, otherUserId: u.id, lastMsg: "", time: "", unread: false }, ...prev];
-                              });
-                              setSelectedConvo(convo.id);
-                              setView("messages");
-                            }
-                          } catch(e) { setView("messages"); }
-                        }} style={{
+                        <button onClick={() => openChatWith(u)} style={{
                           padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE",
                           background: "#fff", cursor: "pointer", color: "#5F5E5B", display: "flex",
                           alignItems: "center", justifyContent: "center",
@@ -2723,11 +2896,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                       <Avatar name={user.name} size={28} url={user.avatar_url} />
                       <div style={{ flex: 1 }}>
-                        <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder="Write a response to help..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 60, resize: "none", boxSizing: "border-box" }} />
+                        <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder="Write a response to help..." maxLength={TEXT_LIMIT} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 60, resize: "none", boxSizing: "border-box" }} />
+                        <CharCount value={helpResponse} />
                         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                           <button disabled={!helpResponse.trim()} onClick={async () => {
                             const text = helpResponse;
-                            try { await api.addHelpResponse(h.id, text); } catch(e) {}
+                            try { await api.addHelpResponse(h.id, text); } catch(e) {
+                              alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your response couldn't be posted. Please try again.");
+                              return;
+                            }
                             setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, responses: (x.responses || 0) + 1 } : x));
                             setHelpResponses(prev => ({ ...prev, [h.id]: [...(prev[h.id] || []), { id: Date.now(), text, user: user.name, time: "Just now" }] }));
                             setHelpResponse("");
@@ -2781,16 +2958,25 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
                   <Avatar name={user.name} size={32} url={user.avatar_url || user.avatarUrl} />
                   <div style={{ flex: 1 }}>
-                    <textarea value={docComment} onChange={(e) => setDocComment(e.target.value)} placeholder="Add a comment..." style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 70, resize: "none", boxSizing: "border-box" }} />
+                    <textarea value={docComment} onChange={(e) => setDocComment(e.target.value)} placeholder="Add a comment..." maxLength={TEXT_LIMIT} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, minHeight: 70, resize: "none", boxSizing: "border-box" }} />
+                    <CharCount value={docComment} />
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                       <button disabled={!docComment.trim()} onClick={async () => {
                         const text = docComment;
+                        const docId = selectedDoc.id;
                         const newComment = { id: "c_" + Date.now(), user: user.name, text, time: "Just now" };
-                        const updated = docs.map(d => d.id === selectedDoc.id ? { ...d, comments: [...(d.comments || []), newComment] } : d);
+                        const updated = docs.map(d => d.id === docId ? { ...d, comments: [...(d.comments || []), newComment] } : d);
                         setDocs(updated);
-                        setSelectedDoc(updated.find(d => d.id === selectedDoc.id));
+                        setSelectedDoc(updated.find(d => d.id === docId));
                         setDocComment("");
-                        try { await api.addDocComment(selectedDoc.id, text); } catch(e) {}
+                        try { await api.addDocComment(docId, text); } catch(e) {
+                          // Take the comment back out and give the text back.
+                          const without = (d) => d.id === docId ? { ...d, comments: (d.comments || []).filter(c => c.id !== newComment.id) } : d;
+                          setDocs(prev => prev.map(without));
+                          setSelectedDoc(prev => prev && without(prev));
+                          setDocComment(prev => prev || text);
+                          alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your comment couldn't be posted. Please try again.");
+                        }
                       }} style={{ ...btnPrimary, padding: "8px 18px", opacity: docComment.trim() ? 1 : 0.4 }}>Post Comment</button>
                     </div>
                   </div>
@@ -2959,7 +3145,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
                         {item.user_id === user.id && <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); } }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font }}>{Icons.trash({ size: 11 })}</button>}
-                        <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
+                        {item.user_id !== user.id && <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>}
                         <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "marketplace", id: item.id, name: item.title }); }} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", cursor: "pointer", color: "#D4D4D2" }}>{Icons.flag({ size: 12 })}</button>
                       </div>
                     </div>
@@ -2972,7 +3158,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       case "messages":
         // Load conversations from DB on first visit
-        if (!convosLoaded) {
+        if (!convosLoaded && canBrowse) {
           setConvosLoaded(true);
           (async () => {
             try {
@@ -3017,25 +3203,25 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           // Check if recipient allows messages
           const otherUser = activeConvo ? convos.find(c => c.id === selectedConvo) : null;
           if (otherUser?.otherUserId) {
-            try {
-              const targetSettings = await api.getOtherUserSettings(otherUser.otherUserId);
-              if (targetSettings?.receive_messages === "Nobody") {
-                alert("This user is not accepting messages.");
-                return;
-              }
-              if (targetSettings?.receive_messages === "Connections Only" && !acceptedConnections.has(otherUser.otherUserId)) {
-                alert("This user only accepts messages from connections. Send a Namaste request first.");
-                return;
-              }
-            } catch(e) {}
+            const reason = await messageBlockedReason(otherUser.otherUserId);
+            if (reason) { alert(reason); return; }
           }
+          const convoId = selectedConvo;
           const msg = { id: Date.now().toString(), text: chatInput, sender: "me", time: "Just now" };
-          setChatMessages(p => ({ ...p, [selectedConvo]: [...(p[selectedConvo] || []), msg] }));
+          setChatMessages(p => ({ ...p, [convoId]: [...(p[convoId] || []), msg] }));
           const text = chatInput;
           setChatInput("");
-          try { await api.sendMessage(selectedConvo, text); } catch (e) {}
+          try {
+            await api.sendMessage(convoId, text);
+          } catch (e) {
+            // Take the message back out and give the text back.
+            setChatMessages(p => ({ ...p, [convoId]: (p[convoId] || []).filter(m => m.id !== msg.id) }));
+            setChatInput(prev => prev || text);
+            alert(messageErrorText(e));
+            return;
+          }
           // Update convo list
-          setConvos(p => p.map(c => c.id === selectedConvo ? { ...c, lastMsg: text, time: "Just now" } : c));
+          setConvos(p => p.map(c => c.id === convoId ? { ...c, lastMsg: text, time: "Just now" } : c));
         };
 
         return (
@@ -3130,11 +3316,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ display: "flex", gap: 8 }}>
                       <input value={chatInput} onChange={(e) => setChatInput(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") sendChatMessage(); }}
-                        placeholder="Type a message..." style={{ flex: 1, padding: "10px 16px", borderRadius: 20, border: "1px solid #E0E0DE", fontSize: 13, outline: "none", fontFamily: font, background: "#FAFAF8" }} />
+                        placeholder="Type a message..." maxLength={TEXT_LIMIT} style={{ flex: 1, padding: "10px 16px", borderRadius: 20, border: "1px solid #E0E0DE", fontSize: 13, outline: "none", fontFamily: font, background: "#FAFAF8" }} />
                       <button onClick={sendChatMessage} style={{ padding: "8px 12px", borderRadius: "50%", background: chatInput.trim() ? "#37352F" : "#E8E7E4", border: "none", cursor: chatInput.trim() ? "pointer" : "default", color: "#fff", display: "flex", alignItems: "center" }}>
                         {Icons.send({ size: 16 })}
                       </button>
                     </div>
+                    <CharCount value={chatInput} />
                   </div>
                 </>
               ) : (
@@ -3165,7 +3352,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
                       localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
                       window.location.reload();
-                    } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
+                    } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB.")); }
                   }}
                 />
                 <label htmlFor="profile-avatar-upload" style={{
@@ -3272,7 +3459,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <div data-lock-overlay><RejectedScreen user={user} onSignOut={onLogout} /></div>
       )}
       {/* Get verified again, when an admin asked for more information */}
-      {verifyOpen && (
+      {verifyOpen && user.verificationStatus === "needs_info" && !locked && (
         <GetVerified
           user={user}
           mode="update"
@@ -3547,7 +3734,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         const preview = URL.createObjectURL(file);
                         const url = await api.uploadPostImage(file);
                         setPostImage({ url, preview });
-                      } catch (err) { alert("Upload failed: " + err.message); }
+                      } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB.")); }
                     }}
                   />
                   {postImage ? (
@@ -3584,23 +3771,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       )}
 
       {/* Blocked user overlay */}
-      {user?.status === "blocked" && (
-        <div data-lock-overlay style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div role="alertdialog" aria-modal="true" aria-label="Profile blocked" style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
-            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
-            </div>
-            <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Profile Blocked</h2>
-            <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 20, fontFamily: font }}>
-              Your profile has been blocked by our admin team.
-            </p>
-            <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>
-              If you believe this is an error, please contact <a href="mailto:support@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>support@nriclub.app</a>.
-            </p>
-            <button onClick={onLogout} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Sign Out</button>
-          </div>
-        </div>
-      )}
+      {user?.status === "blocked" && <BlockedOverlay onSignOut={onLogout} font={font} />}
 
       {/* MAIN */}
       <main style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 100px", display: "grid", gridTemplateColumns: (view === "profile" || view === "trending") ? "1fr" : "240px 1fr 210px", gap: 28 }} className="main-grid">
@@ -3636,7 +3807,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
                       localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
                       window.location.reload();
-                    } catch (err) { alert("Upload failed: " + (err.message || "Unknown error")); }
+                    } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB.")); }
                   }}
                 />
                 <label htmlFor="avatar-upload" style={{
@@ -3965,11 +4136,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
 
-              {/* Action buttons */}
-              <div style={{ display: "flex", gap: 12 }}>
-                <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(`Hi ${expandedMarketItem.seller.split(" ")[0]}, is this still available?`); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
-                  {Icons.send({ size: 15 })} Contact Seller
-                </button>
+              {/* Action buttons (no Contact Seller on your own listing) */}
+              <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                {expandedMarketItem.user_id !== user.id && (
+                  <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(`Hi ${expandedMarketItem.seller.split(" ")[0]}, is this still available?`); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
+                    {Icons.send({ size: 15 })} Contact Seller
+                  </button>
+                )}
                 <button onClick={() => setExpandedMarketItem(null)} style={{ padding: "12px 20px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: font }}>
                   Close
                 </button>
@@ -4062,9 +4235,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button disabled={!externalLinkInput.trim() || !externalLinkInput.match(/^https?:\/\//i)} onClick={async () => {
                 const url = externalLinkInput.trim();
                 const content = externalLinkNote.trim() ? `${externalLinkNote.trim()}\n\n${url}` : url;
-                const tags = ["__external__"];
-                const hashtags = content.match(/#(\w+)/g);
-                if (hashtags) hashtags.forEach((h) => tags.push(h.replace("#", "")));
+                const tags = postTags(content, true);
                 const post = {
                   id: "p_" + Date.now(), userId: user.id, content,
                   author: { name: user.name, profession: user.profession, location: user.location, hometown: user.hometown },
@@ -4102,7 +4273,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Message</label>
-                <textarea value={contactMsg} onChange={(e) => setContactMsg(e.target.value)} style={{ ...inputStyle, minHeight: 90, resize: "none" }} />
+                {/* The message carries the listing's title in front of it. */}
+                <textarea value={contactMsg} onChange={(e) => setContactMsg(e.target.value)} maxLength={TEXT_LIMIT - `[MARKETPLACE: ${selectedMarketItem.title}] `.length} style={{ ...inputStyle, minHeight: 90, resize: "none" }} />
+                <CharCount value={contactMsg} max={TEXT_LIMIT - `[MARKETPLACE: ${selectedMarketItem.title}] `.length} />
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setSelectedMarketItem(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
@@ -4110,10 +4283,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   if (!contactMsg.trim()) return;
                   try {
                     const sellerId = selectedMarketItem.user_id;
-                    if (!sellerId) {
-                      alert("Could not find seller's user ID. Please try again.");
+                    if (!sellerId || sellerId === user.id) {
+                      alert("You can't contact the seller of this listing.");
                       return;
                     }
+                    const reason = await messageBlockedReason(sellerId);
+                    if (reason) { alert(reason); return; }
                     // Tag message as marketplace with item title for filtering
                     const taggedMsg = `[MARKETPLACE: ${selectedMarketItem.title}] ${contactMsg}`;
                     const convo = await api.getOrCreateConversation(sellerId);
@@ -4143,11 +4318,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       setView("messages");
                       return;
                     } else {
-                      alert("Could not create conversation. Please try again.");
+                      alert("Your message couldn't be sent. Please try again.");
+                      return;
                     }
-                  } catch (e) { alert("Failed to send: " + (e.message || "")); }
-                  setSelectedMarketItem(null);
-                  setContactMsg("");
+                  } catch (e) {
+                    // Keep the message so it can be sent again.
+                    alert(messageErrorText(e));
+                    return;
+                  }
                 }} style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6 }}>{Icons.send({ size: 14 })} Send Message</button>
               </div>
             </div>
@@ -4198,20 +4376,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>
                   {Icons.shield({ size: 13 })} Data & Privacy (GDPR)
                 </h4>
-                <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 14, lineHeight: 1.5, fontFamily: font }}>Under EU GDPR, you have the right to access, export, and delete your personal data.</p>
-                <button onClick={() => {
-                  const data = {
-                    profile: { name: user.name, email: user.email, location: user.location, hometown: user.hometown, profession: user.profession, linkedinUrl: user.linkedinUrl, yearsAbroad: user.yearsAbroad, createdAt: user.createdAt || user.created_at },
-                    exportDate: new Date().toISOString(),
-                    note: "This file contains all personal data stored by NRIClub. Posts, comments, and messages are stored separately in the database."
-                  };
-                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a"); a.href = url; a.download = "nriclub-my-data.json"; a.click();
-                  URL.revokeObjectURL(url);
-                }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
-                  {Icons.share({ size: 14 })} Download My Data
+                <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 14, lineHeight: 1.5, fontFamily: font }}>Under EU GDPR, you have the right to access, export, and delete your personal data. Your download is a file with your account, profile, settings and verification history, and the posts, comments, messages and other activity in your account (photos as links).</p>
+                <button onClick={async () => {
+                  if (dataDownload.busy) return;
+                  setDataDownload({ busy: true, error: "" });
+                  try {
+                    await downloadMyData();
+                    setDataDownload({ busy: false, error: "" });
+                  } catch (e) {
+                    setDataDownload({ busy: false, error: apiErrorMessage(e, "We couldn't download your data. Please try again, or contact support@nriclub.app.") });
+                  }
+                }} aria-disabled={dataDownload.busy} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: dataDownload.busy ? "default" : "pointer", opacity: dataDownload.busy ? 0.7 : 1, fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
+                  {Icons.share({ size: 14 })} {dataDownload.busy ? "Preparing your data..." : "Download My Data"}
                 </button>
+                {dataDownload.error && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginBottom: 10, lineHeight: 1.5, fontFamily: font }}>{dataDownload.error}</p>}
               </div>
               <div style={{ borderTop: "1px solid #F0EFED", paddingTop: 20, marginTop: 10 }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#DC2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>
@@ -4296,7 +4474,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         </div>
       )}
 
-      {/* Notification Preferences Modal */}
+      {/* Notification Preferences Modal (Marketing Emails is the member's marketing consent) */}
       {settingsModal === "notifications" && (
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
@@ -4324,15 +4502,27 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, color: "#5F5E5B", background: "#fff", cursor: "pointer", fontFamily: font }}>Cancel</button>
               <button onClick={async () => {
+                if (notifSaving) return;
+                setNotifSaving(true);
                 try {
                   await api.saveUserSettings({
                     email_notifications: notifSettings.email,
                     push_notifications: notifSettings.push,
-                    marketing_emails: notifSettings.marketing,
                   });
                 } catch(e) {}
+                if (notifSettings.marketing !== !!user.marketingConsent) {
+                  try {
+                    await api.updateProfile({ marketing_consent: notifSettings.marketing });
+                    onUserUpdate({ ...user, marketingConsent: notifSettings.marketing });
+                  } catch (e) {
+                    setNotifSaving(false);
+                    alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your choice for marketing emails couldn't be saved. Please try again.");
+                    return;
+                  }
+                }
+                setNotifSaving(false);
                 setSettingsModal(null);
-              }} style={{ ...btnPrimary, padding: "10px 20px" }}>Save Settings</button>
+              }} style={{ ...btnPrimary, padding: "10px 20px", opacity: notifSaving ? 0.7 : 1 }}>{notifSaving ? "Saving..." : "Save Settings"}</button>
             </div>
           </div>
         </div>
@@ -4401,7 +4591,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   await api.reportPost(user.id, `[BUG] ${page}: ${title} — ${desc || "No details"}`);
                   alert("Bug reported! Thank you for helping us improve NRIClub.");
                   setSettingsModal(null);
-                } catch(e) { alert("Failed to submit: " + (e.message || "Please try again.")); }
+                } catch(e) { alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your bug report couldn't be sent. Please try again."); }
               }} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Submit Bug Report</button>
             </div>
           </div>
@@ -4449,7 +4639,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24, overflow: "auto", flex: 1, fontSize: 13, color: "#5F5E5B", lineHeight: 1.7, fontFamily: font }}>
-              <TermsContent />
+              <div role="tablist" aria-label="Terms and policies" style={{ display: "flex", gap: 4, background: "#F0EFED", padding: 3, borderRadius: 8, marginBottom: 20 }}>
+                {[{ k: "terms", l: "Terms of Use" }, { k: "privacy", l: "Privacy Policy" }].map(tab => (
+                  <button key={tab.k} type="button" role="tab" aria-selected={legalTab === tab.k} onClick={() => setLegalTab(tab.k)} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "none", background: legalTab === tab.k ? "#fff" : "transparent", color: legalTab === tab.k ? "#37352F" : "#6B6A67", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: legalTab === tab.k ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>{tab.l}</button>
+                ))}
+              </div>
+              {legalTab === "terms" ? <TermsContent /> : <PrivacyContent />}
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", background: "#FAFAF8", flexShrink: 0 }}>
               <button onClick={() => setSettingsModal(null)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Close</button>
@@ -4547,11 +4742,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {acceptedConnections.has(profilePreview.id) ? "Following" : sentNamaste.has(profilePreview.id) ? "Sent" : "Namaste"}
               </button>
               <button onClick={async () => {
-                try {
-                  const convo = await api.getOrCreateConversation(profilePreview.id);
-                  if (convo) { setConvos(prev => { if (prev.find(c => c.id === convo.id)) return prev; return [{ id: convo.id, name: profilePreview.name, otherUserId: profilePreview.id, lastMsg: "", time: "", unread: false }, ...prev]; }); setSelectedConvo(convo.id); }
-                } catch(e) {}
-                setProfilePreview(null); setView("messages");
+                if (await openChatWith(profilePreview)) setProfilePreview(null);
               }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>
                 {Icons.message({ size: 14 })} Message
               </button>
@@ -4585,7 +4776,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   alert("Reported successfully. Our team will review this content.");
                 } catch(e) {
                   console.error("Report failed:", e);
-                  alert("Report failed: " + (e.message || "Please try again."));
+                  alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your report couldn't be sent. Please try again.");
                   setReportConfirm(null);
                 }
               }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Report</button>
@@ -4898,7 +5089,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       await api.requestNewGroup(newGroupCity.trim());
                       alert(`Your request to create "Indians in ${newGroupCity}" has been sent to the admin for approval.`);
                     } catch(e) {
-                      alert("Failed to submit request: " + (e.message || "Please try again."));
+                      alert(isNetworkError(e) ? NETWORK_MESSAGE
+                        : /23505/.test(e.message || "") ? `There's already a community or a request for ${newGroupCity.trim()}.`
+                        : "Your request couldn't be sent. Please try again.");
                     }
                     setNewGroupCity("");
                     setGroupRequestModal(false);
@@ -5097,7 +5290,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Responsive CSS */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=DM+Sans:wght@400;500;600;700;800&display=swap');
         * { box-sizing: border-box; margin: 0; }
         body { font-family: 'DM Sans', sans-serif; background: #FAFAF8; color: #37352F; }
         input:focus, select:focus, textarea:focus { border-color: #37352F !important; background: #fff !important; }
@@ -5185,6 +5377,7 @@ const CookieConsent = () => {
   const [visible, setVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
+  const [legal, setLegal] = useState(null); // "terms" | "privacy"
   const bannerRef = useRef(null);
 
   useEffect(() => {
@@ -5245,6 +5438,10 @@ const CookieConsent = () => {
               <button onClick={() => setShowDetails(!showDetails)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
                 {showDetails ? "Hide details" : "Learn more"}
               </button>
+              {" · "}
+              <button type="button" onClick={() => setLegal("privacy")} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: "inherit", padding: 0 }}>Privacy Policy</button>
+              {" · "}
+              <button type="button" onClick={() => setLegal("terms")} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: "inherit", padding: 0 }}>Terms of Use</button>
             </p>
 
             {showDetails && (
@@ -5296,43 +5493,119 @@ const CookieConsent = () => {
           </div>
         </div>
       </div>
+      {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
+      {legal === "privacy" && <PrivacyModal onClose={() => setLegal(null)} />}
     </div>
   );
 };
 
-// Shown after following a password-reset email link.
-const ResetPasswordPage = ({ onDone }) => {
+// "a***@example.com": enough to recognise an email address without showing it.
+const maskEmail = (email) => {
+  const [local, domain] = String(email || "").split("@");
+  if (!domain) return email || "";
+  return `${local.slice(0, 1)}***@${domain}`;
+};
+
+// Shown after following a password-reset email link. The link's session is
+// kept in memory only (supabaseApi), so the page says which account the new
+// password is for, warns when this browser is signed in to a different
+// account, and afterwards sends the member to log in. onDone(email) after the
+// password is set; onCancel to leave it; onExpired when the link no longer works.
+const ResetPasswordPage = ({ onDone, onCancel, onExpired }) => {
+  const [account, setAccount] = useState(null); // { email, signedInAsSomeoneElse }
+  const [checkError, setCheckError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
+  useEffect(() => {
+    let active = true;
+    setCheckError("");
+    api.getRecoveryUser().then((a) => { if (active) setAccount(a); }).catch((err) => {
+      if (!active) return;
+      if (err.expired) onExpired();
+      else setCheckError(isNetworkError(err) ? NETWORK_MESSAGE : "We couldn't check your reset link. Please try again.");
+    });
+    return () => { active = false; };
+  }, [attempt]);
+
   const save = async (e) => {
     e.preventDefault();
+    if (saving || !account) return;
     if (password.length < 8) { setError("Use at least 8 characters."); return; }
     setSaving(true);
     setError("");
     try {
-      await api.updatePassword(password);
-      onDone();
+      const result = await api.updatePassword(password);
+      onDone(result?.email || account.email);
     } catch (err) {
-      setError(err.message || "Couldn't update your password. The link may have expired; request a new one.");
+      if (err.expired) { onExpired(); return; }
+      setError(authErrorMessage(err) || err.message || "Couldn't update your password. Please try again.");
       setSaving(false);
     }
   };
+  const cancel = () => {
+    api.cancelRecovery();
+    onCancel();
+  };
+
+  const linkButton = { background: "none", border: "none", color: "#5F5E5B", fontSize: 13, fontWeight: 500, cursor: "pointer", textDecoration: "underline", fontFamily: font, padding: 4 };
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
-      <form onSubmit={save} style={{ maxWidth: 380, width: "100%", background: "#fff", borderRadius: 16, padding: 32, border: "1px solid #EDEDEB" }}>
+      <form onSubmit={save} noValidate style={{ maxWidth: 380, width: "100%", background: "#fff", borderRadius: 16, padding: 32, border: "1px solid #EDEDEB" }}>
         <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 6 }}>Set a new password</h2>
-        <p style={{ fontSize: 13, color: "#787774", marginBottom: 20 }}>Choose a password with at least 8 characters.</p>
-        {error && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{error}</div>}
-        <label htmlFor="new-password" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>New password</label>
-        <div style={{ position: "relative", marginBottom: 20 }}>
-          <input id="new-password" type={show ? "text" : "password"} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", padding: "12px 64px 12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 15, boxSizing: "border-box", outline: "none", fontFamily: font }} />
-          <button type="button" onClick={() => setShow(!show)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#787774", fontSize: 12, cursor: "pointer" }}>{show ? "Hide" : "Show"}</button>
-        </div>
-        <button type="submit" disabled={saving} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1 }}>{saving ? "Saving..." : "Save password"}</button>
+        {!account ? (
+          checkError ? (
+            <>
+              <div role="alert" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, margin: "14px 0 16px" }}>{checkError}</div>
+              <button type="button" onClick={() => setAttempt(a => a + 1)} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Try again</button>
+            </>
+          ) : (
+            <p role="status" style={{ fontSize: 13, color: "#787774", marginBottom: 20 }}>Checking your link...</p>
+          )
+        ) : (
+          <>
+            <p style={{ fontSize: 13, color: "#787774", marginBottom: 20, lineHeight: 1.5 }}>
+              Set a new password for <strong style={{ color: "#37352F" }}>{maskEmail(account.email)}</strong>. Use at least 8 characters.
+            </p>
+            {account.signedInAsSomeoneElse && (
+              <div role="note" style={{ background: "#FFF8E6", border: "1px solid #FCE7B2", color: "#7A4D00", padding: "10px 12px", borderRadius: 8, fontSize: 12, lineHeight: 1.5, marginBottom: 16 }}>
+                This browser is signed in to a different NRIClub account. This link changes the password of {maskEmail(account.email)} only. If you didn't ask for it, cancel.
+              </div>
+            )}
+            {error && <div role="alert" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{error}</div>}
+            <label htmlFor="new-password" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>New password</label>
+            <div style={{ position: "relative", marginBottom: 20 }}>
+              <input id="new-password" type={show ? "text" : "password"} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", padding: "12px 64px 12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 15, boxSizing: "border-box", outline: "none", fontFamily: font }} />
+              <button type="button" onClick={() => setShow(!show)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#787774", fontSize: 12, cursor: "pointer" }}>{show ? "Hide" : "Show"}</button>
+            </div>
+            <button type="submit" disabled={saving} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1 }}>{saving ? "Saving..." : "Save password"}</button>
+          </>
+        )}
+        <p style={{ textAlign: "center", marginTop: 16, marginBottom: 0 }}>
+          <button type="button" onClick={cancel} disabled={saving} style={linkButton}>Cancel</button>
+        </p>
       </form>
+    </div>
+  );
+};
+
+// Shown for a link from one of our emails that has expired, was already used
+// or isn't valid.
+const ExpiredLinkPage = ({ onContinue }) => {
+  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1rem", background: "#F7F7F5", fontFamily: font }}>
+      <div role="alert" style={{ maxWidth: 380, width: "100%", background: "#fff", borderRadius: 16, padding: 32, border: "1px solid #EDEDEB" }}>
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginBottom: 6 }}>This link has expired</h2>
+        <p style={{ fontSize: 13, color: "#787774", marginBottom: 20, lineHeight: 1.6 }}>
+          Links in our emails work only once and only for a limited time. To reset your password, ask for a new link: choose “Forgot password?” on the login page.
+        </p>
+        <button type="button" onClick={onContinue} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Go to log in</button>
+      </div>
     </div>
   );
 };
@@ -5341,6 +5614,7 @@ export default function App() {
   const [authState, setAuthState] = useState("loading");
   const [user, setUser] = useState(null);
   const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead"
+  const [loginNotice, setLoginNotice] = useState(""); // e.g. after a new password
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPass, setAdminPass] = useState("");
@@ -5397,63 +5671,100 @@ export default function App() {
     }
   };
 
-  const handleAdminLogout = async () => {
-    try { await api.signOut(); } catch (e) {}
+  // Signs out at once; the server is told in the background.
+  const handleAdminLogout = () => {
+    api.signOut().catch(() => {});
     setIsAdmin(false);
     setAuthState("admin-login");
   };
 
   // Leave the signed-in screens if the session ends by itself (revoked,
-  // expired, or another tab signed in as someone else).
+  // expired, or another tab signed out or signed in as someone else).
   useEffect(() => { api.onSessionEnded(() => window.location.reload()); }, []);
 
+  const isAdminRoute = () => {
+    const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
+    return isAdminDomain || window.location.hash === "#admin";
+  };
+
+  // Restores this browser's session, or shows `fallback` when nobody is
+  // signed in. If the session is fine but the profile can't be read, the
+  // member gets a retry: they are never shown as signed out or unverified
+  // because of one failed request.
+  const restoreSession = async (fallback = "landing") => {
+    setAuthState("loading");
+    if (isAdminRoute()) {
+      try {
+        const session = await api.getSession();
+        if (session?.user && await api.isAdmin()) {
+          setIsAdmin(true);
+          setAuthState("admin");
+          return;
+        }
+      } catch (e) {}
+      setAuthState("admin-login");
+      return;
+    }
+    let session = null;
+    try { session = await api.getSession(); } catch (e) {}
+    if (session?.user) {
+      try {
+        const dbProfile = await api.getMyProfile();
+        if (dbProfile) {
+          setUser(mapProfile(dbProfile));
+          setAuthState("authenticated");
+          return;
+        }
+      } catch (e) {
+        setAuthState("profile-error");
+        return;
+      }
+    }
+    // No valid session: never treat cached profile data as a login.
+    try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
+    setAuthState(fallback);
+  };
+
   useEffect(() => {
-    // Password-reset links land here with a one-time session in the URL.
-    if (api.takeRecoverySession()) {
+    // Links from our emails: the API took the auth data out of the address
+    // bar as the site loaded. A password-reset link opens the reset page; an
+    // expired or used link says so.
+    const link = api.takeAuthRedirect();
+    if (link.kind === "recovery" && api.takeRecoverySession()) {
       setAuthState("reset-password");
       return;
     }
-    // Check for admin route
-    const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
-    if (isAdminDomain || window.location.hash === "#admin") {
-      (async () => {
-        try {
-          const session = await api.getSession();
-          if (session?.user && await api.isAdmin()) {
-            setIsAdmin(true);
-            setAuthState("admin");
-            return;
-          }
-        } catch (e) {}
-        setAuthState("admin-login");
-      })();
+    if (link.kind === "expired") {
+      setAuthState("link-expired");
       return;
     }
-    (async () => {
-      try {
-        const session = await api.getSession();
-        if (session && session.user) {
-          const dbProfile = await api.getMyProfile();
-          if (dbProfile) {
-            setUser(mapProfile(dbProfile));
-            setAuthState("authenticated");
-            return;
-          }
-        }
-      } catch (e) {}
-      // No valid session: never treat cached profile data as a login.
-      try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
-      setAuthState("landing");
-    })();
+    restoreSession();
   }, []);
 
+  // After a new password: log in with it (the email filled in).
+  const handlePasswordReset = (email) => {
+    const notice = "Your password has been changed. Log in with your new password.";
+    if (isAdminRoute()) {
+      setAdminEmail(email || "");
+      setAdminErr("");
+      setAdminNotice(notice);
+      setAuthState("admin-login");
+      return;
+    }
+    setLoginEmail(email || "");
+    setLoginNotice(notice);
+    setAuthState("login");
+  };
+
   const handleAuthComplete = (userData) => {
+    setLoginNotice("");
     setUser(userData);
     setAuthState("authenticated");
   };
 
-  const handleLogout = async () => {
-    try { await api.signOut(); } catch (e) {}
+  // Shows the signed-out screen at once; the server is told in the background.
+  const handleLogout = () => {
+    api.signOut().catch(() => {});
     try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
     setUser(null);
     setAuthState("landing");
@@ -5467,6 +5778,25 @@ export default function App() {
             {Icons.globe({ size: 24 })}
           </div>
           <p style={{ color: "#9B9A97", fontSize: 14 }}>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Signed in, but the profile couldn't be read (e.g. a network hiccup).
+  if (authState === "profile-error") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
+        <div role="alert" style={{ textAlign: "center", maxWidth: 360 }}>
+          <div style={{ width: 48, height: 48, background: "#37352F", borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16, color: "#fff" }}>
+            {Icons.globe({ size: 24 })}
+          </div>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>We couldn't load your profile</h2>
+          <p style={{ color: "#6B6A67", fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>Please check your connection and try again.</p>
+          <button type="button" onClick={() => restoreSession()} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Try again</button>
+          <p style={{ marginTop: 12 }}>
+            <button type="button" onClick={handleLogout} style={{ background: "none", border: "none", color: "#5F5E5B", fontSize: 13, fontWeight: 500, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit", padding: 4 }}>Sign out</button>
+          </p>
         </div>
       </div>
     );
@@ -5492,14 +5822,28 @@ export default function App() {
         </div>
       );
     }
-    if (authState === "reset-password") return <ResetPasswordPage onDone={() => window.location.reload()} />;
+    if (authState === "reset-password") {
+      return <ResetPasswordPage onDone={handlePasswordReset} onCancel={() => restoreSession()} onExpired={() => setAuthState("link-expired")} />;
+    }
+    if (authState === "link-expired") return <ExpiredLinkPage onContinue={() => restoreSession("login")} />;
     if (authState === "admin" && isAdmin) return <AdminPanel onLogout={handleAdminLogout} />;
     if (authState === "landing") return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
-    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onLogin={(email) => { setLoginEmail(email || ""); setAuthState("login"); }} />;
-    if (authState === "login") return <LoginPage initialEmail={loginEmail} onComplete={handleAuthComplete} onSignUp={() => setAuthState("signup")} />;
-    // Members who haven't given their verification details yet do that first.
-    if (authState === "authenticated" && user && user.verificationStatus === "incomplete") return <GetVerified user={user} onDone={setUser} onSignOut={handleLogout} />;
-    if (authState === "authenticated" && user) return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
+    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
+    if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={handleAuthComplete} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
+    if (authState === "authenticated" && user) {
+      // In this order: blocked members only see the blocked card (whatever
+      // their verification status); members who haven't given their
+      // verification details do that first; then anyone who hasn't confirmed
+      // they're 18+ and accepted the Terms. Rejected members see the
+      // rejected card in the dashboard (a Terms screen would be pointless).
+      // The dashboard loads nothing behind a blocked or rejected card.
+      if (user.status === "blocked") return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
+      if (user.verificationStatus === "incomplete") return <GetVerified user={user} onDone={setUser} onSignOut={handleLogout} />;
+      if (user.verificationStatus !== "rejected" && (!user.ageConfirmedAt || !user.termsAcceptedAt)) {
+        return <TermsGate user={user} onDone={setUser} onSignOut={handleLogout} />;
+      }
+      return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
+    }
     return <LandingPage onJoin={() => setAuthState("signup")} onLogin={() => setAuthState("login")} />;
   })();
 
