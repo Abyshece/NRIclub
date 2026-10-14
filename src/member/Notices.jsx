@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import FlagIcon from "../FlagIcon";
 import { useDialogFocus } from "./LegalModals";
 import { firstName } from "./profile";
@@ -201,6 +201,7 @@ export function CatchUpNotice({ user, items, onClose }) {
 function Toast({ toast, onDismiss }) {
   const boxRef = useRef(null);
   const timer = useRef(null);
+  const recheck = useRef(null);
   const hovered = useRef(false);
   const dismiss = () => {
     const hadFocus = boxRef.current?.contains(document.activeElement);
@@ -209,11 +210,14 @@ function Toast({ toast, onDismiss }) {
   };
   const stop = () => clearTimeout(timer.current);
   const start = () => { stop(); timer.current = setTimeout(dismiss, 8000); };
-  const maybeStart = () => setTimeout(() => { if (!hovered.current && !boxRef.current?.contains(document.activeElement)) start(); }, 0);
-  useEffect(() => { start(); return stop; }, []);
+  const maybeStart = () => {
+    clearTimeout(recheck.current);
+    recheck.current = setTimeout(() => { if (boxRef.current && !hovered.current && !boxRef.current.contains(document.activeElement)) start(); }, 0);
+  };
+  useEffect(() => { start(); return () => { stop(); clearTimeout(recheck.current); }; }, []);
   return (
-    <div ref={boxRef} onMouseEnter={() => { hovered.current = true; stop(); }} onMouseLeave={() => { hovered.current = false; maybeStart(); }}
-      onFocus={stop} onBlur={maybeStart} style={{ display: "flex", alignItems: "center", gap: 10, background: INK, color: "#fff", borderRadius: 12, padding: "8px 8px 8px 14px", boxShadow: "0 8px 24px rgba(0,0,0,0.18)", fontFamily: font, maxWidth: 420, width: "100%", boxSizing: "border-box", pointerEvents: "auto" }}>
+    <div ref={boxRef} className="nc-toast" onMouseEnter={() => { hovered.current = true; stop(); }} onMouseLeave={() => { hovered.current = false; maybeStart(); }}
+      onFocus={stop} onBlur={maybeStart} style={{ alignItems: "center", gap: 10, background: INK, color: "#fff", borderRadius: 12, padding: "8px 8px 8px 14px", boxShadow: "0 8px 24px rgba(0,0,0,0.18)", fontFamily: font, maxWidth: 420, width: "100%", boxSizing: "border-box", pointerEvents: "auto" }}>
       <span aria-hidden="true" style={{ fontSize: 18 }}>{toast.icon}</span>
       <span style={{ flex: 1, fontSize: 14, lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{toast.text}</span>
       {toast.onOpen && (
@@ -226,17 +230,24 @@ function Toast({ toast, onDismiss }) {
   );
 }
 
-// Above the page and the bottom bar, below the app's windows (zIndex 50
-// and up), so a toast never covers a window's buttons. On phones only the
-// newest shows. Screen readers hear only the newest toast's text, from a
-// live region that is always on the page.
+// Above the page, below the top bar and its menus (zIndex 30), the mobile
+// menu (40) and the app's windows (50 and up), so a toast never covers
+// something the member is using. On phones only the newest shows. Screen
+// readers hear each new toast's text once, from a live region that is
+// always on the page (a toast going away says nothing).
 export function ToastStack({ toasts, onDismiss }) {
-  const newest = toasts[toasts.length - 1];
+  const [said, setSaid] = useState({ n: 0, text: "" });
+  const known = useRef(new WeakSet());
+  useEffect(() => {
+    const added = toasts.filter((t) => !known.current.has(t));
+    toasts.forEach((t) => known.current.add(t));
+    if (added.length) setSaid((s) => ({ n: s.n + 1, text: added.map((t) => t.text).join(". ") }));
+  }, [toasts]);
   return (
     <>
-      <div role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>{newest ? newest.text : ""}</div>
-      <div className="nc-toasts" style={{ position: "fixed", left: 12, right: 12, zIndex: 45, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, pointerEvents: "none" }}>
-        <style>{`.nc-toasts { bottom: 24px; } @media (max-width: 900px) { .nc-toasts { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); } .nc-toasts > div:not(:last-child) { display: none; } }`}</style>
+      <div role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}><span key={said.n}>{said.text}</span></div>
+      <div className="nc-toasts" style={{ position: "fixed", left: 12, right: 12, zIndex: 25, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, pointerEvents: "none" }}>
+        <style>{`.nc-toasts { bottom: 24px; } .nc-toast { display: flex; } @media (max-width: 900px) { .nc-toasts { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); } .nc-toasts > .nc-toast:not(:last-child) { display: none; } }`}</style>
         {toasts.map((t) => <Toast key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />)}
       </div>
     </>

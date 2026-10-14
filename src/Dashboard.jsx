@@ -14,7 +14,8 @@ import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
 import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
-import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
+import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName } from "./member/profile";
+import { findCity } from "./content/findCity";
 
 
 // ============================================================================
@@ -1085,8 +1086,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [notifications, setNotifications] = useState([]);
   const [notifsLoaded, setNotifsLoaded] = useState(false); // the list has been fetched at least once
   // The member's status as loaded after a verification decision arrived:
-  // { id: the notification, status }. The notice waits for it.
+  // { id: the notification, status } (status null if that reload failed;
+  // the next check tries again). The notices wait for it.
   const [verificationChecked, setVerificationChecked] = useState(null);
+  const checkedDecision = (id, fresh) => {
+    setVerificationChecked({ id, status: fresh ? fresh.verificationStatus : null });
+    if (!fresh && lastVerificationNotifRef.current === id) lastVerificationNotifRef.current = null;
+  };
   const [acceptedNotifs, setAcceptedNotifs] = useState([]); // Namaste requests just accepted, shown as "✓ Accepted" for a moment
   const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
   const [privSettingsLoaded, setPrivSettingsLoaded] = useState(false);
@@ -1403,7 +1409,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
         if (decision && decision.id !== lastVerificationNotifRef.current) {
           lastVerificationNotifRef.current = decision.id;
-          refreshMyProfile().then(fresh => { if (fresh) setVerificationChecked({ id: decision.id, status: fresh.verificationStatus }); });
+          refreshMyProfile().then(fresh => checkedDecision(decision.id, fresh));
         }
         setNotifications(dbNotifs.map(n => ({
           id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
@@ -1659,7 +1665,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
           if (decision && decision.id !== lastVerificationNotifRef.current) {
             lastVerificationNotifRef.current = decision.id;
-            refreshMyProfile().then(fresh => { if (fresh) setVerificationChecked({ id: decision.id, status: fresh.verificationStatus }); });
+            refreshMyProfile().then(fresh => checkedDecision(decision.id, fresh));
             reloaded = true;
           }
         }
@@ -1826,8 +1832,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
   // A new member's first day: their city's group, joined for them once, and
   // a welcome card with people nearby (until they dismiss it or follow someone).
+  // Spelled any way ("Dusseldorf", "München", "nyc"): matched like city addresses are.
   const welcomeCity = (user.city || (user.location || "").split(",")[0] || "").trim();
-  const cityGroup = welcomeCity ? groups.find(g => (g.name || "").toLowerCase() === `indians in ${welcomeCity.toLowerCase()}`) : null;
+  const cityGroup = (() => {
+    if (!welcomeCity) return null;
+    const cityGroups = groups.filter(g => cityFromGroupName(g.name));
+    const name = findCity(welcomeCity, cityGroups.map(g => cityFromGroupName(g.name))) || welcomeCity;
+    return cityGroups.find(g => slug(g.name) === slug(`Indians in ${name}`)) || null;
+  })();
   const welcomeKey = `nriclub_welcome_done_${user.id}`;
   const [welcomeDone, setWelcomeDone] = useState(() => { try { return !!localStorage.getItem(welcomeKey); } catch (e) { return true; } });
   const dismissWelcome = () => { setWelcomeDone(true); try { localStorage.setItem(welcomeKey, "1"); } catch (e) {} };
@@ -4226,7 +4238,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // something (nothing typed is lost), so the place it opens is in view.
   const leaveOverlays = () => {
     setExpandedEvent(null); setExpandedMarketItem(null); setMarketPhotoIdx(0);
-    setSettingsModal(null); setFollowModal(null); setHelpModal(false);
+    setSettingsModal(m => (m === "feedback" ? m : null)); setFollowModal(null); setHelpModal(false);
     setNotifOpen(false); setSettingsOpen(false); setMobileMenu(false); setChatSettings(false);
   };
   const openConversation = (cid) => {
@@ -4305,15 +4317,18 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   useEffect(() => {
     if (firstNoticeRef.current || !noticesReady || locked) return;
     if (notice) { firstNoticeRef.current = true; return; }
-    // A decision our team just made is shown by the effect above.
+    // A decision our team just made: wait for the status loaded after it;
+    // an approval or a request for information is shown by the effect above.
+    if (verificationNotif && verificationChecked?.id !== verificationNotif.id) return;
     if (decided === "approved" || decided === "needs_info") return;
     firstNoticeRef.current = true;
     if (welcomeDue(user)) { setNotice({ kind: "welcome" }); return; }
     const since = lastCatchUp(user.id);
     if (!canBrowse || notifSettings.email === false || since === null || Date.now() - since <= CATCH_UP_EVERY_MS) return;
     const isNew = (n) => !n.read && Date.parse(n.created_at || "") > since;
-    const chats = Object.keys(unreadCounts).filter(id => unreadCounts[id] > 0 && api.newestUnreadAt(id) > since);
-    const messages = chats.reduce((sum, id) => sum + unreadCounts[id], 0);
+    const fresh = (id) => Math.min(unreadCounts[id] || 0, api.unreadSince(id, since));
+    const chats = Object.keys(unreadCounts).filter(id => fresh(id) > 0);
+    const messages = chats.reduce((sum, id) => sum + fresh(id), 0);
     const requests = notifications.filter(n => n.type === "request" && isNew(n)).length;
     const others = notifications.filter(n => isNew(n) && !["request", "verification"].includes(n.type)).length;
     const go = (fn) => () => { closeNotice(); leaveOverlays(); fn(); };
@@ -4324,7 +4339,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!items.length) return;
     rememberNotice("catchup", user.id);
     setNotice({ kind: "catchup", items });
-  }, [noticesReady]);
+  }, [noticesReady, verificationChecked]);
 
   // A locked member (blocked or rejected) sees only their card.
   useEffect(() => { if (locked) { setNotice(null); setToasts([]); } }, [locked]);

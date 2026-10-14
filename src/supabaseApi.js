@@ -1039,16 +1039,24 @@ export async function getMyRsvps() {
 // conversation comes back only with messages sent after that.
 const hiddenAt = new Map();
 
-export async function getConversations() {
-  if (!currentUser) return [];
-  const [data, hides] = await Promise.all([
-    restCall("GET", `/rest/v1/conversations?or=(participant_1.eq.${currentUser.id},participant_2.eq.${currentUser.id})&select=*,p1:participant_1(id,name,avatar_url),p2:participant_2(id,name,avatar_url)&order=last_message_at.desc`),
-    restCall("GET", `/rest/v1/conversation_hides?user_id=eq.${currentUser.id}&select=conversation_id,hidden_at`).catch(() => null),
-  ]);
-  if (hides) {
+// Which member's hides hiddenAt holds (null: not loaded yet).
+let hidesUser = null;
+async function loadHides() {
+  const uid = currentUser?.id;
+  const hides = await restCall("GET", `/rest/v1/conversation_hides?user_id=eq.${uid}&select=conversation_id,hidden_at`).catch(() => null);
+  if (hides && uid === currentUser?.id) {
     hiddenAt.clear();
     hides.forEach(h => hiddenAt.set(h.conversation_id, h.hidden_at));
+    hidesUser = uid;
   }
+}
+
+export async function getConversations() {
+  if (!currentUser) return [];
+  const [data] = await Promise.all([
+    restCall("GET", `/rest/v1/conversations?or=(participant_1.eq.${currentUser.id},participant_2.eq.${currentUser.id})&select=*,p1:participant_1(id,name,avatar_url),p2:participant_2(id,name,avatar_url)&order=last_message_at.desc`),
+    loadHides(),
+  ]);
   return (data || [])
     .filter(c => !hiddenAt.has(c.id) || new Date(c.last_message_at) > new Date(hiddenAt.get(c.id)))
     .map(c => ({
@@ -1067,21 +1075,25 @@ export async function hideConversation(conversationId) {
 }
 
 // Unread messages per conversation: { conversation id: count }.
-// The newest unread message's time per conversation (ms), as of the last
-// getUnreadCounts(), so the app can tell what arrived after a given moment.
-const newestUnread = new Map();
-export const newestUnreadAt = (conversationId) => newestUnread.get(conversationId) || 0;
+// When each unread message arrived (ms), per conversation, as of the last
+// getUnreadCounts(), so the app can count what arrived after a moment.
+const unreadTimes = new Map();
+export const unreadSince = (conversationId, since) => (unreadTimes.get(conversationId) || []).filter(t => t > since).length;
 
 export async function getUnreadCounts() {
   if (!currentUser) return {};
-  const rows = await restCall("GET", `/rest/v1/messages?read=eq.false&sender_id=neq.${currentUser.id}&select=conversation_id,created_at&limit=1000`);
+  // Chats the member deleted don't count: load their hides first if needed.
+  const [rows] = await Promise.all([
+    restCall("GET", `/rest/v1/messages?read=eq.false&sender_id=neq.${currentUser.id}&select=conversation_id,created_at&limit=1000`),
+    hidesUser === currentUser.id ? null : loadHides(),
+  ]);
   const counts = {};
-  newestUnread.clear();
+  unreadTimes.clear();
   (rows || []).forEach(r => {
     const h = hiddenAt.get(r.conversation_id);
     if (!h || new Date(r.created_at) > new Date(h)) {
       counts[r.conversation_id] = (counts[r.conversation_id] || 0) + 1;
-      newestUnread.set(r.conversation_id, Math.max(newestUnread.get(r.conversation_id) || 0, Date.parse(r.created_at) || 0));
+      unreadTimes.set(r.conversation_id, [...(unreadTimes.get(r.conversation_id) || []), Date.parse(r.created_at) || 0]);
     }
   });
   return counts;
