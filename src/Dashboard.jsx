@@ -8,12 +8,14 @@ import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner"
 import ProfileChecklist, { setupSteps, useProfileCardDismissed } from "./member/ProfileChecklist";
 import { TermsContent, PrivacyContent, ImpressumContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
 import { hasImprint } from "./content/imprint";
+import { WelcomeNotice, VerifiedNotice, NeedsInfoNotice, CatchUpNotice, ToastStack, welcomeDue, lastCatchUp, rememberNotice, CATCH_UP_EVERY_MS } from "./member/Notices";
 import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
 import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
-import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
+import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName } from "./member/profile";
+import { findCity } from "./content/findCity";
 
 
 // ============================================================================
@@ -1082,18 +1084,28 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModal, setSettingsModal] = useState(startRoute.legal ? "terms" : null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
   const [notifications, setNotifications] = useState([]);
+  const [notifsLoaded, setNotifsLoaded] = useState(false); // the list has been fetched at least once
+  // The member's status as loaded after a verification decision arrived:
+  // { id: the notification, status } (status null if that reload failed;
+  // the next check tries again). The notices wait for it.
+  const [verificationChecked, setVerificationChecked] = useState(null);
+  const checkedDecision = (id, fresh) => {
+    setVerificationChecked({ id, status: fresh ? fresh.verificationStatus : null });
+    if (!fresh && lastVerificationNotifRef.current === id) lastVerificationNotifRef.current = null;
+  };
   const [acceptedNotifs, setAcceptedNotifs] = useState([]); // Namaste requests just accepted, shown as "✓ Accepted" for a moment
   const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
   const [privSettingsLoaded, setPrivSettingsLoaded] = useState(false);
-  // marketing mirrors the member's marketing consent (profile_private), the
-  // one place it is kept; email and push live in user_settings.
-  const [notifSettings, setNotifSettings] = useState({ email: true, push: true, marketing: !!user.marketingConsent });
+  const [notifPrefsLoaded, setNotifPrefsLoaded] = useState(false); // false | "ok" | "failed" (choices unknown)
+  // In-app notices (user_settings): push = pop-ups for new things while the
+  // member is here; email = the catch-up when they come back. (NRIClub sends
+  // no notification emails; the column kept its old name.)
+  const [notifSettings, setNotifSettings] = useState({ email: true, push: true });
   const [dataDownload, setDataDownload] = useState({ busy: false, error: "" });
   const [legalTab, setLegalTab] = useState(startRoute.legal || "terms"); // Settings > Terms & Policies: "terms" | "privacy" | "impressum"
-  // Opening a settings window shows what is stored now: the marketing
-  // choice. (Terms & Policies opens on the tab its menu item names.)
+  // Opening Account starts without an old download message. (Terms &
+  // Policies opens on the tab its menu item names.)
   useEffect(() => {
-    if (settingsModal === "notifications") setNotifSettings(prev => ({ ...prev, marketing: !!user.marketingConsent }));
     if (settingsModal === "account") setDataDownload({ busy: false, error: "" });
   }, [settingsModal]);
   const [accountName, setAccountName] = useState(user.name);
@@ -1397,7 +1409,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
         if (decision && decision.id !== lastVerificationNotifRef.current) {
           lastVerificationNotifRef.current = decision.id;
-          refreshMyProfile();
+          refreshMyProfile().then(fresh => checkedDecision(decision.id, fresh));
         }
         setNotifications(dbNotifs.map(n => ({
           id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
@@ -1405,6 +1417,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           read: n.read, reference_id: n.reference_id,
         })));
       }
+      if (dbNotifs) setNotifsLoaded(true);
       if (dbMarket && dbMarket.length) {
         setMarketItems(dbMarket.map(m => {
           const photos = listingPhotos(m.image_url);
@@ -1558,7 +1571,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           }));
           setPrivSettingsLoaded(true);
         }
-      } catch (e) {}
+        setNotifPrefsLoaded("ok");
+      } catch (e) {
+        setNotifPrefsLoaded("failed");
+      }
     })();
   }, [locked]);
 
@@ -1651,10 +1667,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
           if (decision && decision.id !== lastVerificationNotifRef.current) {
             lastVerificationNotifRef.current = decision.id;
-            refreshMyProfile();
+            refreshMyProfile().then(fresh => checkedDecision(decision.id, fresh));
             reloaded = true;
           }
         }
+        if (dbNotifs) setNotifsLoaded(true);
         // A block or unblock leaves no notification: check the member's own
         // status about once a minute as well.
         pollCountRef.current += 1;
@@ -1671,7 +1688,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     setUnreadCounts(prev => (prev[id] ? { ...prev, [id]: 0 } : prev));
     api.markConversationRead(id).catch(() => {});
   };
-  useEffect(() => { if (canBrowse) api.getUnreadCounts().then(setUnreadCounts).catch(() => {}); }, [canBrowse]);
+  const [unreadLoaded, setUnreadLoaded] = useState(false);
+  useEffect(() => {
+    if (canBrowse) api.getUnreadCounts().then(setUnreadCounts).catch(() => {}).finally(() => setUnreadLoaded(true));
+  }, [canBrowse]);
 
   // Realtime messages via WebSocket + fast fallback polling
   useEffect(() => {
@@ -1814,8 +1834,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
   // A new member's first day: their city's group, joined for them once, and
   // a welcome card with people nearby (until they dismiss it or follow someone).
+  // Spelled any way ("Dusseldorf", "München", "nyc"): matched like city addresses are.
   const welcomeCity = (user.city || (user.location || "").split(",")[0] || "").trim();
-  const cityGroup = welcomeCity ? groups.find(g => (g.name || "").toLowerCase() === `indians in ${welcomeCity.toLowerCase()}`) : null;
+  const cityGroup = (() => {
+    if (!welcomeCity) return null;
+    const cityGroups = groups.filter(g => cityFromGroupName(g.name));
+    const name = findCity(welcomeCity, cityGroups.map(g => cityFromGroupName(g.name))) || welcomeCity;
+    return cityGroups.find(g => slug(g.name) === slug(`Indians in ${name}`)) || null;
+  })();
   const welcomeKey = `nriclub_welcome_done_${user.id}`;
   const [welcomeDone, setWelcomeDone] = useState(() => { try { return !!localStorage.getItem(welcomeKey); } catch (e) { return true; } });
   const dismissWelcome = () => { setWelcomeDone(true); try { localStorage.setItem(welcomeKey, "1"); } catch (e) {} };
@@ -4137,6 +4163,229 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  // A notification from the bell (or from its pop-up): go where it points.
+  const openNotification = (n) => {
+    if (n.type === "like" || n.type === "comment") {
+      setView("home");
+      setNotifOpen(false);
+      // Mark as read
+      try { api.markNotificationHandled(n.id); } catch(e) {}
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+      // Scroll to the post after a short delay for render
+      if (n.reference_id) {
+        setTimeout(() => {
+          const el = document.querySelector(`[data-post-id="${n.reference_id}"]`);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            el.style.boxShadow = "0 0 0 3px #5B9CFF";
+            setTimeout(() => { el.style.boxShadow = ""; }, 2000);
+          }
+        }, 300);
+      }
+    } else if (n.type === "request") {
+      // Don't navigate for requests - they have Accept/Ignore buttons
+    } else if (["booking", "booking_cancelled", "review"].includes(n.type)) {
+      setNotifOpen(false);
+      Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+      setMentoringKey(k => k + 1);
+      if (n.type === "review") refreshRatings();
+      setView("mentoring");
+    } else if (["answer", "thanks", "best", "urgent", "rsvp", "member"].includes(n.type)) {
+      setNotifOpen(false);
+      Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+      if (n.type === "rsvp") {
+        const ev = events.find(e => e.id === n.reference_id);
+        setView("events");
+        if (ev) setExpandedEvent(ev);
+      } else if (n.type === "member") {
+        if (n.actor_id) openMember(n.actor_id);
+      } else if (n.reference_id) {
+        openQuestion(n.reference_id);
+      }
+    } else if (n.type === "event") {
+      setView("events");
+      setNotifOpen(false);
+    } else if (n.type === "group") {
+      setView("groups");
+      setNotifOpen(false);
+    } else if (n.type === "message") {
+      setView("messages");
+      setNotifOpen(false);
+    } else if (n.type === "verification") {
+      setNotifOpen(false);
+      Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+      refreshMyProfile().then(fresh => {
+        if (fresh?.verificationStatus === "needs_info") setVerifyOpen(true);
+      });
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // IN-APP NOTICES (member/Notices.jsx): NRIClub sends no notification emails,
+  // so what they would have said shows here. One dialog at a time: the
+  // verification result, else the welcome (first visit) or the catch-up (back
+  // to unread things); and small pop-ups for new things while the member is here.
+  // ---------------------------------------------------------------------------
+  const [notice, setNotice] = useState(null); // null | { kind: "welcome" | "verified" | "info" | "catchup", verified?, notifId?, items? }
+  const [toasts, setToasts] = useState([]);
+  const firstNoticeRef = useRef(false); // the welcome or catch-up was decided for this visit
+  const handledNoticesRef = useRef(new Set()); // notifications already shown as a notice (the next poll may still say unread)
+  const pushToast = (t) => setToasts(prev => [...prev.filter(x => x.id !== t.id), t].slice(-3));
+  const dismissToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
+
+  // Before going somewhere from a notice or a toast: close what only shows
+  // something (nothing typed is lost), so the place it opens is in view.
+  const leaveOverlays = () => {
+    setExpandedEvent(null); setExpandedMarketItem(null); setMarketPhotoIdx(0);
+    setSettingsModal(m => (m === "feedback" ? m : null)); setFollowModal(null); setHelpModal(false);
+    setNotifOpen(false); setSettingsOpen(false); setMobileMenu(false); setChatSettings(false);
+  };
+  const openConversation = (cid) => {
+    leaveOverlays();
+    setView("messages");
+    setSelectedConvo(cid);
+    if (!chatMessages[cid]) {
+      api.getMessages(cid).then(msgs => {
+        if (msgs) setChatMessages(p => ({ ...p, [cid]: msgs.map(m => ({
+          id: m.id, text: m.content,
+          sender: m.sender_id === user.id ? "me" : "them",
+          time: new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        })) }));
+      }).catch(() => {});
+    }
+  };
+  // The member's city group (cityGroup, above), or asking for one when the
+  // lists show there is none. Before the lists are in, /groups opens and the
+  // group follows once it has loaded.
+  const cityMissing = !!welcomeCity && listsLoaded && !cityGroup;
+  const openMyCityGroup = () => {
+    closeNotice();
+    leaveOverlays();
+    if (cityGroup) { setGroupMembers([]); setSelectedGroup(cityGroup); setView("groups"); return; }
+    setSelectedGroup(null);
+    setView("groups");
+    if (cityMissing) {
+      setNewGroupCity(welcomeCity); setNewGroupKind("City"); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true);
+    } else if (welcomeCity) {
+      try { if (window.location.pathname !== "/groups") window.history.pushState(null, "", "/groups"); } catch (e) {}
+      setPendingRoute({ kind: "city", id: welcomeCity });
+    }
+  };
+
+  const closeNotice = () => {
+    const n = notice;
+    setNotice(null);
+    if (!n) return;
+    if (n.notifId) {
+      handledNoticesRef.current.add(n.notifId);
+      Promise.resolve(api.markNotificationHandled(n.notifId)).catch(() => {});
+      setNotifications(prev => prev.map(x => x.id === n.notifId ? { ...x, read: true } : x));
+    }
+    if (n.kind === "welcome") { rememberNotice("welcome", user.id); rememberNotice("catchup", user.id); }
+  };
+
+  // Our team decided (approved, or needs more information): say so once,
+  // going by the status loaded after the decision arrived (never by the one
+  // from before). While the welcome is open, it takes the approval (it then
+  // says "You're verified" itself) instead of a second dialog.
+  const verificationNotif = notifications.find(n => n.type === "verification" && !n.read && !handledNoticesRef.current.has(n.id));
+  const decided = verificationNotif && verificationChecked?.id === verificationNotif.id ? verificationChecked.status : null;
+  useEffect(() => {
+    if (!verificationNotif || !decided || locked) return;
+    if (notice) {
+      if (notice.kind === "welcome" && decided === "approved" && notice.notifId !== verificationNotif.id) {
+        setNotice(n => (n?.kind === "welcome" ? { ...n, verified: true, notifId: verificationNotif.id } : n));
+      }
+      return;
+    }
+    if (decided === "approved") {
+      firstNoticeRef.current = true;
+      setNotice(welcomeDue(user) ? { kind: "welcome", verified: true, notifId: verificationNotif.id } : { kind: "verified", notifId: verificationNotif.id });
+    } else if (decided === "needs_info") {
+      firstNoticeRef.current = true;
+      setNotice({ kind: "info", notifId: verificationNotif.id });
+    }
+  }, [verificationNotif?.id, decided, notice, locked]);
+
+  // Opening NRIClub: the welcome for a new member, else a catch-up with what
+  // arrived since the last one (unread messages, Namaste requests,
+  // notifications), at most every few hours. Decided once everything it
+  // needs has loaded (a member held for review loads no lists; they get the
+  // welcome only).
+  const noticesReady = notifPrefsLoaded && (canBrowse ? listsLoaded && unreadLoaded : !locked);
+  useEffect(() => {
+    if (firstNoticeRef.current || !noticesReady || locked) return;
+    if (notice) { firstNoticeRef.current = true; return; }
+    // A decision our team just made: wait for the status loaded after it;
+    // an approval or a request for information is shown by the effect above.
+    if (verificationNotif && verificationChecked?.id !== verificationNotif.id) return;
+    if (decided === "approved" || decided === "needs_info") return;
+    firstNoticeRef.current = true;
+    if (welcomeDue(user)) { setNotice({ kind: "welcome" }); return; }
+    const since = lastCatchUp(user.id);
+    // Not when the member's choice couldn't be loaded (they may have turned it off).
+    if (!canBrowse || notifPrefsLoaded !== "ok" || notifSettings.email === false || since === null || Date.now() - since <= CATCH_UP_EVERY_MS) return;
+    const isNew = (n) => !n.read && Date.parse(n.created_at || "") > since;
+    const fresh = (id) => Math.min(unreadCounts[id] || 0, api.unreadSince(id, since));
+    const chats = Object.keys(unreadCounts).filter(id => fresh(id) > 0);
+    const messages = chats.reduce((sum, id) => sum + fresh(id), 0);
+    const requests = notifications.filter(n => n.type === "request" && isNew(n)).length;
+    const others = notifications.filter(n => isNew(n) && !["request", "verification"].includes(n.type)).length;
+    const go = (fn) => () => { closeNotice(); leaveOverlays(); fn(); };
+    const items = [];
+    if (messages) items.push({ icon: "💬", text: messages === 1 ? "1 new message" : `${messages} new messages`, action: "Open", onClick: go(() => { if (chats.length === 1) openConversation(chats[0]); else setView("messages"); }) });
+    if (requests) items.push({ icon: "🙏", text: requests === 1 ? "1 Namaste request" : `${requests} Namaste requests`, action: "See", onClick: go(() => setNotifOpen(true)) });
+    if (others) items.push({ icon: "🔔", text: others === 1 ? "1 new notification" : `${others} new notifications`, action: "See", onClick: go(() => setNotifOpen(true)) });
+    if (!items.length) return;
+    rememberNotice("catchup", user.id);
+    setNotice({ kind: "catchup", items });
+  }, [noticesReady, verificationChecked]);
+
+  // A locked member (blocked or rejected) sees only their card.
+  useEffect(() => { if (locked) { setNotice(null); setToasts([]); } }, [locked]);
+
+  // Pop-ups for new things while the member is here. Only the latest 20
+  // notifications are loaded, so an older one can come back into the list
+  // (when a newer one is deleted): only what is newer than the oldest one
+  // seen at the start counts as new.
+  const TOAST_SKIP = ["like", "verification", "trending"];
+  const notifLine = (n) => (n.actor && !(n.text || "").startsWith(n.actor) ? `${n.actor} ${n.text || ""}` : n.text || "");
+  const seenNotifsRef = useRef(null);
+  const notifFloorRef = useRef(-Infinity);
+  useEffect(() => {
+    if (!notifsLoaded) return;
+    if (!seenNotifsRef.current) {
+      seenNotifsRef.current = new Set(notifications.map(n => n.id));
+      if (notifications.length) notifFloorRef.current = Math.min(...notifications.map(n => Date.parse(n.created_at || "") || 0));
+      return;
+    }
+    const fresh = notifications.filter(n => !seenNotifsRef.current.has(n.id));
+    fresh.forEach(n => seenNotifsRef.current.add(n.id));
+    if (notifSettings.push === false || notifPrefsLoaded !== "ok" || locked) return;
+    fresh.filter(n => !n.read && !TOAST_SKIP.includes(n.type) && (Date.parse(n.created_at || "") || 0) >= notifFloorRef.current).slice(0, 3).forEach(n => pushToast({
+      id: `n-${n.id}`,
+      icon: n.type === "request" ? "🙏" : n.type === "comment" ? "💬" : NOTIF_BADGE[n.type] || "🔔",
+      text: notifLine(n),
+      onOpen: () => { leaveOverlays(); if (n.type === "request") setNotifOpen(true); else openNotification(n); },
+    }));
+  }, [notifications, notifsLoaded]);
+  const lastUnreadRef = useRef(null);
+  useEffect(() => {
+    const before = lastUnreadRef.current;
+    if (!unreadLoaded) return;
+    lastUnreadRef.current = unreadCounts;
+    if (!before || notifSettings.push === false || notifPrefsLoaded !== "ok" || locked) return;
+    Object.keys(unreadCounts).forEach(cid => {
+      if (unreadCounts[cid] > (before[cid] || 0) && view !== "messages") {
+        const c = convos.find(x => x.id === cid);
+        pushToast({ id: `m-${cid}`, icon: "💬", text: c?.name ? `New message from ${c.name}` : "New message", action: "Open", onOpen: () => openConversation(cid) });
+      }
+    });
+  }, [unreadCounts, unreadLoaded]);
+
   return (
     <div ref={dashboardRef} style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: font }}>
       {/* Rejected verification: full-screen card (blocked members see the blocked overlay instead) */}
@@ -4191,65 +4440,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     </div>
                     <div style={{ overflow: "auto", maxHeight: 380 }}>
                       {(acceptedNotifs.length ? [...notifications.filter(n => !acceptedNotifs.some(a => a.id === n.id)), ...acceptedNotifs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : notifications).map(n => (
-                        <div key={n.id} onClick={() => {
-                          // Navigate based on notification type
-                          if (n.type === "like" || n.type === "comment") {
-                            setView("home");
-                            setNotifOpen(false);
-                            // Mark as read
-                            try { api.markNotificationHandled(n.id); } catch(e) {}
-                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
-                            // Scroll to the post after a short delay for render
-                            if (n.reference_id) {
-                              setTimeout(() => {
-                                const el = document.querySelector(`[data-post-id="${n.reference_id}"]`);
-                                if (el) {
-                                  el.scrollIntoView({ behavior: "smooth", block: "center" });
-                                  el.style.boxShadow = "0 0 0 3px #5B9CFF";
-                                  setTimeout(() => { el.style.boxShadow = ""; }, 2000);
-                                }
-                              }, 300);
-                            }
-                          } else if (n.type === "request") {
-                            // Don't navigate for requests - they have Accept/Ignore buttons
-                          } else if (["booking", "booking_cancelled", "review"].includes(n.type)) {
-                            setNotifOpen(false);
-                            Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
-                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
-                            setMentoringKey(k => k + 1);
-                            if (n.type === "review") refreshRatings();
-                            setView("mentoring");
-                          } else if (["answer", "thanks", "best", "urgent", "rsvp", "member"].includes(n.type)) {
-                            setNotifOpen(false);
-                            Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
-                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
-                            if (n.type === "rsvp") {
-                              const ev = events.find(e => e.id === n.reference_id);
-                              setView("events");
-                              if (ev) setExpandedEvent(ev);
-                            } else if (n.type === "member") {
-                              if (n.actor_id) openMember(n.actor_id);
-                            } else if (n.reference_id) {
-                              openQuestion(n.reference_id);
-                            }
-                          } else if (n.type === "event") {
-                            setView("events");
-                            setNotifOpen(false);
-                          } else if (n.type === "group") {
-                            setView("groups");
-                            setNotifOpen(false);
-                          } else if (n.type === "message") {
-                            setView("messages");
-                            setNotifOpen(false);
-                          } else if (n.type === "verification") {
-                            setNotifOpen(false);
-                            Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
-                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
-                            refreshMyProfile().then(fresh => {
-                              if (fresh?.verificationStatus === "needs_info") setVerifyOpen(true);
-                            });
-                          }
-                        }} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", gap: 12, background: n.read ? "#fff" : "#F5F8FF", cursor: n.type !== "request" ? "pointer" : "default" }}>
+                        <div key={n.id} onClick={() => openNotification(n)} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", display: "flex", gap: 12, background: n.read ? "#fff" : "#F5F8FF", cursor: n.type !== "request" ? "pointer" : "default" }}>
                           <div style={{ flexShrink: 0, marginTop: 2 }}>
                             {n.actor ? (
                               <div style={{ position: "relative" }}>
@@ -4353,7 +4544,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       { key: "install", icon: Icons.home, label: "Add to Home Screen" },
                       { key: "account", icon: Icons.user, label: "Account Settings" },
                       { key: "privacy", icon: Icons.shield, label: "Privacy & Safety" },
-                      { key: "notifications", icon: Icons.bell, label: "Email Notifications" },
+                      { key: "notifications", icon: Icons.bell, label: "Notifications" },
                       { key: "activity", icon: Icons.trending, label: "Activity Log" },
                     ].map(item => (
                       <button key={item.key} onClick={() => {
@@ -5171,37 +5362,36 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         </div>
       )}
 
-      {/* Notification Preferences Modal (Marketing Emails is the member's marketing consent) */}
+      {/* Notifications: in-app pop-ups only (NRIClub sends no notification emails) */}
       {settingsModal === "notifications" && (
         <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setSettingsModal(null)}>
           <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
               <div>
-                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Email Notifications</h3>
+                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Notifications</h3>
                 {settingsSaveError && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 2, fontFamily: font }}>{settingsSaveError}</p>}
               </div>
               <button onClick={() => setSettingsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               {[
-                { label: "Email Notifications", desc: "Receive updates via email.", key: "email" },
-                { label: "Marketing Emails", desc: "Receive news and special offers.", key: "marketing" },
+                { label: "Pop-ups while I'm on NRIClub", desc: "A small pop-up for new messages, Namaste requests, answers and bookings.", key: "push", dbKey: "push_notifications" },
+                { label: "Catch-up when I come back", desc: "A summary of unread messages and notifications when you open NRIClub.", key: "email", dbKey: "email_notifications" },
               ].map((item, i) => (
                 <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderBottom: i < 1 ? "1px solid #F0EFED" : "none" }}>
                   <div>
-                    <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{item.label}</h4>
-                    <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 2, fontFamily: font }}>{item.desc}</p>
+                    <h4 id={`notif-${item.key}`} style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>{item.label}</h4>
+                    <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 2, fontFamily: font }}>{item.desc}</p>
                   </div>
-                  <button onClick={() => {
+                  <button type="button" role="switch" aria-checked={notifSettings[item.key] !== false} aria-labelledby={`notif-${item.key}`} onClick={() => {
                     const v = !notifSettings[item.key];
-                    saveSetting(setNotifSettings, item.key, v, item.key === "marketing"
-                      ? async () => { await api.updateProfile({ marketing_consent: v }); onUserUpdate({ ...user, marketingConsent: v }); }
-                      : () => api.saveUserSettings({ email_notifications: v }));
+                    saveSetting(setNotifSettings, item.key, v, () => api.saveUserSettings({ [item.dbKey]: v }));
                   }} style={{ width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: notifSettings[item.key] ? "#37352F" : "#D4D4D2", position: "relative", padding: 0, flexShrink: 0 }}>
                     <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: notifSettings[item.key] ? 23 : 3, transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.15)" }} />
                   </button>
                 </div>
               ))}
+              <p style={{ fontSize: 12, color: "#6B6A67", margin: "14px 0 0", lineHeight: 1.5, fontFamily: font }}>Everything also waits for you in Messages and under the bell. We only email you sign-in codes and password links.</p>
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
               <button onClick={() => { setSettingsModal(null); setSettingsSaveError(""); }} style={{ ...btnPrimary, padding: "10px 20px" }}>Done</button>
@@ -5908,6 +6098,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       )}
 
       {bookingMentor && <BookingModal mentor={bookingMentor} onClose={() => setBookingMentor(null)} onMessage={messageMember} Avatar={Avatar} />}
+
+      {!locked && (
+        <>
+          {notice?.kind === "welcome" && <WelcomeNotice user={user} verified={!!notice.verified} cityGroup={cityGroup?.name} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
+          {notice?.kind === "verified" && <VerifiedNotice user={user} cityGroup={cityGroup?.name} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
+          {notice?.kind === "info" && <NeedsInfoNotice user={user} onClose={closeNotice} onUpdate={() => { closeNotice(); leaveOverlays(); setVerifyOpen(true); }} />}
+          {notice?.kind === "catchup" && <CatchUpNotice user={user} items={notice.items} onClose={closeNotice} />}
+          <ToastStack toasts={toasts} onDismiss={dismissToast} />
+        </>
+      )}
 
       {/* Edit Profile Modal */}
       {profileModal && (() => {

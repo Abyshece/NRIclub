@@ -73,12 +73,15 @@ the phase that will handle them.
   or search on the server for older handled reports.
 - Reports store the kind of content in the reason prefix (`[DOC]` …) and bug
   reports share the reports table; add a content type column / bug table.
-- `user_settings.marketing_emails` is no longer read or written by the site
-  (marketing consent is `profile_private.marketing_consent`), and it's
-  FALSE by default for everyone, so it says nothing about consent. Drop the
-  column, and never build a mailing list from it. Build mailing lists from
-  `marketing_consent`, and only from confirmed accounts
-  (`profiles.email_verified`).
+- `user_settings.marketing_emails` and `profile_private.marketing_consent`
+  are no longer used: NRIClub sends no newsletters or notification emails
+  (only sign-in emails), signup doesn't ask and Settings has no switch. No
+  member had opted in (checked on live, October 2026). Drop both columns
+  some day, and never build a mailing list from them: a future newsletter
+  needs a new opt-in and a switch in Settings to withdraw it.
+  (`user_settings.email_notifications` and `push_notifications` now hold the
+  in-app choices "Catch-up when I come back" and "Pop-ups while I'm on
+  NRIClub"; rename them if the table is ever reworked.)
 - Marketplace photos are a JSON string in `image_url`; event dates are free
   text.
 
