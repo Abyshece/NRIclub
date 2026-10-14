@@ -57,10 +57,19 @@ In the Supabase dashboard → **Authentication**:
    addresses of your own Supabase team, and only a few emails an hour.
    Without custom SMTP the public sees "We couldn't create your account",
    while your own address still works, which hides the problem.
+   - These are the only emails NRIClub sends: sign-up codes, code logins,
+     password links and email-change confirmations. Everything else (the
+     verification result, new messages, Namaste requests, answers, bookings)
+     shows inside the app as a pop-up or under the bell. So the volume is
+     about one or two emails per new member plus password resets, not one
+     per member per month.
    - Choose an email provider (for example Resend, Postmark, Brevo or Amazon
      SES), verify the `nriclub.app` domain with it (it gives you DNS records
      to add where the domain is registered), and enter its SMTP host, port,
-     user name and password here.
+     user name and password here. Mind the daily limits on free plans
+     (Resend's free plan: 3,000 a month but only 100 a day; Brevo's: 300 a
+     day): a launch day with more sign-ups than that needs a paid plan or
+     Amazon SES (about $0.10 per 1,000 emails).
    - Sender address e.g. `no-reply@nriclub.app`, sender name `NRIClub`.
    - Test it: sign up with an address that isn't on your Supabase team (a
      friend's, or a new free mailbox) and check the code arrives.

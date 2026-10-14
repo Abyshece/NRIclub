@@ -341,7 +341,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
           </div>
         </Field>
 
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ marginBottom: 28 }}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
             <input
               id="signup-agree" ref={fieldRefs.agree} type="checkbox" checked={form.agree}
@@ -360,13 +360,6 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
               {errors.agree && <p id="signup-agree-error" style={fieldErrorStyle}>{errors.agree}</p>}
             </div>
           </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 28 }}>
-          <input id="signup-marketing" type="checkbox" checked={form.marketing} onChange={(e) => update("marketing", e.target.checked)} style={checkboxStyle} />
-          <label htmlFor="signup-marketing" style={{ fontSize: 14, color: COLORS.label, lineHeight: 1.5, cursor: "pointer" }}>
-            Email me about events and community news <span style={{ color: COLORS.helper }}>(optional)</span>
-          </label>
         </div>
 
         <button type="submit" disabled={submitting} aria-describedby={submitError ? "signup-submit-error" : undefined} style={primaryButtonStyle(submitting)}>

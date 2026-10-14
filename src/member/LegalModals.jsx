@@ -4,9 +4,10 @@ import { IMPRINT, hasImprint, imprintSections } from "../content/imprint";
 
 const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
-// A simple centred dialog in the style of the app's other modals. Escape
-// closes it, Tab stays inside it, and focus goes back to where it was.
-export function LegalModal({ title, onClose, children }) {
+// For a dialog: Escape closes it, Tab stays inside it, the element in
+// closeRef gets focus when it opens, and focus goes back to where it was
+// when it closes.
+export function useDialogFocus(onClose) {
   const closeRef = useRef(null);
   const dialogRef = useRef(null);
   const onCloseRef = useRef(onClose);
@@ -32,6 +33,13 @@ export function LegalModal({ title, onClose, children }) {
       if (previous && previous.focus) previous.focus();
     };
   }, []);
+  return { closeRef, dialogRef };
+}
+
+// A simple centred dialog in the style of the app's other modals. Escape
+// closes it, Tab stays inside it, and focus goes back to where it was.
+export function LegalModal({ title, onClose, children }) {
+  const { closeRef, dialogRef } = useDialogFocus(onClose);
   const titleId = `legal-${title.replace(/\W+/g, "-").toLowerCase()}`;
   return (
     <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 150, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={onClose}>
@@ -112,7 +120,7 @@ export function PrivacyContent() {
       <h4 style={h4}>1. Data We Collect</h4>
       <p style={para}>We collect the personal information you provide when you sign up and verify your profile: your name, email, city and country, and either your LinkedIn profile link or a short note on how you're connected to the community (and, if you give one, the member who can vouch for you). Optional profile details such as hometown, profession and status are added by you later. We also collect usage data such as posts, comments, and interactions within the platform.</p>
       <h4 style={h4}>2. How We Use Your Data</h4>
-      <p style={para}>Your data is used to: provide and personalize the NRIClub service, verify that members are real people, connect you with relevant community members, send essential service notifications, and (with your consent) send marketing communications.</p>
+      <p style={para}>Your data is used to: provide and personalize the NRIClub service, verify that members are real people, connect you with relevant community members, show you notifications inside NRIClub, and email you what your account needs, such as sign-up codes and password links. We don't send newsletters or notification emails.</p>
       <h4 style={h4}>3. Legal Basis (GDPR Art. 6)</h4>
       <p style={para}>We process your data based on: your explicit consent (Art. 6(1)(a)), performance of our service contract (Art. 6(1)(b)), and our legitimate interest in operating the platform (Art. 6(1)(f)).</p>
       <h4 style={h4}>4. Your Rights</h4>
