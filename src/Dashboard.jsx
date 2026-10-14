@@ -1096,7 +1096,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [acceptedNotifs, setAcceptedNotifs] = useState([]); // Namaste requests just accepted, shown as "✓ Accepted" for a moment
   const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
   const [privSettingsLoaded, setPrivSettingsLoaded] = useState(false);
-  const [notifPrefsLoaded, setNotifPrefsLoaded] = useState(false);
+  const [notifPrefsLoaded, setNotifPrefsLoaded] = useState(false); // false | "ok" | "failed" (choices unknown)
   // In-app notices (user_settings): push = pop-ups for new things while the
   // member is here; email = the catch-up when they come back. (NRIClub sends
   // no notification emails; the column kept its old name.)
@@ -1571,8 +1571,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           }));
           setPrivSettingsLoaded(true);
         }
-      } catch (e) {}
-      setNotifPrefsLoaded(true);
+        setNotifPrefsLoaded("ok");
+      } catch (e) {
+        setNotifPrefsLoaded("failed");
+      }
     })();
   }, [locked]);
 
@@ -4324,7 +4326,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     firstNoticeRef.current = true;
     if (welcomeDue(user)) { setNotice({ kind: "welcome" }); return; }
     const since = lastCatchUp(user.id);
-    if (!canBrowse || notifSettings.email === false || since === null || Date.now() - since <= CATCH_UP_EVERY_MS) return;
+    // Not when the member's choice couldn't be loaded (they may have turned it off).
+    if (!canBrowse || notifPrefsLoaded !== "ok" || notifSettings.email === false || since === null || Date.now() - since <= CATCH_UP_EVERY_MS) return;
     const isNew = (n) => !n.read && Date.parse(n.created_at || "") > since;
     const fresh = (id) => Math.min(unreadCounts[id] || 0, api.unreadSince(id, since));
     const chats = Object.keys(unreadCounts).filter(id => fresh(id) > 0);
@@ -4361,7 +4364,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
     const fresh = notifications.filter(n => !seenNotifsRef.current.has(n.id));
     fresh.forEach(n => seenNotifsRef.current.add(n.id));
-    if (notifSettings.push === false || locked) return;
+    if (notifSettings.push === false || notifPrefsLoaded !== "ok" || locked) return;
     fresh.filter(n => !n.read && !TOAST_SKIP.includes(n.type) && (Date.parse(n.created_at || "") || 0) >= notifFloorRef.current).slice(0, 3).forEach(n => pushToast({
       id: `n-${n.id}`,
       icon: n.type === "request" ? "🙏" : n.type === "comment" ? "💬" : NOTIF_BADGE[n.type] || "🔔",
@@ -4374,7 +4377,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     const before = lastUnreadRef.current;
     if (!unreadLoaded) return;
     lastUnreadRef.current = unreadCounts;
-    if (!before || notifSettings.push === false || locked) return;
+    if (!before || notifSettings.push === false || notifPrefsLoaded !== "ok" || locked) return;
     Object.keys(unreadCounts).forEach(cid => {
       if (unreadCounts[cid] > (before[cid] || 0) && view !== "messages") {
         const c = convos.find(x => x.id === cid);
