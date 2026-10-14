@@ -1067,13 +1067,22 @@ export async function hideConversation(conversationId) {
 }
 
 // Unread messages per conversation: { conversation id: count }.
+// The newest unread message's time per conversation (ms), as of the last
+// getUnreadCounts(), so the app can tell what arrived after a given moment.
+const newestUnread = new Map();
+export const newestUnreadAt = (conversationId) => newestUnread.get(conversationId) || 0;
+
 export async function getUnreadCounts() {
   if (!currentUser) return {};
   const rows = await restCall("GET", `/rest/v1/messages?read=eq.false&sender_id=neq.${currentUser.id}&select=conversation_id,created_at&limit=1000`);
   const counts = {};
+  newestUnread.clear();
   (rows || []).forEach(r => {
     const h = hiddenAt.get(r.conversation_id);
-    if (!h || new Date(r.created_at) > new Date(h)) counts[r.conversation_id] = (counts[r.conversation_id] || 0) + 1;
+    if (!h || new Date(r.created_at) > new Date(h)) {
+      counts[r.conversation_id] = (counts[r.conversation_id] || 0) + 1;
+      newestUnread.set(r.conversation_id, Math.max(newestUnread.get(r.conversation_id) || 0, Date.parse(r.created_at) || 0));
+    }
   });
   return counts;
 }

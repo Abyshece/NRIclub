@@ -8,7 +8,7 @@ import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner"
 import ProfileChecklist, { setupSteps, useProfileCardDismissed } from "./member/ProfileChecklist";
 import { TermsContent, PrivacyContent, ImpressumContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
 import { hasImprint } from "./content/imprint";
-import { WelcomeNotice, VerifiedNotice, NeedsInfoNotice, CatchUpNotice, ToastStack, welcomeDue, catchUpDue, rememberNotice } from "./member/Notices";
+import { WelcomeNotice, VerifiedNotice, NeedsInfoNotice, CatchUpNotice, ToastStack, welcomeDue, lastCatchUp, rememberNotice, CATCH_UP_EVERY_MS } from "./member/Notices";
 import { downloadMyData, useAccountActions } from "./member/AccountActions";
 import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
@@ -1083,6 +1083,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModal, setSettingsModal] = useState(startRoute.legal ? "terms" : null); // 'account'|'privacy'|'notifications'|'activity'|'helpCenter'|'terms'
   const [notifications, setNotifications] = useState([]);
+  const [notifsLoaded, setNotifsLoaded] = useState(false); // the list has been fetched at least once
+  // The member's status as loaded after a verification decision arrived:
+  // { id: the notification, status }. The notice waits for it.
+  const [verificationChecked, setVerificationChecked] = useState(null);
   const [acceptedNotifs, setAcceptedNotifs] = useState([]); // Namaste requests just accepted, shown as "✓ Accepted" for a moment
   const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
   const [privSettingsLoaded, setPrivSettingsLoaded] = useState(false);
@@ -1399,7 +1403,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
         if (decision && decision.id !== lastVerificationNotifRef.current) {
           lastVerificationNotifRef.current = decision.id;
-          refreshMyProfile();
+          refreshMyProfile().then(fresh => { if (fresh) setVerificationChecked({ id: decision.id, status: fresh.verificationStatus }); });
         }
         setNotifications(dbNotifs.map(n => ({
           id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
@@ -1407,6 +1411,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           read: n.read, reference_id: n.reference_id,
         })));
       }
+      if (dbNotifs) setNotifsLoaded(true);
       if (dbMarket && dbMarket.length) {
         setMarketItems(dbMarket.map(m => {
           const photos = listingPhotos(m.image_url);
@@ -1654,10 +1659,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           const decision = dbNotifs.find(n => n.type === "verification" && !n.read);
           if (decision && decision.id !== lastVerificationNotifRef.current) {
             lastVerificationNotifRef.current = decision.id;
-            refreshMyProfile();
+            refreshMyProfile().then(fresh => { if (fresh) setVerificationChecked({ id: decision.id, status: fresh.verificationStatus }); });
             reloaded = true;
           }
         }
+        if (dbNotifs) setNotifsLoaded(true);
         // A block or unblock leaves no notification: check the member's own
         // status about once a minute as well.
         pollCountRef.current += 1;
@@ -4216,7 +4222,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const pushToast = (t) => setToasts(prev => [...prev.filter(x => x.id !== t.id), t].slice(-3));
   const dismissToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
 
+  // Before going somewhere from a notice or a toast: close what only shows
+  // something (nothing typed is lost), so the place it opens is in view.
+  const leaveOverlays = () => {
+    setExpandedEvent(null); setExpandedMarketItem(null); setMarketPhotoIdx(0);
+    setSettingsModal(null); setFollowModal(null); setHelpModal(false);
+    setNotifOpen(false); setSettingsOpen(false); setMobileMenu(false); setChatSettings(false);
+  };
   const openConversation = (cid) => {
+    leaveOverlays();
     setView("messages");
     setSelectedConvo(cid);
     if (!chatMessages[cid]) {
@@ -4229,12 +4243,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       }).catch(() => {});
     }
   };
+  // The member's city group (cityGroup, above), or asking for one when the
+  // lists show there is none. Before the lists are in, /groups opens and the
+  // group follows once it has loaded.
+  const cityMissing = !!welcomeCity && listsLoaded && !cityGroup;
   const openMyCityGroup = () => {
     closeNotice();
-    if (!user.city) { setView("groups"); return; }
+    leaveOverlays();
+    if (cityGroup) { setGroupMembers([]); setSelectedGroup(cityGroup); setView("groups"); return; }
     setSelectedGroup(null);
     setView("groups");
-    setPendingRoute({ kind: "city", id: user.city });
+    if (cityMissing) {
+      setNewGroupCity(welcomeCity); setNewGroupKind("City"); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true);
+    } else if (welcomeCity) {
+      try { if (window.location.pathname !== "/groups") window.history.pushState(null, "", "/groups"); } catch (e) {}
+      setPendingRoute({ kind: "city", id: welcomeCity });
+    }
   };
 
   const closeNotice = () => {
@@ -4249,69 +4273,93 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     if (n.kind === "welcome") { rememberNotice("welcome", user.id); rememberNotice("catchup", user.id); }
   };
 
-  // Our team decided (approved, or needs more information): say so once. The
-  // status can arrive a moment after the notification; then this runs again.
+  // Our team decided (approved, or needs more information): say so once,
+  // going by the status loaded after the decision arrived (never by the one
+  // from before). While the welcome is open, it takes the approval (it then
+  // says "You're verified" itself) instead of a second dialog.
   const verificationNotif = notifications.find(n => n.type === "verification" && !n.read && !handledNoticesRef.current.has(n.id));
+  const decided = verificationNotif && verificationChecked?.id === verificationNotif.id ? verificationChecked.status : null;
   useEffect(() => {
-    if (!verificationNotif || notice || locked) return;
-    const status = user.verificationStatus;
-    if (status === "approved") {
+    if (!verificationNotif || !decided || locked) return;
+    if (notice) {
+      if (notice.kind === "welcome" && decided === "approved" && notice.notifId !== verificationNotif.id) {
+        setNotice(n => (n?.kind === "welcome" ? { ...n, verified: true, notifId: verificationNotif.id } : n));
+      }
+      return;
+    }
+    if (decided === "approved") {
       firstNoticeRef.current = true;
       setNotice(welcomeDue(user) ? { kind: "welcome", verified: true, notifId: verificationNotif.id } : { kind: "verified", notifId: verificationNotif.id });
-    } else if (status === "needs_info") {
+    } else if (decided === "needs_info") {
       firstNoticeRef.current = true;
       setNotice({ kind: "info", notifId: verificationNotif.id });
     }
-  }, [verificationNotif?.id, user.verificationStatus, notice, locked]);
+  }, [verificationNotif?.id, decided, notice, locked]);
 
-  // Opening NRIClub: the welcome for a new member, else a catch-up when they
-  // come back to unread messages, Namaste requests or notifications. Decided
-  // once everything it needs has loaded (a member held for review loads no
-  // lists; they get the welcome only).
+  // Opening NRIClub: the welcome for a new member, else a catch-up with what
+  // arrived since the last one (unread messages, Namaste requests,
+  // notifications), at most every few hours. Decided once everything it
+  // needs has loaded (a member held for review loads no lists; they get the
+  // welcome only).
   const noticesReady = notifPrefsLoaded && (canBrowse ? listsLoaded && unreadLoaded : !locked);
   useEffect(() => {
     if (firstNoticeRef.current || !noticesReady || locked) return;
     if (notice) { firstNoticeRef.current = true; return; }
     // A decision our team just made is shown by the effect above.
-    if (verificationNotif && ["approved", "needs_info"].includes(user.verificationStatus)) return;
+    if (decided === "approved" || decided === "needs_info") return;
     firstNoticeRef.current = true;
     if (welcomeDue(user)) { setNotice({ kind: "welcome" }); return; }
-    if (!canBrowse || notifSettings.email === false || !catchUpDue(user.id)) return;
-    const chats = Object.keys(unreadCounts).filter(id => unreadCounts[id] > 0);
-    const requests = notifications.filter(n => n.type === "request" && !n.read).length;
-    const others = notifications.filter(n => !n.read && !["request", "verification"].includes(n.type)).length;
+    const since = lastCatchUp(user.id);
+    if (!canBrowse || notifSettings.email === false || since === null || Date.now() - since <= CATCH_UP_EVERY_MS) return;
+    const isNew = (n) => !n.read && Date.parse(n.created_at || "") > since;
+    const chats = Object.keys(unreadCounts).filter(id => unreadCounts[id] > 0 && api.newestUnreadAt(id) > since);
+    const messages = chats.reduce((sum, id) => sum + unreadCounts[id], 0);
+    const requests = notifications.filter(n => n.type === "request" && isNew(n)).length;
+    const others = notifications.filter(n => isNew(n) && !["request", "verification"].includes(n.type)).length;
+    const go = (fn) => () => { closeNotice(); leaveOverlays(); fn(); };
     const items = [];
-    if (unreadTotal) items.push({ icon: "💬", text: unreadTotal === 1 ? "1 new message" : `${unreadTotal} new messages`, action: "Open", onClick: () => { closeNotice(); if (chats.length === 1) openConversation(chats[0]); else setView("messages"); } });
-    if (requests) items.push({ icon: "🙏", text: requests === 1 ? "1 Namaste request" : `${requests} Namaste requests`, action: "See", onClick: () => { closeNotice(); setNotifOpen(true); } });
-    if (others) items.push({ icon: "🔔", text: others === 1 ? "1 new notification" : `${others} new notifications`, action: "See", onClick: () => { closeNotice(); setNotifOpen(true); } });
+    if (messages) items.push({ icon: "💬", text: messages === 1 ? "1 new message" : `${messages} new messages`, action: "Open", onClick: go(() => { if (chats.length === 1) openConversation(chats[0]); else setView("messages"); }) });
+    if (requests) items.push({ icon: "🙏", text: requests === 1 ? "1 Namaste request" : `${requests} Namaste requests`, action: "See", onClick: go(() => setNotifOpen(true)) });
+    if (others) items.push({ icon: "🔔", text: others === 1 ? "1 new notification" : `${others} new notifications`, action: "See", onClick: go(() => setNotifOpen(true)) });
     if (!items.length) return;
     rememberNotice("catchup", user.id);
     setNotice({ kind: "catchup", items });
   }, [noticesReady]);
 
-  // Pop-ups for new things while the member is here (not for what was
-  // already there when they arrived).
+  // A locked member (blocked or rejected) sees only their card.
+  useEffect(() => { if (locked) { setNotice(null); setToasts([]); } }, [locked]);
+
+  // Pop-ups for new things while the member is here. Only the latest 20
+  // notifications are loaded, so an older one can come back into the list
+  // (when a newer one is deleted): only what is newer than the oldest one
+  // seen at the start counts as new.
   const TOAST_SKIP = ["like", "verification", "trending"];
+  const notifLine = (n) => (n.actor && !(n.text || "").startsWith(n.actor) ? `${n.actor} ${n.text || ""}` : n.text || "");
   const seenNotifsRef = useRef(null);
+  const notifFloorRef = useRef(-Infinity);
   useEffect(() => {
-    if (!listsLoaded) return;
-    if (!seenNotifsRef.current) { seenNotifsRef.current = new Set(notifications.map(n => n.id)); return; }
+    if (!notifsLoaded) return;
+    if (!seenNotifsRef.current) {
+      seenNotifsRef.current = new Set(notifications.map(n => n.id));
+      if (notifications.length) notifFloorRef.current = Math.min(...notifications.map(n => Date.parse(n.created_at || "") || 0));
+      return;
+    }
     const fresh = notifications.filter(n => !seenNotifsRef.current.has(n.id));
     fresh.forEach(n => seenNotifsRef.current.add(n.id));
-    if (notifSettings.push === false) return;
-    fresh.filter(n => !n.read && !TOAST_SKIP.includes(n.type)).slice(0, 3).forEach(n => pushToast({
+    if (notifSettings.push === false || locked) return;
+    fresh.filter(n => !n.read && !TOAST_SKIP.includes(n.type) && (Date.parse(n.created_at || "") || 0) >= notifFloorRef.current).slice(0, 3).forEach(n => pushToast({
       id: `n-${n.id}`,
       icon: n.type === "request" ? "🙏" : n.type === "comment" ? "💬" : NOTIF_BADGE[n.type] || "🔔",
-      text: n.text,
-      onOpen: n.type === "request" ? () => setNotifOpen(true) : () => openNotification(n),
+      text: notifLine(n),
+      onOpen: () => { leaveOverlays(); if (n.type === "request") setNotifOpen(true); else openNotification(n); },
     }));
-  }, [notifications, listsLoaded]);
+  }, [notifications, notifsLoaded]);
   const lastUnreadRef = useRef(null);
   useEffect(() => {
     const before = lastUnreadRef.current;
     if (!unreadLoaded) return;
     lastUnreadRef.current = unreadCounts;
-    if (!before || notifSettings.push === false) return;
+    if (!before || notifSettings.push === false || locked) return;
     Object.keys(unreadCounts).forEach(cid => {
       if (unreadCounts[cid] > (before[cid] || 0) && view !== "messages") {
         const c = convos.find(x => x.id === cid);
@@ -6033,11 +6081,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {bookingMentor && <BookingModal mentor={bookingMentor} onClose={() => setBookingMentor(null)} onMessage={messageMember} Avatar={Avatar} />}
 
-      {notice?.kind === "welcome" && <WelcomeNotice user={user} verified={!!notice.verified} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
-      {notice?.kind === "verified" && <VerifiedNotice user={user} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
-      {notice?.kind === "info" && <NeedsInfoNotice user={user} onClose={closeNotice} onUpdate={() => { closeNotice(); setVerifyOpen(true); }} />}
-      {notice?.kind === "catchup" && <CatchUpNotice user={user} items={notice.items} onClose={closeNotice} />}
-      <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      {!locked && (
+        <>
+          {notice?.kind === "welcome" && <WelcomeNotice user={user} verified={!!notice.verified} cityGroup={cityGroup?.name} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
+          {notice?.kind === "verified" && <VerifiedNotice user={user} cityGroup={cityGroup?.name} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
+          {notice?.kind === "info" && <NeedsInfoNotice user={user} onClose={closeNotice} onUpdate={() => { closeNotice(); leaveOverlays(); setVerifyOpen(true); }} />}
+          {notice?.kind === "catchup" && <CatchUpNotice user={user} items={notice.items} onClose={closeNotice} />}
+          <ToastStack toasts={toasts} onDismiss={dismissToast} />
+        </>
+      )}
 
       {/* Edit Profile Modal */}
       {profileModal && (() => {

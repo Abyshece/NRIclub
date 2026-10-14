@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import FlagIcon from "../FlagIcon";
 import { useDialogFocus } from "./LegalModals";
 import { firstName } from "./profile";
@@ -41,10 +41,12 @@ export function welcomeDue(user) {
   return !created || Date.now() - created < WELCOME_FOR_DAYS * 86400000;
 }
 
-const CATCH_UP_EVERY_MS = 6 * 3600000;
-export function catchUpDue(uid) {
+// When the last catch-up showed (0: never), or null if this browser can't
+// remember it. A catch-up counts only what arrived after it.
+export const CATCH_UP_EVERY_MS = 6 * 3600000;
+export function lastCatchUp(uid) {
   const r = read("catchup", uid);
-  return r.ok && Date.now() - (Number(r.value) || 0) > CATCH_UP_EVERY_MS;
+  return r.ok ? Number(r.value) || 0 : null;
 }
 
 const button = (primary) => ({
@@ -52,21 +54,23 @@ const button = (primary) => ({
   border: primary ? "none" : "1px solid #E0E0DE", background: primary ? INK : "#fff", color: primary ? "#fff" : INK,
 });
 
-// A small centred dialog. `actions`: [{ label, onClick, primary }]; the
-// primary one has focus when it opens. Escape, the ✕ and a click outside
-// all close it.
+// A small centred dialog. `actions`: [{ label, onClick, primary }]. The
+// dialog itself has focus when it opens (it can open while the member is
+// typing, so no button may catch the next key). Escape, the ✕ and a click
+// outside all close it.
 function NoticeModal({ id, onClose, actions, children }) {
   const { closeRef, dialogRef } = useDialogFocus(onClose);
+  const setDialog = (el) => { dialogRef.current = el; closeRef.current = el; };
   return (
     <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={onClose}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} style={{ position: "relative", background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, maxHeight: "88vh", overflow: "auto", fontFamily: font, color: INK }} onClick={(e) => e.stopPropagation()}>
+      <div ref={setDialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} style={{ outline: "none", position: "relative", background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, maxHeight: "88vh", overflow: "auto", fontFamily: font, color: INK }} onClick={(e) => e.stopPropagation()}>
         <button type="button" onClick={onClose} aria-label="Close" style={{ position: "absolute", top: 6, right: 6, width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 8, cursor: "pointer", color: MUTED }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
         </button>
         <div style={{ padding: "28px 24px 4px" }}>{children}</div>
         <div style={{ padding: "16px 24px 22px", display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {actions.map((a, i) => (
-            <button key={a.label} ref={a.primary ? closeRef : undefined} type="button" onClick={a.onClick} style={{ ...button(a.primary), flex: i === actions.length - 1 ? "1 1 auto" : "0 1 auto" }}>{a.label}</button>
+            <button key={a.label} type="button" onClick={a.onClick} style={{ ...button(a.primary), flex: i === actions.length - 1 ? "1 1 auto" : "0 1 auto" }}>{a.label}</button>
           ))}
         </div>
       </div>
@@ -89,23 +93,37 @@ const Steps = ({ items }) => (
   </ol>
 );
 
+// The member's city group, for the first step and the main button:
+// `group` its name when it exists; `missing` when the lists say it doesn't
+// (then they can ask for one); neither while the lists are still loading.
+const cityStep = (city, group, missing) => (group
+  ? { step: [`Join ${group}`, "Questions, rooms, referrals and meetups near you."], label: `Go to ${group}` }
+  : missing
+    ? { step: [`Ask for a ${city} group`, `There's no ${city} group yet. Ask for one and be its first member.`], label: `Ask for a ${city} group` }
+    : { step: ["Join your city's group", "Questions, rooms, referrals and meetups near you."], label: "Go to my city's group" });
+
 // The first time a new member opens NRIClub: what it's for, where they stand
 // with verification, and three first steps. `verified`: our team's approval
 // arrived with this visit (also true when their status says approved).
-export function WelcomeNotice({ user, verified, onClose, onCityGroup }) {
+// onCityGroup opens the city's group (or asks for one when `cityMissing`).
+export function WelcomeNotice({ user, verified, cityGroup, cityMissing, onClose, onCityGroup }) {
   const city = (user.city || "").trim();
   const approved = verified || user.verificationStatus === "approved";
+  const needsInfo = !approved && user.verificationStatus === "needs_info";
   const held = user.reviewFlag && !approved; // can't take part until approved
   const status = approved
     ? <p style={box("#F0FDF4", "#BBF7D0", "#166534")}>✓ You're verified. Your profile shows the Verified badge, so members know you're real.</p>
-    : held
-      ? <p style={box("#EFF6FF", "#BFDBFE", "#1E40AF")}>Our team will check your membership before you can take part. This usually takes a day; you'll see it here.</p>
-      : user.verificationStatus === "needs_info"
-        ? <p style={box("#FFF8E6", "#FCE7B2", "#7A4D00")}>We need a little more information to verify you: see the note at the top of the page.</p>
+    : needsInfo
+      ? <p style={box("#FFF8E6", "#FCE7B2", "#7A4D00")}>{held
+        ? "We need a little more information before our team can check your membership: see the note at the top of the page."
+        : "We need a little more information to verify you: see the note at the top of the page."}</p>
+      : held
+        ? <p style={box("#EFF6FF", "#BFDBFE", "#1E40AF")}>Our team will check your membership before you can take part. This usually takes a day; you'll see it here.</p>
         : <p style={box("#EFF6FF", "#BFDBFE", "#1E40AF")}>Our team is checking your profile, usually within a day. You can already join groups and say hello.</p>;
+  const first = cityStep(city, cityGroup, cityMissing);
   const actions = held || !city
     ? [{ label: "Get started", onClick: onClose, primary: true }]
-    : [{ label: "Later", onClick: onClose }, { label: `Go to Indians in ${city}`, onClick: onCityGroup, primary: true }];
+    : [{ label: "Later", onClick: onClose }, { label: first.label, onClick: onCityGroup, primary: true }];
   return (
     <NoticeModal id="notice-welcome" onClose={onClose} actions={actions}>
       <div style={{ marginBottom: 14 }}><FlagIcon size={40} /></div>
@@ -116,9 +134,9 @@ export function WelcomeNotice({ user, verified, onClose, onCityGroup }) {
         <>
           <h3 style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: MUTED, margin: "0 0 10px" }}>Start here</h3>
           <Steps items={[
-            [city ? `Join Indians in ${city}` : "Join your city's group", "Questions, rooms, referrals and meetups near you."],
+            first.step,
             ["Add a photo", "So people recognise you at meetups."],
-            ["Say hello or ask a question", "Someone who has been through it will answer."],
+            ["Say hello or ask a question", "Members who've been through it can answer."],
           ]} />
         </>
       )}
@@ -127,11 +145,12 @@ export function WelcomeNotice({ user, verified, onClose, onCityGroup }) {
 }
 
 // Our team approved the member (after they had already been in).
-export function VerifiedNotice({ user, onClose, onCityGroup }) {
+export function VerifiedNotice({ user, cityGroup, cityMissing, onClose, onCityGroup }) {
   const city = (user.city || "").trim();
+  const first = cityStep(city, cityGroup, cityMissing);
   return (
     <NoticeModal id="notice-verified" onClose={onClose}
-      actions={city ? [{ label: "OK", onClick: onClose }, { label: `Go to Indians in ${city}`, onClick: onCityGroup, primary: true }] : [{ label: "OK", onClick: onClose, primary: true }]}>
+      actions={city ? [{ label: "OK", onClick: onClose }, { label: first.label, onClick: onCityGroup, primary: true }] : [{ label: "OK", onClick: onClose, primary: true }]}>
       <div aria-hidden="true" style={{ fontSize: 34, marginBottom: 8 }}>🎉</div>
       <h2 id="notice-verified-title" style={title}>You're verified</h2>
       <p style={para}>Welcome to the club, {firstName(user.name)}. Your profile now shows the Verified badge, so members know you're real.</p>
@@ -176,32 +195,50 @@ export function CatchUpNotice({ user, items, onClose }) {
 }
 
 // A small pop-up at the bottom for something new while the member is here.
-// It goes after 8 seconds; everything in it is also in Messages or the bell.
+// It goes 8 seconds after the pointer and focus have left it; everything in
+// it is also in Messages or under the bell. If it had focus when it goes,
+// focus moves to the bell.
 function Toast({ toast, onDismiss }) {
-  useEffect(() => {
-    const t = setTimeout(onDismiss, 8000);
-    return () => clearTimeout(t);
-  }, []);
+  const boxRef = useRef(null);
+  const timer = useRef(null);
+  const hovered = useRef(false);
+  const dismiss = () => {
+    const hadFocus = boxRef.current?.contains(document.activeElement);
+    onDismiss();
+    if (hadFocus) [...document.querySelectorAll('button[aria-label="Notifications"]')].find((b) => b.getClientRects().length)?.focus();
+  };
+  const stop = () => clearTimeout(timer.current);
+  const start = () => { stop(); timer.current = setTimeout(dismiss, 8000); };
+  const maybeStart = () => setTimeout(() => { if (!hovered.current && !boxRef.current?.contains(document.activeElement)) start(); }, 0);
+  useEffect(() => { start(); return stop; }, []);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, background: INK, color: "#fff", borderRadius: 12, padding: "8px 8px 8px 14px", boxShadow: "0 8px 24px rgba(0,0,0,0.18)", fontFamily: font, maxWidth: 420, width: "100%", boxSizing: "border-box", pointerEvents: "auto" }}>
+    <div ref={boxRef} onMouseEnter={() => { hovered.current = true; stop(); }} onMouseLeave={() => { hovered.current = false; maybeStart(); }}
+      onFocus={stop} onBlur={maybeStart} style={{ display: "flex", alignItems: "center", gap: 10, background: INK, color: "#fff", borderRadius: 12, padding: "8px 8px 8px 14px", boxShadow: "0 8px 24px rgba(0,0,0,0.18)", fontFamily: font, maxWidth: 420, width: "100%", boxSizing: "border-box", pointerEvents: "auto" }}>
       <span aria-hidden="true" style={{ fontSize: 18 }}>{toast.icon}</span>
       <span style={{ flex: 1, fontSize: 14, lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{toast.text}</span>
       {toast.onOpen && (
-        <button type="button" onClick={() => { onDismiss(); toast.onOpen(); }} style={{ minHeight: 40, padding: "0 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.35)", background: "transparent", color: "#fff", fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer", flexShrink: 0 }}>{toast.action || "View"}</button>
+        <button type="button" onClick={() => { stop(); onDismiss(); toast.onOpen(); }} style={{ minHeight: 40, padding: "0 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.35)", background: "transparent", color: "#fff", fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer", flexShrink: 0 }}>{toast.action || "View"}</button>
       )}
-      <button type="button" onClick={onDismiss} aria-label="Dismiss" style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: "transparent", color: "#fff", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <button type="button" onClick={() => { stop(); dismiss(); }} aria-label="Dismiss" style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: "transparent", color: "#fff", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
       </button>
     </div>
   );
 }
 
-// Always on the page, so screen readers announce new toasts.
+// Above the page and the bottom bar, below the app's windows (zIndex 50
+// and up), so a toast never covers a window's buttons. On phones only the
+// newest shows. Screen readers hear only the newest toast's text, from a
+// live region that is always on the page.
 export function ToastStack({ toasts, onDismiss }) {
+  const newest = toasts[toasts.length - 1];
   return (
-    <div className="nc-toasts" role="status" aria-live="polite" style={{ position: "fixed", left: 12, right: 12, zIndex: 110, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, pointerEvents: "none" }}>
-      <style>{`.nc-toasts { bottom: 24px; } @media (max-width: 900px) { .nc-toasts { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); } }`}</style>
-      {toasts.map((t) => <Toast key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />)}
-    </div>
+    <>
+      <div role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>{newest ? newest.text : ""}</div>
+      <div className="nc-toasts" style={{ position: "fixed", left: 12, right: 12, zIndex: 45, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, pointerEvents: "none" }}>
+        <style>{`.nc-toasts { bottom: 24px; } @media (max-width: 900px) { .nc-toasts { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); } .nc-toasts > div:not(:last-child) { display: none; } }`}</style>
+        {toasts.map((t) => <Toast key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />)}
+      </div>
+    </>
   );
 }

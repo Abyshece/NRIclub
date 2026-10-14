@@ -71,9 +71,10 @@ The current site stays up and works, with these differences:
   the member gave (`profile_private.marketing_consent`, at signup or with
   the new site's switch), and neither the migration nor the follow-ups
   change it. Anyone who changes the switch in those minutes can set it again
-  on the new site. (When this was written, no member had opted in.) Build
-  any mailing list from `marketing_consent`, and only from members whose
-  email address is confirmed (`profiles.email_verified`).
+  on the new site. (When this was written, no member had opted in.) Later
+  (October 2026) NRIClub stopped collecting marketing consent altogether:
+  it sends no newsletters, so never build a mailing list from
+  `marketing_consent`.
 - Not visible to members: dates are now set by the server, event organiser
   names come from the organiser's profile, message previews have a length
   limit, and photo links must be uploads to this project.
