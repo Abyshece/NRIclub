@@ -109,7 +109,7 @@ export function TermsContent() {
         </div>
       )}
       <h4 style={h4}>11. Contact</h4>
-      <p style={{ margin: 0 }}>Questions? Write to <a href="mailto:support@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>support@nriclub.app</a>.</p>
+      <p style={{ margin: 0 }}>Questions? Write to <a href="mailto:hello@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>hello@nriclub.app</a>.</p>
     </>
   );
 }
@@ -124,7 +124,7 @@ export function PrivacyContent() {
       <h4 style={h4}>3. Legal Basis (GDPR Art. 6)</h4>
       <p style={para}>We process your data based on: your explicit consent (Art. 6(1)(a)), performance of our service contract (Art. 6(1)(b)), and our legitimate interest in operating the platform (Art. 6(1)(f)).</p>
       <h4 style={h4}>4. Your Rights</h4>
-      <p style={para}>Under GDPR, you have the right to: access your personal data, rectify inaccurate data, request erasure ("right to be forgotten"), restrict processing, data portability (export your data), object to processing, and withdraw consent at any time. You can exercise these rights from your Account Settings, where “Download my data” gives you a copy of what your account holds. Notes our team wrote about you (for example while checking your membership) and the moderation record described below aren't in that file; you can ask for them at privacy@nriclub.app.</p>
+      <p style={para}>Under GDPR, you have the right to: access your personal data, rectify inaccurate data, request erasure ("right to be forgotten"), restrict processing, data portability (export your data), object to processing, and withdraw consent at any time. You can exercise these rights from your Account Settings, where “Download my data” gives you a copy of what your account holds. Notes our team wrote about you (for example while checking your membership) and the moderation record described below aren't in that file; you can ask for them at hello@nriclub.app.</p>
       <h4 style={h4}>5. Data Retention</h4>
       <p style={para}>We retain your data for as long as your account is active. Upon account deletion, all personal data is permanently erased within 30 days.</p>
       {/* LEGAL REVIEW NEEDED: the moderation record (private.moderation_record,
@@ -139,7 +139,7 @@ export function PrivacyContent() {
       <p style={para}>We do not sell your personal data. Data is only shared with essential service providers (email delivery, hosting) under data processing agreements compliant with GDPR.</p>
       <h4 style={h4}>7. Contact</h4>
       {hasImprint() && <p style={para}>The controller responsible for your data is {[IMPRINT.name, ...IMPRINT.address].map((l) => l.trim()).filter(Boolean).join(", ")}.</p>}
-      <p style={{ margin: 0 }}>For any data protection inquiries, contact our Data Protection Officer at privacy@nriclub.app.</p>
+      <p style={{ margin: 0 }}>For any data protection inquiries, contact our Data Protection Officer at hello@nriclub.app.</p>
       <p style={{ marginTop: 20, marginBottom: 0, fontSize: 11, color: "#6B6A67", fontStyle: "italic" }}>Last updated: October 2026</p>
     </>
   );

@@ -13,7 +13,7 @@ export const IMPRINT = {
   // A postal address where letters reach you: street and number, postcode
   // and city, country. One line each. A P.O. box isn't enough.
   address: [],
-  email: "support@nriclub.app",
+  email: "hello@nriclub.app",
   // A second quick way to reach you, usually a phone number in international
   // format, e.g. "+49 89 1234 5678" (with the country code, no leading 0).
   phone: "",

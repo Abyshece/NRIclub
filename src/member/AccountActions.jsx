@@ -42,7 +42,7 @@ export function useAccountActions(onSignOut) {
     try {
       await downloadMyData();
     } catch (err) {
-      setError(apiErrorMessage(err, "We couldn't download your data. Please try again, or contact support@nriclub.app."));
+      setError(apiErrorMessage(err, "We couldn't download your data. Please try again, or contact hello@nriclub.app."));
     }
     setBusy("");
   };
@@ -55,7 +55,7 @@ export function useAccountActions(onSignOut) {
     try {
       await api.deleteAccount();
     } catch (err) {
-      setError(apiErrorMessage(err, "Your account couldn't be deleted. Please try again, or contact support@nriclub.app."));
+      setError(apiErrorMessage(err, "Your account couldn't be deleted. Please try again, or contact hello@nriclub.app."));
       setBusy("");
       return;
     }

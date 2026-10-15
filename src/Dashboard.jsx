@@ -961,7 +961,7 @@ const BlockedOverlay = ({ onSignOut, font }) => {
           Your profile has been blocked by our admin team.
         </p>
         <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>
-          If you believe this is an error, please contact <a href="mailto:support@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>support@nriclub.app</a>.
+          If you believe this is an error, please contact <a href="mailto:hello@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>hello@nriclub.app</a>.
         </p>
         <button onClick={onSignOut} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Sign Out</button>
         <p style={{ margin: "16px 0 0", fontSize: 13, color: "#6B6A67", fontFamily: font }}>
@@ -1764,7 +1764,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       setPosts(prev => prev.filter(p => p.id !== post.id));
       setNewPost(prev => prev || post.content);
       alert(isNetworkError(e) ? NETWORK_MESSAGE
-        : /42501/.test(e.message || "") ? "Your account can't post right now. If you think this is a mistake, contact support@nriclub.app."
+        : /42501/.test(e.message || "") ? "Your account can't post right now. If you think this is a mistake, contact hello@nriclub.app."
         : "Your post couldn't be published. Please try again.");
     }
   };
@@ -5270,7 +5270,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     await downloadMyData();
                     setDataDownload({ busy: false, error: "" });
                   } catch (e) {
-                    setDataDownload({ busy: false, error: apiErrorMessage(e, "We couldn't download your data. Please try again, or contact support@nriclub.app.") });
+                    setDataDownload({ busy: false, error: apiErrorMessage(e, "We couldn't download your data. Please try again, or contact hello@nriclub.app.") });
                   }
                 }} aria-disabled={dataDownload.busy} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: dataDownload.busy ? "default" : "pointer", opacity: dataDownload.busy ? 0.7 : 1, fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
                   {Icons.share({ size: 14 })} {dataDownload.busy ? "Preparing your data..." : "Download My Data"}
@@ -5539,7 +5539,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <h4 style={{ fontSize: 15, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font, display: "flex", alignItems: "center", gap: 6 }}>{Icons.help({ size: 16 })} Need assistance?</h4>
                 <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, marginBottom: 14, fontFamily: font }}>Our support team is here to help you with any issues or questions you might have.</p>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <a href="mailto:support@nriclub.app" style={{ ...btnPrimary, textDecoration: "none" }}>Contact support</a>
+                  <a href="mailto:hello@nriclub.app" style={{ ...btnPrimary, textDecoration: "none" }}>Contact support</a>
                   <button onClick={() => { setBugError(""); setFeedbackKind("bug"); setSettingsModal("feedback"); }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Report a problem</button>
                   <button onClick={() => { setBugError(""); setFeedbackKind("idea"); setSettingsModal("feedback"); }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Suggest an idea</button>
                 </div>

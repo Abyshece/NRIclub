@@ -93,7 +93,7 @@ the phase that will handle them.
 - Rejected and blocked members can still file reports (on purpose, so they
   can report bugs); add a per-member rate limit.
 - The client-side rate limiter resets on reload; rely on Supabase Auth limits.
-- `support@nriclub.app` and `privacy@nriclub.app` must be real mailboxes
+- `hello@nriclub.app` must be a real mailbox
   that someone reads: the site, the Terms and the Privacy Policy send people
   there.
 - Members' LinkedIn URLs are visible to all members; consider an option to
@@ -199,7 +199,7 @@ the phase that will handle them.
     and the notes their own changes left (such as their name and LinkedIn
     before a change), but not the notes admins wrote about them nor their
     moderation record. The Privacy Policy (section 4) says those are
-    available on request from `privacy@nriclub.app`, and such a request
+    available on request from `hello@nriclub.app`, and such a request
     must be answered within a month. Confirm that's enough, or add admins'
     notes to the export with other people's names removed.
   - If the Terms change after the review, give them a new version in both

@@ -193,7 +193,7 @@ Launch tasks from the Phase 1 review (2026-10-12):
       "Approval audit").
 - [ ] The `phase1_backup` copy is dropped **on or before 2026-11-11**:
       `DROP SCHEMA phase1_backup CASCADE;` in the SQL editor.
-- [ ] `support@nriclub.app` and `privacy@nriclub.app` are real mailboxes that
+- [ ] `hello@nriclub.app` is a real mailbox that
       someone reads (the site, the Terms and the Privacy Policy send people
       there).
 - [ ] The Terms of Use and Privacy Policy have had their legal review

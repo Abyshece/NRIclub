@@ -88,7 +88,7 @@ export function RejectedScreen({ user, onSignOut }) {
           </p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <a href="mailto:support@nriclub.app?subject=My%20NRIClub%20membership" style={{ ...button, border: "none", background: "#37352F", color: "#fff" }}>Contact support</a>
+          <a href="mailto:hello@nriclub.app?subject=My%20NRIClub%20membership" style={{ ...button, border: "none", background: "#37352F", color: "#fff" }}>Contact support</a>
           <button type="button" onClick={download} aria-disabled={!!busy} style={{ ...button, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", opacity: busy === "download" ? 0.7 : 1 }}>
             {busy === "download" ? "Preparing your data..." : "Download my data"}
           </button>

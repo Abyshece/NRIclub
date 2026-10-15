@@ -25,7 +25,7 @@ export const primaryBtn = {
   border: "none", cursor: "pointer", fontFamily: "inherit",
 };
 
-export const SUPPORT_EMAIL = "support@nriclub.app";
+export const SUPPORT_EMAIL = "hello@nriclub.app";
 export const AMBASSADOR_MAIL = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("I'd like to be a city ambassador")}`
   + `&body=${encodeURIComponent("My city: \nMy LinkedIn (or a few words about me): \nHow I'd help: \n")}`;
 // "Free · Our team checks… · Your phone…", wrapping only between the parts.
