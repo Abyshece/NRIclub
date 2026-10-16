@@ -220,7 +220,9 @@ export function BookingModal({ mentor, onClose, onMessage, Avatar }) {
 // ---------------------------------------------------------------------------
 // MENTOR CARD (member page) with reviews
 // ---------------------------------------------------------------------------
-export function MentorProfileCard({ member, rating, onBook, isSelf, Avatar, me }) {
+// onReport(target): opens the report dialog for a review (the same dialog as
+// for everything else that can be reported).
+export function MentorProfileCard({ member, rating, onBook, isSelf, Avatar, me, onReport }) {
   const [reviews, setReviews] = useState(null);
   useEffect(() => {
     let gone = false;
@@ -248,7 +250,7 @@ export function MentorProfileCard({ member, rating, onBook, isSelf, Avatar, me }
                   {me && r.mentee_id === me ? (
                     <button onClick={async () => { if (!confirm("Delete your review?")) return; try { await api.deleteMyReview(r.id); setReviews(prev => prev.filter(x => x.id !== r.id)); } catch (e) { alert(errorText(e, "Your review couldn't be deleted.")); } }} style={{ marginLeft: "auto", background: "none", border: "none", color: FAINT, fontSize: 11, cursor: "pointer", textDecoration: "underline", fontFamily: font }}>Delete</button>
                   ) : me && (
-                    <button onClick={async () => { if (!confirm("Report this review to the NRIClub team?")) return; try { await api.reportPost(r.id, `[REVIEW] Mentor review: ${(r.comment || "").slice(0, 80)}`); alert("Thanks, the NRIClub team will look at it."); } catch (e) { alert(errorText(e, "The report couldn't be sent.")); } }} style={{ marginLeft: "auto", background: "none", border: "none", color: FAINT, fontSize: 11, cursor: "pointer", textDecoration: "underline", fontFamily: font }}>Report</button>
+                    onReport && <button onClick={() => onReport({ type: "review", id: r.id, userId: r.mentee_id, name: r.comment || `${r.rating}-star review` })} style={{ marginLeft: "auto", background: "none", border: "none", color: FAINT, fontSize: 11, cursor: "pointer", textDecoration: "underline", fontFamily: font }}>Report</button>
                   )}
                 </div>
                 {r.comment && <p style={{ fontSize: 13, color: INK, lineHeight: 1.5, marginTop: 2, overflowWrap: "anywhere" }}>{r.comment}</p>}

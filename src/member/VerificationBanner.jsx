@@ -25,10 +25,11 @@ export function VerificationBanner({ user, onUpdateDetails }) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
         </div>
         <p style={{ fontSize: 13, color: "#1E40AF", margin: 0, fontFamily: font, lineHeight: 1.5 }}>
-          {/* A member held for review is told it was an automatic match, not
-              what matched (that's for the admins). */}
+          {/* A member held for review is told that an automatic check flagged
+              their profile, never what it matched: that would say something
+              about another person (an account we declined or blocked). */}
           {user.reviewFlag
-            ? <>Thanks, {firstName(user.name)}! Your details match an account our team declined or blocked before (we check this automatically), so a person on our team will look at your membership before you can take part. This usually takes a day.</>
+            ? <>Thanks, {firstName(user.name)}! An automatic check flagged your profile for a closer look, so a person on our team will check it before you can take part. A person decides, not the check. This usually takes a day.</>
             : <>Thanks, {firstName(user.name)}! Our team checks every new member before they can take part, usually within a day.</>}
         </p>
       </div>
@@ -169,12 +170,15 @@ export function RejectedScreen({ user, onSignOut }) {
               {user.verificationMessage}
             </p>
           ) : null}
+          <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, margin: "0 0 10px", fontFamily: font }}>
+            A person on our team decided this; no automated tools were used. Think we got it wrong? Write to hello@nriclub.app within 6 months, and a person on our team will look at it again. You can also go to court.
+          </p>
           <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, margin: "0 0 24px", fontFamily: font }}>
-            If you think this is a mistake, contact our support team and we'll take another look.
+            You can still download your data and delete your account.
           </p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <a href="mailto:hello@nriclub.app?subject=My%20NRIClub%20membership" style={{ ...button, border: "none", background: "#37352F", color: "#fff" }}>Contact support</a>
+          <a href="mailto:hello@nriclub.app?subject=Please%20review%20the%20decision%20on%20my%20membership" style={{ ...button, border: "none", background: "#37352F", color: "#fff" }}>Write to hello@nriclub.app</a>
           <button type="button" onClick={download} aria-disabled={!!busy} style={{ ...button, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", opacity: busy === "download" ? 0.7 : 1 }}>
             {busy === "download" ? "Preparing your data..." : "Download my data"}
           </button>
