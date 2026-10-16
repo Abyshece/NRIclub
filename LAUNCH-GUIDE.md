@@ -123,8 +123,40 @@ SELECT id FROM auth.users WHERE email = 'you@example.com';
 
 To remove an admin: `DELETE FROM public.admins WHERE user_id = (SELECT id FROM auth.users WHERE email = '...');`
 
-The admin panel is at `https://admin.nriclub.app` (any `admin.` host) or
-`<your site>/#admin`.
+The admin panel is only at `https://admin.nriclub.app` (add that domain to
+the Vercel project, and check that it opens the site, before you deploy a
+version with this rule). `https://nriclub.app/#admin` sends you there. While
+developing, `http://localhost:3000/#admin` opens it.
+
+**Two-step login for admins.** In the admin panel open **Security** and set
+up two-step login with an authenticator app (Google Authenticator,
+Microsoft Authenticator, 1Password, Aegis...). Keep the key it shows in your
+password manager. Then switch on **Require two-step login for admin
+rights**: from then on the database gives admin rights only to a session
+signed in with the 6-digit code. (Supabase: **Authentication → Multi-Factor**
+must allow TOTP; it does by default.) Then set `SECURITY.adminTwoStep` to
+`true` in `src/content/legal/privacy.js` and deploy, so the Privacy Policy
+says so. Every admin should set up two-step login before you switch it on:
+while it is on, an admin without it is asked to set it up at the login with
+the password alone (so nobody is locked out, but a stolen password of such
+an admin would be enough). With two-step login set up, "Forgot password?"
+still works: the reset link asks for the 6-digit code before it saves the new
+password. If you ever lose both your phone and the key, turn the
+requirement off in the SQL editor and remove the factor under
+**Authentication → Users → (your user)**:
+
+```sql
+UPDATE private.app_settings SET value = 'false' WHERE key = 'admin_mfa_required';
+```
+
+An admin account that is blocked has no admin rights, and an admin can't
+block their own account from the panel.
+
+Members see only accounts our team has approved, admin accounts included.
+If members should see your name on what you post, send your details in
+**Get verified** on the site and approve yourself in **Verification** (the
+`20261023000000_admin_access.sql` update says in its message how many admin
+accounts members don't see).
 
 There are no admin passwords in the code or in environment variables any more.
 If `VITE_ADMIN_EMAIL` / `VITE_ADMIN_PASS` are still set in Vercel, delete them.

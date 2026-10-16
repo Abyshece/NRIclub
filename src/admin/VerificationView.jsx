@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import MemberPeek from "./MemberPeek";
 import { moderateMember } from "./moderateMember";
-import { Avatar, EmptyState, ErrorNote, Icon, PageHeader, Pill, SkeletonRows } from "./ui";
+import { Avatar, Button, EmptyState, ErrorNote, Icon, PageHeader, Pill, SkeletonRows } from "./ui";
 import {
   NO_HOLD, VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, holdSummary, identityChanged,
   isOverdue, linkedinSlug, memberFields, msSince, nameMatchesSlug, placeLabel, refusedDecisionError,
@@ -23,6 +23,9 @@ const EMPTY = {
 const TIME_HEADING = { pending: "Waiting", needs_info: "Asked", incomplete: "Joined", rejected: "Reviewed", approved: "Reviewed" };
 
 const FRESH_MS = 10000;
+
+// The order of each list, for "Showing 200 of 1,234, ...".
+const ORDER_NOTE = { pending: "oldest first", needs_info: "oldest first", incomplete: "newest first", rejected: "newest decision first", approved: "newest decision first" };
 
 function RowChecks({ m }) {
   const slug = linkedinSlug(m.linkedin_url);
@@ -52,12 +55,18 @@ function RowChecks({ m }) {
 }
 
 // counts: members per verification status; countsExact when they come from
-// the server (the lists themselves stop at 1,000 rows).
+// the server. Lists load a page at a time (api.VERIFICATION_PAGE members);
+// cache.current[status] = { rows, at, total, paged }: total is how many
+// there are in all, paged false before the database could give pages (the
+// list then stops at 1,000 rows).
 // recorded: whether the database records our team's decisions and tells the
 // member (the 2026-10-21 update).
 export default function VerificationView({ usersById, counts, countsExact = false, cache, onMemberChange, showToast, recorded = true }) {
   const [filter, setFilter] = useState("pending");
   const [rows, setRows] = useState(() => cache.current.pending?.rows || null);
+  const pageOf = (entry) => (entry ? { total: entry.total ?? null, paged: !!entry.paged } : null);
+  const [pageInfo, setPageInfo] = useState(() => pageOf(cache.current.pending));
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(!cache.current.pending);
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState(null);
@@ -73,7 +82,7 @@ export default function VerificationView({ usersById, counts, countsExact = fals
   const touch = (id) => { changes.current[id] = (changes.current[id] || 0) + 1; };
 
   const commitRows = useCallback((list, f) => {
-    cache.current[f] = { rows: list, at: Date.now() };
+    cache.current[f] = { ...(cache.current[f] || {}), rows: list, at: Date.now() };
     if (filterRef.current === f) setRows(list);
   }, [cache]);
 
@@ -98,9 +107,11 @@ export default function VerificationView({ usersById, counts, countsExact = fals
     if (!silent) setLoading(true);
     setError("");
     try {
-      const data = await api.adminVerificationQueue([f]);
+      const data = await api.adminVerificationPage(f, 0);
       if (req !== reqRef.current) return;
-      commitRows(reconcile(Array.isArray(data) ? data : [], f, marks), f);
+      cache.current[f] = { ...(cache.current[f] || {}), total: data.total, paged: data.paged };
+      commitRows(reconcile(data.rows, f, marks), f);
+      if (filterRef.current === f) setPageInfo(pageOf(cache.current[f]));
     } catch (e) {
       if (req !== reqRef.current) return;
       setError(friendlyError(e));
@@ -113,10 +124,49 @@ export default function VerificationView({ usersById, counts, countsExact = fals
     filterRef.current = filter;
     const cached = cache.current[filter];
     setRows(cached?.rows || null);
+    setPageInfo(pageOf(cached));
     setOpenId(null);
     if (cached && Date.now() - cached.at < FRESH_MS) { setLoading(false); return; }
     load(filter, { silent: !!cached });
   }, [filter, load, cache]);
+
+  // How many members list f has in all, when it comes in pages: a decision
+  // here that takes a member out of it, or an Undo that brings them back,
+  // changes it at once.
+  const shiftTotal = (f, by) => {
+    const c = cache.current[f];
+    if (!c || c.total == null) return;
+    cache.current[f] = { ...c, total: Math.max(0, c.total + by) };
+    if (filterRef.current === f) setPageInfo(pageOf(cache.current[f]));
+  };
+
+  // The next page of this list. It starts after the members listed here who
+  // are still in it on the server (a member whose status changed elsewhere
+  // keeps their row, showing the new status); a member already listed isn't
+  // added twice. A short page is the end of the list.
+  const loadMore = async () => {
+    const f = filterRef.current;
+    const have = rowsRef.current || [];
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await api.adminVerificationPage(f, have.filter((r) => r.verification_status === f).length);
+      if (filterRef.current !== f) return;
+      const ids = new Set(have.map((r) => r.id));
+      const merged = [...have, ...data.rows.filter((r) => !ids.has(r.id))];
+      commitRows(merged, f);
+      const total = data.paged && data.rows.length < api.VERIFICATION_PAGE
+        ? merged.filter((r) => r.verification_status === f).length : data.total;
+      if (total != null) {
+        cache.current[f] = { ...cache.current[f], total };
+        setPageInfo(pageOf(cache.current[f]));
+      }
+    } catch (e) {
+      showToast({ text: `Couldn't load more: ${friendlyError(e)}`, tone: "error" });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const list = rows || [];
   const openIndex = openId ? list.findIndex((r) => r.id === openId) : -1;
@@ -154,13 +204,12 @@ export default function VerificationView({ usersById, counts, countsExact = fals
   // Load the member again each time the peek opens on them, so the admin
   // decides on their details as they are now. If their name, LinkedIn link,
   // status or hold changed (or full: after a refused decision or an Undo),
-  // their row is loaded again from the review queue for their status now,
-  // which also reloads that list (duplicates, notes and holds may have
-  // changed too). The row stays where it is in this list, showing the new
-  // status if it no longer matches the filter.
+  // their row is loaded again from the review queue (duplicates, notes and
+  // holds may have changed too), and the other lists load again when next
+  // opened. The row stays where it is in this list, showing the new status
+  // if it no longer matches the filter.
   const refreshMember = async (id, { full = false } = {}) => {
-    const marks = { ...changes.current };
-    const mark = marks[id] || 0;
+    const mark = changes.current[id] || 0;
     let fresh = null;
     try { fresh = await api.adminGetReportedItem("profile", id); } catch { return; }
     if (!fresh || (changes.current[id] || 0) !== mark) return;
@@ -169,15 +218,12 @@ export default function VerificationView({ usersById, counts, countsExact = fals
     const moved = !row || identityChanged(row, fresh) || row.verification_status !== fresh.verification_status
       || (row.review_flag || "") !== (fresh.review_flag || "");
     if (!full && !moved) { patchRow(id, memberFields(fresh)); return; }
-    const status = fresh.verification_status;
-    let list = null;
-    try { list = await api.adminVerificationQueue([status]); } catch { list = null; }
+    let queueRow = null;
+    try { queueRow = await api.adminMemberDetails(id, fresh.verification_status); } catch { queueRow = null; }
     if ((changes.current[id] || 0) !== mark) return;
-    const queueRow = Array.isArray(list) ? list.find((r) => r.id === id) : null;
     patchRow(id, queueRow || memberFields(fresh));
-    if (Array.isArray(list)) commitRows(reconcile(list, status, marks), status);
     // Other lists may still have the member under their old status.
-    Object.keys(cache.current).forEach((f) => { if (f !== status && f !== filterRef.current) delete cache.current[f]; });
+    Object.keys(cache.current).forEach((f) => { if (f !== filterRef.current) delete cache.current[f]; });
   };
 
   useEffect(() => {
@@ -224,6 +270,7 @@ export default function VerificationView({ usersById, counts, countsExact = fals
     const stays = decision === f;
     const next = stays ? current.map((r) => (r.id === m.id ? updated : r)) : current.filter((r) => r.id !== m.id);
     commitRows(next, f);
+    if (!stays && index >= 0) shiftTotal(f, -1);
     // The list the member moved to loads again next time, with them in it.
     if (!stays) delete cache.current[decision];
     const after = stays ? next[index + 1] : (next[index] || next[index - 1]);
@@ -265,7 +312,9 @@ export default function VerificationView({ usersById, counts, countsExact = fals
           previous_decisions: updated.previous_decisions,
           ...(before === "incomplete" ? NO_HOLD : {}),
         };
+        const back = !(cache.current[f]?.rows || []).some((r) => r.id === m.id);
         restoreRow(restored, index < 0 ? 0 : index, f);
+        if (back) shiftTotal(f, 1);
         onMemberChange(m.id, { verification_status: before, linkedin_verified: false, review_flag: restored.review_flag }, updated);
         refreshMember(m.id, { full: true });
         return before === "pending" ? `Undone. ${who} is back in the queue.` : `Undone. ${who} is back to unfinished.`;
@@ -290,15 +339,18 @@ export default function VerificationView({ usersById, counts, countsExact = fals
     else if (e.key === "ArrowUp" && list[i - 1]) { e.preventDefault(); rowEl(list[i - 1].id)?.focus(); }
   };
 
-  const countFor = (f) => (f === filter && rows && !countsExact ? rows.length : counts[f] ?? 0);
-  // A list stops at 1,000 members: say so when there are more.
-  const filterTotal = countsExact ? counts[filter] ?? 0 : 0;
+  const paged = !!pageInfo?.paged && pageInfo.total != null;
+  const countFor = (f) => (f === filter && rows && !countsExact ? (paged ? pageInfo.total : rows.length) : counts[f] ?? 0);
+  // Lists come a page at a time (or, before the database gave pages, stop
+  // at 1,000 members): say so when there are more.
+  const filterTotal = paged ? pageInfo.total : countsExact ? counts[filter] ?? 0 : 0;
   const cut = !!rows && rows.length > 0 && filterTotal > rows.length;
+  const morePages = paged && !!rows && rows.length < pageInfo.total;
   const [emptyTitle, emptyText] = EMPTY[filter];
 
   return (
     <>
-      <PageHeader title="Verification" description="Check new members and give them the Verified badge. Members have full access while they wait, unless they're held for review." />
+      <PageHeader title="Verification" description="Check new members and give them the Verified badge. Until you approve them, members can't see other members or take part, and other members can't see them." />
 
       <div className="adm-filters" role="group" aria-label="Filter by status">
         {VERIFICATION_FILTERS.map((f) => (
@@ -312,10 +364,8 @@ export default function VerificationView({ usersById, counts, countsExact = fals
       {error && <ErrorNote onRetry={() => load(filter)}>{error}</ErrorNote>}
       {cut && (
         <p className="adm-muted adm-small" style={{ margin: "0 0 10px" }}>
-          {/* The database lists unfinished sign-ups newest first, everyone else oldest first. */}
-          {filter === "incomplete"
-            ? `Showing the newest ${rows.length.toLocaleString("en-GB")} of ${filterTotal.toLocaleString("en-GB")}.`
-            : `Showing the first ${rows.length.toLocaleString("en-GB")} of ${filterTotal.toLocaleString("en-GB")}, oldest first.`}
+          {/* Before the 2026-10-23 database update every list but unfinished sign-ups came oldest first. */}
+          {`Showing ${rows.length.toLocaleString("en-GB")} of ${filterTotal.toLocaleString("en-GB")}, ${paged ? ORDER_NOTE[filter] : filter === "incomplete" ? "newest first" : "oldest first"}.`}
         </p>
       )}
 
@@ -355,6 +405,13 @@ export default function VerificationView({ usersById, counts, countsExact = fals
               </div>
             );
           })}
+          {morePages && (
+            <div className="adm-more">
+              <Button variant="secondary" size="sm" onClick={loadMore} disabled={loadingMore}>
+                {loadingMore ? "Loading…" : `Show ${Math.min(api.VERIFICATION_PAGE, pageInfo.total - rows.length).toLocaleString("en-GB")} more`}
+              </Button>
+            </div>
+          )}
         </div>
       ) : null}
 

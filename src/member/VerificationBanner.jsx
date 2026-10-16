@@ -55,6 +55,50 @@ export function VerificationBanner({ user, onUpdateDetails }) {
   return null;
 }
 
+// The NRI essentials (the guides every visitor can read), each opening in
+// place. For members waiting for review, on their home page and on Guides.
+export function EssentialGuides() {
+  const [openGuide, setOpenGuide] = useState(null); // slug
+  return (
+    <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      {ESSENTIALS.map((g) => (
+        <li key={g.slug} style={{ borderTop: "1px solid #F0EFED" }}>
+          <button
+            type="button" onClick={() => setOpenGuide(openGuide === g.slug ? null : g.slug)} aria-expanded={openGuide === g.slug}
+            style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: "10px 0", cursor: "pointer", fontFamily: font }}
+          >
+            <span style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#37352F" }}>{g.title}</span>
+            <span style={{ display: "block", fontSize: 12, color: "#6B6A67", marginTop: 2 }}>{g.excerpt} · {g.readTime}</span>
+          </button>
+          {openGuide === g.slug && (
+            <div style={{ padding: "0 0 12px", fontSize: 14, color: "#37352F", lineHeight: 1.6 }}>
+              {guideBlocks(g.content).map((b, i) => {
+                if (b.type === "h") return <h4 key={i} style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color: "#9A5B13", margin: "14px 0 6px" }}>{b.text}</h4>;
+                if (b.type === "ul") return <ul key={i} style={{ margin: "0 0 10px", paddingLeft: 20 }}>{b.items.map((t, j) => <li key={j} style={{ marginBottom: 3 }}>{t}</li>)}</ul>;
+                return <p key={i} style={{ margin: "0 0 10px" }}>{b.text}</p>;
+              })}
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Guides, for a member waiting for review: the NRI essentials. (Guides and
+// questions from members come once they're approved.)
+export function WaitingGuides() {
+  return (
+    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+      <section aria-labelledby="waiting-guides-title" style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "20px 20px 18px", fontFamily: font }}>
+        <h2 id="waiting-guides-title" style={{ fontSize: 19, fontWeight: 700, color: "#37352F", margin: "0 0 6px" }}>NRI essentials</h2>
+        <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, margin: "0 0 12px" }}>Our guides to life abroad. Guides and questions from other members open up once our team has approved you.</p>
+        <EssentialGuides />
+      </section>
+    </div>
+  );
+}
+
 // What a member waiting for review (pending or needs_info) sees instead of
 // the feed and the other pages: what happens next, and what they can do
 // meanwhile (finish their profile, read the guides, look at the groups).
@@ -64,7 +108,6 @@ export function VerificationBanner({ user, onUpdateDetails }) {
 export function WaitingForReview({ user, onEditProfile, onUpdateDetails }) {
   const needsInfo = user?.verificationStatus === "needs_info";
   const [groups, setGroups] = useState(null); // names of the approved groups, or null while loading / if they can't be read
-  const [openGuide, setOpenGuide] = useState(null); // slug
   useEffect(() => {
     let alive = true;
     api.getGroups().then((rows) => { if (alive) setGroups((rows || []).map((g) => g.name)); }).catch(() => {});
@@ -97,28 +140,7 @@ export function WaitingForReview({ user, onEditProfile, onUpdateDetails }) {
 
       <section aria-labelledby="waiting-guides" style={card}>
         <h3 id="waiting-guides" style={h3}>Read the NRI essentials</h3>
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-          {ESSENTIALS.map((g) => (
-            <li key={g.slug} style={{ borderTop: "1px solid #F0EFED" }}>
-              <button
-                type="button" onClick={() => setOpenGuide(openGuide === g.slug ? null : g.slug)} aria-expanded={openGuide === g.slug}
-                style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: "10px 0", cursor: "pointer", fontFamily: font }}
-              >
-                <span style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#37352F" }}>{g.title}</span>
-                <span style={{ display: "block", fontSize: 12, color: "#6B6A67", marginTop: 2 }}>{g.excerpt} · {g.readTime}</span>
-              </button>
-              {openGuide === g.slug && (
-                <div style={{ padding: "0 0 12px", fontSize: 14, color: "#37352F", lineHeight: 1.6 }}>
-                  {guideBlocks(g.content).map((b, i) => {
-                    if (b.type === "h") return <h4 key={i} style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color: "#9A5B13", margin: "14px 0 6px" }}>{b.text}</h4>;
-                    if (b.type === "ul") return <ul key={i} style={{ margin: "0 0 10px", paddingLeft: 20 }}>{b.items.map((t, j) => <li key={j} style={{ marginBottom: 3 }}>{t}</li>)}</ul>;
-                    return <p key={i} style={{ margin: "0 0 10px" }}>{b.text}</p>;
-                  })}
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
+        <EssentialGuides />
       </section>
 
       {shownGroups.length > 0 && (

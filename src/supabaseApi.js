@@ -238,6 +238,28 @@ export async function signOut() {
   endServerSession(token, refreshing);
 }
 
+// Signs out every device and browser this member is signed in on, this one
+// included (Settings → Account): Supabase Auth ends all their sessions, so
+// no device can renew its sign-in (an access token another device already
+// has still reads the database until it expires, within the hour; a reload
+// there signs out at once). Throws if that can't be confirmed (e.g.
+// no connection); then nothing is signed out here either, so the member can
+// try again.
+export async function signOutEverywhere() {
+  const send = () => fetch(`${SUPABASE_URL}/auth/v1/logout?scope=global`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+  });
+  if (!accessToken) throw new Error("Not logged in");
+  let res = await send();
+  if ((res.status === 401 || res.status === 403) && await refreshSession()) res = await send();
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.msg || data.message || `Couldn't sign out everywhere (${res.status}).`);
+  }
+  await signOut();
+}
+
 // Saves the session verifyOtp (or signIn) kept in memory with persist: false,
 // once signup has finished setting the account up: from now on it lasts
 // across reloads and other tabs share it. Rejects if that session has ended
@@ -413,9 +435,20 @@ function expiredLinkError() {
 }
 
 // The access token was refused as expired or invalid: 401, or (as Supabase
-// Auth answers an expired token) 403 with error_code "bad_jwt".
+// Auth answers an expired token) 403 with error_code "bad_jwt". Not when
+// the session is fine but wasn't signed in with the 6-digit code
+// (insufficient_aal, e.g. a new password for an account with two-step login).
 function isRefusedToken(res, data) {
+  if (data.error_code === "insufficient_aal") return false;
   return res.status === 401 || data.error_code === "bad_jwt" || /\bbad_jwt\b|invalid jwt/i.test(data.msg || data.message || "");
+}
+
+// An Auth API error for the caller: Supabase Auth's message, and its
+// error_code as err.code (e.g. "insufficient_aal").
+function authError(data, fallback) {
+  const err = new Error(data.msg || data.error_description || data.message || fallback);
+  err.code = data.error_code || "";
+  return err;
 }
 
 // An Auth API call made with the reset link's session. Renews that session
@@ -439,7 +472,7 @@ async function recoveryRequest(method, path, body = null, fallback = "Something 
     recovery = null;
     throw expiredLinkError();
   }
-  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || fallback);
+  if (!res.ok) throw authError(data, fallback);
   return data;
 }
 
@@ -481,6 +514,28 @@ export function cancelRecovery() {
   logoutOnServer(token);
 }
 
+// For an account with two-step login (admins), Supabase Auth sets a new
+// password only from a session confirmed with the 6-digit code:
+// updatePassword then fails with err.code "insufficient_aal". This confirms
+// the reset link's session with a code from the authenticator app; then
+// updatePassword works. Throws with a message for the member when the code
+// is wrong or too old.
+export async function confirmRecoveryCode(code) {
+  const user = await recoveryRequest("GET", "/auth/v1/user");
+  const factor = (user.factors || []).find((f) => f.factor_type === "totp" && f.status === "verified");
+  if (!factor) throw new Error("This account has no authenticator app set up. Please try again.");
+  const id = encodeURIComponent(factor.id);
+  try {
+    const challenge = await recoveryRequest("POST", `/auth/v1/factors/${id}/challenge`, {});
+    const data = await recoveryRequest("POST", `/auth/v1/factors/${id}/verify`, { challenge_id: challenge.id, code: String(code || "").replace(/\s+/g, "") });
+    if (!data.access_token || !recovery) throw new Error("Couldn't confirm the code. Please try again.");
+    recovery.accessToken = data.access_token;
+    if (data.refresh_token) recovery.refreshToken = data.refresh_token;
+  } catch (err) {
+    throw wrongCodeError(err);
+  }
+}
+
 // A password change that gets no answer fails after this long, so a hung
 // request goes down the caller's "try again" path instead of waiting forever.
 const PASSWORD_TIMEOUT_MS = 15000;
@@ -509,7 +564,7 @@ export async function updatePassword(password) {
       signal: controller.signal,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Couldn't update your password.");
+    if (!res.ok) throw authError(data, "Couldn't update your password.");
     if (data.id && data.id === currentUser?.id) currentUser = data;
     return data;
   } catch (err) {
@@ -681,6 +736,100 @@ async function checkStoredSession(retry) {
 export function getCurrentUser() { return currentUser; }
 export function getToken() { return accessToken; }
 
+// ----------------------------------------------------------------------------
+// Two-step login (Supabase Auth TOTP), for admins
+// ----------------------------------------------------------------------------
+
+// How this session was signed in, from its access token: "aal2" after the
+// 6-digit code from an authenticator app, "aal1" with the password only.
+export function sessionAal() {
+  return tokenClaims(accessToken || "").aal || "aal1";
+}
+
+// An Auth API call as the signed-in member, renewing the session once if
+// its token has expired. Throws with Supabase Auth's message; err.code is
+// its error_code (e.g. "mfa_verification_failed").
+async function authCall(method, path, body = null) {
+  const send = () => fetch(`${SUPABASE_URL}/auth/v1${path}`, {
+    method,
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!accessToken) throw new Error("Not logged in");
+  let res = await send();
+  let data = await res.json().catch(() => ({}));
+  if (isRefusedToken(res, data) && await refreshSession()) {
+    res = await send();
+    data = await res.json().catch(() => ({}));
+  }
+  if (!res.ok) throw authError(data, `Request failed (${res.status})`);
+  return data;
+}
+
+// A refused 6-digit code (wrong, or too old) as a message for the member;
+// any other error as it is.
+function wrongCodeError(err) {
+  if (/^mfa_(verification_failed|challenge_expired)$/.test(err.code || "") || /invalid totp|totp code/i.test(err.message || "")) {
+    const wrong = new Error("That code didn't work. Codes change every 30 seconds: type the one your app shows now, and check that your phone's clock is right.");
+    wrong.code = err.code;
+    return wrong;
+  }
+  return err;
+}
+
+// The member's authenticator-app (TOTP) factors: { verified, unverified },
+// each a list of { id, friendly_name, created_at }.
+export async function getTotpFactors() {
+  const user = await authCall("GET", "/user");
+  const totp = (user.factors || []).filter((f) => f.factor_type === "totp");
+  return {
+    verified: totp.filter((f) => f.status === "verified"),
+    unverified: totp.filter((f) => f.status !== "verified"),
+  };
+}
+
+// The QR code Supabase Auth sends with a new factor, as an image address the
+// page can show in an <img> (the site's Content Security Policy allows data:
+// images). Supabase sends either the SVG itself or an SVG data address,
+// sometimes unencoded; both become an encoded SVG data address.
+function qrImage(qr) {
+  const text = String(qr || "").trim();
+  if (!text) return "";
+  if (/^data:image\/[a-z+]+;base64,/i.test(text)) return text;
+  const svg = text.startsWith("data:") ? text.slice(text.indexOf(",") + 1) : text;
+  let markup = svg;
+  try { if (!svg.trimStart().startsWith("<")) markup = decodeURIComponent(svg); } catch {}
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
+}
+
+// Starts setting up two-step login: a new authenticator-app factor. Returns
+// { id, qr, secret, uri }: show the QR code (or the secret, to type in),
+// then confirm the first code with verifyTotp(id, code). Factors left
+// unconfirmed by an earlier try are removed first.
+export async function enrollTotp() {
+  const { unverified } = await getTotpFactors();
+  await Promise.all(unverified.map((f) => authCall("DELETE", `/factors/${encodeURIComponent(f.id)}`).catch(() => {})));
+  const data = await authCall("POST", "/factors", { factor_type: "totp", friendly_name: "NRIClub admin", issuer: "NRIClub" });
+  return { id: data.id, qr: qrImage(data.totp?.qr_code), secret: data.totp?.secret || "", uri: data.totp?.uri || "" };
+}
+
+// Signs this session in with a 6-digit code from the authenticator app
+// (the factor's first code confirms a new factor). The session becomes a
+// two-step one (aal2) and is kept as the session always is. Throws with a
+// message for the member when the code is wrong or too old.
+export async function verifyTotp(factorId, code) {
+  const id = encodeURIComponent(factorId);
+  try {
+    const challenge = await authCall("POST", `/factors/${id}/challenge`, {});
+    const data = await authCall("POST", `/factors/${id}/verify`, { challenge_id: challenge.id, code: String(code || "").replace(/\s+/g, "") });
+    if (!data.access_token) throw new Error("Couldn't confirm the code. Please try again.");
+    saveSession(data);
+    return data;
+  } catch (err) {
+    throw wrongCodeError(err);
+  }
+}
+
 // ============================================================================
 // PROFILES
 // ============================================================================
@@ -692,6 +841,22 @@ export function getToken() { return accessToken; }
 const PROFILE_FIELDS = "id,name,avatar_url,location,hometown,profession,occupation_status,years_abroad,city,country_code,"
   + "bio,email_verified,linkedin_verified,created_at,updated_at,ambassador_city,ask_me_about,mentor_open,mentor_areas,"
   + "mentee_open,mentee_needs";
+
+// Since the 2026-10-23 database update members see only the profiles of
+// members our team has approved and who aren't blocked. What an account
+// that isn't shown (waiting for review, declined, blocked, unfinished)
+// posted or wrote before stays, but comes without its profile: the site
+// shows it as UNLISTED_NAME, with no photo and no profile to open
+// (unlisted: true).
+export const UNLISTED_NAME = "NRIClub member";
+const unlistedPerson = (id) => ({ id: id || null, name: UNLISTED_NAME, avatar_url: "", unlisted: true });
+
+// Rows with an embedded profile (key, e.g. "profiles"), whose foreign key is
+// idKey: a profile the member can't see becomes the placeholder above.
+function withPerson(rows, key = "profiles", idKey = "user_id") {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((r) => (r && r[key] == null && r[idKey] ? { ...r, [key]: unlistedPerson(r[idKey]) } : r));
+}
 
 // A database function the database doesn't have yet (or a column) was asked
 // for at this time (Date.now()): the old way is used for a few minutes, then
@@ -998,19 +1163,19 @@ export async function searchProfiles(query = "", filters = {}) {
 export async function getPosts(limit = 30, groupId = null) {
   let url = `/rest/v1/posts?select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)&order=created_at.desc&limit=${limit}`;
   if (groupId) url += `&group_id=eq.${groupId}`;
-  return restCall("GET", url);
+  return withPerson(await restCall("GET", url));
 }
 
 // One post with its author, or null: for a shared link (#post=<id>) to a
 // post older than the ones the feed loads.
 export async function getPost(postId) {
-  const rows = await restCall("GET", `/rest/v1/posts?id=eq.${encodeURIComponent(postId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)`);
+  const rows = withPerson(await restCall("GET", `/rest/v1/posts?id=eq.${encodeURIComponent(postId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)`));
   return rows?.[0] || null;
 }
 
 // A member's latest posts (with author), for their profile page.
 export async function getUserPosts(userId, limit = 20) {
-  return restCall("GET", `/rest/v1/posts?user_id=eq.${encodeURIComponent(userId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)&order=created_at.desc&limit=${limit}`);
+  return withPerson(await restCall("GET", `/rest/v1/posts?user_id=eq.${encodeURIComponent(userId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)&order=created_at.desc&limit=${limit}`));
 }
 
 // The groups a member belongs to (ids), for "Groups in common".
@@ -1070,7 +1235,7 @@ export async function deleteEvent(id) {
 // ============================================================================
 
 export async function getComments(postId) {
-  return restCall("GET", `/rest/v1/comments?post_id=eq.${postId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+  return withPerson(await restCall("GET", `/rest/v1/comments?post_id=eq.${postId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`));
 }
 
 export async function addComment(postId, content) {
@@ -1133,7 +1298,9 @@ export async function unfollowUser(userId) {
 
 export async function getMyConnections() {
   if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/connections?or=(requester_id.eq.${currentUser.id},recipient_id.eq.${currentUser.id})&status=eq.accepted&select=*,requester:requester_id(id,name,avatar_url,profession),recipient:recipient_id(id,name,avatar_url,profession)`);
+  // Followers and following who are shown (see UNLISTED_NAME).
+  const rows = await restCall("GET", `/rest/v1/connections?or=(requester_id.eq.${currentUser.id},recipient_id.eq.${currentUser.id})&status=eq.accepted&select=*,requester:requester_id(id,name,avatar_url,profession),recipient:recipient_id(id,name,avatar_url,profession)`);
+  return (rows || []).filter((c) => c.requester && c.recipient);
 }
 
 export async function getAllConnections() {
@@ -1173,7 +1340,9 @@ export async function getMyGroupIds() {
 }
 
 export async function getGroupMembers(groupId) {
-  return restCall("GET", `/rest/v1/group_members?group_id=eq.${groupId}&select=*,profiles:user_id(id,name,avatar_url,profession,location)`);
+  // Only members who are shown (see UNLISTED_NAME).
+  const rows = await restCall("GET", `/rest/v1/group_members?group_id=eq.${groupId}&select=*,profiles:user_id(id,name,avatar_url,profession,location)`);
+  return (rows || []).filter((m) => m.profiles);
 }
 
 // A new city group ("Indians in Paris") or university group ("Indians at
@@ -1324,10 +1493,10 @@ export async function getConversations() {
   ]);
   return (data || [])
     .filter(c => !hiddenAt.has(c.id) || new Date(c.last_message_at) > new Date(hiddenAt.get(c.id)))
-    .map(c => ({
-      ...c,
-      otherUser: c.participant_1 === currentUser.id ? c.p2 : c.p1,
-    }));
+    .map(c => {
+      const otherId = c.participant_1 === currentUser.id ? c.participant_2 : c.participant_1;
+      return { ...c, otherUser: (c.participant_1 === currentUser.id ? c.p2 : c.p1) || unlistedPerson(otherId) };
+    });
 }
 
 // "Delete conversation": removes it from this member's list only.
@@ -1382,7 +1551,7 @@ export async function getOrCreateConversation(otherUserId) {
 }
 
 export async function getMessages(conversationId) {
-  const rows = await restCall("GET", `/rest/v1/messages?conversation_id=eq.${conversationId}&select=*,sender:sender_id(id,name,avatar_url)&order=created_at.asc`);
+  const rows = withPerson(await restCall("GET", `/rest/v1/messages?conversation_id=eq.${conversationId}&select=*,sender:sender_id(id,name,avatar_url)&order=created_at.asc`), "sender", "sender_id");
   const h = hiddenAt.get(conversationId);
   return h && rows ? rows.filter(m => new Date(m.created_at) > new Date(h)) : rows;
 }
@@ -1405,7 +1574,7 @@ export async function getMarketItems(filters = {}) {
   if (filters.category && filters.category !== "All") url += `&category=eq.${filters.category}`;
   if (filters.city && filters.city !== "All") url += `&location=ilike.%25${filters.city}%25`;
   if (filters.search) url += `&or=(title.ilike.%25${filters.search}%25,description.ilike.%25${filters.search}%25)`;
-  return restCall("GET", url);
+  return withPerson(await restCall("GET", url));
 }
 
 export async function createMarketItem(item) {
@@ -1423,7 +1592,7 @@ export async function createMarketItem(item) {
 export async function getDocs(cityFilter = "All") {
   let url = "/rest/v1/docs?select=*,profiles:user_id(id,name,avatar_url,profession,location)&order=created_at.desc";
   if (cityFilter !== "All") url += `&city=ilike.%25${cityFilter}%25`;
-  return restCall("GET", url);
+  return withPerson(await restCall("GET", url));
 }
 
 export async function createDoc(doc) {
@@ -1435,7 +1604,7 @@ export async function createDoc(doc) {
 }
 
 export async function getDocComments(docId) {
-  return restCall("GET", `/rest/v1/doc_comments?doc_id=eq.${docId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+  return withPerson(await restCall("GET", `/rest/v1/doc_comments?doc_id=eq.${docId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`));
 }
 
 export async function addDocComment(docId, content) {
@@ -1452,7 +1621,7 @@ export async function addDocComment(docId, content) {
 // ============================================================================
 
 export async function getHelpRequests() {
-  return restCall("GET", "/rest/v1/help_requests?select=*,profiles:user_id(id,name,avatar_url)&order=created_at.desc");
+  return withPerson(await restCall("GET", "/rest/v1/help_requests?select=*,profiles:user_id(id,name,avatar_url)&order=created_at.desc"));
 }
 
 export async function createHelpRequest({ urgent = false, ...req }) {
@@ -1474,7 +1643,7 @@ export async function createHelpRequest({ urgent = false, ...req }) {
 
 // One question (with the asker), e.g. from a notification.
 export async function getHelpRequest(id) {
-  const rows = await restCall("GET", `/rest/v1/help_requests?id=eq.${encodeURIComponent(id)}&select=*,profiles:user_id(id,name,avatar_url)`);
+  const rows = withPerson(await restCall("GET", `/rest/v1/help_requests?id=eq.${encodeURIComponent(id)}&select=*,profiles:user_id(id,name,avatar_url)`));
   return rows?.[0] || null;
 }
 
@@ -1508,7 +1677,7 @@ export async function getHelpedCount(memberId) {
 
 export async function getHelpResponses(requestId) {
   if (requestId) {
-    return restCall("GET", `/rest/v1/help_responses?request_id=eq.${requestId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+    return withPerson(await restCall("GET", `/rest/v1/help_responses?request_id=eq.${requestId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`));
   }
   // Fetch all responses (for counting)
   return restCall("GET", `/rest/v1/help_responses?select=id,request_id&order=created_at.desc`);
@@ -1530,7 +1699,7 @@ export async function addHelpResponse(requestId, content) {
 export async function getNotifications() {
   if (!currentUser) return [];
   // Get all unread + non-request read notifications (exclude handled requests)
-  const all = await restCall("GET", `/rest/v1/notifications?user_id=eq.${currentUser.id}&select=*,actor:actor_id(id,name,avatar_url)&order=created_at.desc&limit=20`);
+  const all = withPerson(await restCall("GET", `/rest/v1/notifications?user_id=eq.${currentUser.id}&select=*,actor:actor_id(id,name,avatar_url)&order=created_at.desc&limit=20`), "actor", "actor_id");
   if (!all) return [];
   // Filter out request notifications that have been read (they were accepted/ignored)
   return all.filter(n => !(n.type === "request" && n.read === true));
@@ -1724,7 +1893,7 @@ export async function unblockUser(userId) {
 
 export async function getBlockedUsers() {
   if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/blocks?blocker_id=eq.${currentUser.id}&select=*,blocked:blocked_id(id,name,avatar_url,profession)`);
+  return withPerson(await restCall("GET", `/rest/v1/blocks?blocker_id=eq.${currentUser.id}&select=*,blocked:blocked_id(id,name,avatar_url,profession)`), "blocked", "blocked_id");
 }
 
 
@@ -2078,10 +2247,39 @@ export function unsubscribeFromMessages() {
 // for accounts listed in public.admins.
 // ============================================================================
 
-export async function isAdmin() {
-  if (!currentUser) return false;
+// What the signed-in account may do in the admin panel, as the database
+// says (public.admin_mfa_status): { listed, active, mfaRequired, aal,
+// isAdmin }. listed: in public.admins; active: not blocked; mfaRequired:
+// admin rights need two-step login; aal: how this session was signed in;
+// isAdmin: admin rights now; changedAt: when an admin last switched the
+// requirement. Before the 2026-10-23 database update there is no such
+// function: being listed is enough then (and there's no two-step
+// requirement), so the answer comes from public.admins, with before: true.
+export async function adminAccess() {
+  if (!currentUser) return { listed: false, active: false, mfaRequired: false, aal: "", isAdmin: false };
+  if (!knownMissing("admin_mfa_status")) {
+    try {
+      const s = (await restCall("POST", "/rest/v1/rpc/admin_mfa_status", {})) || {};
+      return { listed: !!s.listed, active: s.active !== false, mfaRequired: !!s.mfa_required, aal: s.aal || sessionAal(), isAdmin: !!s.is_admin, changedAt: s.mfa_changed_at || null };
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.admin_mfa_status = Date.now();
+    }
+  }
   const rows = await restCall("GET", `/rest/v1/admins?user_id=eq.${currentUser.id}&select=user_id`);
-  return Array.isArray(rows) && rows.length > 0;
+  const listed = Array.isArray(rows) && rows.length > 0;
+  return { listed, active: true, mfaRequired: false, aal: sessionAal(), isAdmin: listed, before: true };
+}
+
+export async function isAdmin() {
+  return (await adminAccess()).isAdmin;
+}
+
+// Turns "Require two-step login for admin rights" on or off. Works only from
+// a session signed in with the 6-digit code (the database refuses it
+// otherwise, with a message to show).
+export async function adminSetMfaRequired(on) {
+  return restCall("POST", "/rest/v1/rpc/admin_set_mfa_required", { p_on: !!on });
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -2421,8 +2619,72 @@ export async function adminSetAmbassador(userId, city) {
 
 // Members waiting for a decision (or any other verification statuses), with
 // everything needed to decide: email, LinkedIn or note, voucher, duplicates.
+// All of them, up to 1,000 (the API's limit).
 export async function adminVerificationQueue(statuses = ["pending"]) {
   return restCall("POST", "/rest/v1/rpc/admin_verification_queue", { p_statuses: statuses });
+}
+
+// One page of a verification list (see adminVerificationQueue): limit
+// members from offset. Waiting members come oldest first, approved and
+// rejected ones newest decision first, unfinished sign-ups newest first.
+// { rows, total, paged }. Before the 2026-10-23 database update there are
+// no pages: the first call gets the whole list (up to 1,000; total is its
+// length) and paged is false.
+export const VERIFICATION_PAGE = 200;
+export async function adminVerificationPage(status, offset = 0, limit = VERIFICATION_PAGE) {
+  if (!knownMissing("queue_pages")) {
+    try {
+      const rows = (await restCall("POST", "/rest/v1/rpc/admin_verification_queue", { p_statuses: [status], p_limit: limit, p_offset: offset })) || [];
+      const total = rows.length ? Number(rows[0].total_count) : null;
+      return { rows, total: Number.isFinite(total) ? total : (offset === 0 ? rows.length : null), paged: true };
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.queue_pages = Date.now();
+    }
+  }
+  if (offset > 0) return { rows: [], total: null, paged: false };
+  const rows = (await adminVerificationQueue([status])) || [];
+  return { rows, total: rows.length, paged: false };
+}
+
+// One member's row of the review queue (what the peek shows: email,
+// LinkedIn or note, voucher, duplicates, hold), or null. status: their
+// verification status, used before the 2026-10-23 database update, when the
+// row can only be found in that status's whole list.
+export async function adminMemberDetails(memberId, status) {
+  if (!UUID.test(memberId || "")) return null;
+  if (!knownMissing("queue_pages")) {
+    try {
+      const rows = await restCall("POST", "/rest/v1/rpc/admin_verification_queue", { p_statuses: null, p_ids: [memberId], p_limit: 1 });
+      return (rows || [])[0] || null;
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.queue_pages = Date.now();
+    }
+  }
+  const rows = (await adminVerificationQueue([status || "pending"])) || [];
+  return rows.find((r) => r.id === memberId) || null;
+}
+
+// Searches every member, not only the newest loaded in the panel
+// (public.admin_search_members): query matches part of the name, email
+// address, city or place; status a verification status; blocked true or
+// false; null for any. { members, total }, members shaped like the panel's
+// other member rows, newest first. null before the 2026-10-23 database
+// update (no such function): the panel then searches the members it has.
+export const SEARCH_PAGE = 100;
+export async function adminSearchMembers({ query = "", status = null, blocked = null, limit = SEARCH_PAGE, offset = 0 } = {}) {
+  if (knownMissing("admin_search")) return null;
+  try {
+    const res = (await restCall("POST", "/rest/v1/rpc/admin_search_members", {
+      p_query: String(query || "").slice(0, 200), p_status: status, p_blocked: blocked, p_limit: limit, p_offset: offset,
+    })) || {};
+    return { members: (res.members || []).map(adminMember), total: Number(res.total) || 0 };
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.admin_search = Date.now();
+    return null;
+  }
 }
 
 // decision: "approved" | "needs_info" | "rejected" | "pending" (reopen/undo)
@@ -2646,7 +2908,8 @@ export async function deleteMentorSlot(id) {
 // Sessions the member is in (as mentor or as the one being helped).
 export async function getMySessions() {
   if (!currentUser) return [];
-  return (await restCall("GET", `/rest/v1/mentor_bookings?or=(mentor_id.eq.${currentUser.id},mentee_id.eq.${currentUser.id})&select=*,mentor:mentor_id(id,name,avatar_url),mentee:mentee_id(id,name,avatar_url)&order=starts_at.desc&limit=100`)) || [];
+  const rows = await restCall("GET", `/rest/v1/mentor_bookings?or=(mentor_id.eq.${currentUser.id},mentee_id.eq.${currentUser.id})&select=*,mentor:mentor_id(id,name,avatar_url),mentee:mentee_id(id,name,avatar_url)&order=starts_at.desc&limit=100`);
+  return withPerson(withPerson(rows, "mentor", "mentor_id"), "mentee", "mentee_id") || [];
 }
 
 export async function bookMentorSession(slotId, topic, note) {
@@ -2672,7 +2935,7 @@ export async function getMentorRatings() {
 }
 
 export async function getMentorReviews(mentorId) {
-  return (await restCall("GET", `/rest/v1/mentor_reviews?mentor_id=eq.${encodeURIComponent(mentorId)}&select=*,mentee:mentee_id(id,name,avatar_url)&order=created_at.desc&limit=50`)) || [];
+  return withPerson(await restCall("GET", `/rest/v1/mentor_reviews?mentor_id=eq.${encodeURIComponent(mentorId)}&select=*,mentee:mentee_id(id,name,avatar_url)&order=created_at.desc&limit=50`), "mentee", "mentee_id") || [];
 }
 
 // The reviews the member wrote (booking ids), to know which sessions are rated.

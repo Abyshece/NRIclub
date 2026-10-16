@@ -4,7 +4,7 @@ import FlagIcon from "./FlagIcon";
 import "./member/base.css";
 import GetVerified from "./member/GetVerified";
 import CodeEntry from "./member/CodeEntry";
-import { VerificationBanner, RejectedScreen, WaitingForReview } from "./member/VerificationBanner";
+import { VerificationBanner, RejectedScreen, WaitingForReview, WaitingGuides } from "./member/VerificationBanner";
 import ProfileChecklist, { setupSteps, useProfileCardDismissed } from "./member/ProfileChecklist";
 import { TermsContent, PrivacyContent, ImpressumContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
 import { hasImprint } from "./content/imprint";
@@ -618,11 +618,16 @@ const PLACE_KINDS = ["Grocery", "Restaurant", "Temple", "Shop", "Doctor", "Tax &
 const PRO_KINDS = ["Doctor", "Tax & accounts", "Lawyer", "Driving school"];
 const PLACE_ICON = { Grocery: "🛒", Restaurant: "🍛", Temple: "🛕", Shop: "🛍️", Doctor: "🩺", "Tax & accounts": "🧾", Lawyer: "⚖️", "Driving school": "🚗" };
 
+// The first message to a Market seller (no name for a seller who isn't
+// shown to members any more: they're "NRIClub member").
+const contactGreeting = (item) =>
+  `${item.sellerHidden ? "Hi" : `Hi ${item.seller.split(" ")[0]}`}, is this still available?`;
+
 // A question as the Ask page uses it (responses: the answer count, if known).
 const toHelp = (h, responses) => ({
   id: h.id, userId: h.user_id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status,
   city: h.city || "", urgent: !!h.urgent || h.urgency === "High", bestResponseId: h.best_response_id || null,
-  user: h.profiles?.name || "User", avatar: h.profiles?.avatar_url || "", timestamp: new Date(h.created_at).getTime(),
+  user: h.profiles?.name || "User", avatar: h.profiles?.avatar_url || "", userHidden: !!h.profiles?.unlisted, timestamp: new Date(h.created_at).getTime(),
   responses: responses ?? (h.responses_count || 0),
 });
 
@@ -789,6 +794,8 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
   };
 
   const author = post.author || {};
+  // An author who isn't shown to members any more has no profile to open.
+  const openProfile = !!onOpenProfile && !author.unlisted;
   const cardStyle = {
     background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4",
     padding: 20, marginBottom: 16, transition: "box-shadow 0.15s",
@@ -801,14 +808,14 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
       {isReported && <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.6)", borderRadius: 14, zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}><span style={{ background: "#FEF2F2", color: "#DC2626", padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>Reported — Under Review</span></div>}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 12 }}>
-          <button type="button" onClick={() => onOpenProfile?.(post.userId)} aria-label={`${author.name || "Member"}'s profile`} style={{ background: "none", border: "none", padding: 0, cursor: onOpenProfile ? "pointer" : "default", alignSelf: "flex-start" }}>
+          <button type="button" onClick={() => onOpenProfile?.(post.userId)} disabled={!openProfile} aria-label={openProfile ? `${author.name || "Member"}'s profile` : author.name} style={{ background: "none", border: "none", padding: 0, cursor: openProfile ? "pointer" : "default", alignSelf: "flex-start" }}>
             <Avatar name={author.name || "User"} size={40} url={author.avatar_url} />
           </button>
           <div>
-            <div onClick={() => onOpenProfile?.(post.userId)} style={{ fontWeight: 600, fontSize: 14, color: "#37352F", cursor: onOpenProfile ? "pointer" : "default" }}>{author.name}</div>
-            <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>
-              {author.profession} • {author.location}
-            </div>
+            <div onClick={() => { if (openProfile) onOpenProfile(post.userId); }} style={{ fontWeight: 600, fontSize: 14, color: "#37352F", cursor: openProfile ? "pointer" : "default" }}>{author.name}</div>
+            {(author.profession || author.location) && <div style={{ fontSize: 12, color: "#9B9A97", marginTop: 2 }}>
+              {[author.profession, author.location].filter(Boolean).join(" • ")}
+            </div>}
             {author.hometown && <div style={{ fontSize: 11, color: "#9B9A97", marginTop: 1 }}>From: {author.hometown}</div>}
             {post.groupName && !hideGroup && (
               <div style={{ fontSize: 10, color: "#5B9CFF", marginTop: 3, display: "flex", alignItems: "center", gap: 3, fontWeight: 600 }}>
@@ -1035,7 +1042,7 @@ const BlockedOverlay = ({ user, onSignOut, font }) => {
 // sends them back to review (private.reverify_on_identity_change), and
 // members waiting for review can't take part until approved again.
 const REVIEW_AGAIN_NOTE = (what) =>
-  `Changing your ${what} sends your profile back for a quick review. Until our team has checked it, you can't see other members or take part.`;
+  `Changing your ${what} sends your profile back for a quick review. Until our team has checked it, you can't see other members or take part, and they don't see your profile.`;
 
 // The fields of the user object (mapProfile) that decide what the member may
 // do: the ones api.refreshMyStatus reads.
@@ -1127,6 +1134,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // Members waiting for review (pending or needs_info) see WaitingForReview
   // instead of the feed and the other pages until an admin approves them.
   const waiting = !locked && isWaitingForReview(user);
+  // They also get a smaller menu, matching what they can use: Home (the
+  // waiting page), Guides (the NRI essentials), their profile and settings.
+  // shownView is the page the menu marks: for them, one of those three.
+  const shownView = !waiting ? view : view === "profile" ? "profile" : (view === "help" || view === "docs") ? "help" : "home";
   // Whether the database lets this member see other members and what they
   // post (private.can_browse()): only approved members (and not while
   // locked). Nothing is loaded until then.
@@ -1176,6 +1187,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [accountName, setAccountName] = useState(user.name);
   const [accountPassword, setAccountPassword] = useState("");
   const [accountSave, setAccountSave] = useState({ busy: false, error: "" });
+  // Settings → Account → Sign out of all devices.
+  const [signOutAll, setSignOutAll] = useState({ busy: false, error: "" });
+  const signOutAllDevices = async () => {
+    if (signOutAll.busy) return;
+    if (!confirm("Sign out of NRIClub on all your devices, this one included? You'll need your password to sign in again.")) return;
+    setSignOutAll({ busy: true, error: "" });
+    try {
+      await api.signOutEverywhere();
+    } catch (e) {
+      setSignOutAll({ busy: false, error: apiErrorMessage(e, "We couldn't sign you out everywhere. Please try again.") });
+      return;
+    }
+    onLogout();
+  };
   const [deleteAccountText, setDeleteAccountText] = useState(null); // null = closed; otherwise what was typed
   const [settingsSaveError, setSettingsSaveError] = useState("");
   const [openFaq, setOpenFaq] = useState(null);
@@ -1426,7 +1451,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       timestamp: new Date(p.created_at).getTime(),
       groupName: p.group_id ? (groupList.find(g => g.id === p.group_id)?.name || null) : null,
       groupId: p.group_id || null,
-      author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, occupation_status: p.profiles.occupation_status || "", location: p.profiles.location, hometown: p.profiles.hometown, avatar_url: p.profiles.avatar_url || "" } : { name: "User" },
+      author: p.profiles ? { name: p.profiles.name, profession: p.profiles.profession, occupation_status: p.profiles.occupation_status || "", location: p.profiles.location, hometown: p.profiles.hometown, avatar_url: p.profiles.avatar_url || "", unlisted: !!p.profiles.unlisted } : { name: "User" },
       externalUrl: urlMatch ? urlMatch[0] : null,
     };
   };
@@ -1464,7 +1489,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       const [myLikes, myReports, dbEvents, myR, dbHelp, allResponses, conns, sentData, dbDocs, blocked, dbNotifs, dbMarket] = await rest;
       if (myLikes && myLikes.length) setLikedPostIds(new Set(myLikes.map(l => l.post_id)));
       if (myReports instanceof Set) setReportedIds(myReports);
-      setEvents((dbEvents || []).map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
+      setEvents((dbEvents || []).map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name || (e.organizer_id === user.id ? user.name : api.UNLISTED_NAME), description: e.description, link: e.link || "", image: e.image_url || "" })));
       if (myR) setRsvps(new Set(myR));
       if (dbHelp && dbHelp.length) {
         const counts = {};
@@ -1491,7 +1516,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           refreshMyProfile().then(fresh => checkedDecision(decision.id, fresh));
         }
         setNotifications(dbNotifs.map(n => ({
-          id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
+          id: n.id, type: n.type, actor: n.actor?.name || null, actorHidden: !!n.actor?.unlisted, actor_id: n.actor?.id || n.actor_id || null,
           text: n.text, created_at: n.created_at,
           read: n.read, reference_id: n.reference_id,
         })));
@@ -1500,7 +1525,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       if (dbMarket && dbMarket.length) {
         setMarketItems(dbMarket.map(m => {
           const photos = listingPhotos(m.image_url);
-          return { id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
+          return { id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", sellerHidden: !!m.profiles?.unlisted, date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
         }));
       }
       setListsLoaded(true);
@@ -1701,7 +1726,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         if (canBrowse) api.getUnreadCounts().then(c => setUnreadCounts(view === "messages" && selectedConvoRef.current ? { ...c, [selectedConvoRef.current]: 0 } : c)).catch(() => {});
         if (dbConvos && dbConvos.length) {
           const newConvos = dbConvos.map(c => ({
-            id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
+            id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id, otherHidden: !!c.otherUser?.unlisted,
             avatar_url: c.otherUser?.avatar_url || "",
             lastMsg: c.last_message_text || "", time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
             unread: false,
@@ -1735,7 +1760,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         const dbNotifs = await api.getNotifications();
         if (dbNotifs && dbNotifs.length) {
           setNotifications(dbNotifs.map(n => ({
-            id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
+            id: n.id, type: n.type, actor: n.actor?.name || null, actorHidden: !!n.actor?.unlisted, actor_id: n.actor?.id || n.actor_id || null,
             text: n.text, created_at: n.created_at,
             read: n.read, reference_id: n.reference_id,
           })));
@@ -2033,7 +2058,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       try {
         const resp = await api.getHelpResponses(h.id);
         if (resp) {
-          setHelpResponses(prev => ({ ...prev, [h.id]: resp.map(r => ({ id: r.id, userId: r.user_id, text: r.content, user: r.profiles?.name || "User", avatar: r.profiles?.avatar_url || "", thanks: r.thanks_count || 0, time: new Date(r.created_at).getTime() })) }));
+          setHelpResponses(prev => ({ ...prev, [h.id]: resp.map(r => ({ id: r.id, userId: r.user_id, text: r.content, user: r.profiles?.name || "User", avatar: r.profiles?.avatar_url || "", hidden: !!r.profiles?.unlisted, thanks: r.thanks_count || 0, time: new Date(r.created_at).getTime() })) }));
           const mine = await api.getMyThanks(resp.map(r => r.id)).catch(() => []);
           if (mine.length) setMyThanks(prev => new Set([...prev, ...mine]));
         }
@@ -2323,12 +2348,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // Styles
   const font = "'DM Sans', sans-serif";
   const navBtn = (v) => ({
-    padding: "7px 12px", borderRadius: 20, border: view === v ? "1px solid #E0E0DE" : "1px solid transparent",
-    fontSize: 12, fontWeight: view === v ? 600 : 500,
-    background: view === v ? "#fff" : "transparent",
-    color: view === v ? "#37352F" : "#9B9A97",
+    padding: "7px 12px", borderRadius: 20, border: shownView === v ? "1px solid #E0E0DE" : "1px solid transparent",
+    fontSize: 12, fontWeight: shownView === v ? 600 : 500,
+    background: shownView === v ? "#fff" : "transparent",
+    color: shownView === v ? "#37352F" : "#9B9A97",
     cursor: "pointer", fontFamily: font, transition: "all 0.2s ease",
-    whiteSpace: "nowrap", boxShadow: view === v ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
+    whiteSpace: "nowrap", boxShadow: shownView === v ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
   });
   const inputStyle = {
     width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE",
@@ -3555,7 +3580,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <p onClick={() => openHelp(h)} style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical", cursor: "pointer", whiteSpace: "pre-wrap" }}>{h.description}</p>
                 {h.urgent && selectedHelp === h.id && <div style={{ margin: "10px 0" }}><EmergencyHelp /></div>}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
-                  <button type="button" onClick={() => h.userId && h.userId !== user.id ? openMember(h.userId) : null} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: h.userId && !isMine ? "pointer" : "default" }}>
+                  <button type="button" onClick={() => h.userId && h.userId !== user.id && !h.userHidden ? openMember(h.userId) : null} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: h.userId && !isMine && !h.userHidden ? "pointer" : "default" }}>
                     <Avatar name={h.user} size={24} url={h.avatar} />
                     <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{h.user} · {timeAgo(h.timestamp)}</span>
                   </button>
@@ -3571,7 +3596,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       const own = r.userId === user.id;
                       return (
                       <div key={r.id || ri} style={{ display: "flex", gap: 10, marginBottom: 12, padding: "10px 12px", background: best ? "#F0FBF5" : "#FAFAF8", border: best ? "1px solid #ABF5D1" : "1px solid transparent", borderRadius: 8 }}>
-                        <button type="button" onClick={() => r.userId && !own ? openMember(r.userId) : null} aria-label={r.user} style={{ background: "none", border: "none", padding: 0, cursor: r.userId && !own ? "pointer" : "default", alignSelf: "flex-start" }}><Avatar name={r.user} size={28} url={r.avatar} /></button>
+                        <button type="button" onClick={() => r.userId && !own && !r.hidden ? openMember(r.userId) : null} aria-label={r.user} style={{ background: "none", border: "none", padding: 0, cursor: r.userId && !own && !r.hidden ? "pointer" : "default", alignSelf: "flex-start" }}><Avatar name={r.user} size={28} url={r.avatar} /></button>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{r.user}{best && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: "#1A7F52" }}>✓ Best answer</span>}</span>
@@ -3877,7 +3902,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); } }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>{Icons.trash({ size: 11 })} Delete</button>
                         ) : (
                           <>
-                            <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
+                            <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(contactGreeting(item)); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
                             {!reportedIds.has(item.id) && <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "market", id: item.id, name: item.title }); }} aria-label="Report" title="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 8, display: "flex" }}>{Icons.flag({ size: 12 })}</button>}
                           </>
                         )}
@@ -3905,6 +3930,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   id: c.id,
                   name: c.otherUser?.name || "User",
                   otherUserId: c.otherUser?.id,
+                  otherHidden: !!c.otherUser?.unlisted,
                   avatar_url: c.otherUser?.avatar_url || "",
                   lastMsg: c.last_message_text || "",
                   time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
@@ -4012,7 +4038,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ padding: "12px 18px", borderBottom: "1px solid #E8E7E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                       <button className="msg-back" onClick={() => setSelectedConvo(null)} aria-label="Back to conversations" style={{ background: "none", border: "none", cursor: "pointer", color: "#5F5E5B", padding: 8, margin: "-8px 0 -8px -8px", fontSize: 22, lineHeight: 1 }}>‹</button>
-                      <button type="button" onClick={() => activeConvo.otherUserId && openMember(activeConvo.otherUserId)} style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+                      <button type="button" onClick={() => activeConvo.otherUserId && !activeConvo.otherHidden && openMember(activeConvo.otherUserId)} disabled={activeConvo.otherHidden} style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, background: "none", border: "none", padding: 0, cursor: activeConvo.otherHidden ? "default" : "pointer", textAlign: "left" }}>
                         <Avatar name={activeConvo.name} size={32} url={activeConvo.avatar_url} />
                         <span style={{ fontSize: 14, fontWeight: 700, color: "#37352F", fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeConvo.name}</span>
                       </button>
@@ -4552,12 +4578,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
           {/* Desktop Nav - aligned with center content column */}
           <div style={{ display: "flex", alignItems: "center", background: "#F5F5F3", borderRadius: 24, padding: "3px 4px", gap: 2, justifyContent: "center" }} className="desktop-nav">
-            <button style={navBtn("home")} onClick={() => setView("home")}>Home</button>
-            <button style={navBtn("network")} onClick={() => setView("network")}>Find</button>
-            <button style={navBtn("groups")} onClick={() => { setView("groups"); setSelectedGroup(null); }}>Groups</button>
-            <button style={navBtn("events")} onClick={() => setView("events")}>Events</button>
-            <button style={navBtn(view === "docs" ? "docs" : "help")} onClick={() => setView("help")}>Ask & Guides</button>
-            <button style={navBtn("market")} onClick={() => setView("market")}>Market</button>
+            {waiting ? (
+              <>
+                <button style={navBtn("home")} onClick={() => setView("home")}>Home</button>
+                <button style={navBtn("help")} onClick={() => setView("help")}>Guides</button>
+                <button style={navBtn("profile")} onClick={() => setView("profile")}>Profile</button>
+              </>
+            ) : (
+              <>
+                <button style={navBtn("home")} onClick={() => setView("home")}>Home</button>
+                <button style={navBtn("network")} onClick={() => setView("network")}>Find</button>
+                <button style={navBtn("groups")} onClick={() => { setView("groups"); setSelectedGroup(null); }}>Groups</button>
+                <button style={navBtn("events")} onClick={() => setView("events")}>Events</button>
+                <button style={navBtn(view === "docs" ? "docs" : "help")} onClick={() => setView("help")}>Ask & Guides</button>
+                <button style={navBtn("market")} onClick={() => setView("market")}>Market</button>
+              </>
+            )}
           </div>
 
           {/* Right side icons */}
@@ -4605,7 +4641,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 3, fontFamily: font }}>{timeAgo(new Date(n.created_at).getTime())}</p>
                             {n.type === "request" && acceptedNotifs.some(a => a.id === n.id) ? (
                               <p role="status" style={{ fontSize: 13, fontWeight: 600, color: "#22A06B", marginTop: 8, fontFamily: font }}>
-                                ✓ Accepted.{n.actor ? ` ${n.actor.split(" ")[0]} can now follow you.` : ""}
+                                ✓ Accepted.{n.actor && !n.actorHidden ? ` ${n.actor.split(" ")[0]} can now follow you.` : ""}
                               </p>
                             ) : n.type === "request" && (
                               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -4657,8 +4693,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </>
               )}
             </div>
-            {/* Messages (desktop; phones have it in the bottom bar) */}
-            <button className="nav-messages-btn" aria-label="Messages" title="Messages"
+            {/* Messages (desktop; phones have it in the bottom bar). Not for
+                members waiting for review: they can't message yet. */}
+            {!waiting && <button className="nav-messages-btn" aria-label="Messages" title="Messages"
               onClick={() => { setView("messages"); setHasUnreadMessages(false); setNotifOpen(false); setSettingsOpen(false); }}
               style={{ background: view === "messages" ? "#F0EFED" : "none", border: "none", cursor: "pointer", padding: 6, color: "#9B9A97", position: "relative", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
               onMouseOver={(e) => (e.currentTarget.style.background = "#F0EFED")}
@@ -4667,7 +4704,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {unreadTotal > 0 && view !== "messages"
                 ? <span style={{ position: "absolute", top: 0, right: 0, minWidth: 16, height: 16, padding: "0 4px", background: "#E25555", color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 8, border: "1.5px solid #fff", display: "flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>{unreadTotal > 9 ? "9+" : unreadTotal}</span>
                 : hasUnreadMessages ? <span style={{ position: "absolute", top: 5, right: 6, width: 7, height: 7, background: "#E25555", borderRadius: "50%", border: "1.5px solid #fff" }}>{""}</span> : null}
-            </button>
+            </button>}
             {/* Settings gear */}
             <div style={{ position: "relative" }}>
               <button onClick={() => { setSettingsOpen(!settingsOpen); setNotifOpen(false); }} aria-label="Settings" aria-expanded={settingsOpen}
@@ -4681,7 +4718,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setSettingsOpen(false)} />
                   <div className="settings-dropdown" style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 220, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "6px 0" }}>
                     {[
-                      { key: "invite", icon: Icons.share, label: "Invite a friend" },
+                      // (Members waiting for review invite and mentor once approved.)
+                      ...(waiting ? [] : [{ key: "invite", icon: Icons.share, label: "Invite a friend" }]),
                       { key: "install", icon: Icons.home, label: "Add to Home Screen" },
                       { key: "account", icon: Icons.user, label: "Account Settings" },
                       { key: "privacy", icon: Icons.shield, label: "Privacy & Safety" },
@@ -4703,7 +4741,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     ))}
                     <div style={{ height: 1, background: "#F0EFED", margin: "4px 0" }} />
                     {[
-                      { key: "mentoring", icon: Icons.users, label: "Mentoring" },
+                      ...(waiting ? [] : [{ key: "mentoring", icon: Icons.users, label: "Mentoring" }]),
                       { key: "feedback", icon: Icons.message, label: "Send feedback" },
                       { key: "helpCenter", icon: Icons.help, label: "Support" },
                       { key: "terms", icon: Icons.file, label: "Terms & Policies" },
@@ -4744,7 +4782,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <span style={{ fontWeight: 600, fontSize: 14 }}>Menu</span>
               <button onClick={() => setMobileMenu(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 20 })}</button>
             </div>
-            {[
+            {(waiting ? [
+              { v: "home", icon: Icons.home, label: "Home" },
+              { v: "help", icon: Icons.file, label: "Guides" },
+              { v: "profile", icon: Icons.user, label: "Profile" },
+            ] : [
               { v: "home", icon: Icons.home, label: "Home" },
               { v: "network", icon: Icons.search, label: "Find" },
               { v: "groups", icon: Icons.users, label: "Groups" },
@@ -4753,11 +4795,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               { v: "market", icon: Icons.shop, label: "Market" },
               { v: "messages", icon: Icons.message, label: "Messages" },
               { v: "profile", icon: Icons.user, label: "Profile" },
-            ].map((item) => (
+            ]).map((item) => (
               <button
                 key={item.v}
                 onClick={() => { setView(item.v); setMobileMenu(false); if (item.v === "groups") setSelectedGroup(null); }}
-                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", background: view === item.v ? "#EFEFED" : "transparent", color: view === item.v ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 14, fontFamily: font, marginBottom: 4 }}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", background: shownView === item.v ? "#EFEFED" : "transparent", color: shownView === item.v ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 14, fontFamily: font, marginBottom: 4 }}
               >
                 {item.icon({ size: 18 })} {item.label}
               </button>
@@ -4951,7 +4993,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* Shortcuts, labelled (LinkedIn only when a link is saved) */}
               <div style={{ display: "flex", gap: 0 }}>
                 {[
-                  { icon: Icons.message, label: "Messages", hasNotif: hasUnreadMessages, action: () => { setView("messages"); setHasUnreadMessages(false); } },
+                  waiting ? null : { icon: Icons.message, label: "Messages", hasNotif: hasUnreadMessages, action: () => { setView("messages"); setHasUnreadMessages(false); } },
                   { icon: Icons.file, label: "My Posts", action: () => { setView("profile"); setProfileTab("posts"); } },
                   { icon: Icons.image, label: "My Photos", action: () => { setView("profile"); setProfileTab("photos"); } },
                   user.linkedinUrl ? { icon: Icons.linkedin, label: "LinkedIn", action: () => window.open(user.linkedinUrl.startsWith("http") ? user.linkedinUrl : `https://${user.linkedinUrl}`, "_blank") } : null,
@@ -4979,7 +5021,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           </aside>
         )}
 
-        <div>{waiting ? <WaitingForReview user={user} onEditProfile={() => openProfileEditor()} onUpdateDetails={() => setVerifyOpen(true)} /> : renderContent()}</div>
+        <div>{!waiting || shownView === "profile" ? renderContent()
+          : shownView === "help" ? <WaitingGuides />
+          : <WaitingForReview user={user} onEditProfile={() => openProfileEditor()} onUpdateDetails={() => setVerifyOpen(true)} />}</div>
 
         {view !== "profile" && view !== "trending" && !waiting && (
           <aside className="sidebar-right" style={{ position: "sticky", top: 80, alignSelf: "start" }}>
@@ -5063,17 +5107,21 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Mobile Bottom Nav */}
       <div className="mobile-nav" style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #E8E7E4", padding: "6px 8px", display: "none", justifyContent: "space-around", zIndex: 30 }}>
-        {[
+        {(waiting ? [
+          { v: "home", icon: Icons.home, label: "Home" },
+          { v: "help", icon: Icons.file, label: "Guides" },
+          { v: "profile", icon: Icons.user, label: "Profile" },
+        ] : [
           { v: "home", icon: Icons.home, label: "Home" },
           { v: "network", icon: Icons.search, label: "Find" },
           { v: "messages", icon: Icons.message, label: "Messages", notif: hasUnreadMessages || unreadTotal > 0 },
           { v: "groups", icon: Icons.users, label: "Groups" },
           { v: "profile", icon: Icons.user, label: "Profile" },
-        ].map((item) => (
+        ]).map((item) => (
           <button
             key={item.v}
             onClick={() => { setView(item.v); if (item.v === "groups") setSelectedGroup(null); if (item.v === "messages") setHasUnreadMessages(false); }}
-            style={{ flex: 1, minHeight: 48, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: view === item.v ? "#37352F" : "#9B9A97", fontSize: 11, fontWeight: 500, fontFamily: font }}
+            style={{ flex: 1, minHeight: 48, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, background: "none", border: "none", cursor: "pointer", color: shownView === item.v ? "#37352F" : "#9B9A97", fontSize: 11, fontWeight: 500, fontFamily: font }}
           >
             <span style={{ position: "relative", display: "flex" }}>
               {item.icon({ size: 20 })}
@@ -5174,7 +5222,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* Action row, kept in view at the bottom (no Contact Seller on your own listing) */}
               <div style={{ display: "flex", gap: 12, justifyContent: "space-between", alignItems: "center", position: "sticky", bottom: 0, background: "#fff", padding: "12px 0", borderTop: "1px solid #F0EFED" }}>
                 {expandedMarketItem.user_id !== user.id ? (
-                  <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(`Hi ${expandedMarketItem.seller.split(" ")[0]}, is this still available?`); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
+                  <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(contactGreeting(expandedMarketItem)); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
                     {Icons.send({ size: 15 })} Contact Seller
                   </button>
                 ) : (
@@ -5302,7 +5350,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           setConvos(prev => {
                             const oldMarketIds = new Set(prev.filter(c => c.isMarketplace).map(c => c.id));
                             return dbConvos.map(c => ({
-                              id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id,
+                              id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id, otherHidden: !!c.otherUser?.unlisted,
                               avatar_url: c.otherUser?.avatar_url || "",
                               lastMsg: c.last_message_text || "", 
                               time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
@@ -5392,6 +5440,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <input type="password" autoComplete="new-password" value={accountPassword} onChange={(e) => setAccountPassword(e.target.value)} style={{ ...inputStyle, paddingLeft: 36 }} placeholder="Leave blank to keep your current password" />
                   </div>
                 </div>
+                <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 10, lineHeight: 1.5, fontFamily: font }}>Still signed in on a phone or computer you don't use any more? Sign out everywhere, this device included. Other devices are signed out when they next open NRIClub, and within an hour at the latest.</p>
+                <button type="button" onClick={signOutAllDevices} aria-disabled={signOutAll.busy} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: signOutAll.busy ? "default" : "pointer", opacity: signOutAll.busy ? 0.7 : 1, fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 20 }}>
+                  {Icons.logout({ size: 14 })} {signOutAll.busy ? "Signing out..." : "Sign out of all devices"}
+                </button>
+                {signOutAll.error && <p role="alert" style={{ fontSize: 12, color: "#B91C1C", margin: "-10px 0 20px", lineHeight: 1.5, fontFamily: font }}>{signOutAll.error}</p>}
               </div>
               <div style={{ borderTop: "1px solid #F0EFED", paddingTop: 20 }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12, fontFamily: font, display: "flex", alignItems: "center", gap: 5 }}>

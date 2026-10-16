@@ -48,13 +48,21 @@ export const RETENTION = {
 const R = RETENTION;
 const months = (n) => `${n} month${n === 1 ? "" : "s"}`;
 
-// Who members can see. onlyApprovedListed: false while approved members can
-// still read the profile of every account (members waiting for our check,
-// unfinished, declined and blocked accounts included); true once the
-// database shows other members only approved, active accounts (the profiles
-// policy with private.is_listed_member, in the same pull request).
+// Who members can see. onlyApprovedListed: true since the database shows
+// other members only approved, active accounts (the profiles policy with
+// private.is_listed_member, supabase/migrations/20261023000000_admin_access.sql);
+// false would say that approved members can read the profile of every
+// account (members waiting for our check, unfinished, declined and blocked
+// accounts included), as before that update.
 export const VISIBILITY = {
-  onlyApprovedListed: false,
+  onlyApprovedListed: true,
+};
+
+// How the admin tools are protected. adminTwoStep: true once "Require
+// two-step login for admin rights" is switched on in the admin panel
+// (Security); while it is off, section 15 doesn't claim it.
+export const SECURITY = {
+  adminTwoStep: false,
 };
 
 function accountRetention() {
@@ -148,7 +156,7 @@ export function privacyDoc() {
         ] },
         { entries: [
           { title: "Your account", fields: [
-            ["What", "your email address; your password, which our sign-in provider stores only as a hash (a scrambled form nobody can read back); your name; when you signed up, confirmed your email address and last signed in; your confirmation that you're 18 or older; which version of the Terms of Use you accepted and when; and when you gave the consent in section 3 and in which wording."],
+            ["What", "your email address; your password, which our sign-in provider stores only as a hash (a scrambled form nobody can read back); your name; when you signed up, confirmed your email address, last signed in and last opened NRIClub (only you and our team see this); your confirmation that you're 18 or older; which version of the Terms of Use you accepted and when; and when you gave the consent in section 3 and in which wording."],
             ["Why", "to create your membership, sign you in and send you sign-in codes and password links."],
             ["Legal basis", "contract. Keeping the record of your consent in section 3: legal obligation (Art. 6(1)(c) with Art. 7(1) GDPR, which requires us to be able to show consent). Keeping the record of your age confirmation and of which Terms you accepted: legitimate interests (being able to prove our contract and its terms)."],
             ["How long", accountRetention()],
@@ -157,7 +165,7 @@ export function privacyDoc() {
             ["What", "for each device you sign in on: a session with your IP address, your browser and device type (user agent) and when it was created and last used."],
             ["Why", "to keep you signed in, let you sign out, and protect your account from misuse."],
             ["Legal basis", "contract, and legitimate interests (keeping accounts secure)."],
-            ["How long", "until you sign out on that device, or until you delete your account."],
+            ["How long", "until you sign out on that device, or until you delete your account. Settings → Account → \"Sign out of all devices\" ends all your sessions at once."],
           ] },
           { title: "The membership check", fields: [
             ["What", "your city and country; your LinkedIn profile link or a short note on how you're connected to the Indian community; if you give one, a member who can vouch for you (if you came through an invite link, we fill in who invited you); our decision, any message we send you, notes our team makes about the check, and the dates. Our team opens the LinkedIn profile you gave us and looks at it (the name, photo, jobs and education shown there): that is information we get from LinkedIn rather than from you. If you change your name or LinkedIn link after we've approved you, we check again."],
@@ -166,7 +174,7 @@ export function privacyDoc() {
             ["How long", `until you delete your account. An account our team declined, or whose membership we ended, is deleted ${months(R.endedAccountMonths)} after our decision if you haven't deleted it yourself. If we decline or block an account, a minimal record stays ("Record of declined and blocked accounts" below).`],
           ] },
           { title: "Your profile", fields: [
-            ["What", "required: your name, city and country. Optional: a photo, your hometown, profession and what you do, how long you've lived abroad, a short bio, what people can ask you about, your LinkedIn link, and whether you offer mentoring or look for a mentor, with your topics. We also show your Verified badge, whether you're a city ambassador, and when you were last active."],
+            ["What", "required: your name, city and country. Optional: a photo, your hometown, profession and what you do, how long you've lived abroad, a short bio, what people can ask you about, your LinkedIn link, and whether you offer mentoring or look for a mentor, with your topics. We also show your Verified badge and whether you're a city ambassador."],
             ["Why", "so members can find, recognise and contact each other."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
             ["How long", "until you change it or delete your account."],
@@ -229,9 +237,9 @@ export function privacyDoc() {
             ["Photos", "a photo you upload is stored at a long web address that isn't listed anywhere. New photos get an address with a random code, which can't be guessed. Anyone who has a photo's exact address can open it without signing in, for example if a member copies it."],
           ] },
           { title: "Approved members", fields: [
-            ["What", "your profile (section 2, \"Your profile\", including your LinkedIn link if you add it, and when you were last active); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; the places you add and recommend; the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
+            ["What", "your profile (section 2, \"Your profile\"; your LinkedIn link only if you choose to show it in Edit profile); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; the places you add (not which places you recommend: members see only how many members recommend a place); the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
             ["If your membership ends", VISIBILITY.onlyApprovedListed
-              ? "if we decline your sign-up or end your membership, other members no longer see your profile."
+              ? "if we decline your sign-up or block your account, or while our team checks your profile again (for example after you change your name), other members don't see your profile. What you posted before stays until you or we delete it, but without your name or photo: it shows as \"NRIClub member\", and your name is taken off events you organised."
               : "if we decline your sign-up or block your account, approved members can still see your profile until the account is deleted (section 2, \"The membership check\")."],
           ] },
           { title: "Members waiting for our check", fields: [
@@ -249,7 +257,7 @@ export function privacyDoc() {
             ["Your invite link", "it carries a random code, not your member ID. Someone who signs up through it sees your first name and member ID in the details they send for our check, where we fill in who invited them."],
           ] },
           { title: "Our team", fields: [
-            ["What", "everything approved members see, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, our decisions about your content and account, your account status and the record of your confirmations and consent. Not your messages, except one reported to us (above)."],
+            ["What", `everything approved members see${VISIBILITY.onlyApprovedListed ? " (your profile also while other members don't see it)" : ""}, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, our decisions about your content and account, your account status and the record of your confirmations and consent. Not your messages, except one reported to us (above).`],
           ] },
           { title: "Our service providers", fields: [
             ["What", "they store and process data for us (section 7)."],
@@ -366,7 +374,7 @@ export function privacyDoc() {
       ] },
 
       { id: "security", title: "15. Security", blocks: [
-        { p: "We protect your data with technical and organisational measures (Art. 32 GDPR), including: encrypted connections (HTTPS) everywhere; storage in the EU, encrypted on our provider's disks; database rules that let each person read and change only what they're allowed to; passwords stored only as hashes; admin tools only for our team; and daily backups. No system is completely secure. If a data breach is likely to put you at high risk, we tell you without undue delay (Art. 34 GDPR)." },
+        { p: `We protect your data with technical and organisational measures (Art. 32 GDPR), including: encrypted connections (HTTPS) everywhere; storage in the EU, encrypted on our provider's disks; database rules that let each person read and change only what they're allowed to; passwords stored only as hashes; admin tools only for our team, on their own web address${SECURITY.adminTwoStep ? " and with two-step login (a code from an authenticator app)" : ""}; and daily backups. No system is completely secure. If a data breach is likely to put you at high risk, we tell you without undue delay (Art. 34 GDPR).` },
       ] },
 
       { id: "changes", title: "16. Changes to this policy", blocks: [

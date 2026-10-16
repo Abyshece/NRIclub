@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import MemberPeek, { MemberModeration } from "./MemberPeek";
 import { moderateMember } from "./moderateMember";
-import { Avatar, Button, EmptyState, Icon, PageHeader, Pill } from "./ui";
+import { Avatar, Button, EmptyState, ErrorNote, Icon, PageHeader, Pill, SkeletonRows } from "./ui";
 import {
   NO_HOLD, VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, holdSummary, identityChanged,
   memberFields, placeLabel, refusedDecisionError, reviewFlagLabel, shortName,
@@ -16,81 +16,168 @@ const PAGE = 100;
 const fmt = (n) => n.toLocaleString("en-GB");
 
 // users holds the newest members (at most 1,000); total and blockedTotal are
-// the server's counts of all of them. recorded: whether the database records
-// our team's decisions and tells the member (the 2026-10-21 update).
+// the server's counts of all of them. A search, and the Blocked filter, go
+// to the server (api.adminSearchMembers) and cover every member; before the
+// database could search (its 2026-10-23 update) they cover the loaded ones.
+// recorded: whether the database records our team's decisions and tells the
+// member (the 2026-10-21 update).
+const SEARCH_DELAY_MS = 300;
+
 export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, showToast, recorded = true }) {
   const [query, setQuery] = useState("");
   const [show, setShow] = useState("all"); // all | blocked
   const [limit, setLimit] = useState(PAGE);
   const [openId, setOpenId] = useState(null);
   const [details, setDetails] = useState({}); // id -> row from admin_verification_queue
-  const [loadingDetails, setLoadingDetails] = useState({}); // status -> true while its rows load
+  const [loadingDetails, setLoadingDetails] = useState({}); // id -> true while their row loads
   const [blocking, setBlocking] = useState(null); // member to block (from the list)
+  // The server's answer to the search shown: { key, members, total }.
+  // serverSearch: true once the database searched, false if it can't yet
+  // (before its update), null while that isn't known.
+  const [remote, setRemote] = useState(null);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState("");
+  const [serverSearch, setServerSearch] = useState(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const searchSeq = useRef(0);
+  const remoteRef = useRef(remote);
+  remoteRef.current = remote;
   const listRef = useRef(null);
-  const fetchedStatuses = useRef(new Set());
   const detailsRef = useRef(details);
   detailsRef.current = details;
 
   const blockedCount = blockedTotal ?? users.filter((u) => u.status === "blocked").length;
   const cut = users.length < total;
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+  const q = query.trim();
+  const searchKey = `${show}|${q}`;
+  const searching = !!q || show === "blocked";
+
+  // Search the server a moment after typing stops (the Blocked filter at
+  // once); answers to an earlier search are dropped.
+  useEffect(() => {
+    if (!searching || serverSearch === false) {
+      searchSeq.current += 1;
+      setRemoteLoading(false);
+      setRemoteError("");
+      return undefined;
+    }
+    const seq = ++searchSeq.current;
+    setRemoteLoading(true);
+    setRemoteError("");
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.adminSearchMembers({ query: q, blocked: show === "blocked" ? true : null, offset: 0 });
+        if (seq !== searchSeq.current) return;
+        if (!res) { setServerSearch(false); setRemote(null); return; }
+        setServerSearch(true);
+        setRemote({ key: searchKey, members: res.members, total: res.total });
+      } catch (e) {
+        if (seq === searchSeq.current) setRemoteError(friendlyError(e));
+      } finally {
+        if (seq === searchSeq.current) setRemoteLoading(false);
+      }
+    }, q ? SEARCH_DELAY_MS : 0);
+    return () => clearTimeout(timer);
+  }, [searchKey, serverSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // With more members than are loaded, find out whether the server can
+  // search them all, to say so above the list.
+  useEffect(() => {
+    if (!cut || serverSearch !== null) return;
+    let alive = true;
+    api.adminSearchMembers({ limit: 1 }).then((res) => { if (alive) setServerSearch(!!res); }).catch(() => {});
+    return () => { alive = false; };
+  }, [cut]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const useRemote = searching && serverSearch !== false && remote?.key === searchKey;
+  const localFiltered = useMemo(() => {
+    const ql = q.toLowerCase();
     return users.filter((u) => {
       if (show === "blocked" && u.status !== "blocked") return false;
-      if (!q) return true;
-      return [u.name, u.email, u.city, u.location].some((v) => String(v || "").toLowerCase().includes(q));
+      if (!ql) return true;
+      return [u.name, u.email, u.city, u.location].some((v) => String(v || "").toLowerCase().includes(ql));
     });
-  }, [users, query, show]);
-  const visible = filtered.slice(0, limit);
+  }, [users, q, show]);
+  // (A member unblocked here leaves the Blocked list at once, as it would
+  // from the loaded members, and isn't counted: on the server they've left
+  // it too.)
+  const stillMatches = (m) => show !== "blocked" || m.status === "blocked";
+  const filtered = useRemote ? remote.members.filter(stillMatches) : localFiltered;
+  const visible = useRemote ? filtered : filtered.slice(0, limit);
+  const remoteTotal = useRemote ? Math.max(0, remote.total - (remote.members.length - filtered.length)) : 0;
+  const remoteMore = useRemote ? Math.max(0, remoteTotal - filtered.length) : 0;
 
   useEffect(() => { setLimit(PAGE); }, [query, show]);
 
+  // The next page of the server's answer, after the members listed here that
+  // are still in it.
+  const loadMoreRemote = async () => {
+    const r = remoteRef.current;
+    if (!r || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await api.adminSearchMembers({ query: q, blocked: show === "blocked" ? true : null, offset: r.members.filter(stillMatches).length });
+      if (res && remoteRef.current?.key === r.key) {
+        setRemote((cur) => {
+          if (!cur || cur.key !== r.key) return cur;
+          const have = new Set(cur.members.map((m) => m.id));
+          // total counts the members listed here that left the list too.
+          const gone = cur.members.filter((m) => !stillMatches(m)).length;
+          return { ...cur, members: [...cur.members, ...res.members.filter((m) => !have.has(m.id))], total: res.total + gone };
+        });
+      }
+    } catch (e) {
+      showToast({ text: `Couldn't load more: ${friendlyError(e)}`, tone: "error" });
+    }
+    setLoadingMore(false);
+  };
+
   const openIndex = openId ? filtered.findIndex((u) => u.id === openId) : -1;
-  const openUser = openIndex >= 0 ? filtered[openIndex] : (openId ? users.find((u) => u.id === openId) : null);
+  const openUser = openIndex >= 0 ? filtered[openIndex]
+    : (openId ? users.find((u) => u.id === openId) || remote?.members.find((u) => u.id === openId) : null);
 
   // Counts the changes made here to each member, so a refresh that started
   // before one can't bring back what the member looked like before it.
   const changes = useRef({});
   const touch = (id) => { changes.current[id] = (changes.current[id] || 0) + 1; };
 
+  // A change to a member: in the panel (with how they were, for the counts,
+  // if they aren't among the loaded members, or as the caller says) and in
+  // the search results.
+  const memberChanged = (id, patch, was = null) => {
+    const found = remoteRef.current?.members.find((m) => m.id === id) || null;
+    const before = found || was ? { ...(found || {}), ...(was || {}) } : null;
+    onMemberChange(id, patch, before);
+    setRemote((r) => (r && r.members.some((m) => m.id === id)
+      ? { ...r, members: r.members.map((m) => (m.id === id ? { ...m, ...patch } : m)) } : r));
+  };
+
   // The members list has the public profile; the review queue has the rest
-  // (consents, explanation, duplicates, submission, hold). Load it for the
-  // member's status. Resolves with the rows when done (null on failure;
-  // never rejects).
-  const loadingRef = useRef({}); // status -> the load in progress
-  const loadDetails = (status) => {
-    fetchedStatuses.current.add(status);
-    setLoadingDetails((l) => ({ ...l, [status]: true }));
-    const marks = { ...changes.current };
-    // Rows are keyed by id, so keep them even if the admin has moved on, but
-    // not over members decided on here while they loaded. On failure, forget
-    // the status so the next open tries again.
-    const load = api.adminVerificationQueue([status])
-      .then((rows) => {
-        setDetails((d) => {
-          const next = { ...d };
-          (rows || []).forEach((r) => {
-            if ((changes.current[r.id] || 0) === (marks[r.id] || 0)) next[r.id] = r;
-          });
-          return next;
-        });
-        return rows || [];
+  // (consents, explanation, duplicates, submission, hold). Load the member's
+  // row. Resolves with it when done (null on failure; never rejects).
+  const loadingRef = useRef({}); // id -> the load in progress
+  const loadDetails = (id, status) => {
+    setLoadingDetails((l) => ({ ...l, [id]: true }));
+    const mark = changes.current[id] || 0;
+    // Not over a member decided on here while it loaded.
+    const load = api.adminMemberDetails(id, status)
+      .then((row) => {
+        if (row && (changes.current[id] || 0) === mark) setDetails((d) => ({ ...d, [id]: row }));
+        return row;
       })
-      .catch(() => { fetchedStatuses.current.delete(status); return null; })
+      .catch(() => null)
       .finally(() => {
-        if (loadingRef.current[status] !== load) return;
-        delete loadingRef.current[status];
-        setLoadingDetails((l) => ({ ...l, [status]: false }));
+        if (loadingRef.current[id] !== load) return;
+        delete loadingRef.current[id];
+        setLoadingDetails((l) => ({ ...l, [id]: false }));
       });
-    loadingRef.current[status] = load;
+    loadingRef.current[id] = load;
     return load;
   };
 
   useEffect(() => {
-    if (!openUser) return;
-    const status = openUser.verification_status;
-    if (details[openUser.id] || fetchedStatuses.current.has(status)) return;
-    loadDetails(status);
+    if (!openUser || details[openUser.id] || loadingRef.current[openUser.id]) return;
+    loadDetails(openUser.id, openUser.verification_status);
   }, [openUser?.id, openUser?.verification_status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load the member again each time the peek opens on them, so the admin
@@ -98,28 +185,21 @@ export default function MembersView({ users, total = users.length, blockedTotal 
   // status or hold changed, load their review details again too (until
   // they're back the peek shows only what the members list has); full:
   // load them again anyway (after a refused decision or an Undo). With no
-  // details yet, wait for those loading for their status (since this
-  // refresh started), and load them again if the member isn't among them
-  // (their status changed after that list was loaded, e.g. in another tab,
-  // or the load failed).
+  // details yet, wait for the load in progress, or load them.
   const refreshMember = async (id, { full = false } = {}) => {
     const mark = changes.current[id] || 0;
-    const loading = { ...loadingRef.current };
     let fresh = null;
     try { fresh = await api.adminGetReportedItem("profile", id); } catch { return; }
     if (!fresh || (changes.current[id] || 0) !== mark) return;
     const d = detailsRef.current[id];
     const status = fresh.verification_status;
-    onMemberChange(id, fresh);
+    memberChanged(id, fresh);
     const stale = !!d && (identityChanged(d, fresh) || d.verification_status !== status
       || (d.review_flag || "") !== (fresh.review_flag || ""));
     if (stale) setDetails((prev) => { const next = { ...prev }; delete next[id]; return next; });
-    if (stale || full) await loadDetails(status);
+    if (stale || full) await loadDetails(id, status);
     else if (d) patchDetails(id, memberFields(fresh));
-    else {
-      const rows = await (loading[status] || loadingRef.current[status]);
-      if (!rows?.some((r) => r.id === id)) await loadDetails(status);
-    }
+    else await (loadingRef.current[id] || loadDetails(id, status));
   };
 
   // After the database refused a decision (or an Undo): show the member as
@@ -190,7 +270,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
       ...(endsHold ? NO_HOLD : {}),
     };
     patchDetails(m.id, decided);
-    onMemberChange(m.id, { verification_status: decision, linkedin_verified: decision === "approved", ...(endsHold ? { review_flag: "" } : {}) });
+    memberChanged(m.id, { verification_status: decision, linkedin_verified: decision === "approved", ...(endsHold ? { review_flag: "" } : {}) });
     // Back in review, the member is checked against rejected and blocked
     // accounts again (and gets a submission date): load what the database
     // decided.
@@ -226,7 +306,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
           ...(before === "incomplete" ? NO_HOLD : {}),
         };
         patchDetails(m.id, restored);
-        onMemberChange(m.id, { verification_status: before, linkedin_verified: false, review_flag: restored.review_flag || "" });
+        memberChanged(m.id, { verification_status: before, linkedin_verified: false, review_flag: restored.review_flag || "" });
         refreshMember(m.id, { full: true });
         return before === "pending" ? `Undone. ${who} is now pending.` : `Undone. ${who} is back to unfinished.`;
       } : undefined,
@@ -236,7 +316,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
   const setAmbassador = async (m, city) => {
     await api.adminSetAmbassador(m.id, city);
     touch(m.id);
-    onMemberChange(m.id, { ambassador_city: city });
+    memberChanged(m.id, { ambassador_city: city });
     showToast({ text: city ? `${shortName(m.name)} is now the ambassador for ${city}` : `${shortName(m.name)} is no longer an ambassador` });
   };
 
@@ -246,7 +326,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
     showToast,
     changed: (id, patch, before) => {
       touch(id);
-      onMemberChange(id, patch, before);
+      memberChanged(id, patch, before);
       patchDetails(id, patch);
     },
   });
@@ -257,7 +337,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
 
   return (
     <>
-      <PageHeader title="Members" description="Everyone who has joined NRIClub. Open a member to review them, or block an account." />
+      <PageHeader title="Members" description="Everyone who has joined NRIClub. Search finds any member by name, email or city. Open a member to review them, or block an account." />
 
       <div className="adm-toolbar">
         <label className="adm-search">
@@ -270,16 +350,27 @@ export default function MembersView({ users, total = users.length, blockedTotal 
         </div>
       </div>
 
-      {cut && (
+      {remoteError && <ErrorNote>{`Couldn't search all members: ${remoteError} Showing matches among the loaded members.`}</ErrorNote>}
+      {useRemote ? (
+        <p className="adm-muted adm-small" role="status" style={{ margin: "0 0 10px" }}>
+          {show === "blocked" && !q
+            ? `${fmt(remoteTotal)} blocked account${remoteTotal === 1 ? "" : "s"}`
+            : `${fmt(remoteTotal)} member${remoteTotal === 1 ? "" : "s"} match${remoteTotal === 1 ? "es" : ""}`}
+        </p>
+      ) : searching && remoteLoading ? (
+        <p className="adm-muted adm-small" role="status" style={{ margin: "0 0 10px" }}>Searching all members…</p>
+      ) : cut && (
         <p className="adm-muted adm-small" style={{ margin: "0 0 10px" }}>
-          Showing the newest {fmt(users.length)} of {fmt(total)} members. Search and the Blocked filter only cover these.
+          Showing the newest {fmt(users.length)} of {fmt(total)} members.{" "}
+          {serverSearch === false ? "Search and the Blocked filter only cover these." : serverSearch ? "Search and the Blocked filter cover every member." : ""}
         </p>
       )}
 
       {filtered.length === 0 ? (
-        <EmptyState icon={query ? "search" : "users"} title={query ? "No members match" : show === "blocked" ? (blockedCount > 0 ? "No blocked accounts among these members" : "No blocked accounts") : "No members yet"}>
-          {query ? "Try a different name, email or city." : show === "blocked" ? (blockedCount > 0 ? "Blocked accounts that joined earlier aren't loaded here." : "Accounts you block appear here.") : null}
-        </EmptyState>
+        searching && remoteLoading && !useRemote ? <SkeletonRows rows={3} /> : (
+        <EmptyState icon={query ? "search" : "users"} title={query ? "No members match" : show === "blocked" ? (blockedCount > 0 && !useRemote ? "No blocked accounts among these members" : "No blocked accounts") : "No members yet"}>
+          {query ? "Try a different name, email or city." : show === "blocked" ? (blockedCount > 0 && !useRemote ? "Blocked accounts that joined earlier aren't loaded here." : "Accounts you block appear here.") : null}
+        </EmptyState>)
       ) : (
         <div className="adm-list" ref={listRef} role="table" aria-label="Members">
           <div className="adm-list-head adm-mhead" role="row">
@@ -329,7 +420,11 @@ export default function MembersView({ users, total = users.length, blockedTotal 
               </div>
             );
           })}
-          {filtered.length > visible.length && (
+          {useRemote ? remoteMore > 0 && (
+            <div className="adm-more">
+              <Button variant="secondary" size="sm" onClick={loadMoreRemote} disabled={loadingMore}>{loadingMore ? "Loading…" : `Show ${fmt(Math.min(api.SEARCH_PAGE, remoteMore))} more`}</Button>
+            </div>
+          ) : filtered.length > visible.length && (
             <div className="adm-more">
               <Button variant="secondary" size="sm" onClick={() => setLimit((l) => l + PAGE)}>Show {Math.min(PAGE, filtered.length - visible.length)} more</Button>
             </div>
@@ -340,7 +435,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
       {peekMember && (
         <MemberPeek
           member={peekMember}
-          loadingDetails={!!loadingDetails[peekMember.verification_status] && !details[peekMember.id]}
+          loadingDetails={!!loadingDetails[peekMember.id] && !details[peekMember.id]}
           index={openIndex >= 0 ? openIndex : 0}
           total={openIndex >= 0 ? filtered.length : 1}
           onClose={() => { const id = openId; setOpenId(null); focusRow(id); }}
