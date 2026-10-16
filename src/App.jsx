@@ -83,6 +83,10 @@ const ResetPasswordPage = ({ onDone, onCancel, onExpired }) => {
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // An account with two-step login (admins) needs the 6-digit code from its
+  // authenticator app before Supabase accepts a new password.
+  const [needCode, setNeedCode] = useState(false);
+  const [code, setCode] = useState("");
   const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
   useEffect(() => {
@@ -100,14 +104,25 @@ const ResetPasswordPage = ({ onDone, onCancel, onExpired }) => {
     e.preventDefault();
     if (saving || !account) return;
     if (password.length < 8) { setError("Use at least 8 characters."); return; }
+    if (needCode && code.length !== 6) { setError("Enter the 6-digit code from your authenticator app."); return; }
     setSaving(true);
     setError("");
     try {
+      if (needCode) {
+        await api.confirmRecoveryCode(code);
+        setNeedCode(false);
+      }
       const result = await api.updatePassword(password);
       onDone(result?.email || account.email);
     } catch (err) {
       if (err.expired) { onExpired(); return; }
+      if (err.code === "insufficient_aal") {
+        setNeedCode(true);
+        setSaving(false);
+        return;
+      }
       setError(authErrorMessage(err) || err.message || "Couldn't update your password. Please try again.");
+      if (needCode) setCode("");
       setSaving(false);
     }
   };
@@ -146,6 +161,15 @@ const ResetPasswordPage = ({ onDone, onCancel, onExpired }) => {
               <input id="new-password" type={show ? "text" : "password"} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", padding: "12px 64px 12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 15, boxSizing: "border-box", outline: "none", fontFamily: font }} />
               <button type="button" onClick={() => setShow(!show)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#787774", fontSize: 12, cursor: "pointer" }}>{show ? "Hide" : "Show"}</button>
             </div>
+            {needCode && (
+              <>
+                <label htmlFor="reset-code" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>6-digit code</label>
+                <p id="reset-code-help" style={{ fontSize: 12, color: "#787774", margin: "0 0 8px", lineHeight: 1.5 }}>Your account uses two-step login. Enter the code your authenticator app shows for NRIClub.</p>
+                <input id="reset-code" type="text" inputMode="numeric" autoComplete="one-time-code" autoFocus aria-describedby="reset-code-help" placeholder="123456"
+                  value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 18, letterSpacing: "0.3em", textAlign: "center", boxSizing: "border-box", outline: "none", fontFamily: font, marginBottom: 20 }} />
+              </>
+            )}
             <button type="submit" disabled={saving} style={{ width: "100%", padding: 12, borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1 }}>{saving ? "Saving..." : "Save password"}</button>
           </>
         )}

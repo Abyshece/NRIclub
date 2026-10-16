@@ -223,6 +223,12 @@ export function authErrorMessage(err) {
   if (msg.includes("same_password") || msg.includes("different from the old password")) {
     return "That's already your password. Choose a different one.";
   }
+  // An account with two-step login (admins) can change its password only
+  // from a session confirmed with the 6-digit code (insufficient_aal): the
+  // reset link asks for the code.
+  if (err?.code === "insufficient_aal" || msg.includes("aal2")) {
+    return "Your account uses two-step login, so its password can only be changed with your 6-digit code: sign out, choose \"Forgot password?\" and follow the link in the email.";
+  }
   if (msg.includes("weak") || msg.includes("pwned") || msg.includes("easy to guess")) {
     return "That password is too easy to guess. Please choose a different one.";
   }

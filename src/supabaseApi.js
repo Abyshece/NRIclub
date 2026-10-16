@@ -416,9 +416,20 @@ function expiredLinkError() {
 }
 
 // The access token was refused as expired or invalid: 401, or (as Supabase
-// Auth answers an expired token) 403 with error_code "bad_jwt".
+// Auth answers an expired token) 403 with error_code "bad_jwt". Not when
+// the session is fine but wasn't signed in with the 6-digit code
+// (insufficient_aal, e.g. a new password for an account with two-step login).
 function isRefusedToken(res, data) {
+  if (data.error_code === "insufficient_aal") return false;
   return res.status === 401 || data.error_code === "bad_jwt" || /\bbad_jwt\b|invalid jwt/i.test(data.msg || data.message || "");
+}
+
+// An Auth API error for the caller: Supabase Auth's message, and its
+// error_code as err.code (e.g. "insufficient_aal").
+function authError(data, fallback) {
+  const err = new Error(data.msg || data.error_description || data.message || fallback);
+  err.code = data.error_code || "";
+  return err;
 }
 
 // An Auth API call made with the reset link's session. Renews that session
@@ -442,7 +453,7 @@ async function recoveryRequest(method, path, body = null, fallback = "Something 
     recovery = null;
     throw expiredLinkError();
   }
-  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || fallback);
+  if (!res.ok) throw authError(data, fallback);
   return data;
 }
 
@@ -484,6 +495,28 @@ export function cancelRecovery() {
   logoutOnServer(token);
 }
 
+// For an account with two-step login (admins), Supabase Auth sets a new
+// password only from a session confirmed with the 6-digit code:
+// updatePassword then fails with err.code "insufficient_aal". This confirms
+// the reset link's session with a code from the authenticator app; then
+// updatePassword works. Throws with a message for the member when the code
+// is wrong or too old.
+export async function confirmRecoveryCode(code) {
+  const user = await recoveryRequest("GET", "/auth/v1/user");
+  const factor = (user.factors || []).find((f) => f.factor_type === "totp" && f.status === "verified");
+  if (!factor) throw new Error("This account has no authenticator app set up. Please try again.");
+  const id = encodeURIComponent(factor.id);
+  try {
+    const challenge = await recoveryRequest("POST", `/auth/v1/factors/${id}/challenge`, {});
+    const data = await recoveryRequest("POST", `/auth/v1/factors/${id}/verify`, { challenge_id: challenge.id, code: String(code || "").replace(/\s+/g, "") });
+    if (!data.access_token || !recovery) throw new Error("Couldn't confirm the code. Please try again.");
+    recovery.accessToken = data.access_token;
+    if (data.refresh_token) recovery.refreshToken = data.refresh_token;
+  } catch (err) {
+    throw wrongCodeError(err);
+  }
+}
+
 // A password change that gets no answer fails after this long, so a hung
 // request goes down the caller's "try again" path instead of waiting forever.
 const PASSWORD_TIMEOUT_MS = 15000;
@@ -512,7 +545,7 @@ export async function updatePassword(password) {
       signal: controller.signal,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Couldn't update your password.");
+    if (!res.ok) throw authError(data, "Couldn't update your password.");
     if (data.id && data.id === currentUser?.id) currentUser = data;
     return data;
   } catch (err) {
@@ -710,12 +743,19 @@ async function authCall(method, path, body = null) {
     res = await send();
     data = await res.json().catch(() => ({}));
   }
-  if (!res.ok) {
-    const err = new Error(data.msg || data.message || data.error_description || `Request failed (${res.status})`);
-    err.code = data.error_code || "";
-    throw err;
-  }
+  if (!res.ok) throw authError(data, `Request failed (${res.status})`);
   return data;
+}
+
+// A refused 6-digit code (wrong, or too old) as a message for the member;
+// any other error as it is.
+function wrongCodeError(err) {
+  if (/^mfa_(verification_failed|challenge_expired)$/.test(err.code || "") || /invalid totp|totp code/i.test(err.message || "")) {
+    const wrong = new Error("That code didn't work. Codes change every 30 seconds: type the one your app shows now, and check that your phone's clock is right.");
+    wrong.code = err.code;
+    return wrong;
+  }
+  return err;
 }
 
 // The member's authenticator-app (TOTP) factors: { verified, unverified },
@@ -767,12 +807,7 @@ export async function verifyTotp(factorId, code) {
     saveSession(data);
     return data;
   } catch (err) {
-    if (/^mfa_(verification_failed|challenge_expired)$/.test(err.code || "") || /invalid totp|totp code/i.test(err.message || "")) {
-      const wrong = new Error("That code didn't work. Codes change every 30 seconds: type the one your app shows now, and check that your phone's clock is right.");
-      wrong.code = err.code;
-      throw wrong;
-    }
-    throw err;
+    throw wrongCodeError(err);
   }
 }
 
