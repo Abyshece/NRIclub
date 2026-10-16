@@ -26,7 +26,10 @@ reuse are in `src/content/legal/reporting.js`.
   sexual identity, disability or age never decide anything. Don't mention
   them in a decision or a note.
 - **Write it down:** what you decided, the rule or law, the facts, the
-  date. Keep notes factual; members can ask to see notes about them.
+  date. The admin panel records decisions on content and accounts itself
+  (below). Keep notes factual; members can ask to see notes about them, and
+  "Download my data" gives them the record of our decisions about them
+  (without who decided) and their own reports.
 
 ## Sign-ups (membership check)
 
@@ -43,69 +46,133 @@ reuse are in `src/content/legal/reporting.js`.
 
 ## Reports and notices
 
-Members report with the flag in the app; anyone can email hello@nriclub.app
-(the footer's "Report illegal content" link opens a prefilled email).
+Members report with Report on the item itself: posts, comments, answers,
+questions, guides and their comments, events, Market listings, places
+(and the recommendations on them), mentoring reviews, profiles, and
+messages they received. Anyone, member or not, can use the form at
+nriclub.app/report; it gives the sender a reference code (`R-` and 8
+letters or digits). Both land in the admin panel under **Reports**, and
+every admin gets an in-app notice for a report from the form and for every
+safety report. An email to hello@nriclub.app about content is a notice
+too: handle it the same way, by hand.
 
-1. **Safety first.** Anything suggesting a threat to someone's life or
-   safety goes to the top: follow `SAFETY_CHECKLIST` in
-   `src/content/legal/reporting.js` (110/112 for immediate danger; otherwise
-   tell the police without delay, in Germany the Bundeskriminalamt; keep a
-   copy of the content, the account ID and times first). This is a legal
-   duty (Art. 18 DSA).
-2. **Confirm receipt** of an emailed notice (the mailbox's auto-reply does
-   this; otherwise reply briefly).
-3. **Look at the content** and decide whether it is illegal (which law?) or
-   breaks the Terms (which section?), or neither. If a notice is unclear,
-   ask the sender for the missing details (where, why illegal). For a
-   complaint about a person's rights (e.g. a doctor's entry in Places, a
-   photo of someone), you may ask the author for their side first.
-4. **Act:** remove the content, warn, or (see Blocks) block. Act quickly
-   once you know of illegal content: that is what keeps NRIClub from being
-   liable for it (Art. 6 DSA).
-5. **Tell the author** (statement of reasons, Art. 17 DSA): what you did and
-   for how long, the rule or law, the facts, whether it followed a report
-   or your own check, that a person decided, and how to challenge it. Use
-   `statementOfReasons()` in `reporting.js`. Until the admin panel sends
-   these itself, send the text by email from hello@ (the Privacy Policy
-   tells members our team emails them about this); a message in NRIClub
-   as well is fine.
-6. **Tell the reporter** the outcome (Art. 16(5) DSA): `reporterOutcome()`.
-7. **Record** the decision (until the admin panel logs it: in a simple
-   moderation log next to this file, with date, item, decision, rule,
-   reporter informed, author informed).
-8. **Evidence copies:** keep a copy of reported content (e.g. a screenshot,
-   with the account and time) only where you need it as evidence, store it
-   with the moderation log entry for that report, and delete it when the
-   report is deleted (`deletion-routine.md`), or when a police matter or
-   legal dispute about it is over. The Privacy Policy (sections 2 and 9)
-   tells members so.
+The admin panel does the recording and the in-app messages; the database
+(`supabase/migrations/20261021000000_moderation_dsa.sql`) refuses anything
+else. Admins can no longer edit members' rows or delete content directly.
+
+1. **Safety first.** Reports in the category "A threat to someone's life or
+   safety" are marked **Safety** and listed first, with the checklist
+   (`SAFETY_CHECKLIST` in `src/content/legal/reporting.js`): 110/112 for
+   immediate danger; otherwise tell the police without delay, in Germany
+   the Bundeskriminalamt; keep a copy of the content, the account ID and
+   times first. This is a legal duty (Art. 18 DSA). Write in the report's
+   **Note for our team** (admins only) whom you told, when, and their
+   reference.
+2. **Confirm receipt.** Members who report in the app see the receipt at
+   once. For a report from the form, click **Write to the reporter:
+   receipt**: your email app opens with the message filled in. Send it from
+   the hello@nriclub.app mailbox, then click **Mark as sent**. NRIClub
+   sends no email itself, so this step is by hand; the panel shows which
+   reports still need it. A report without an email address (allowed only
+   for reports about the sexual abuse of a child) can't be answered.
+3. **Look at the content.** The panel shows what was reported. A reported
+   message is shown to admins only, and only that one message. For a
+   report from the form, **Look at the linked …** loads the content if the
+   report has a nriclub.app link; otherwise find it from the description,
+   and ask the sender for the missing details if you can't. For a complaint
+   about a person's rights (e.g. a doctor's entry in Places, a photo of
+   someone), you may ask the author for their side first.
+4. **Decide.** Is it illegal (which law?), against the Terms (which
+   section?), or neither? Then choose:
+   - **Remove…** (content), **Warn author…**, or for a profile **Block…**,
+     **Warn…**, **Remove photo…**, **Remove bio…**. A single recommendation
+     on a place is removed from the list under the place.
+   - **Dismiss…** (a member's report) or **Keep it…** (a report from the
+     form): "we keep it" with the reason, or "it's already gone" (e.g. the
+     member deleted it). Undo is possible for a few seconds.
+
+   Every decision asks for the ground (illegal or against our Terms), the
+   law or rule, and the facts in one sentence that finishes "…because …"
+   (e.g. "it calls another member an idiot"). The dialog shows the
+   statement the member will read. You can't act on your own account or
+   content, or on another admin's.
+5. **What the database then does:** it records the decision
+   (`private.moderation_action`: who decided, what, the rule, the facts,
+   whether a report led to it, a copy of what was removed), sends the member
+   concerned the statement of reasons in NRIClub (Art. 17 DSA), closes every
+   open report about the same item and tells each member who reported it
+   the outcome in NRIClub (Art. 16(5) DSA).
+6. **Tell the sender of a report from the form** the decision: click
+   **Write to the reporter: decision** (filled in from what you decided),
+   send it from hello@nriclub.app, then **Mark as sent**. This is the
+   second step by hand.
+7. **Photos:** removing a post, listing, event or profile photo removes it
+   from NRIClub, but not the photo file in Storage. Those files go with the
+   weekly routine in `deletion-routine.md` (or the clean-up job, once it
+   runs).
+8. **Evidence copies:** the record keeps a copy of removed content for 6
+   months by itself. Keep any other copy (e.g. a screenshot, with the
+   account and time) only where you need it as evidence, store it with the
+   note on that report, and delete it when the report is deleted
+   (`deletion-routine.md`), or when a police matter or legal dispute about
+   it is over. If a report or a report from the form is part of an open
+   legal dispute or police matter, mark it in the SQL Editor so the
+   clean-up keeps it: `INSERT INTO private.report_hold (report_id, reason)
+   ...` for a member's report, `UPDATE private.notices SET hold_reason =
+   '...' WHERE reference = 'R-...'` for one from the form. The Privacy
+   Policy (sections 2 and 9) tells members so.
 
 Aim to decide within a few days, and on safety reports within hours.
 
+**Before the database update of 21 October 2026 is in**, the panel says so
+at the top of Reports: decisions aren't recorded and members aren't told in
+the app. Then send the statement of reasons (`statementOfReasons()` in
+`reporting.js`) and the outcome to the reporter (`reporterOutcome()`) by
+email from hello@, and keep a simple moderation log next to this file
+(date, item, decision, rule, reporter told, author told). Warnings and
+reports from the form need the update.
+
 ## Blocks
 
-- **Not urgent:** first warn with the reason and the rule and give 14 days
-  to reply (`blockWarning()`). Read the reply, then decide.
+- **Not urgent:** first warn (**Warn…** in Members, in a member's panel or
+  on a report). The member gets the warning in NRIClub with 14 days to
+  reply. Read the reply (it comes to hello@), then decide. The panel only
+  blocks once the last warning is at least 14 days old.
 - **Urgent** (threats, violence, fraud, clearly illegal content, danger to
-  someone): block straight away, and send the statement of reasons at the
-  same time.
-- A blocked member can still download their data and delete their account.
-- Blocking a mentor cancels their booked sessions and tells the mentees;
-  say so in the statement of reasons.
+  someone): **Block…** and choose that serious reason; the statement of
+  reasons goes out at the same time. The reason is recorded.
+- The blocked member sees the reason (the rule and the facts) when they
+  sign in, with how to challenge it. They can still download their data and
+  delete their account.
+- Blocking a mentor cancels their upcoming sessions and tells the members
+  who booked; so does declining an approved mentor's membership. The panel
+  says how many sessions before you confirm. Undo of a block is offered only
+  if no sessions or open mentoring times were lost with it.
+- **Unblock account** in Members tells the member in NRIClub.
 - **Ending a membership** (instead of a block) needs an important reason
   (§ 314 BGB), normally after a warning. Otherwise use 4 weeks' notice
   (Terms, section 12). Tell the member by email (a notice only in the app
-  may never reach them), block the account, and note in the moderation log
+  may never reach them), block the account, and note in the block's facts
   that the membership ended. The account is deleted 6 months after the
   decision unless the member deletes it first (`deletion-routine.md`,
   step 3).
+
+## Communities and ambassadors
+
+Approving, declining (with an optional reason) and deleting a community
+(with a reason) tell the member who asked for it, and are recorded, as are
+changes to who is a city's ambassador. Undo of an approval works only while
+nobody has joined or posted. Deleting a community removes its members from
+it; its posts stay in the feed, without the community.
 
 ## Appeals
 
 A member may ask within 6 months to have a decision looked at again. A
 person looks at it again, if possible not the same admin, and answers with
-the result and the reasons. If you got it wrong: restore the content or
-unblock, and say so.
+the result and the reasons. If you got it wrong: unblock (Members), or for
+removed content tell the member they can post it again (the record keeps a
+copy of it for 6 months, `private.moderation_action.snapshot`, if they need
+the text), and say so.
 
 ## Requests about personal data (Art. 12 to 22 GDPR)
 
