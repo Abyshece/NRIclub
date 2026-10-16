@@ -903,7 +903,7 @@ Start here:
 • See what's on in Events, or host the first meetup.
 • New in town? Read "Your first weeks abroad: a checklist" in Guides.
 
-Would you like to bring Indians in %1$s together? Become our %1$s ambassador: write to support@nriclub.app.
+Would you like to bring Indians in %1$s together? Become our %1$s ambassador: write to hello@nriclub.app.
 
 The NRIClub team$p$, t.city), t.id
   FROM admin, target t

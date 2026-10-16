@@ -18,6 +18,8 @@ REVIEW_FIXES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "m
                             "20261013000000_review_fixes.sql")
 ACCESS_CONSENT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                               "20261019000000_access_consent.sql")
+NOTIFICATIONS_LIMITS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                                    "20261020000000_notifications_limits_privacy.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -391,11 +393,12 @@ def main():
           as_user=ALICE, expect="error")
 
     # --- notifications ------------------------------------------------------
-    check("notify another member in own name",
+    check("members can't write notifications, not even in their own name (the database does, C5)",
           f"INSERT INTO notifications (user_id, type, actor_id, text, read, reference_id) VALUES ('{BOB}', 'like', '{ALICE}', 'Alice liked your post', true, '{BOB_POST}')",
-          as_user=ALICE)
-    check("read flag forced false on insert",
-          f"SELECT read::text FROM notifications WHERE user_id = '{BOB}'", expect="false")
+          as_user=ALICE, expect="error")
+    check("the database told bob about alice's Namaste request, unread",
+          f"SELECT type || '|' || read || '|' || text FROM notifications WHERE user_id = '{BOB}'",
+          expect="request|false|sent you a Namaste request")
     check("cannot spoof the actor",
           f"INSERT INTO notifications (user_id, type, actor_id, text, reference_id) VALUES ('{BOB}', 'like', '{CAROL}', 'Carol liked', '{BOB_POST}')",
           as_user=ALICE, expect="error")
@@ -414,7 +417,7 @@ def main():
     check("cannot read others' notifications", "SELECT count(*) FROM notifications", as_user=CAROL, expect="0")
     check("recipient marks read but can't rewrite text",
           "UPDATE notifications SET read = true, text = 'changed' WHERE user_id = auth.uid() RETURNING read::text || text",
-          as_user=BOB, expect="trueAlice liked your post")
+          as_user=BOB, expect="truesent you a Namaste request")
 
     # --- reports ------------------------------------------------------------
     check("report forced to pending",
@@ -611,7 +614,8 @@ def main():
           "UPDATE profiles SET linkedin_url = 'https://twitter.com/diana' WHERE id = auth.uid()", as_user=diana, expect="error")
     check("changing LinkedIn after approval sends the member back to review",
           "UPDATE profiles SET linkedin_url = 'linkedin.com/in/Someone-Else' WHERE id = auth.uid(); "
-          "SELECT (SELECT verification_status FROM profile_private) || '|' || linkedin_verified || '|' || linkedin_url "
+          "SELECT (SELECT verification_status FROM profile_private) || '|' || linkedin_verified || '|' || "
+          "(SELECT l.linkedin_url FROM public.profile_links(ARRAY[auth.uid()]) l) "
           "FROM profiles WHERE id = auth.uid()",
           as_user=diana, expect="pending|false|https://www.linkedin.com/in/someone-else")
     check("editing other fields keeps approval",
@@ -1061,9 +1065,10 @@ def main():
     ]
     for table, sql in made_up_dates:
         check(f"{table}: a made-up date is replaced by the server's", sql, as_user=ALICE, expect="true")
-    check("notifications: a made-up date is replaced by the server's",
+    check("notifications: members can't write one, so not with a made-up date either (C5)",
           f"INSERT INTO notifications (user_id, type, actor_id, text, reference_id, created_at) VALUES "
-          f"('{BOB}', 'comment', '{ALICE}', 'Alice commented', '{BOB_POST}', '2099-01-01')", as_user=ALICE)
+          f"('{BOB}', 'comment', '{ALICE}', 'Alice commented', '{BOB_POST}', '2099-01-01')", as_user=ALICE,
+          expect="error")
     check("... (checked)", f"SELECT (max(created_at) <= now())::text FROM notifications WHERE user_id = '{BOB}'", expect="true")
     check("a conversation can't start with a 10 MB preview dated 2999",
           f"INSERT INTO conversations (id, participant_1, participant_2, last_message_text, last_message_at, created_at) "
@@ -1111,14 +1116,16 @@ def main():
     check("a comment notification about a made-up id is refused",
           f"INSERT INTO notifications (user_id, type, actor_id, text, reference_id) VALUES "
           f"('{BOB}', 'comment', '{ALICE}', 'Free text', gen_random_uuid())", as_user=ALICE, expect="error")
-    check("a comment notification about the recipient's post works",
+    check("... and so is one about the recipient's post: the database writes those now (C5)",
           f"INSERT INTO notifications (user_id, type, actor_id, text, reference_id) VALUES "
-          f"('{BOB}', 'comment', '{ALICE}', 'Alice commented', '{BOB_POST}')", as_user=ALICE)
-    check("a Namaste notification about the matching request works",
-          f"INSERT INTO connections (id, requester_id, recipient_id) VALUES ('20000000-0000-0000-0000-000000000009', auth.uid(), '{DAVE2}'); "
+          f"('{BOB}', 'comment', '{ALICE}', 'Alice commented', '{BOB_POST}')", as_user=ALICE, expect="error")
+    check("a Namaste request works",
+          f"INSERT INTO connections (id, requester_id, recipient_id) VALUES ('20000000-0000-0000-0000-000000000009', auth.uid(), '{DAVE2}')",
+          as_user=ALICE)
+    check("... and a notification about it from the member is refused: the database wrote it (C5)",
           f"INSERT INTO notifications (user_id, type, actor_id, text, reference_id) VALUES "
           f"('{DAVE2}', 'request', '{ALICE}', 'Alice sent you a Namaste request', '20000000-0000-0000-0000-000000000009')",
-          as_user=ALICE)
+          as_user=ALICE, expect="error")
 
     # --- image links must be the member's own uploads (F23) ------------------
     def set_avatar(url):
@@ -1197,17 +1204,19 @@ def main():
     # --- Download my data (F16) ---------------------------------------------
     check("the export covers every kind of the member's data",
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=ALICE,
-          expect="answer_thanks,blocks,comments,connections,conversations,conversations_hidden,doc_comments,docs,"
-                 "event_rsvps,events_organised,exported_at,group_memberships,groups_requested,help_requests,help_responses,"
-                 "likes,marketplace_listings,mentor_reviews_written,mentor_times,mentoring_sessions,messages,notifications,"
-                 "place_recommendations,places_added,posts,profile,profile_private,reports_filed,terms_acceptances,"
-                 "user_settings,verification_log")
+          expect="account,answer_thanks,blocks,comments,connections,conversations,conversations_hidden,doc_comments,docs,"
+                 "event_rsvps,events_organised,exported_at,files,group_memberships,groups_requested,help_requests,"
+                 "help_responses,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
+                 "mentoring_sessions,messages,name_changes,notifications,place_recommendations,places_added,posts,profile,"
+                 "profile_private,rate_limit_log,readme,reports_about_me,reports_filed,sessions,terms_acceptances,"
+                 "urgent_questions_sent,user_settings,verification_log")
     check("... with the member's profile, private details, consent and rows of each kind",
           "SELECT concat_ws('|', d->'profile'->>'name', d->'profile_private'->>'email', d->'profile_private'->>'terms_version', "
           "d->'profile_private'->>'art9_consent_version', d->'terms_acceptances'->0->>'kind', "
           "(SELECT bool_and(jsonb_array_length(v) > 0)::text FROM jsonb_each(d) e(k, v) "
           "WHERE jsonb_typeof(v) = 'array' AND k NOT IN ('verification_log', 'conversations_hidden', 'places_added', "
-          "'place_recommendations', 'answer_thanks', 'mentor_reviews_written'))) FROM (SELECT public.export_my_data() d) x",
+          "'place_recommendations', 'answer_thanks', 'mentor_reviews_written', 'mentor_reviews_received', 'sessions', "
+          "'files', 'urgent_questions_sent', 'reports_about_me'))) FROM (SELECT public.export_my_data() d) x",
           as_user=ALICE, expect=f"Alice Updated|alice@example.com|{TERMS_VERSION}|{ART9_VERSION}|art9|true")
     check("... and only the member's own rows",
           "SELECT (bool_and(p->>'user_id' = auth.uid()::text) AND position('bob2@example.com' IN public.export_my_data()::text) = 0)::text "
@@ -1250,6 +1259,7 @@ def main():
     review_fixes_2()
     review_fixes_3()
     access_consent()
+    notifications_limits_privacy()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -1310,8 +1320,8 @@ def review_fixes_2():
           "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/d%61ve-scam', '', '', NULL); "
           "SELECT review_flag FROM profile_private", as_user=ENCODED, expect="pending\nheld")
     check("... and the admin queue counts it with the other accounts using that link",
-          "SELECT (q.same_linkedin_count > 0 AND q.same_linkedin_count = (SELECT count(*) FROM profiles "
-          "WHERE linkedin_url = 'https://www.linkedin.com/in/dave-scam'))::text "
+          "SELECT (q.same_linkedin_count > 0 AND q.same_linkedin_count = (SELECT count(*) FROM "
+          "public.profile_links(ARRAY(SELECT id FROM profiles)) l WHERE l.linkedin_url = 'https://www.linkedin.com/in/dave-scam'))::text "
           f"FROM public.admin_verification_queue() q WHERE q.id = '{ENCODED}'", as_user=ADMIN, expect="true")
 
     # --- the flag can't be used to test links (R7) -------------------------
@@ -1379,7 +1389,8 @@ def review_fixes_2():
           f"SELECT public.review_member('{MALLORY}', 'rejected', 'We could not verify you.', 'fake profile')",
           as_user=ADMIN, expect="rejected")
     check("a rejected member can still change her LinkedIn link, e.g. to someone else's",
-          "UPDATE profiles SET linkedin_url = 'linkedin.com/in/victim-priya' WHERE id = auth.uid() RETURNING linkedin_url",
+          "UPDATE profiles SET linkedin_url = 'linkedin.com/in/victim-priya' WHERE id = auth.uid(); "
+          "SELECT linkedin_url FROM public.profile_links(ARRAY[auth.uid()])",
           as_user=MALLORY, expect="https://www.linkedin.com/in/victim-priya")
     check("her email change adds a record with the link, note and date the admin decided on (R1)",
           f"UPDATE auth.users SET email = 'mallory2@example.com' WHERE id = '{MALLORY}'; "
@@ -1775,6 +1786,437 @@ def access_consent():
                              FROM terms_acceptances a WHERE a.member_id = p.id), ',' ORDER BY p.name)
           FROM profiles p WHERE p.id IN ('{kiran}', '{lata}');
           ROLLBACK;""", expect="Kiran K=Pune/terms:2026-10:2026-10-02,Lata L=/terms:2026-10:2026-10-02")
+
+
+def approved_member(uid, email, name, city="Berlin"):
+    """A member an admin has approved: signed up, 18+, Terms and Art. 9
+    consent given, details sent (city), approved."""
+    sign_up(uid, email, {"full_name": name}, accept_terms=True)
+    ok, _, err = psql(f"UPDATE profiles SET city = '{city}' WHERE id = '{uid}'; "
+                      f"UPDATE profile_private SET verification_status = 'approved' WHERE id = '{uid}'")
+    if not ok:
+        sys.exit(f"approving {email} failed: {err}")
+
+
+def notifications_limits_privacy():
+    """Notifications the database writes and reserved names (C5), limits
+    (C13), public city pages (C17), what members see of each other (C18),
+    clean-up and signup data (C20), "Download my data" (C21) and the contact
+    address in member content (C10): migration
+    20261020000000_notifications_limits_privacy."""
+    nia, om, pia, raj, sam = (f"00000000-0000-0000-0000-0000000004{n}" for n in ("01", "02", "03", "04", "05"))
+    approved_member(nia, "nia@example.com", "Nia N")
+    approved_member(om, "om@example.com", "Om O")
+    approved_member(pia, "pia@example.com", "Pia P")
+    nia_post = "10000000-0000-0000-0000-000000000401"
+    notes = (f"SELECT count(*) || '|' || COALESCE(string_agg(type || ':' || read || ':' || text, ';' ORDER BY created_at), '') "
+             f"FROM notifications WHERE user_id = '{nia}' AND actor_id = '{om}'")
+
+    # --- notifications the database writes (C5) ------------------------------
+    check("nia posts", f"INSERT INTO posts (id, user_id, content) VALUES ('{nia_post}', auth.uid(), "
+          "'Diwali   party at my place\nthis Saturday, everyone welcome!') RETURNING 1", as_user=nia, expect="1")
+    check("om likes nia's post", f"INSERT INTO likes (post_id, user_id) VALUES ('{nia_post}', auth.uid()) RETURNING 1",
+          as_user=om, expect="1")
+    check("... nia hears about it in the database's words (her post, nothing om wrote)", notes,
+          expect="1|like:false:liked your post: Diwali party at my place this Saturday, everyone welcome!")
+    check("liking, unliking and liking again",
+          f"DELETE FROM likes WHERE user_id = auth.uid(); INSERT INTO likes (post_id, user_id) VALUES ('{nia_post}', auth.uid()); "
+          f"DELETE FROM likes WHERE user_id = auth.uid(); INSERT INTO likes (post_id, user_id) VALUES ('{nia_post}', auth.uid()) "
+          "RETURNING 1", as_user=om, expect="1")
+    check("... notifies once", f"SELECT count(*) FROM notifications WHERE user_id = '{nia}'", expect="1")
+    check("liking your own post notifies nobody",
+          f"INSERT INTO likes (post_id, user_id) VALUES ('{nia_post}', auth.uid()); "
+          "SELECT count(*) FROM notifications WHERE user_id = auth.uid()", as_user=nia, expect="1")
+    check("om comments", f"INSERT INTO comments (post_id, user_id, content) VALUES ('{nia_post}', auth.uid(), "
+          "'Count me in!') RETURNING 1", as_user=om, expect="1")
+    check("... nia hears about it with the start of the comment",
+          f"SELECT text FROM notifications WHERE user_id = '{nia}' AND type = 'comment'",
+          expect="commented on your post: Count me in!")
+    check("a second comment", f"INSERT INTO comments (post_id, user_id, content) VALUES ('{nia_post}', auth.uid(), "
+          "'Bringing sweets') RETURNING 1", as_user=om, expect="1")
+    check("... while nia hasn't read the first updates it instead of adding another",
+          f"SELECT count(*) || '|' || string_agg(text, ';') FROM notifications WHERE user_id = '{nia}' AND type = 'comment'",
+          expect="1|commented on your post: Bringing sweets")
+    check("nia reads it", "UPDATE notifications SET read = true WHERE user_id = auth.uid() AND type = 'comment' RETURNING 1",
+          as_user=nia, expect="1")
+    check("om comments again", f"INSERT INTO comments (post_id, user_id, content) VALUES ('{nia_post}', auth.uid(), "
+          "'See you there') RETURNING 1", as_user=om, expect="1")
+    check("... once she has read the first, the next comment notifies again (one notification, unread)",
+          f"SELECT count(*) || '|' || string_agg(read || ':' || text, ';') FROM notifications "
+          f"WHERE user_id = '{nia}' AND type = 'comment'", expect="1|false:commented on your post: See you there")
+    check("a member back in review hears nothing of a further comment (not even in the waiting notification)", f"""
+          BEGIN;
+          UPDATE profile_private SET verification_status = 'pending' WHERE id = '{nia}';
+          SET ROLE authenticated; SET request.jwt.claims = '{{"sub": "{om}", "role": "authenticated"}}';
+          INSERT INTO comments (post_id, user_id, content) VALUES ('{nia_post}', auth.uid(), 'Secret plans');
+          RESET ROLE;
+          SELECT string_agg(text, ';') FROM notifications WHERE user_id = '{nia}' AND type = 'comment';
+          ROLLBACK;""", expect="commented on your post: See you there")
+    check("om asks nia for a Namaste",
+          f"INSERT INTO connections (id, requester_id, recipient_id) VALUES ('20000000-0000-0000-0000-000000000401', auth.uid(), '{nia}') "
+          "RETURNING 1", as_user=om, expect="1")
+    check("... one notification, pointing at the request",
+          f"SELECT text || '|' || reference_id FROM notifications WHERE user_id = '{nia}' AND type = 'request'",
+          expect="sent you a Namaste request|20000000-0000-0000-0000-000000000401")
+    check("nia ignores it; om withdraws and asks again: still one notification, now for the new request",
+          f"UPDATE notifications SET read = true WHERE user_id = '{nia}' AND type = 'request'; "
+          f"UPDATE connections SET status = 'blocked' WHERE id = '20000000-0000-0000-0000-000000000401'; "
+          f"DELETE FROM connections WHERE id = '20000000-0000-0000-0000-000000000401'; "
+          f"INSERT INTO connections (id, requester_id, recipient_id) VALUES ('20000000-0000-0000-0000-000000000402', '{om}', '{nia}'); "
+          f"SELECT count(*) || '|' || string_agg(read || ':' || reference_id, ';') FROM notifications WHERE user_id = '{nia}' AND type = 'request'",
+          expect="1|false:20000000-0000-0000-0000-000000000402")
+    check("nobody hears from someone they blocked",
+          f"INSERT INTO blocks (blocker_id, blocked_id) VALUES ('{pia}', '{om}'); "
+          f"INSERT INTO posts (id, user_id, content) VALUES ('10000000-0000-0000-0000-000000000402', '{pia}', 'Pia here'); "
+          f"INSERT INTO comments (post_id, user_id, content) VALUES ('10000000-0000-0000-0000-000000000402', '{om}', 'hi'); "
+          f"SELECT count(*) FROM notifications WHERE user_id = '{pia}'", expect="0")
+    check("a deleted post takes its like and comment notifications with it",
+          f"BEGIN; DELETE FROM posts WHERE id = '{nia_post}'; "
+          f"SELECT count(*) FROM notifications WHERE user_id = '{nia}' AND type IN ('like', 'comment'); ROLLBACK;",
+          expect="0")
+    for kind, ref in (("like", nia_post), ("comment", nia_post), ("request", "20000000-0000-0000-0000-000000000402")):
+        check(f"om can't write a {kind} notification himself, not even a true one",
+              f"INSERT INTO notifications (user_id, type, actor_id, text, reference_id) VALUES "
+              f"('{nia}', '{kind}', auth.uid(), 'NRIClub Security Team: your account will be deleted', '{ref}')",
+              as_user=om, expect="error")
+    check("the site asks which notifications the database writes",
+          "SELECT array_to_string(public.server_notification_types(), ',')", as_user=om, expect="like,comment,request")
+    check("... (signed-in members only)", "SELECT public.server_notification_types()", role="anon", expect="error")
+
+    # --- names (C5) -----------------------------------------------------------
+    for name in ("NRIClub Support", "N.R.I. Club", "nri-club team", "Admin", "Om (Moderator)", "Official NRIClub",
+                 "Priya from the Team", "Staff"):
+        check(f"a member can't call themselves {name!r}",
+              f"UPDATE profiles SET name = '{name}' WHERE id = auth.uid()", as_user=pia,
+              error_has="Names like NRIClub, Admin, Support or Team are kept for the NRIClub team.")
+    check("names that only contain such letters are fine (and don't count as a change when unchanged)",
+          "UPDATE profiles SET name = 'Henri Clubb Steamworth' WHERE id = auth.uid(); "
+          "UPDATE profiles SET name = 'Henri Clubb Steamworth' WHERE id = auth.uid() RETURNING name",
+          as_user=pia, expect="Henri Clubb Steamworth")
+    check("invisible direction and zero-width characters are removed from names",
+          "UPDATE profiles SET name = E'Pia\u202E\u200B  P\u2066' WHERE id = auth.uid() RETURNING name",
+          as_user=pia, expect="Pia P")
+    check("a third change in 30 days works",
+          "UPDATE profiles SET name = 'Pia Patel' WHERE id = auth.uid() RETURNING name", as_user=pia, expect="Pia Patel")
+    check("... a fourth doesn't",
+          "UPDATE profiles SET name = 'Pia Q' WHERE id = auth.uid()", as_user=pia,
+          error_has="You can change your name 3 times in 30 days.")
+    check("members can't see or reset the count", "DELETE FROM private.name_changes", as_user=pia, expect="error")
+    check("an admin can still rename her (it isn't counted)",
+          f"UPDATE profiles SET name = 'Pia Patel-Rao' WHERE id = '{pia}' RETURNING name", as_user=ADMIN,
+          expect="Pia Patel-Rao")
+    check("... and approve her again (a new name sends a member back to review)",
+          f"SELECT public.review_member('{pia}', 'approved', '', '')", as_user=ADMIN, expect="approved")
+    check("... and use a team name for an account",
+          f"UPDATE profiles SET name = 'NRIClub Team' WHERE id = auth.uid() RETURNING name", as_user=ADMIN,
+          expect="NRIClub Team")
+    check("a signup with a team name gets an empty name (chosen again in Settings)",
+          f"""INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at) VALUES
+            ('{raj}', 'raj@example.com', '{{"full_name": "NRIClub Support"}}', now());
+          SELECT '[' || name || ']' FROM profiles WHERE id = '{raj}'""", expect="[]")
+    check("... a normal name is kept, cleaned",
+          f"""INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at) VALUES
+            ('{sam}', 'sam@example.com', '{{"full_name": "Sam\u202e S", "hometown": "Pune", "location": "Paris", "profession": "Spy"}}', now());
+          SELECT name FROM profiles WHERE id = '{sam}'""", expect="Sam S")
+
+    # --- signup data (C20) ------------------------------------------------------
+    check("Supabase Auth keeps only the name from the signup data",
+          f"SELECT string_agg(k, ',' ORDER BY k) FROM auth.users u, jsonb_object_keys(u.raw_user_meta_data) k "
+          f"WHERE u.id = '{sam}'", expect="full_name")
+    check("... also when it's changed later",
+          f"UPDATE auth.users SET raw_user_meta_data = raw_user_meta_data || '{{\"hometown\": \"Pune\", \"email_verified\": true}}' "
+          f"WHERE id = '{sam}'; SELECT string_agg(k, ',' ORDER BY k) FROM auth.users u, jsonb_object_keys(u.raw_user_meta_data) k "
+          f"WHERE u.id = '{sam}'", expect="email_verified,full_name")
+
+    # --- limits (C13) -----------------------------------------------------------
+    too_often = "You're doing that too often. Please wait a little and try again."
+    check("20 posts in a day are fine",
+          "INSERT INTO posts (user_id, content) SELECT auth.uid(), 'post ' || g FROM generate_series(1, 19) g; "
+          "SELECT count(*) FROM posts WHERE user_id = auth.uid()", as_user=nia, expect="20")
+    check("... the 21st isn't", "INSERT INTO posts (user_id, content) VALUES (auth.uid(), 'one more')", as_user=nia,
+          error_has=too_often)
+    check("... not even after deleting some",
+          "DELETE FROM posts WHERE user_id = auth.uid() AND content LIKE 'post %'; "
+          "INSERT INTO posts (user_id, content) VALUES (auth.uid(), 'one more')", as_user=nia, error_has=too_often)
+    check("a refused post isn't counted, nor what a policy refuses",
+          "SELECT count(*) FROM private.rate_log WHERE action = 'post' AND member_id = "
+          f"'{nia}'", expect="20")
+    check("members can't read or clear the counts", "DELETE FROM private.rate_log", as_user=nia, expect="error")
+    check("admins have no limit",
+          "INSERT INTO posts (user_id, content) SELECT auth.uid(), 'starter ' || g FROM generate_series(1, 25) g RETURNING 1",
+          as_user=ADMIN, expect="\n".join(["1"] * 25))
+    check("nor does the database itself (e.g. the SQL editor)",
+          f"INSERT INTO posts (user_id, content) SELECT '{nia}', 'imported ' || g FROM generate_series(1, 3) g RETURNING 1",
+          expect="1\n1\n1")
+    convo = "30000000-0000-0000-0000-000000000401"
+    check("30 messages a minute are fine",
+          f"INSERT INTO conversations (id, participant_1, participant_2) VALUES ('{convo}', auth.uid(), '{nia}'); "
+          f"INSERT INTO messages (conversation_id, sender_id, content) SELECT '{convo}', auth.uid(), 'm' || g "
+          "FROM generate_series(1, 30) g; SELECT count(*) FROM messages WHERE sender_id = auth.uid()", as_user=pia,
+          expect="30")
+    check("... the 31st isn't",
+          f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{convo}', auth.uid(), 'spam')",
+          as_user=pia, error_has=too_often)
+    check("... and the other member can still answer",
+          f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{convo}', auth.uid(), 'slow down') RETURNING 1",
+          as_user=nia, expect="1")
+    check("20 reports a day are fine (and feedback counts apart)",
+          "INSERT INTO reports (reporter_id, reported_post_id, reason) SELECT auth.uid(), gen_random_uuid(), '[POST] spam' "
+          "FROM generate_series(1, 20) g; INSERT INTO reports (reporter_id, reported_post_id, reason) "
+          "VALUES (auth.uid(), auth.uid(), '[BUG] Home | The feed is empty'); "
+          "SELECT count(*) FROM reports WHERE reporter_id = auth.uid()", as_user=om, expect="21")
+    check("... the 21st isn't", "INSERT INTO reports (reporter_id, reported_user_id, reason) "
+          f"VALUES (auth.uid(), '{nia}', 'rude')", as_user=om, error_has=too_often)
+    check("feedback: 5 a day",
+          "INSERT INTO reports (reporter_id, reported_post_id, reason) SELECT auth.uid(), auth.uid(), '[IDEA] idea ' || g "
+          "FROM generate_series(1, 4) g; INSERT INTO reports (reporter_id, reported_post_id, reason) "
+          "VALUES (auth.uid(), auth.uid(), '[IDEA] one more')", as_user=om, error_has=too_often)
+    check("the same report twice is kept once, quietly",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES (auth.uid(), '{nia_post}', '[POST] spam'); "
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES (auth.uid(), '{nia_post}', '[POST] spam again'); "
+          f"SELECT count(*) FROM reports WHERE reporter_id = auth.uid() AND reported_post_id = '{nia_post}'",
+          as_user=pia, expect="1")
+    check("... and not counted", f"SELECT count(*) FROM private.rate_log WHERE member_id = '{pia}' AND action = 'report'",
+          expect="1")
+    check("a report in someone else's name is refused, even a copy of theirs (no hint what they reported)",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES ('{pia}', '{nia_post}', '[POST] spam')",
+          as_user=om, expect="error")
+    check("5 group requests a day",
+          "INSERT INTO groups (name, created_by) SELECT 'Indians in Town ' || g, auth.uid() FROM generate_series(1, 5) g; "
+          "INSERT INTO groups (name, created_by) VALUES ('Indians in Town 6', auth.uid())", as_user=pia, error_has=too_often)
+    check("50 Namaste requests a day, withdrawn or not",
+          f"""DO $$ BEGIN
+                FOR i IN 1..50 LOOP
+                  INSERT INTO public.connections (requester_id, recipient_id) VALUES (auth.uid(), '{nia}');
+                  DELETE FROM public.connections WHERE requester_id = auth.uid() AND recipient_id = '{nia}';
+                END LOOP;
+              END $$""", as_user=pia)
+    check("... the 51st isn't", f"INSERT INTO connections (requester_id, recipient_id) VALUES (auth.uid(), '{nia}')",
+          as_user=pia, error_has=too_often)
+    check("... and nia has one notification from pia, not 50",
+          f"SELECT count(*) FROM notifications WHERE user_id = '{nia}' AND actor_id = '{pia}'", expect="1")
+
+    # --- public city pages (C17) ---------------------------------------------------
+    berlin = "70000000-0000-0000-0000-000000000401"
+    check("setup: a Berlin group and events",
+          f"INSERT INTO groups (id, name, category, is_approved, members_count) VALUES "
+          f"('{berlin}', 'Indians in Berlin', 'City', true, 4), "
+          f"('70000000-0000-0000-0000-000000000402', 'Indians in Forchheim', 'City', true, 1), "
+          f"('70000000-0000-0000-0000-000000000403', 'Indians in Zürich', 'City', true, 7); "
+          f"INSERT INTO events (title, date, location, city, organizer_id) "
+          f"SELECT 'Meetup ' || g, to_char(CURRENT_DATE + g, 'YYYY-MM-DD'), 'Tempelhofer Feld, my flat 3', "
+          f"CASE WHEN g <= 6 THEN 'Berlin' ELSE 'Munich' END, '{ADMIN}' FROM generate_series(1, 8) g")
+    summary = "SELECT public.city_summary('{}')::text"
+    for probe in ("Tempelhofer%", "T_mpelhofer", "%", "_", "Ber%", "Berlin;--", "a" * 61):
+        check(f"city_summary answers nothing to {probe[:20]!r}", summary.format(probe.replace("'", "''")), role="anon",
+              expect="")
+    check("a small group shows no number of members, events counted by city only",
+          summary.format("berlin"), role="anon",
+          expect='{"city": "Berlin", "group": true, "events": 6, "places": 1, "members": null}')
+    check("... the event count needs 5 too",
+          "SELECT public.city_summary('Munich')->>'events'", role="anon", expect="")
+    check("a group with 5 or more shows its members, accents and all",
+          "SELECT public.city_summary('Zürich')->>'members'", role="anon", expect="7")
+    check("public_cities hides numbers below 5 and lists those groups by name, after the others",
+          "SELECT string_agg(city || '=' || COALESCE(members::text, '-'), ',') FROM public.public_cities() "
+          "WHERE city IN ('Berlin', 'Forchheim', 'Zürich')", role="anon", expect="Zürich=7,Berlin=-,Forchheim=-")
+    check("admin city numbers count the city's own events only",
+          "SELECT events_upcoming FROM public.admin_city_stats() WHERE city = 'Berlin'", as_user=ADMIN, expect="6")
+
+    # --- what members see of each other (C18) -------------------------------------
+    check("members can't read LinkedIn links from profiles any more",
+          "SELECT linkedin_url FROM profiles", as_user=om, error_has="permission denied")
+    check("... nor everything at once (select=*)", "SELECT * FROM profiles", as_user=om, error_has="permission denied")
+    check("... admins neither: they use profile_links", "SELECT linkedin_url FROM profiles", as_user=ADMIN,
+          error_has="permission denied")
+    check("the other columns are readable",
+          f"SELECT name || '|' || linkedin_public FROM profiles WHERE id = '{nia}'", as_user=om, expect="Nia N|false")
+    check("setup: nia's LinkedIn link",
+          f"UPDATE profiles SET linkedin_url = 'https://www.linkedin.com/in/nia-n' WHERE id = '{nia}'")
+    check("nia sees her link", "SELECT linkedin_url || '|' || linkedin_public FROM public.profile_links(ARRAY[auth.uid()])",
+          as_user=nia, expect="https://www.linkedin.com/in/nia-n|false")
+    check("... other members don't", f"SELECT count(*) FROM public.profile_links(ARRAY['{nia}'::uuid])", as_user=om,
+          expect="0")
+    check("... admins do", f"SELECT linkedin_url FROM public.profile_links(ARRAY['{nia}'::uuid])", as_user=ADMIN,
+          expect="https://www.linkedin.com/in/nia-n")
+    check("once she shows it, members do",
+          "UPDATE profiles SET linkedin_public = true WHERE id = auth.uid() RETURNING linkedin_public::text", as_user=nia,
+          expect="true")
+    check("... (checked)", f"SELECT linkedin_url FROM public.profile_links(ARRAY['{nia}'::uuid, '{pia}'::uuid])",
+          as_user=om, expect="https://www.linkedin.com/in/nia-n")
+    check("... but not members who can't see other members", f"SELECT count(*) FROM public.profile_links(ARRAY['{nia}'::uuid])",
+          as_user=raj, expect="0")
+    check("... nor signed-out visitors", f"SELECT * FROM public.profile_links(ARRAY['{nia}'::uuid])", role="anon",
+          expect="error")
+    check("profiles have no last_active any more",
+          "SELECT count(*) FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'last_active'",
+          expect="0")
+    check("setup: nia's account last changed on 1 January",
+          f"ALTER TABLE profile_private DISABLE TRIGGER set_updated_at; "
+          f"UPDATE profile_private SET updated_at = '2026-01-01' WHERE id = '{nia}'; "
+          f"ALTER TABLE profile_private ENABLE TRIGGER set_updated_at")
+    check("a member's last activity is kept privately, by the server's clock",
+          "UPDATE profile_private SET last_active = '2000-01-01' WHERE id = auth.uid() "
+          "RETURNING (last_active > now() - interval '1 minute')::text", as_user=nia, expect="true")
+    check("... and isn't a change to the account",
+          f"SELECT updated_at::date FROM profile_private WHERE id = '{nia}'", expect="2026-01-01")
+    check("... other members can't see it", f"SELECT count(*) FROM profile_private WHERE id = '{nia}'", as_user=om,
+          expect="0")
+    check("setup: places in Berlin recommended by nia and om",
+          f"INSERT INTO places (id, city, name, kind, created_by) VALUES "
+          f"('80000000-0000-0000-0000-000000000401', 'Berlin', 'Sri Ganesha Temple', 'Temple', '{nia}'), "
+          f"('80000000-0000-0000-0000-000000000402', 'Berlin', 'Dr. Rao', 'Doctor', '{om}'); "
+          f"INSERT INTO place_recommendations (place_id, user_id) VALUES "
+          f"('80000000-0000-0000-0000-000000000401', '{nia}'), ('80000000-0000-0000-0000-000000000401', '{om}'), "
+          f"('80000000-0000-0000-0000-000000000402', '{nia}')")
+    check("members see only their own recommendations",
+          "SELECT count(*) FROM place_recommendations", as_user=om, expect="1")
+    check("... and how many members recommend each place",
+          "SELECT string_agg(name || '=' || c.recommendations || '/' || c.mine, ',' ORDER BY name) "
+          "FROM public.place_recommendation_counts('berlin') c JOIN places p ON p.id = c.place_id", as_user=om,
+          expect="Dr. Rao=1/false,Spice Shop=0/false,Sri Ganesha Temple=2/true")
+    check("... (not for members who can't see other members)",
+          "SELECT count(*) FROM public.place_recommendation_counts('Berlin')", as_user=raj, expect="0")
+    check("admins see who recommended what", "SELECT count(*) FROM place_recommendations", as_user=ADMIN, expect="3")
+    check("other members' contact settings: only the two that matter",
+          f"SELECT string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns "
+          f"WHERE table_name = 'user_settings' AND column_name IN ('profile_visibility', 'online_status')", expect="")
+
+    # --- Download my data (C21) -----------------------------------------------------
+    check("the export has a readme pointing to the Privacy Policy",
+          "SELECT position('https://nriclub.app/privacy' IN public.export_my_data()->'readme'->>'privacy_policy') = 1",
+          as_user=nia, expect="t")
+    check("... the account as Supabase Auth keeps it",
+          "SELECT d->'account'->>'email' || '|' || (d->'account'->'signup_data')::text || '|' || (d->'account' ? 'last_sign_in_at') "
+          "FROM (SELECT public.export_my_data() d) x", as_user=nia,
+          expect='nia@example.com|{"full_name": "Nia N"}|true')
+    check("... reports about her or her posts, without who sent them",
+          f"SELECT jsonb_array_length(d->'reports_about_me') || '|' || (position('{pia}' IN (d->'reports_about_me')::text) = 0) "
+          "FROM (SELECT public.export_my_data() d) x", as_user=nia, expect="1|true")
+    check("setup: photo files and an urgent question",
+          f"INSERT INTO storage.buckets (id, name) VALUES ('avatars', 'avatars') ON CONFLICT DO NOTHING; "
+          f"INSERT INTO storage.objects (bucket_id, name) VALUES ('avatars', '{nia}/me.jpg'), ('avatars', '{om}/om.jpg'); "
+          f"INSERT INTO private.urgent_log (user_id) VALUES ('{nia}')")
+    check("... her photo files, urgent questions, name changes, limit counts and last activity",
+          "SELECT concat_ws('|', d->'files'->0->>'name', jsonb_array_length(d->'files'), jsonb_array_length(d->'urgent_questions_sent'), "
+          "jsonb_array_length(d->'name_changes'), d->'rate_limit_log'->0->>'action', d->'profile_private' ? 'last_active') "
+          "FROM (SELECT public.export_my_data() d) x", as_user=nia,
+          expect=f"{nia}/me.jpg|1|1|0|post|t")
+    check("... reviews of her mentoring sessions (rating and comment, not who wrote them)",
+          f"""BEGIN;
+          INSERT INTO mentor_bookings (id, mentor_id, mentee_id, starts_at, duration_min)
+            VALUES ('90000000-0000-0000-0000-000000000401', '{nia}', '{om}', now() - interval '2 days', 30);
+          INSERT INTO mentor_reviews (booking_id, mentor_id, mentee_id, rating, comment)
+            VALUES ('90000000-0000-0000-0000-000000000401', '{nia}', '{om}', 5, 'Very helpful');
+          SET ROLE authenticated; SET request.jwt.claims = '{{"sub": "{nia}", "role": "authenticated"}}';
+          SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()->'mentor_reviews_received'->0) k;
+          ROLLBACK;""", expect="comment,created_at,rating")
+    check("... and her sign-in sessions where Supabase Auth keeps them",
+          f"""BEGIN;
+          CREATE TABLE auth.sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid, created_at timestamptz DEFAULT now(),
+            updated_at timestamptz, refreshed_at timestamp, user_agent text, ip inet, refresh_token_hmac_key text);
+          INSERT INTO auth.sessions (user_id, user_agent, ip, refresh_token_hmac_key)
+            VALUES ('{nia}', 'Firefox', '10.1.2.3', 'secret'), ('{om}', 'Chrome', '10.9.9.9', 'secret');
+          SET ROLE authenticated; SET request.jwt.claims = '{{"sub": "{nia}", "role": "authenticated"}}';
+          SELECT jsonb_array_length(s) || '|' || (s->0->>'ip') || '|' || (s->0->>'user_agent') || '|' || (position('secret' IN s::text) = 0)
+          FROM (SELECT public.export_my_data()->'sessions' AS s) x;
+          ROLLBACK;""", expect="1|10.1.2.3|Firefox|true")
+
+    # --- clean-up (C20) ----------------------------------------------------------------
+    check("members can't run the clean-up", "SELECT private.daily_cleanup()", as_user=nia, expect="error")
+    old = [f"00000000-0000-0000-0000-0000000005{n:02d}" for n in range(1, 8)]
+    check("the clean-up deletes what the Privacy Policy says is deleted after a time, and nothing else", f"""
+          BEGIN;
+          INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at, created_at) VALUES
+            ('{old[0]}', 'unconfirmed-31d@example.com', '{{}}', NULL, now() - interval '31 days'),
+            ('{old[1]}', 'unconfirmed-29d@example.com', '{{}}', NULL, now() - interval '29 days'),
+            ('{old[2]}', 'unfinished-91d@example.com', '{{}}', now(), now() - interval '91 days'),
+            ('{old[3]}', 'sent-back-10d@example.com', '{{}}', now(), now() - interval '200 days'),
+            ('{old[4]}', 'declined-7m@example.com', '{{}}', now(), now() - interval '300 days'),
+            ('{old[5]}', 'declined-5m@example.com', '{{}}', now(), now() - interval '300 days'),
+            ('{old[6]}', 'admin-unconfirmed@example.com', '{{}}', NULL, now() - interval '400 days');
+          INSERT INTO public.admins (user_id) VALUES ('{old[6]}');
+          UPDATE profile_private SET created_at = now() - interval '91 days' WHERE id = '{old[2]}';
+          UPDATE profile_private SET created_at = now() - interval '200 days', reviewed_at = now() - interval '10 days' WHERE id = '{old[3]}';
+          UPDATE profile_private SET verification_status = 'rejected' WHERE id IN ('{old[4]}', '{old[5]}');
+          UPDATE profile_private SET reviewed_at = now() - interval '7 months' WHERE id = '{old[4]}';
+          UPDATE profile_private SET reviewed_at = now() - interval '5 months' WHERE id = '{old[5]}';
+          INSERT INTO notifications (user_id, type, text, read, created_at) VALUES
+            ('{nia}', 'group', 'read, 7 months', true, now() - interval '7 months'),
+            ('{nia}', 'group', 'unread, 7 months', false, now() - interval '7 months'),
+            ('{nia}', 'group', 'read, 5 months', true, now() - interval '5 months');
+          INSERT INTO reports (id, reporter_id, reported_user_id, reason, status, created_at) VALUES
+            ('a0000000-0000-0000-0000-000000000501', '{nia}', '{om}', 'closed, 13 months', 'reviewed', now() - interval '13 months'),
+            ('a0000000-0000-0000-0000-000000000502', '{nia}', '{om}', 'closed, 13 months, held', 'resolved', now() - interval '13 months'),
+            ('a0000000-0000-0000-0000-000000000503', '{nia}', '{om}', 'open, 13 months', 'pending', now() - interval '13 months'),
+            ('a0000000-0000-0000-0000-000000000504', '{nia}', '{om}', 'closed, 11 months', 'reviewed', now() - interval '11 months');
+          INSERT INTO private.report_hold (report_id, reason) VALUES ('a0000000-0000-0000-0000-000000000502', 'police matter');
+          INSERT INTO private.moderation_record (decision, admin_note, created_at) VALUES
+            ('rejected', 'note, 25 months', now() - interval '25 months'),
+            ('rejected', 'note, 13 months', now() - interval '13 months'),
+            ('blocked', 'note, 11 months', now() - interval '11 months');
+          SELECT concat_ws(',', r->>'unconfirmed_signups', r->>'unfinished_accounts', r->>'declined_accounts',
+                           r->>'read_notifications', r->>'closed_reports', r->>'moderation_records', r->>'moderation_notes_cleared')
+          FROM (SELECT private.daily_cleanup() r) x;
+          SELECT string_agg(email, ',' ORDER BY email) FROM auth.users WHERE id = ANY ('{{{",".join(old)}}}'::uuid[]);
+          SELECT string_agg(text, ',' ORDER BY text) FROM notifications WHERE user_id = '{nia}' AND type = 'group';
+          SELECT string_agg(reason, ',' ORDER BY reason) FROM reports WHERE id::text LIKE 'a0000000%';
+          SELECT string_agg(decision || ':' || admin_note, ',' ORDER BY admin_note) FROM private.moderation_record
+            WHERE member_id IS NULL AND admin_note LIKE 'note, %' OR created_at < now() - interval '10 months';
+          ROLLBACK;""",
+          expect="1,1,1,1,1,1,1\n"
+                 "admin-unconfirmed@example.com,declined-5m@example.com,sent-back-10d@example.com,unconfirmed-29d@example.com\n"
+                 "read, 5 months,unread, 7 months\n"
+                 "closed, 11 months,closed, 13 months, held,open, 13 months\n"
+                 "rejected:,blocked:note, 11 months")
+    check("without pg_cron the clean-up isn't scheduled, and says what to do",
+          "SELECT private.schedule_daily_cleanup()",
+          expect="not scheduled: this database has no pg_cron. Run SELECT private.daily_cleanup(); by hand once a day.")
+    check("with pg_cron it runs every night", """
+          BEGIN;
+          CREATE SCHEMA cron;
+          CREATE TABLE cron.job (jobname TEXT PRIMARY KEY, schedule TEXT, command TEXT);
+          CREATE FUNCTION cron.schedule(TEXT, TEXT, TEXT) RETURNS BIGINT LANGUAGE sql AS $f$
+            INSERT INTO cron.job VALUES ($1, $2, $3) ON CONFLICT (jobname) DO UPDATE SET schedule = $2, command = $3 RETURNING 1::BIGINT $f$;
+          SELECT private.schedule_daily_cleanup();
+          SELECT private.schedule_daily_cleanup() IS NOT NULL;
+          SELECT jobname || '|' || schedule || '|' || command FROM cron.job;
+          ROLLBACK;""",
+          expect="scheduled: private.daily_cleanup() runs every night at 03:17 UTC (pg_cron job nriclub-daily-cleanup)\n"
+                 "t\nnriclub-daily-cleanup|17 3 * * *|SELECT private.daily_cleanup()")
+    check("the limits, table by table",
+          "SELECT string_agg(t.tgrelid::regclass || ':' || x.a[1] || '=' || (SELECT string_agg(x.a[2 * i]::INTEGER || '/' "
+          "|| x.a[2 * i + 1]::INTERVAL, '+' ORDER BY i) FROM generate_series(1, (cardinality(x.a) - 1) / 2) i), ', ' "
+          "ORDER BY t.tgrelid::regclass::text, x.a[1]) "
+          "FROM pg_trigger t, LATERAL (SELECT string_to_array(regexp_replace(encode(t.tgargs, 'escape'), '\\\\000$', ''), "
+          "'\\000') AS a) x WHERE t.tgname LIKE 'rate_limit%' AND NOT t.tgisinternal",
+          expect="comments:comment=60/01:00:00, connections:namaste=50/1 day, conversations:conversation=20/1 day, "
+                 "doc_comments:guide_comment=60/01:00:00, docs:guide=20/1 day, events:event=20/1 day, groups:group=5/1 day, "
+                 "help_requests:question=20/1 day, help_responses:answer=60/01:00:00, marketplace:listing=20/1 day, "
+                 "messages:message=30/00:01:00+500/1 day, places:place=20/1 day, posts:post=20/1 day, "
+                 "reports:feedback=5/1 day, reports:report=20/1 day")
+
+    # --- the migration's changes to existing rows (C5, C10, C20) -------------------
+    oldie, oldie_post = "00000000-0000-0000-0000-000000000510", "10000000-0000-0000-0000-000000000510"
+    check("existing rows: names lose invisible characters, signup data keeps the name, "
+          "member content gets the new contact address", f"""
+          BEGIN;
+          INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at) VALUES
+            ('{oldie}', 'oldie@example.com', '{{"full_name": "Old One"}}', now());
+          ALTER TABLE auth.users DISABLE TRIGGER nriclub_trim_signup_data;
+          UPDATE auth.users SET raw_user_meta_data = '{{"full_name": "Old One", "hometown": "Pune", "location": "Berlin",
+            "profession": "Developer", "sub": "{oldie}"}}' WHERE id = '{oldie}';
+          ALTER TABLE auth.users ENABLE TRIGGER nriclub_trim_signup_data;
+          ALTER TABLE public.profiles DISABLE TRIGGER check_name;
+          UPDATE profiles SET name = E'Old\\u202E  One\\u200B' WHERE id = '{oldie}';
+          ALTER TABLE public.profiles ENABLE TRIGGER check_name;
+          INSERT INTO posts (id, user_id, content) VALUES
+            ('{oldie_post}', '{oldie}', 'Questions? Write to support@nriclub.app (or privacy@nriclub.app).');
+          {migration_section("EXISTING DATA", NOTIFICATIONS_LIMITS)}
+          SELECT concat_ws('|', (SELECT name FROM profiles WHERE id = '{oldie}'),
+            (SELECT string_agg(k, ',' ORDER BY k) FROM auth.users u, jsonb_object_keys(u.raw_user_meta_data) k WHERE u.id = '{oldie}'),
+            (SELECT content FROM posts WHERE id = '{oldie_post}'));
+          ROLLBACK;""", expect="Old One|full_name,sub|Questions? Write to hello@nriclub.app (or hello@nriclub.app).")
 
 
 if __name__ == "__main__":
