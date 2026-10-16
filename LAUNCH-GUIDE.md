@@ -191,9 +191,10 @@ key in the frontend or in a `VITE_` variable.
   Enterprise plans, so set `vercel: true` only once the project is on one;
   `mailbox: true` once you have accepted the mailbox provider's), and how
   long Vercel keeps request logs on your plan.
-- **Dates:** set `TERMS_DATE` in `src/content/legal/terms.js` and
-  `PRIVACY_DATE` in `src/content/legal/privacy.js` to the day you deploy
-  this version (they say "19 October 2026" now).
+- **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` and
+  `PRIVACY_DATE` in `src/content/legal/privacy.js` say "16 October 2026",
+  the day this version went live. When you change a text, set its date to
+  the day the change goes live.
 - **Deleting old data:** the Privacy Policy promises retention periods
   that, for now, you keep by hand: photo files every week, the rest once a
   month (`docs/compliance/deletion-routine.md`). The periods are in
