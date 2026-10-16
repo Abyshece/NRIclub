@@ -1,5 +1,9 @@
 # Questions for the lawyer
 
+*First review done in October 2026. The lawyer's advice, what changed and
+what is still open are in `questions-for-the-lawyer.md`; this file stays as
+the record of what was asked.*
+
 For a German lawyer specialised in IT and data protection law (IT-Recht /
 Datenschutzrecht), before NRIClub invites the public. Send with this list:
 the Terms of Use (nriclub.app/terms, `src/content/legal/terms.js`), the

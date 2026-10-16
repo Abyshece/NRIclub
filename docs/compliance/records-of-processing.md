@@ -30,38 +30,43 @@ as it holds no secrets.
 - **Approved members** (verification_status `approved`, active, 18+, current
   Terms and Art. 9 consent): see other members' profiles and content. Members
   waiting for review see only the list of groups and the guides (migration
-  `20261019000000_access_consent.sql`).
+  `20261019000000_access_consent.sql`). Approved members can still see the
+  profiles of waiting, unfinished, declined and blocked accounts until the
+  profiles policy shows only approved, active ones (`VISIBILITY` in
+  `src/content/legal/privacy.js`; the lawyer finds no legal basis for showing
+  declined and unfinished accounts).
 - **Admins** (rows in `public.admins`): see everything members see plus email
   addresses, verification details, notes, reports. Not private messages.
-- **Processors** (Art. 28): Supabase Inc. (database, Auth, Storage, Realtime;
-  AWS eu-west-1, Ireland), Vercel Inc. (hosting and CDN, worldwide edge
-  network), Resend (transactional email via Amazon SES eu-west-1), the
-  hello@nriclub.app mailbox provider **[fill in]**. See
-  `processor-agreements.md`.
+- **Processors** (Art. 28): Supabase Pte. Ltd., Singapore (database, Auth,
+  Storage, Realtime; AWS eu-west-1, Ireland), Vercel Inc., USA (hosting and
+  CDN, worldwide edge network), Plus Five Five, Inc. (Resend), USA
+  (transactional email via Amazon SES eu-west-1), the hello@nriclub.app
+  mailbox provider **[fill in]**. See `processor-agreements.md`.
+- **Lawyers and courts** where we need to establish, exercise or defend
+  legal claims (Art. 6(1)(f)).
 - **Authorities** only where a law obliges (court orders; Art. 18 DSA reports
   of threats to life or safety to the police).
 
 ## Third-country transfers (Art. 44 ff.)
 
-Supabase, Vercel and Resend are US companies; Vercel serves requests from
-edge locations outside the EU, including the USA. Safeguard per provider
-**[fill in after checking dataprivacyframework.gov]**: certified under the
-EU-US Data Privacy Framework (adequacy decision of 10 July 2023, Art. 45),
-otherwise the standard contractual clauses in the provider's DPA
-(Art. 46(2)(c)).
+Supabase is in Singapore, Vercel and Resend are US companies; Vercel
+serves requests from edge locations outside the EU, including the USA. The
+safeguard is the standard contractual clauses in each provider's DPA
+(Art. 46(2)(c)); the Privacy Policy names it per provider once
+`PRIVACY_DETAILS.agreements` says the DPA is in place.
 
-| Provider | DPF certified? | Safeguard used | Checked on |
+| Provider | DPA | Safeguard used | Checked on |
 |---|---|---|---|
-| Supabase Inc. | **[fill in]** | **[fill in]** | **[fill in]** |
-| Vercel Inc. | **[fill in]** | **[fill in]** | **[fill in]** |
-| Resend | **[fill in]** | **[fill in]** | **[fill in]** |
+| Supabase Pte. Ltd. (Singapore) | Part of the terms of service | SCCs in the DPA (no DPF reliance) | 16 October 2026 (website); **[fill in: signed copy filed]** |
+| Vercel Inc. (USA) | Only on Pro and Enterprise plans | SCCs in the DPA | **[fill in: plan, DPA filed]** |
+| Plus Five Five, Inc. (Resend, USA) | Part of the terms | SCCs in the DPA; Resend states DPF compliance | 16 October 2026 (website) |
 | Mailbox provider | **[fill in]** | **[fill in]** | **[fill in]** |
 
 ## Activities
 
-Retention periods marked *(job)* are enforced by a scheduled clean-up job;
-check that the job exists on the live database before you rely on the
-period. Everything else is deleted when the member deletes their account
+Retention periods marked *(by hand)* are kept with
+`deletion-routine.md` until scheduled clean-up jobs exist (then mark them
+*(job)*). Everything else is deleted when the member deletes their account
 (`delete_my_account()` deletes the `auth.users` row; every table that
 references the member cascades, except where noted).
 
@@ -75,7 +80,7 @@ references the member cascades, except where noted).
 | Data | Email address, bcrypt password hash, name, sign-up/confirmation/last sign-in times, signup metadata (`auth.users.raw_user_meta_data`); sessions with IP address and user agent (`auth.sessions`), refresh tokens |
 | Systems | Supabase Auth (`auth.users`, `auth.sessions`, `auth.refresh_tokens`); `public.profiles`, `public.profile_private` |
 | Recipients | Admins (email address); Supabase |
-| Retention | Until account deletion. Sessions until sign-out on that device or account deletion (no time-box set yet: see Supabase Auth → Sessions) |
+| Retention | Until account deletion. Sign-ups never confirmed: 30 days *(by hand)*. Sessions until sign-out on that device or account deletion (no time-box set yet: see Supabase Auth → Sessions) |
 
 ### 2. Membership check (verification)
 
@@ -86,7 +91,7 @@ references the member cascades, except where noted).
 | Data subjects | Applicants and members |
 | Data | City, country, location, LinkedIn profile link or a note, voucher (member who vouches, or the inviter from an invite link), decision, message to the member, admin notes, dates (`profile_private`, `verification_log`, `private.review_hold`, `private.reviewed_link`). Admins also look at the LinkedIn profile itself (data from another source, Art. 14) |
 | Recipients | Admins; the member sees decisions and messages, not admin notes |
-| Retention | Until account deletion |
+| Retention | Until account deletion. Accounts that never sent their details: 90 days *(by hand)*. Declined accounts, and accounts whose membership we ended: 6 months after the decision *(by hand)* |
 
 ### 3. Record of declined and blocked accounts
 
@@ -96,7 +101,7 @@ references the member cascades, except where noted).
 | Legal basis | Art. 6(1)(f) (protecting members from people removed before) |
 | Data | Keyed SHA-256 hash of the email address (secret `moderation_salt`), LinkedIn profile slug, decision, date, admin note (`private.moderation_record`) |
 | Recipients | Admins (shown when a sign-up matches) |
-| Retention | Kept after account deletion with the account link removed. **[fill in: period agreed with the lawyer, and the clean-up job]** |
+| Retention | Kept after account deletion with the account link removed. Deleted 24 months after the decision, the admin note cleared after 12 months *(by hand)* (periods proposed by the lawyer) |
 | Note | Automatic step: a match holds the sign-up until a person decides. No decision is made by the system alone (Art. 22 does not apply) |
 
 ### 4. Member profiles and directory
@@ -107,7 +112,7 @@ references the member cascades, except where noted).
 | Legal basis | Art. 6(1)(b); Art. 9(2)(a) explicit consent for information that can reveal ethnic origin, religion or health |
 | Data | Name, photo, city, country, location, hometown, profession, occupation, years abroad, bio, "ask me about", LinkedIn link, mentoring fields, Verified badge, ambassador city, last active time |
 | Recipients | Approved members; admins; Supabase (photos in Storage are reachable by anyone who has the exact URL while the buckets are public) |
-| Retention | Until changed or account deletion |
+| Retention | Until changed or account deletion. Photo files nothing uses any more: within 7 days *(by hand, weekly)* |
 
 ### 5. Community content and features
 
@@ -137,14 +142,14 @@ references the member cascades, except where noted).
 | Legal basis | Art. 6(1)(b) |
 | Data | Recipient, actor, short text, reference, read state (`public.notifications`) |
 | Recipients | The recipient only |
-| Retention | Until account deletion **[fill in: read notices after 6 months, if the clean-up job is live]** |
+| Retention | Until account deletion; read notices after 6 months *(by hand)* |
 
 ### 8. Terms acceptance and Art. 9 consent records
 
 | | |
 |---|---|
 | Purpose | Prove which Terms version a member accepted and that they gave the explicit Art. 9 consent, with its wording version |
-| Legal basis | Art. 6(1)(c) with Art. 7(1) (demonstrating consent); Art. 6(1)(b) for the contract record |
+| Legal basis | Art. 9 consent record: Art. 6(1)(c) with Art. 7(1) (demonstrating consent). Age confirmation and Terms acceptance: Art. 6(1)(f) (being able to prove the contract and its terms) |
 | Data | `profile_private.age_confirmed_at`, `terms_accepted_at`, `terms_version`, `art9_consent_at`, `art9_consent_version`; history in `public.terms_acceptances` |
 | Recipients | The member (in "Download my data"); admins |
 | Retention | Until account deletion |
@@ -155,20 +160,20 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Handle reports from members and notices from anyone (Art. 16 DSA), decide, give statements of reasons (Art. 17), inform the reporter (Art. 16(5)), escalate threats to life or safety (Art. 18), handle bug reports and ideas |
 | Legal basis | Art. 6(1)(c) with Art. 16-18 DSA; otherwise Art. 6(1)(f) (a safe community; defending decisions) |
-| Data | Reporter, reported member or content, reason; bug reports with user agent and screen size; emails to hello@; decisions |
+| Data | Reporter, reported member or content, reason (the in-app report writes the reported member's name or the item's title into it); evidence copies of reported content where needed; bug reports with user agent and screen size; emails to hello@; decisions |
 | Recipients | Admins; the reporter and the affected member (decision); police where Art. 18 applies |
-| Retention | Reports are kept until deleted **[fill in: closed reports after 12 months, if the clean-up job is live]**. A report about a deleted member stays without the link to the member; a reporter's own reports are deleted with their account |
+| Retention | Closed reports, with evidence copies, once 12 months old *(by hand)*, unless a legal dispute or police matter is open. A report about a deleted member stays without the link to the member (its text can still name them); a reporter's own reports are deleted with their account |
 
 ### 10. Transactional email
 
 | | |
 |---|---|
-| Purpose | Sign-up and sign-in codes, password links, email-change confirmations |
-| Legal basis | Art. 6(1)(b) |
-| Data | Email address, code or link, delivery events |
-| Recipients | Resend (Amazon SES eu-west-1) as processor of Supabase Auth's custom SMTP |
-| Retention | Resend's log retention **[fill in from the Resend dashboard]** |
-| Note | No newsletters, no marketing, no notification emails. Open and click tracking must stay off for send.nriclub.app |
+| Purpose | Sign-up and sign-in codes, password links, email-change confirmations; emails from our team about the membership (check decisions, statements of reasons, block warnings, report outcomes, changes to the Terms or the service, termination, breach notices) |
+| Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5), 17 DSA and Art. 34 GDPR |
+| Data | Email address, subject and content (incl. code or link), delivery events |
+| Recipients | Resend (Amazon SES eu-west-1) as processor of Supabase Auth's custom SMTP; the mailbox provider for our team's emails |
+| Retention | Resend: 30 days (all self-serve plans). Our team's emails: like No. 13 |
+| Note | No newsletters, no marketing, no automatic notification emails. Open and click tracking must stay off for send.nriclub.app |
 
 ### 11. Hosting and server logs
 
@@ -178,7 +183,7 @@ references the member cascades, except where noted).
 | Legal basis | Art. 6(1)(f) (a secure, working service) |
 | Data | IP address, time, URL or API query, user agent, status |
 | Recipients | Vercel (edge and request logs), Supabase (API, Auth, database logs) |
-| Retention | Supabase about 7 days (Pro plan); Vercel **[fill in: per plan]** |
+| Retention | Supabase about 7 days (Pro plan); Vercel 1 hour (Hobby) or 1 day (Pro) **[fill in: your plan]** |
 
 ### 12. Backups
 
@@ -198,7 +203,7 @@ references the member cascades, except where noted).
 | Legal basis | Art. 6(1)(b), 6(1)(c) (GDPR and DSA duties), 6(1)(f) |
 | Data | Sender, content, attachments, replies; the request log |
 | Recipients | The mailbox provider **[fill in]** |
-| Retention | As long as needed for the matter; requests about rights and DSA notices with the answers for 3 years after closing (proof of compliance) **[confirm with the lawyer]** |
+| Retention | Requests about rights and DSA notices with the answers: 3 years after closing (proof of compliance; the lawyer ties it to the § 195 BGB limitation period). Other emails: 12 months after closing *(by hand)* |
 
 ### 14. Device storage
 

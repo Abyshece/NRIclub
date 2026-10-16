@@ -93,15 +93,17 @@ In the Supabase dashboard → **Authentication**:
    code; the site only works with the code. The *Reset password* template
    keeps its link (`{{ .ConfirmationURL }}`); it opens the site's "Set a new
    password" screen.
-   Below the code in *Confirm signup*, add the contract confirmation (the
-   lawyer confirms whether the withdrawal sentence is needed,
-   `docs/compliance/lawyer-questions.md`): "Welcome to NRIClub. By
-   confirming you accept our Terms of Use (version 2026-10-19), which you
-   can read and save at https://nriclub.app/terms. Provider: <name,
-   address>, hello@nriclub.app. You can withdraw within 14 days by telling
-   us or by deleting your account." Keep the version in step with the
-   Terms. Once the company is registered, add its details (§ 35a GmbHG) to
-   every template.
+   Below the code in *Confirm signup*, add the contract confirmation
+   (wording from the legal review, `docs/compliance/questions-for-the-lawyer.md`):
+   "Enter this code to finish signing up. Your membership is then under
+   our Terms of Use (version 2026-10-19), which you accepted on the sign-up
+   form; you can read and save them at https://nriclub.app/terms.
+   Provider: <name, address>, hello@nriclub.app. You can withdraw from the
+   contract within 14 days by telling us or by deleting your account."
+   Change the template only after `20261019000000_access_consent.sql` has
+   run on the live database: before that, sign-ups still accept version
+   2026-10. Keep the version in step with the Terms. Once the company is
+   registered, add its details (§ 35a GmbHG) to every template.
 5. **Attack Protection**: turn on *Leaked password protection* (prevent use of
    leaked passwords). It may need a paid plan (Pro); if yours doesn't offer
    it, skip it.
@@ -183,8 +185,24 @@ key in the frontend or in a `VITE_` variable.
   appear, and the Terms and the Privacy Policy name you as provider and
   controller. Until then they say that NRIClub is run by its founder in
   Germany, and the build only warns. In the same file, `PRIVACY_DETAILS`
-  takes the data protection authority of your federal state and the
-  mailbox provider for the Privacy Policy.
+  takes, for the Privacy Policy: the data protection authority of your
+  federal state, the mailbox provider, which providers have a data
+  processing agreement (`agreements`: Vercel's applies only on its Pro and
+  Enterprise plans, so set `vercel: true` only once the project is on one;
+  `mailbox: true` once you have accepted the mailbox provider's), and how
+  long Vercel keeps request logs on your plan.
+- **Dates:** set `TERMS_DATE` in `src/content/legal/terms.js` and
+  `PRIVACY_DATE` in `src/content/legal/privacy.js` to the day you deploy
+  this version (they say "19 October 2026" now).
+- **Deleting old data:** the Privacy Policy promises retention periods
+  that, for now, you keep by hand: photo files every week, the rest once a
+  month (`docs/compliance/deletion-routine.md`). The periods are in
+  `RETENTION` in `privacy.js`; change both together.
+- **Who members see:** `VISIBILITY.onlyApprovedListed` in `privacy.js`
+  says whether other members see only approved accounts' profiles. It is
+  `false` while approved members can still see the profile of an account
+  that is waiting, unfinished, declined or blocked; set it to `true` in the
+  same pull request as the database change that hides those.
 - **Where the texts are:** `src/content/legal/terms.js` and `privacy.js`.
   The build writes them into static pages (nriclub.app/terms and /privacy)
   and the app shows the same text in its dialogs.
@@ -197,14 +215,21 @@ key in the frontend or in a `VITE_` variable.
   `private.current_terms_version()` in a new migration. Deploy the site,
   then apply the migration the same day: members are asked to accept the
   new version once the database says it is current. The Terms promise at
-  least 2 weeks' notice in the app before new Terms apply.
+  least 2 weeks' notice, in the app and by email, before new Terms apply,
+  and (section 14) that a member who doesn't accept them keeps using
+  NRIClub under the previous Terms until we end the membership with 4
+  weeks' notice. Before the first change that doesn't need a new consent,
+  the Terms screen needs a "Later" button and the database must let such
+  members take part (today any new version locks members out until they
+  accept, which section 14 allows only for a required consent).
 - **A change to the Privacy Policy:** change `privacy.js`, its version and
   date, and the matching entry in `docs/compliance/records-of-processing.md`.
   Members don't accept it, but tell them about important changes in the
   app.
 - **Compliance records:** `docs/compliance/` (record of processing,
   security measures, breach runbook and register, DPIA check, processor
-  agreements, moderation guidelines, questions for the lawyer).
+  agreements, moderation guidelines, the deletion routine, the lawyer's
+  advice and open questions).
 
 ## Step 6: Testing checklist
 
@@ -261,13 +286,22 @@ Launch tasks from the Phase 1 review (2026-10-12):
       "Legal texts and the Impressum") and deployed: /impressum shows, and
       the Terms and the Privacy Policy name the operator.
 - [ ] The Terms of Use and the Privacy Policy have had their legal review
-      (`docs/compliance/lawyer-questions.md`), including the Art. 9
-      consent, real names, the withdrawal right and the retention periods.
-      If the Terms text changes, publish it as a new version ("Legal texts
-      and the Impressum").
-- [ ] Data processing agreements accepted with Supabase, Vercel, Resend and
-      the mailbox provider; Supabase's AI options off; Resend tracking off;
-      Vercel on a plan that allows business use
+      (first review done in October 2026; its advice and the open points
+      are in `docs/compliance/questions-for-the-lawyer.md`). If the Terms
+      text changes, publish it as a new version ("Legal texts and the
+      Impressum").
+- [ ] The Impressum details (name and postal address) are filled in
+      **before** `20261019000000_access_consent.sql` runs: the lawyer
+      advises that an Art. 9 consent given to an unnamed controller is
+      hard to defend as informed.
+- [ ] The deletion routine runs: photo files every week, the rest once a
+      month (`docs/compliance/deletion-routine.md`). The first photo run
+      also removes the files of accounts deleted before October 2026.
+- [ ] Data processing agreements in place with Supabase, Vercel, Resend and
+      the mailbox provider, and `PRIVACY_DETAILS.agreements` in
+      `src/content/imprint.js` says so (Vercel's agreement applies only on
+      its Pro and Enterprise plans); Supabase's AI options off; Resend
+      tracking off; Vercel on a plan that allows business use
       (`docs/compliance/processor-agreements.md`).
 - [ ] The breach record for the exposure before 12 October 2026 is
       complete and the notification decision is made with the lawyer

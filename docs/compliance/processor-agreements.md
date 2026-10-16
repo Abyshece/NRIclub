@@ -8,13 +8,26 @@ changes, in the Privacy Policy (section 7, `src/content/legal/privacy.js`).
 
 Menu names below were right as of October 2026; providers move them.
 
+The Privacy Policy says a provider works under a data processing agreement,
+and names the transfer safeguard in it, only where
+`PRIVACY_DETAILS.agreements` in `src/content/imprint.js` says so. Keep that
+in step with this list. Checked on the providers' websites on 16 October
+2026: Supabase's and Resend's agreements are part of their terms of
+service; Vercel's applies only on its Pro and Enterprise plans; all three
+include the EU standard contractual clauses.
+
 ## Supabase (database, sign-in, photo storage, live updates)
 
-- [ ] DPA: Supabase dashboard → your organisation → Settings → Legal
-      Documents (Data Processing Addendum). Accept or request it there and
-      download the PDF. **Signed on: [fill in]**
-- [ ] Transfer safeguard: check "Supabase" on dataprivacyframework.gov; if
-      not listed, the standard contractual clauses in the DPA apply. **Result: [fill in]**
+- [ ] Contracting company: Supabase Pte. Ltd., Singapore (supabase.com/terms,
+      section 1(j); Supabase, Inc., USA, only if you bought through AWS
+      Marketplace). Check it in your organisation's billing details.
+- [x] DPA: supabase.com/legal/dpa "supplements and forms part of the
+      Supabase Terms of Service", so it applies since you accepted them.
+      For your files, download a signed copy: Supabase dashboard → your
+      organisation → Settings → Legal Documents. **Downloaded on: [fill in]**
+- [x] Transfer safeguard: the standard contractual clauses in the DPA
+      (Singapore has no EU adequacy decision; the DPA doesn't rely on the
+      Data Privacy Framework).
 - [ ] Sub-processors: note the link to Supabase's sub-processor list and
       subscribe to changes if offered.
 - [ ] Organisation settings: switch off the AI options that send schema or
@@ -28,32 +41,42 @@ Menu names below were right as of October 2026; providers move them.
 
 - [ ] Plan: the Hobby plan is for non-commercial use only. Move the project
       to Pro if NRIClub is run on a business basis. **Plan: [fill in]**
-- [ ] DPA: vercel.com/legal/dpa (it may apply automatically through the
-      terms of your plan; download and file the version that applies).
-      **Accepted on: [fill in]**
-- [ ] Transfer safeguard (US company, worldwide edge network): DPF
-      certification or SCCs. **Result: [fill in]**
-- [ ] Log retention for your plan: **[fill in]**, and put it in the Privacy
-      Policy (section 2, "Server and security logs").
+- [ ] DPA: vercel.com/legal/dpa says it applies "for Customers who are on
+      Enterprise and Pro plans". On Hobby there is no DPA, and the Privacy
+      Policy doesn't claim one. Once on Pro: download the DPA, file it, and
+      set `vercel: true` in `PRIVACY_DETAILS.agreements`. **Done on: [fill in]**
+- [ ] Transfer safeguard (Vercel Inc., USA, worldwide edge network): the
+      standard contractual clauses in the DPA (2021 SCCs). **Checked on: [fill in]**
+- [ ] Log retention for your plan (Vercel's docs, October 2026: 1 hour on
+      Hobby, 1 day on Pro, longer only with Observability Plus): put it in
+      `PRIVACY_DETAILS.vercelLogRetention`. **[fill in]**
 - [ ] Deployment Protection for preview and old deployments, or delete the
       deployments from before 12 October 2026 (`breach-register.md`).
 
 ## Resend (sign-in and password emails, through Amazon SES in Ireland)
 
-- [ ] DPA: Resend dashboard → Settings (legal / DPA), or resend.com/legal.
-      **Accepted on: [fill in]**
-- [ ] Transfer safeguard (US company): DPF certification or SCCs.
-      **Result: [fill in]**
+- [x] Company: Plus Five Five, Inc. (Resend), 2261 Market Street #5039,
+      San Francisco, USA (resend.com/legal/dpa).
+- [x] DPA: resend.com/legal/dpa "shall become legally binding upon Customer
+      entering into the Agreement", so it applies since you accepted
+      Resend's terms. Download it for your files. **Downloaded on: [fill in]**
+- [x] Transfer safeguard: the EU standard contractual clauses in the DPA;
+      Resend also states it complies with the EU-US Data Privacy Framework
+      (check "Plus Five Five" on dataprivacyframework.gov if you want to
+      name it too). **Checked on: [fill in]**
 - [ ] Domain send.nriclub.app: switch **off** open and click tracking, so
       password links aren't rewritten through Resend. **Done on: [fill in]**
-- [ ] Log retention: **[fill in]**
+- [x] Retention: Resend keeps each email (address, subject, content) and its
+      delivery status for 30 days on every self-serve plan (resend.com/pricing,
+      October 2026); the Privacy Policy says so.
 
 ## The hello@nriclub.app mailbox (not set up yet)
 
 - [ ] Choose a provider with an EU data region that signs a DPA (for
       example mailbox.org, IONOS, Zoho EU, Google Workspace). Don't forward
       to a personal Gmail account: consumer Gmail has no DPA.
-- [ ] DPA signed in the provider's customer area. **Signed on: [fill in]**
+- [ ] DPA signed in the provider's customer area, and `mailbox: true` in
+      `PRIVACY_DETAILS.agreements`. **Signed on: [fill in]**
 - [ ] Put the provider's name and country in `PRIVACY_DETAILS.mailProvider`
       in `src/content/imprint.js` and deploy: the Privacy Policy names it.
 - [ ] DNS (Vercel): the provider's MX records, SPF

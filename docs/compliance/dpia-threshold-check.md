@@ -50,6 +50,14 @@ apply, in particular large-scale processing of special-category data.]**
 - If the lawyer concludes that no DPIA is needed, write the reasons here and
   keep calling nobody a data protection officer.
 
+The lawyer's view (October 2026, `questions-for-the-lawyer.md`): besides
+§ 38(1) sentence 2 BDSG, Art. 37(1)(c) GDPR itself requires a data
+protection officer once the core activity is large-scale processing of
+special-category data, which a diaspora network is; treat "large scale" as
+reached at a few thousand members across several countries. Do the DPIA
+before opening to the public at scale (the 1,000-member mark above is
+reasonable).
+
 ## Decision
 
 | | |

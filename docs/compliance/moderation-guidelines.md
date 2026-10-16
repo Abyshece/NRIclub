@@ -66,12 +66,19 @@ Members report with the flag in the app; anyone can email hello@nriclub.app
    for how long, the rule or law, the facts, whether it followed a report
    or your own check, that a person decided, and how to challenge it. Use
    `statementOfReasons()` in `reporting.js`. Until the admin panel sends
-   these itself, send the text as a message in NRIClub or by email from
-   hello@.
+   these itself, send the text by email from hello@ (the Privacy Policy
+   tells members our team emails them about this); a message in NRIClub
+   as well is fine.
 6. **Tell the reporter** the outcome (Art. 16(5) DSA): `reporterOutcome()`.
 7. **Record** the decision (until the admin panel logs it: in a simple
    moderation log next to this file, with date, item, decision, rule,
    reporter informed, author informed).
+8. **Evidence copies:** keep a copy of reported content (e.g. a screenshot,
+   with the account and time) only where you need it as evidence, store it
+   with the moderation log entry for that report, and delete it when the
+   report is deleted (`deletion-routine.md`), or when a police matter or
+   legal dispute about it is over. The Privacy Policy (sections 2 and 9)
+   tells members so.
 
 Aim to decide within a few days, and on safety reports within hours.
 
@@ -87,7 +94,11 @@ Aim to decide within a few days, and on safety reports within hours.
   say so in the statement of reasons.
 - **Ending a membership** (instead of a block) needs an important reason
   (§ 314 BGB), normally after a warning. Otherwise use 4 weeks' notice
-  (Terms, section 12).
+  (Terms, section 12). Tell the member by email (a notice only in the app
+  may never reach them), block the account, and note in the moderation log
+  that the membership ended. The account is deleted 6 months after the
+  decision unless the member deletes it first (`deletion-routine.md`,
+  step 3).
 
 ## Appeals
 

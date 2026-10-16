@@ -20,7 +20,8 @@ There is no server of our own.
 | Server functions | `SECURITY DEFINER` functions run with `search_path = ''`, check the caller themselves, and have explicit grants (`REVOKE ALL ... FROM PUBLIC`) | In place |
 | Protected columns | Triggers (`private.protect_columns`) stop members from setting server-owned fields (verification status, Terms and consent dates, badges, counters) | In place |
 | Admin access | Admins sign in with their normal account; the database checks `public.admins`. Only one admin today | In place. **Open:** a second factor (TOTP) for admins enforced in the database, and admins only on admin.nriclub.app |
-| Photos | Buckets accept only images up to 5 MB, uploads only into the member's own folder. Buckets are public: a photo opens for anyone with its exact URL | **Open:** private buckets with signed URLs; deleting files with the account |
+| Photos | Buckets accept only images up to 5 MB, uploads only into the member's own folder. Buckets are public: a photo opens for anyone with its exact URL. Files nothing uses any more (deleted posts and accounts, replaced photos) are deleted by hand every week (`deletion-routine.md`) | **Open:** private buckets with signed URLs; deleting files with the post or account in the code |
+| Retention | The periods in the Privacy Policy are kept by hand once a month until clean-up jobs exist (`deletion-routine.md`) | **Open:** scheduled clean-up jobs |
 | Pseudonymisation | The record of declined and blocked accounts keeps only a keyed SHA-256 hash of the email address (secret key `moderation_salt`, never in the code) | In place |
 | Encryption in transit | HTTPS everywhere; HSTS with subdomains (vercel.json) | In place |
 | Encryption at rest | Provided by Supabase/AWS for the database, Storage and backups | In place (provider) |
