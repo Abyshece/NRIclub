@@ -2626,10 +2626,21 @@ def moderation_dsa():
           "SELECT bool_and(e ->> 'reason' NOT LIKE '%flat 3%' AND NOT (e ? 'explanation')) || '|' || "
           "bool_or(e ->> 'reason' = '[USER] Ravi R — Against our rules: Harassment or bullying') FROM "
           "jsonb_array_elements(public.export_my_data() -> 'reports_about_me') e", as_user=ravi, expect="true|true")
-    check("ravi's download lists the reports about him, without who sent them",
+    check("ravi's download lists the reports about him, without who sent them (none about his message: only sita "
+          "could have sent that one)",
           "SELECT bool_and(NOT (e ? 'reporter_id')) || '|' || string_agg(DISTINCT e ->> 'about', ',' ORDER BY e ->> 'about') FROM "
           "jsonb_array_elements(public.export_my_data() -> 'reports_about_me') e", as_user=ravi,
-          expect="true|message,post,profile")
+          expect="true|post,profile")
+    check("sita reports ravi's other message too", report("message", hello, category="spam",
+          explanation="He sends me the same greeting again and again.") + " RETURNING 1", as_user=sita, expect="1")
+    check("... our team keeps it", "SELECT count(*) FROM public.admin_close_reports(ARRAY(SELECT id FROM reports "
+          f"WHERE reported_post_id = '{hello}'), 'reviewed', 'a greeting is not spam')", as_user=ADMIN, expect="1")
+    check("... ravi's download doesn't show that a message of his was reported or kept (it would say who reported it, "
+          "Art. 15(4) GDPR); the message we removed is there, as he was told then",
+          "SELECT (SELECT count(*) FROM jsonb_array_elements(d -> 'reports_about_me') e WHERE e ->> 'about' = 'message') "
+          "|| '|' || (SELECT string_agg(e ->> 'action', ',') FROM jsonb_array_elements(d -> 'moderation_actions_about_me') e "
+          "WHERE e ->> 'about' = 'message') || '|' || (d -> 'readme' ->> 'left_out' LIKE '%reports about messages you sent%') "
+          "FROM public.export_my_data() d", as_user=ravi, expect="0|remove|true")
 
     # --- a report stays when its sender deletes their account (C6b) ---------------------
     check("usha deletes her account", "SELECT public.delete_my_account()", as_user=usha)

@@ -31,9 +31,10 @@ export async function moderateMember(m, { kind, action, reasons = {}, overview =
   }[action];
   const tail = res?.fallback && action !== "unblock" ? ". They weren't told in the app: write to them from hello@nriclub.app." : "";
   // Undo a block only while nothing went with it: no mentoring sessions
-  // cancelled and no open mentoring times deleted (both can't come back).
+  // cancelled, no open mentoring times deleted and no ambassador role ended
+  // (none of them come back with an unblock).
   const undoable = kind === "member" && action === "block" && !cancelled
-    && !(overview?.upcoming_sessions > 0) && !(overview?.free_slots > 0);
+    && !(overview?.upcoming_sessions > 0) && !(overview?.free_slots > 0) && !m.ambassador_city;
   showToast({
     text: `${text}${tail}`,
     undo: undoable ? async () => {

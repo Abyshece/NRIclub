@@ -1527,7 +1527,10 @@ $$;
 -- removed, while it's kept; not who on our team did it), and, for reports
 -- about the member, the kind and reason (not who sent them, nor their own
 -- words). Reports others sent about the member stay in it after those
--- members deleted their accounts.
+-- members deleted their accounts. Left out: reports about a message the
+-- member sent, and our team keeping such a message (only the member it was
+-- sent to can report it, so either would say who did, Art. 15(4) GDPR); a
+-- message we removed is in it, as the member was told when it happened.
 CREATE OR REPLACE FUNCTION public.export_my_data()
 RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1551,6 +1554,7 @@ BEGIN
       'about', 'Everything NRIClub keeps about you in its database at the time of exported_at: your account, profile and settings, what you posted, sent and received, and the records about you below.',
       'privacy_policy', 'https://nriclub.app/privacy: why we use each kind of data, the legal basis, who receives it, how long we keep it, and your rights.',
       'not_included', 'The photo files themselves (listed under files; you see them in the app), copies in our database provider''s daily backups (overwritten after 7 days), server logs, emails between you and us, and our team''s internal notes on decisions about your account. Write to hello@nriclub.app for a copy of any of these.',
+      'left_out', 'To protect members who report content, this file doesn''t say who reported you, and leaves out reports about messages you sent (only the member you wrote to can report a message). A message of yours we removed is under moderation_actions_about_me.',
       'contact', 'hello@nriclub.app'),
     'account', (SELECT jsonb_build_object(
         'email', a->'email', 'created_at', a->'created_at', 'email_confirmed_at', a->'email_confirmed_at',
@@ -1573,7 +1577,8 @@ BEGIN
         'facts', a.explanation, 'immediate_block_because', a.urgent, 'source', a.source,
         'statement_sent_to_you', NULLIF(a.statement, ''), 'copy_of_removed_content', a.snapshot -> 'row')
         ORDER BY a.created_at)
-      FROM private.moderation_action a WHERE a.target_user = uid), '[]'::jsonb),
+      FROM private.moderation_action a WHERE a.target_user = uid
+        AND NOT (a.action = 'dismiss' AND a.target_kind = 'message')), '[]'::jsonb),
     'name_changes', COALESCE((SELECT jsonb_agg(c.changed_at ORDER BY c.changed_at)
       FROM private.name_changes c WHERE c.member_id = uid), '[]'::jsonb),
     'posts', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at)
@@ -1623,6 +1628,7 @@ BEGIN
         'status', x.status) ORDER BY x.created_at)
       FROM public.reports x
       WHERE x.reporter_id IS DISTINCT FROM uid AND x.content_type IS DISTINCT FROM 'feedback'
+        AND x.content_type IS DISTINCT FROM 'message'
         AND (x.reported_user_id = uid OR x.reported_post_id IN (
         SELECT y.id FROM public.posts y WHERE y.user_id = uid
         UNION ALL SELECT y.id FROM public.docs y WHERE y.user_id = uid

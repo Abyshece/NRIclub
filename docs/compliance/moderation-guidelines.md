@@ -29,7 +29,8 @@ reuse are in `src/content/legal/reporting.js`.
   date. The admin panel records decisions on content and accounts itself
   (below). Keep notes factual; members can ask to see notes about them, and
   "Download my data" gives them the record of our decisions about them
-  (without who decided) and their own reports.
+  (without who decided), their own reports, and reports about them without
+  who sent them (none about a message they sent).
 
 ## Sign-ups (membership check)
 
@@ -116,7 +117,9 @@ else. Admins can no longer edit members' rows or delete content directly.
    weekly routine in `deletion-routine.md` (or the clean-up job, once it
    runs).
 8. **Evidence copies:** the record keeps a copy of removed content for 6
-   months by itself. Keep any other copy (e.g. a screenshot, with the
+   months by itself: its text, and of a photo only the file's name (the
+   file itself is deleted, step 7). If you need a photo as evidence, save
+   it before you remove it. Keep any other copy (e.g. a screenshot, with the
    account and time) only where you need it as evidence, store it with the
    note on that report, and delete it when the report is deleted
    (`deletion-routine.md`), or when a police matter or legal dispute about
@@ -152,7 +155,8 @@ reports from the form need the update.
 - Blocking a mentor cancels their upcoming sessions and tells the members
   who booked; so does declining an approved mentor's membership. The panel
   says how many sessions before you confirm. Undo of a block is offered only
-  if no sessions or open mentoring times were lost with it.
+  if no sessions, open mentoring times or ambassador role were lost with it
+  (a block ends the ambassador role; make them ambassador again by hand).
 - **Unblock account** in Members tells the member in NRIClub.
 - **Ending a membership** (instead of a block) needs an important reason
   (§ 314 BGB), normally after a warning. Otherwise use 4 weeks' notice
@@ -190,7 +194,9 @@ why. Log each request: date received, who, what, deadline, date answered.
 - **Access (Art. 15):** point them to Settings → Download my data, and send
   what isn't in that file: admin notes about them (`verification_log.admin_note`),
   the record of declined and blocked accounts if one exists, reports about
-  them (without the reporter's identity, Art. 15(4)). Also the purposes,
+  them (without the reporter's identity, Art. 15(4)). Never reports about a
+  message they sent: only the member they wrote to can report one, so it
+  would say who did (the file leaves those out too). Also the purposes,
   recipients and retention (point to the Privacy Policy).
 - **Correction (Art. 16):** they can edit their profile; change the email
   address for them if they can't.
