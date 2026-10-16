@@ -36,7 +36,11 @@ as it holds no secrets.
   `src/content/legal/privacy.js`; the lawyer finds no legal basis for showing
   declined and unfinished accounts).
 - **Admins** (rows in `public.admins`): see everything members see plus email
-  addresses, verification details, notes, reports. Not private messages.
+  addresses, verification details, notes, reports and our decisions. Not
+  private messages, except a single message a member reported (shown only
+  with that report). Admins change members' content and accounts only
+  through database functions that record what they did
+  (`private.moderation_action`; membership decisions in `verification_log`).
 - **Processors** (Art. 28): Supabase Pte. Ltd., Singapore (database, Auth,
   Storage, Realtime; AWS eu-west-1, Ireland), Vercel Inc., USA (hosting and
   CDN, worldwide edge network), Plus Five Five, Inc. (Resend), USA
@@ -138,8 +142,8 @@ references the member cascades, except where noted).
 
 | | |
 |---|---|
-| Purpose | Tell members about likes, comments, Namaste, answers, events, bookings, verification results, urgent questions in their city, members joining (ambassadors) |
-| Legal basis | Art. 6(1)(b) |
+| Purpose | Tell members about likes, comments, Namaste, answers, events, bookings, verification results, urgent questions in their city, members joining (ambassadors); statements of reasons and warnings (type `moderation`), outcomes of reports they sent (`report`), and for admins new reports from the form and safety reports (`alert`) |
+| Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5) and 17 DSA for statements of reasons and report outcomes |
 | Data | Recipient, actor, short text, reference, read state (`public.notifications`) |
 | Recipients | The recipient only |
 | Retention | Until account deletion; read notices after 6 months *(by hand)* |
@@ -160,15 +164,15 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Handle reports from members and notices from anyone (Art. 16 DSA), decide, give statements of reasons (Art. 17), inform the reporter (Art. 16(5)), escalate threats to life or safety (Art. 18), handle bug reports and ideas |
 | Legal basis | Art. 6(1)(c) with Art. 16-18 DSA; otherwise Art. 6(1)(f) (a safe community; defending decisions) |
-| Data | Reporter, reported member or content, reason (the in-app report writes the reported member's name or the item's title into it); evidence copies of reported content where needed; bug reports with user agent and screen size; emails to hello@; decisions |
-| Recipients | Admins; the reporter and the affected member (decision); police where Art. 18 applies |
-| Retention | Closed reports, with evidence copies, once 12 months old *(by hand)*, unless a legal dispute or police matter is open. A report about a deleted member stays without the link to the member (its text can still name them); a reporter's own reports are deleted with their account |
+| Data | In-app reports: reporter, reported member or content, kind, reason category, the reporter's explanation, good-faith confirmation (`public.reports`; the reason line also names the item). Reports from the form at nriclub.app/report: where, category, explanation, name and email of the sender (may be empty for child sexual abuse material), reference code, decision and when the receipt and decision emails were sent (`private.notices`); keyed SHA-256 hashes of the sender's email and IP address (for IPv6, its /64 network) for the daily limits (`private.notice_log`). Decisions: admin, action, rule or law, facts, urgency, source, the reports answered, a copy of removed content (text; of photos only the file path), the statement sent (`private.moderation_action`); block reason on the account (`profile_private.block_reason/block_rule/blocked_at`); admins' notes on reports (`private.report_note`). Evidence copies where needed; bug reports with user agent and screen size; emails to hello@ |
+| Recipients | Admins; the affected member (statement of reasons, in the app) and the reporter (outcome: in the app, or by email from hello@ for the form); police where Art. 18 applies. A reported message is shown to admins (only that message) |
+| Retention | Closed reports and closed reports from the form, with evidence copies, once 12 months old, unless held for a legal dispute or police matter (`private.report_hold`, `notices.hold_reason`). Limit hashes: 1 day. Decisions: 24 months, the copy of removed content 6 months (unless held). Feedback (bug reports, ideas) is deleted with the sender's account; other reports stay without the link to the reporter. Reports and decisions about a deleted member stay without the link to the member (their text can still name them). Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
 
 ### 10. Transactional email
 
 | | |
 |---|---|
-| Purpose | Sign-up and sign-in codes, password links, email-change confirmations; emails from our team about the membership (check decisions, statements of reasons, block warnings, report outcomes, changes to the Terms or the service, termination, breach notices) |
+| Purpose | Sign-up and sign-in codes, password links, email-change confirmations; emails from our team about the membership (check decisions, changes to the Terms or the service, termination, breach notices; statements of reasons, warnings and report outcomes go in the app and may also be emailed); receipt and decision emails to senders of reports from the form at nriclub.app/report (sent by hand from hello@, prefilled by the admin panel) |
 | Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5), 17 DSA and Art. 34 GDPR |
 | Data | Email address, subject and content (incl. code or link), delivery events |
 | Recipients | Resend (Amazon SES eu-west-1) as processor of Supabase Auth's custom SMTP; the mailbox provider for our team's emails |

@@ -1,9 +1,11 @@
 // Members: everyone who has joined, with search, block / unblock and the
-// same peek as Verification.
+// same peek as Verification. A block (like a warning, or removing a photo or
+// bio) goes through the database with the reasons the member is told.
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
-import MemberPeek from "./MemberPeek";
-import { Avatar, Button, ConfirmDialog, EmptyState, Icon, PageHeader, Pill } from "./ui";
+import MemberPeek, { MemberModeration } from "./MemberPeek";
+import { moderateMember } from "./moderateMember";
+import { Avatar, Button, EmptyState, Icon, PageHeader, Pill } from "./ui";
 import {
   NO_HOLD, VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, holdSummary, identityChanged,
   memberFields, placeLabel, refusedDecisionError, reviewFlagLabel, shortName,
@@ -14,17 +16,16 @@ const PAGE = 100;
 const fmt = (n) => n.toLocaleString("en-GB");
 
 // users holds the newest members (at most 1,000); total and blockedTotal are
-// the server's counts of all of them.
-export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, showToast }) {
+// the server's counts of all of them. recorded: whether the database records
+// our team's decisions and tells the member (the 2026-10-21 update).
+export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, showToast, recorded = true }) {
   const [query, setQuery] = useState("");
   const [show, setShow] = useState("all"); // all | blocked
   const [limit, setLimit] = useState(PAGE);
   const [openId, setOpenId] = useState(null);
   const [details, setDetails] = useState({}); // id -> row from admin_verification_queue
   const [loadingDetails, setLoadingDetails] = useState({}); // status -> true while its rows load
-  const [confirm, setConfirm] = useState(null); // member to block
-  const [confirmBusy, setConfirmBusy] = useState(false);
-  const [confirmError, setConfirmError] = useState("");
+  const [blocking, setBlocking] = useState(null); // member to block (from the list)
   const listRef = useRef(null);
   const fetchedStatuses = useRef(new Set());
   const detailsRef = useRef(details);
@@ -239,39 +240,19 @@ export default function MembersView({ users, total = users.length, blockedTotal 
     showToast({ text: city ? `${shortName(m.name)} is now the ambassador for ${city}` : `${shortName(m.name)} is no longer an ambassador` });
   };
 
-  const setStatus = async (m, status) => {
-    await api.adminSetMemberStatus(m.id, status);
-    touch(m.id);
-    onMemberChange(m.id, { status });
-    const who = shortName(m.name);
-    showToast(status === "blocked"
-      ? {
-        text: `Blocked ${who}`,
-        undo: async () => {
-          await api.adminSetMemberStatus(m.id, "active");
-          touch(m.id);
-          onMemberChange(m.id, { status: "active" });
-          return `Unblocked ${who}`;
-        },
-      }
-      : { text: `Unblocked ${who}` });
-  };
-
-  const confirmBlock = async () => {
-    setConfirmBusy(true);
-    setConfirmError("");
-    try {
-      await setStatus(confirm, "blocked");
-      setConfirm(null);
-    } catch (e) {
-      setConfirmError(friendlyError(e));
-    } finally {
-      setConfirmBusy(false);
-    }
-  };
+  // Warn, block, unblock, remove the photo or bio (MemberPeek's
+  // onModerate). Throws so the dialog can show why it didn't work.
+  const moderate = (m, decision) => moderateMember(m, decision, {
+    showToast,
+    changed: (id, patch, before) => {
+      touch(id);
+      onMemberChange(id, patch, before);
+      patchDetails(id, patch);
+    },
+  });
 
   const unblock = async (u) => {
-    try { await setStatus(u, "active"); } catch (e) { showToast({ text: friendlyError(e), tone: "error" }); }
+    try { await moderate(u, { kind: "member", action: "unblock", reasons: {} }); } catch (e) { showToast({ text: friendlyError(e), tone: "error" }); }
   };
 
   return (
@@ -343,7 +324,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
                   <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setOpenId(u.id); }}>View</Button>
                   {blocked
                     ? <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); unblock(u); }}>Unblock</Button>
-                    : <Button variant="ghost" size="sm" className="adm-btn-ghost-danger" onClick={(e) => { e.stopPropagation(); setConfirmError(""); setConfirm(u); }}>Block</Button>}
+                    : <Button variant="ghost" size="sm" className="adm-btn-ghost-danger" onClick={(e) => { e.stopPropagation(); setBlocking(u); }}>Block…</Button>}
                 </div>
               </div>
             );
@@ -365,22 +346,17 @@ export default function MembersView({ users, total = users.length, blockedTotal 
           onClose={() => { const id = openId; setOpenId(null); focusRow(id); }}
           onPrev={openIndex > 0 ? () => setOpenId(filtered[openIndex - 1].id) : null}
           onNext={openIndex >= 0 && openIndex < filtered.length - 1 ? () => setOpenId(filtered[openIndex + 1].id) : null}
+          recorded={recorded}
           onDecision={decide}
-          onSetStatus={setStatus}
+          onModerate={moderate}
           onSetAmbassador={setAmbassador}
         />
       )}
 
-      {confirm && (
-        <ConfirmDialog
-          title={`Block ${confirm.name || "this member"}?`}
-          confirmLabel="Block account"
-          busy={confirmBusy}
-          error={confirmError}
-          onConfirm={confirmBlock}
-          onCancel={() => { setConfirm(null); focusRow(confirm.id); }}>
-          They can still sign in, but can't post, message or connect with anyone until you unblock them.
-        </ConfirmDialog>
+      {blocking && (
+        <MemberModeration member={blocking} action="block" recorded={recorded} onModerate={moderate}
+          onDone={() => { const id = blocking.id; setBlocking(null); focusRow(id); }}
+          onCancel={() => { const id = blocking.id; setBlocking(null); focusRow(id); }} />
       )}
     </>
   );

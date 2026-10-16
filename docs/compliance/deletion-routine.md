@@ -19,6 +19,9 @@ files deleted with their post or account), set `byHand` (and
 | Accounts whose membership we ended | 6 months after the decision | once a month (by hand, below) |
 | In-app notices the member has read | 6 months | once a month |
 | Closed reports, and evidence copies kept with them | once closed and 12 months old | once a month |
+| Closed reports from the form at nriclub.app/report | once closed and 12 months old | once a month |
+| Coded addresses behind the report limits (`private.notice_log`) | 24 hours | once a month |
+| Record of our decisions (`private.moderation_action`) | 24 months; the copy of removed content in it after 6 months | once a month |
 | Record of declined and blocked accounts | 24 months after the decision; its note after 12 months | once a month |
 | Emails about rights and reports of illegal content, with our answers | 3 years after the matter is closed | once a month (mailbox) |
 | All other emails, with our replies | 12 months after the matter is closed | once a month (mailbox) |
@@ -101,8 +104,23 @@ SELECT 'records of declined and blocked accounts, 24 months', count(*) FROM priv
   WHERE created_at < now() - interval '24 months'
 UNION ALL
 SELECT 'notes in those records, 12 months', count(*) FROM private.moderation_record
-  WHERE admin_note <> '' AND created_at < now() - interval '12 months';
+  WHERE admin_note <> '' AND created_at < now() - interval '12 months'
+UNION ALL
+SELECT 'closed reports from the form, 12 months', count(*) FROM private.notices
+  WHERE status = 'closed' AND created_at < now() - interval '12 months' AND hold_reason = ''
+UNION ALL
+SELECT 'report-limit counters, 1 day', count(*) FROM private.notice_log
+  WHERE at < now() - interval '1 day'
+UNION ALL
+SELECT 'copies of removed content, 6 months', count(*) FROM private.moderation_action
+  WHERE snapshot IS NOT NULL AND created_at < now() - interval '6 months'
+UNION ALL
+SELECT 'records of our decisions, 24 months', count(*) FROM private.moderation_action
+  WHERE created_at < now() - interval '24 months';
 ```
+
+(The last four exist once the database update of 21 October 2026 is in;
+before it, leave them out.)
 
 The first time, older accounts that never finished signing up go at once.
 If you'd like to warn them first, email them two weeks before.
@@ -111,7 +129,10 @@ If you'd like to warn them first, email them two weeks before.
 
 A report that is part of a legal dispute or a police matter that is still
 open stays: put its id between the braces in `'{}'` below (several ids
-separated by commas, e.g. `'{1b2c..., 3d4e...}'`). Evidence copies you kept
+separated by commas, e.g. `'{1b2c..., 3d4e...}'`), or hold it with
+`private.report_hold` (`moderation-guidelines.md`, step 8). A report from
+the form that is held has `hold_reason` set and stays; so do the decisions
+that answered held reports. Evidence copies you kept
 outside the database (screenshots) go with their report: delete them by
 hand when the report goes.
 
@@ -136,6 +157,18 @@ DELETE FROM public.reports
 DELETE FROM private.moderation_record WHERE created_at < now() - interval '24 months';
 UPDATE private.moderation_record SET admin_note = ''
   WHERE admin_note <> '' AND created_at < now() - interval '12 months';
+-- Since the database update of 21 October 2026:
+DELETE FROM private.notices
+  WHERE status = 'closed' AND created_at < now() - interval '12 months' AND hold_reason = '';
+DELETE FROM private.notice_log WHERE at < now() - interval '1 day';
+UPDATE private.moderation_action a SET snapshot = NULL
+  WHERE snapshot IS NOT NULL AND created_at < now() - interval '6 months'
+    AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = ANY (a.report_ids))
+    AND NOT EXISTS (SELECT 1 FROM private.notices n WHERE n.id = a.notice_id AND n.hold_reason <> '');
+DELETE FROM private.moderation_action a
+  WHERE created_at < now() - interval '24 months'
+    AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = ANY (a.report_ids))
+    AND NOT EXISTS (SELECT 1 FROM private.notices n WHERE n.id = a.notice_id AND n.hold_reason <> '');
 COMMIT;
 ```
 

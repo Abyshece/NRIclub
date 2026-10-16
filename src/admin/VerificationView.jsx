@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import MemberPeek from "./MemberPeek";
+import { moderateMember } from "./moderateMember";
 import { Avatar, EmptyState, ErrorNote, Icon, PageHeader, Pill, SkeletonRows } from "./ui";
 import {
   NO_HOLD, VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, holdSummary, identityChanged,
@@ -52,7 +53,9 @@ function RowChecks({ m }) {
 
 // counts: members per verification status; countsExact when they come from
 // the server (the lists themselves stop at 1,000 rows).
-export default function VerificationView({ usersById, counts, countsExact = false, cache, onMemberChange, showToast }) {
+// recorded: whether the database records our team's decisions and tells the
+// member (the 2026-10-21 update).
+export default function VerificationView({ usersById, counts, countsExact = false, cache, onMemberChange, showToast, recorded = true }) {
   const [filter, setFilter] = useState("pending");
   const [rows, setRows] = useState(() => cache.current.pending?.rows || null);
   const [loading, setLoading] = useState(!cache.current.pending);
@@ -270,25 +273,16 @@ export default function VerificationView({ usersById, counts, countsExact = fals
     });
   };
 
-  const setStatus = async (m, status) => {
-    await api.adminSetMemberStatus(m.id, status);
-    touch(m.id);
-    patchRow(m.id, { status });
-    onMemberChange(m.id, { status }, m);
-    const who = shortName(m.name);
-    showToast(status === "blocked"
-      ? {
-        text: `Blocked ${who}`,
-        undo: async () => {
-          await api.adminSetMemberStatus(m.id, "active");
-          touch(m.id);
-          patchRow(m.id, { status: "active" });
-          onMemberChange(m.id, { status: "active" }, { status: "blocked" });
-          return `Unblocked ${who}`;
-        },
-      }
-      : { text: `Unblocked ${who}` });
-  };
+  // Warn, block, unblock, remove the photo (MemberPeek's onModerate).
+  // Throws so the dialog can show why it didn't work.
+  const moderate = (m, decision) => moderateMember(m, decision, {
+    showToast,
+    changed: (id, patch, before) => {
+      touch(id);
+      patchRow(id, patch);
+      onMemberChange(id, patch, before ? { ...m, ...before } : m);
+    },
+  });
 
   const onRowKey = (e, id, i) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenId(id); }
@@ -372,8 +366,9 @@ export default function VerificationView({ usersById, counts, countsExact = fals
           onClose={closePeek}
           onPrev={openIndex > 0 ? () => setOpenId(list[openIndex - 1].id) : null}
           onNext={openIndex < list.length - 1 ? () => setOpenId(list[openIndex + 1].id) : null}
+          recorded={recorded}
           onDecision={decide}
-          onSetStatus={setStatus}
+          onModerate={moderate}
         />
       )}
     </>

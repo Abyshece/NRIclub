@@ -14,6 +14,7 @@ import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
 import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
+import ReportDialog from "./member/ReportDialog";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview } from "./member/profile";
 import { findCity } from "./content/findCity";
 import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
@@ -626,7 +627,39 @@ const toHelp = (h, responses) => ({
 });
 
 // The small sign on a notification's avatar, by type.
-const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐" };
+const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐", moderation: "🛡️", report: "🚩", alert: "⚠️" };
+
+// Messages from our team (the database writes them): why we removed
+// something of the member's or acted on their account (a statement of
+// reasons), what we decided about a report they sent, and, for admins, a new
+// report to look at. They can be long, so the bell shows the start and
+// opens the whole message.
+const TEAM_MESSAGE_TITLES = { moderation: "A message from our team", report: "About your report", alert: "For our team" };
+
+const TeamMessageDialog = ({ notification, onClose, font }) => {
+  const closeRef = useRef(null);
+  useEffect(() => { closeRef.current?.focus(); }, []);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const n = notification;
+  return (
+    <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 55, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 16, overflowY: "auto", backdropFilter: "blur(2px)" }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="team-message-title" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, padding: "24px 22px", margin: "auto", boxSizing: "border-box", fontFamily: font }}>
+        <h3 id="team-message-title" style={{ fontSize: 17, fontWeight: 700, color: "#37352F", margin: "0 0 4px" }}>{TEAM_MESSAGE_TITLES[n.type] || "A message from our team"}</h3>
+        <p style={{ fontSize: 12, color: "#6B6A67", margin: "0 0 14px" }}>{new Date(n.created_at).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+        <p style={{ fontSize: 14, color: "#37352F", lineHeight: 1.6, margin: "0 0 18px", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{n.text}</p>
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          {n.type !== "alert" && <a href={`mailto:hello@nriclub.app?subject=${encodeURIComponent(n.type === "report" ? "About my report" : "Please review a decision")}`} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 13, color: "#37352F", textDecoration: "none", fontWeight: 600 }}>Write to hello@nriclub.app</a>}
+          <button ref={closeRef} type="button" onClick={onClose} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // For urgent questions: who to call first, and the Indian embassy's help.
 const EmergencyHelp = () => (
@@ -679,7 +712,9 @@ const parsePath = (path, selfId) => {
   }
 };
 
-const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup, onOpenProfile, pinned, onPin }) => {
+// onReportItem(target) opens the report dialog for one of the comments;
+// reportedIds: what the member already reported (Report doesn't show).
+const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup, onOpenProfile, pinned, onPin, onReportItem, reportedIds }) => {
   const [liked, setLiked] = useState(initialLiked || false);
   const [likeCount, setLikeCount] = useState(post.likes || 0);
   const [showComments, setShowComments] = useState(false);
@@ -713,7 +748,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
       try {
         const dbComments = await api.getComments(post.id);
         if (dbComments && dbComments.length) {
-          setComments(dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", avatar: c.profiles?.avatar_url || "", text: c.content, time: new Date(c.created_at).getTime() })));
+          setComments(dbComments.map(c => ({ id: c.id, userId: c.user_id, user: c.profiles?.name || "User", avatar: c.profiles?.avatar_url || "", text: c.content, time: new Date(c.created_at).getTime() })));
         }
       } catch(e) {}
     }
@@ -802,7 +837,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
                   <button onClick={() => { onDelete(post.id); setShowMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#E00", fontSize: 13 }}>
                     {Icons.trash({ size: 14 })} Delete
                   </button>
-                ) : (
+                ) : !isReported && (
                   <button onClick={() => { setShowMenu(false); if (onReport) onReport(post.id); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13 }}>
                     {Icons.flag({ size: 14 })} Report
                   </button>
@@ -872,9 +907,15 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
             <div key={c.id} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
               <Avatar name={c.user} size={28} url={c.avatar} />
               <div style={{ flex: 1, background: "#F7F7F5", padding: "8px 12px", borderRadius: "0 10px 10px 10px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 4 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>{c.user}</span>
-                  <span style={{ fontSize: 10, color: "#9B9A97" }}>{timeAgo(c.time)}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <span style={{ fontSize: 10, color: "#9B9A97" }}>{timeAgo(c.time)}</span>
+                    {onReportItem && typeof c.id === "string" && c.userId && c.userId !== user?.id && !reportedIds?.has(c.id) && (
+                      <button type="button" onClick={() => onReportItem({ type: "comment", id: c.id, userId: c.userId, name: c.text })} aria-label={`Report ${c.user}'s comment`} title="Report"
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 6, margin: -4, display: "flex" }}>{Icons.flag({ size: 11 })}</button>
+                    )}
+                  </span>
                 </div>
                 <p style={{ fontSize: 13, color: "#5F5E5B", margin: 0 }}>{c.text}</p>
               </div>
@@ -946,24 +987,38 @@ const BlockedUsersModal = ({ onClose, onUnblocked, font }) => {
   );
 };
 
-// Full-screen card for blocked members. Settings can't be reached from here,
-// so the card also lets them download their data or delete their account.
-const BlockedOverlay = ({ onSignOut, font }) => {
+// Full-screen card for blocked members: why (the rule or law and the facts
+// our team gave in the statement of reasons, Art. 17 DSA), how to challenge
+// it, and that they can still download their data and delete their account
+// (Settings can't be reached from here, so the card has both).
+const BlockedOverlay = ({ user, onSignOut, font }) => {
   const { busy, error, download, deleteAccount } = useAccountActions(onSignOut);
   const link = { background: "none", border: "none", padding: 4, cursor: busy ? "default" : "pointer", color: "#5F5E5B", fontSize: 13, fontWeight: 500, textDecoration: "underline", fontFamily: font };
+  const since = user?.blockedAt ? new Date(user.blockedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "";
+  const reason = String(user?.blockReason || "").trim();
   return (
-    <div data-lock-overlay style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div role="alertdialog" aria-modal="true" aria-label="Profile blocked" style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center" }}>
+    <div data-lock-overlay style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 16, overflowY: "auto" }}>
+      <div role="alertdialog" aria-modal="true" aria-labelledby="blocked-title" aria-describedby="blocked-text" style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "100%", padding: 32, textAlign: "center", boxSizing: "border-box", margin: "auto" }}>
         <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
         </div>
-        <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Profile Blocked</h2>
-        <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 20, fontFamily: font }}>
-          Your profile has been blocked by our admin team.
-        </p>
-        <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, marginBottom: 24, fontFamily: font }}>
-          If you believe this is an error, please contact <a href="mailto:hello@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>hello@nriclub.app</a>.
-        </p>
+        <h2 id="blocked-title" style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8, fontFamily: font }}>Your account is blocked</h2>
+        <div id="blocked-text">
+          <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, margin: "0 0 14px", fontFamily: font }}>
+            Our team blocked your account{since ? ` on ${since}` : ""}, until further notice. A person on our team decided this; no automated tools were used.
+          </p>
+          {(reason || user?.blockRule) && (
+            <p style={{ fontSize: 14, color: "#37352F", lineHeight: 1.6, margin: "0 0 14px", fontFamily: font, padding: "12px 14px", background: "#F7F7F5", borderRadius: 8, textAlign: "left", overflowWrap: "anywhere" }}>
+              <strong>Reason:</strong> {user?.blockRule ? `${user.blockRule}` : "our Terms of Use"}{reason ? `, because ${reason}.` : "."}
+            </p>
+          )}
+          <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, margin: "0 0 10px", fontFamily: font }}>
+            Think we got it wrong? Write to <a href={`mailto:hello@nriclub.app?subject=${encodeURIComponent("Please review the block on my account")}`} style={{ color: "#37352F", fontWeight: 600 }}>hello@nriclub.app</a> within 6 months, and a person on our team will look at it again. You can also go to court.
+          </p>
+          <p style={{ fontSize: 13, color: "#6B6A67", lineHeight: 1.6, margin: "0 0 22px", fontFamily: font }}>
+            You can still download your data and delete your account.
+          </p>
+        </div>
         <button onClick={onSignOut} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Sign Out</button>
         <p style={{ margin: "16px 0 0", fontSize: 13, color: "#6B6A67", fontFamily: font }}>
           <button type="button" onClick={download} aria-disabled={!!busy} style={link}>{busy === "download" ? "Preparing your data..." : "Download my data"}</button>
@@ -1156,8 +1211,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [docComment, setDocComment] = useState("");
   const [docLiked, setDocLiked] = useState(false);
-  const [reportConfirm, setReportConfirm] = useState(null); // { type, id, name }
+  // The report dialog's target: { type (reports.content_type), id, userId, name }.
+  const [reportConfirm, setReportConfirm] = useState(null);
+  // What the member reported that our team hasn't decided on yet (ids, and
+  // "type:id"): Report doesn't show on those.
   const [reportedIds, setReportedIds] = useState(new Set());
+  // A message from our team opened from the bell (TeamMessageDialog).
+  const [teamMessage, setTeamMessage] = useState(null);
   const [selectedMarketItem, setSelectedMarketItem] = useState(null);
   const [expandedMarketItem, setExpandedMarketItem] = useState(null);
   const [marketPhotoIdx, setMarketPhotoIdx] = useState(0);
@@ -1403,7 +1463,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       setGroupsLoaded(true);
       const [myLikes, myReports, dbEvents, myR, dbHelp, allResponses, conns, sentData, dbDocs, blocked, dbNotifs, dbMarket] = await rest;
       if (myLikes && myLikes.length) setLikedPostIds(new Set(myLikes.map(l => l.post_id)));
-      if (myReports && myReports.length) setReportedIds(new Set(myReports.filter(r => r.reported_post_id).map(r => r.reported_post_id)));
+      if (myReports instanceof Set) setReportedIds(myReports);
       setEvents((dbEvents || []).map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name, description: e.description, link: e.link || "", image: e.image_url || "" })));
       if (myR) setRsvps(new Set(myR));
       if (dbHelp && dbHelp.length) {
@@ -2435,7 +2495,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {/* Feed List */}
             {feedPosts.length > 0 ? feedPosts.map((p) => (
-              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onOpenProfile={openMember} />
+              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onOpenProfile={openMember} />
             )) : (feedFiltered || feedPostType !== "all") ? (
               <EmptyCard text="No posts match these filters." action="Clear filters" onAction={() => { setFeedFilters(noFeedFilters); setFeedPostType("all"); }} />
             ) : listsLoaded && (
@@ -2563,9 +2623,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     onMouseOut={(e) => (e.currentTarget.style.boxShadow = "none")}
                     >
                       {/* Report (small grey flag, top-right) */}
-                      <button onClick={() => setReportConfirm({ type: "user", id: u.id })} aria-label="Report" style={{ position: "absolute", top: 12, right: 12, padding: 8, background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", display: "flex" }}>
+                      {!reportedIds.has(u.id) && <button onClick={() => setReportConfirm({ type: "profile", id: u.id, name: u.name })} aria-label={`Report ${u.name}`} style={{ position: "absolute", top: 12, right: 12, padding: 8, background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", display: "flex" }}>
                         {Icons.flag({ size: 14 })}
-                      </button>
+                      </button>}
 
                       {/* Avatar (opens their profile) */}
                       <button type="button" onClick={() => openMember(u.id)} aria-label={`${u.name}'s profile`} style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}>
@@ -2848,7 +2908,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   )}
 
                   {groupPosts.length > 0 ? (
-                    [...groupPosts].sort((a, b) => (b.id === selectedGroup.pinnedPostId) - (a.id === selectedGroup.pinnedPostId)).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} hideGroup onOpenProfile={openMember} pinned={p.id === selectedGroup.pinnedPostId} onPin={canPinIn(selectedGroup) ? (id) => pinPost(selectedGroup, id) : null} />)
+                    [...groupPosts].sort((a, b) => (b.id === selectedGroup.pinnedPostId) - (a.id === selectedGroup.pinnedPostId)).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} hideGroup onOpenProfile={openMember} pinned={p.id === selectedGroup.pinnedPostId} onPin={canPinIn(selectedGroup) ? (id) => pinPost(selectedGroup, id) : null} />)
                   ) : (
                     <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                       No posts in this community yet. Be the first to say hello!
@@ -2887,6 +2947,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
                               <button onClick={() => togglePlaceRec(pl, !mine)} style={{ padding: "6px 10px", borderRadius: 8, border: mine ? "1px solid #B5E4CA" : "1px solid #E0E0DE", background: mine ? "#E3FCEF" : "#fff", color: mine ? "#22A06B" : "#37352F", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>👍 {pl.recs.length}</button>
                               {pl.created_by === user.id && <button onClick={() => removePlace(pl)} style={{ background: "none", border: "none", padding: 0, color: "#9B9A97", fontSize: 11, cursor: "pointer", fontFamily: font, textDecoration: "underline" }}>Delete</button>}
+                              {pl.created_by !== user.id && !reportedIds.has(pl.id) && (
+                                <button type="button" onClick={() => setReportConfirm({ type: "place", id: pl.id, userId: pl.created_by, name: pl.name })} aria-label={`Report ${pl.name}`} title="Report this place or its recommendations"
+                                  style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 6, margin: -4, display: "flex" }}>{Icons.flag({ size: 12 })}</button>
+                              )}
                             </div>
                           </div>
                         );
@@ -3342,7 +3406,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     </div>
                     {/* Report (and Delete for the host) / Share */}
                     <div style={{ display: "flex", alignItems: "center", gap: 4, paddingTop: 8, borderTop: "1px solid #F0EFED", marginTop: 12 }}>
-                      <button onClick={() => setReportConfirm({ type: "event", id: e.id, name: e.title })} aria-label="Report" title="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 8, display: "flex" }}>{Icons.flag({ size: 14 })}</button>
+                      {!reportedIds.has(e.id) && e.organizerId !== user.id && <button onClick={() => setReportConfirm({ type: "event", id: e.id, userId: e.organizerId, name: e.title })} aria-label="Report" title="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 8, display: "flex" }}>{Icons.flag({ size: 14 })}</button>}
                       {e.organizerId === user.id && <button onClick={async () => { if (confirm("Delete this event?")) { try { await api.deleteEvent(e.id); } catch(e2) {} setEvents(prev => prev.filter(x => x.id !== e.id)); } }} aria-label="Delete event" title="Delete event" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 8, display: "flex" }}>{Icons.trash({ size: 14 })}</button>}
                       <button onClick={() => {
                         const shareUrl = `${window.location.origin}/events/${e.id}`;
@@ -3451,7 +3515,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {isMine && <button aria-label="Delete question" onClick={async () => { if (confirm("Delete this question?")) { try { await api.deleteHelpRequest(h.id); } catch(e) {} setHelpRequests(prev => prev.filter(x => x.id !== h.id)); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 14 })}</button>}
-                    <button aria-label="Report" onClick={async () => { setReportConfirm({ type: "help", id: h.id, name: h.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 14 })}</button>
+                    {!isMine && !reportedIds.has(h.id) && <button aria-label="Report" title="Report" onClick={() => setReportConfirm({ type: "help", id: h.id, userId: h.userId, name: h.title })} style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 2 }}>{Icons.flag({ size: 14 })}</button>}
                   </div>
                 </div>
                 <h3 onClick={() => openHelp(h)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font, cursor: "pointer" }}>{h.title}</h3>
@@ -3478,7 +3542,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{r.user}{best && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: "#1A7F52" }}>✓ Best answer</span>}</span>
-                            <span style={{ fontSize: 10, color: "#9B9A97", fontFamily: font, flexShrink: 0 }}>{timeAgo(r.time)}</span>
+                            <span style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                              <span style={{ fontSize: 10, color: "#9B9A97", fontFamily: font }}>{timeAgo(r.time)}</span>
+                              {!own && typeof r.id === "string" && !reportedIds.has(r.id) && (
+                                <button type="button" onClick={() => setReportConfirm({ type: "answer", id: r.id, userId: r.userId, name: r.text })} aria-label={`Report ${r.user}'s answer`} title="Report"
+                                  style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 6, margin: -4, display: "flex" }}>{Icons.flag({ size: 11 })}</button>
+                              )}
+                            </span>
                           </div>
                           <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 4, lineHeight: 1.5, fontFamily: font, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{r.text}</p>
                           {typeof r.id === "string" && (
@@ -3592,6 +3662,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font }}>{c.user}</span>
                         <span style={{ fontSize: 11, color: "#9B9A97" }}>· {timeAgo(c.time)}</span>
+                        {c.userId && c.userId !== user.id && !reportedIds.has(c.id) && (
+                          <button type="button" onClick={() => setReportConfirm({ type: "doc_comment", id: c.id, userId: c.userId, name: c.text })} aria-label={`Report ${c.user}'s comment`} title="Report"
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 6, margin: -4, display: "flex" }}>{Icons.flag({ size: 12 })}</button>
+                        )}
                       </div>
                       <p style={{ fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, fontFamily: font }}>{c.text}</p>
                     </div>
@@ -3662,7 +3736,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   try {
                     const dbComments = await api.getDocComments(d.id);
                     if (dbComments && dbComments.length) {
-                      const withComments = { ...d, comments: dbComments.map(c => ({ id: c.id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).getTime() })) };
+                      const withComments = { ...d, comments: dbComments.map(c => ({ id: c.id, userId: c.user_id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).getTime() })) };
                       setSelectedDoc(withComments);
                     }
                   } catch(e) {}
@@ -3689,7 +3763,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 12, color: "#9B9A97", display: "flex", alignItems: "center", gap: 4 }}>{Icons.heart({ size: 13 })} {d.likes}</span>
                       {d.userId === user.id && <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this doc?")) { try { await api.deleteDoc(d.id); } catch(e2) {} setDocs(prev => prev.filter(x => x.id !== d.id)); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 12 })}</button>}
-                      <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "doc", id: d.id, name: d.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 2 }}>{Icons.flag({ size: 12 })}</button>
+                      {d.userId !== user.id && !reportedIds.has(d.id) && <button aria-label="Report" title="Report" onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "doc", id: d.id, userId: d.userId, name: d.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 2 }}>{Icons.flag({ size: 12 })}</button>}
                     </div>
                   </div>
                 </div>
@@ -3771,7 +3845,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         ) : (
                           <>
                             <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
-                            <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "marketplace", id: item.id, name: item.title }); }} aria-label="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 8, display: "flex" }}>{Icons.flag({ size: 12 })}</button>
+                            {!reportedIds.has(item.id) && <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "market", id: item.id, name: item.title }); }} aria-label="Report" title="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 8, display: "flex" }}>{Icons.flag({ size: 12 })}</button>}
                           </>
                         )}
                       </div>
@@ -3919,7 +3993,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             <button onClick={() => { const _bid = convos.find(c => c.id === selectedConvo)?.otherUserId; setBlockTargetId(_bid); setBlockModalOpen(true); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg> Block User
                             </button>
-                            <button onClick={() => { setReportConfirm({ type: "user", id: activeConvo.otherUserId, name: activeConvo.name }); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
+                            <button onClick={() => { setReportConfirm({ type: "profile", id: activeConvo.otherUserId, name: activeConvo.name }); setChatSettings(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, fontFamily: font, borderBottom: "1px solid #F0EFED" }}>
                               {Icons.flag({ size: 14 })} Report User
                             </button>
                             <button onClick={async () => {
@@ -3953,7 +4027,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             </>);
                           })()}
                         </div>
-                        <div style={{ fontSize: 10, color: "#9B9A97", marginTop: 4, textAlign: m.sender === "me" ? "right" : "left" }}>{m.time}</div>
+                        <div style={{ fontSize: 10, color: "#9B9A97", marginTop: 4, textAlign: m.sender === "me" ? "right" : "left", display: "flex", alignItems: "center", gap: 6, justifyContent: m.sender === "me" ? "flex-end" : "flex-start" }}>
+                          <span>{m.time}</span>
+                          {m.sender === "them" && /^[0-9a-f-]{36}$/i.test(String(m.id)) && !reportedIds.has(m.id) && (
+                            <button type="button" onClick={() => setReportConfirm({ type: "message", id: m.id, userId: activeConvo?.otherUserId, name: m.text })} aria-label="Report this message" title="Report this message"
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 6, margin: -4, display: "flex" }}>{Icons.flag({ size: 11 })}</button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -4002,7 +4082,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <EmptyCard text={mp.error} action="Find members" onAction={() => setView("network")} />
             ) : (<>
               <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "28px 24px", textAlign: "center", position: "relative", marginBottom: 20 }}>
-                <button onClick={() => setReportConfirm({ type: "user", id: m.id, name: m.name })} aria-label="Report" style={{ position: "absolute", top: 12, right: 12, padding: 8, background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", display: "flex" }}>{Icons.flag({ size: 14 })}</button>
+                {!reportedIds.has(m.id) && <button onClick={() => setReportConfirm({ type: "profile", id: m.id, name: m.name })} aria-label={`Report ${m.name || "this member"}`} title="Report" style={{ position: "absolute", top: 12, right: 12, padding: 8, background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", display: "flex" }}>{Icons.flag({ size: 14 })}</button>}
                 <div style={{ display: "flex", justifyContent: "center" }}><Avatar name={m.name || "Member"} size={96} url={m.avatar_url} /></div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>{m.name || "Member"}</h2>
@@ -4051,7 +4131,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
               {m.mentor_open && m.linkedin_verified && (
-                <MentorProfileCard member={{ id: m.id, name: m.name, avatar_url: m.avatar_url, mentorAreas: m.mentor_areas }} rating={mentorRatings[m.id]} isSelf={m.id === user.id} me={user.id} onBook={() => bookMentor({ id: m.id, name: m.name, avatar_url: m.avatar_url, mentorAreas: m.mentor_areas })} Avatar={Avatar} />
+                <MentorProfileCard member={{ id: m.id, name: m.name, avatar_url: m.avatar_url, mentorAreas: m.mentor_areas }} rating={mentorRatings[m.id]} isSelf={m.id === user.id} me={user.id} onReport={setReportConfirm} onBook={() => bookMentor({ id: m.id, name: m.name, avatar_url: m.avatar_url, mentorAreas: m.mentor_areas })} Avatar={Avatar} />
               )}
               {shared.length > 0 && (
                 <div style={{ marginBottom: 20 }}>
@@ -4065,7 +4145,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               )}
               <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, fontFamily: font }}>Recent posts</h4>
               {mp.posts.length > 0
-                ? mp.posts.filter(p => !blockedIds.has(p.userId)).map(p => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />)
+                ? mp.posts.filter(p => !blockedIds.has(p.userId)).map(p => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />)
                 : <EmptyCard text={`${(m.name || "This member").split(" ")[0]} hasn't posted yet.`} />}
             </>)}
           </div>
@@ -4162,7 +4242,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             {profileTab === "posts" ? (
               posts.filter((p) => p.userId === user.id).length > 0 ? (
-                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id })} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onOpenProfile={openMember} />)
+                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onOpenProfile={openMember} />)
               ) : (
                 <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                   You haven't posted anything yet.
@@ -4244,6 +4324,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     } else if (n.type === "message") {
       setView("messages");
       setNotifOpen(false);
+    } else if (TEAM_MESSAGE_TITLES[n.type]) {
+      setNotifOpen(false);
+      Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+      setTeamMessage(n);
     } else if (n.type === "verification") {
       setNotifOpen(false);
       Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
@@ -4399,7 +4484,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     fresh.filter(n => !n.read && !TOAST_SKIP.includes(n.type) && (Date.parse(n.created_at || "") || 0) >= notifFloorRef.current).slice(0, 3).forEach(n => pushToast({
       id: `n-${n.id}`,
       icon: n.type === "request" ? "🙏" : n.type === "comment" ? "💬" : NOTIF_BADGE[n.type] || "🔔",
-      text: notifLine(n),
+      text: TEAM_MESSAGE_TITLES[n.type] ? `${TEAM_MESSAGE_TITLES[n.type]}: ${n.text || ""}` : notifLine(n),
       onOpen: () => { leaveOverlays(); if (n.type === "request") setNotifOpen(true); else openNotification(n); },
     }));
   }, [notifications, notifsLoaded]);
@@ -4482,12 +4567,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                               </div>
                             ) : (
                               <div style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: n.type === "event" ? "#FFF3E0" : n.type === "group" ? "#EDF4FF" : "#F0EFED", color: n.type === "event" ? "#E65100" : n.type === "group" ? "#5B9CFF" : "#5F5E5B" }}>
-                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : n.type === "verification" ? Icons.shield({ size: 16 }) : Icons.trending({ size: 16 })}
+                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : n.type === "verification" || n.type === "moderation" ? Icons.shield({ size: 16 }) : n.type === "report" || n.type === "alert" ? Icons.flag({ size: 16 }) : Icons.trending({ size: 16 })}
                               </div>
                             )}
                           </div>
                           <div style={{ flex: 1 }}>
-                            <p style={{ fontSize: 13, color: "#37352F", lineHeight: 1.4, fontFamily: font, margin: 0 }}>
+                            <p style={{ fontSize: 13, color: "#37352F", lineHeight: 1.4, fontFamily: font, margin: 0, ...(TEAM_MESSAGE_TITLES[n.type] ? { overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" } : {}) }}>
                               {n.actor && (n.text || "").startsWith(n.actor)
                                 ? <><strong>{n.actor}</strong>{n.text.slice(n.actor.length)}</>
                                 : <>{n.actor && <strong>{n.actor} </strong>}{n.text}</>}
@@ -4745,7 +4830,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       )}
 
       {/* Blocked user overlay */}
-      {user?.status === "blocked" && <BlockedOverlay onSignOut={onLogout} font={font} />}
+      {user?.status === "blocked" && <BlockedOverlay user={user} onSignOut={onLogout} font={font} />}
 
       {/* MAIN */}
       <main style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 100px", display: "grid", gridTemplateColumns: (view === "profile" || view === "trending") ? "minmax(0,1fr)" : "240px minmax(0,1fr) 210px", gap: 28 }} className="main-grid">
@@ -5676,47 +5761,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       )}
 
       {/* Profile Preview Modal */}
-      {/* Report Confirmation Modal */}
+      {teamMessage && <TeamMessageDialog notification={teamMessage} font={font} onClose={() => setTeamMessage(null)} />}
+
+      {/* Report: the same dialog for everything that can be reported */}
       {reportConfirm && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 55, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setReportConfirm(null)}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 380, padding: 28, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-              {Icons.flag({ size: 22, stroke: "#DC2626" })}
-            </div>
-            <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>Report this {reportConfirm.type}?</h3>
-            {reportConfirm.name && <p style={{ fontSize: 12, color: "#5F5E5B", marginBottom: 8, fontFamily: font }}>"{reportConfirm.name}"</p>}
-            <p style={{ fontSize: 13, color: "#9B9A97", marginBottom: 20, lineHeight: 1.5, fontFamily: font }}>This will be reviewed by our moderation team.</p>
-            {reportConfirm.type === "user" && (
-              <div style={{ textAlign: "left", marginBottom: 20 }}>
-                <label htmlFor="report-reason" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font }}>Reason</label>
-                <select id="report-reason" value={reportConfirm.reason || ""} onChange={(e) => setReportConfirm({ ...reportConfirm, reason: e.target.value })} style={{ ...inputStyle, cursor: "pointer" }}>
-                  <option value="" disabled>Choose a reason</option>
-                  {["Spam or misleading", "Harassment or hate speech", "Inappropriate content", "Violence or physical harm", "Impersonation", "Other"].map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-              <button onClick={() => setReportConfirm(null)} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 13, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button disabled={reportConfirm.type === "user" && !reportConfirm.reason} onClick={async () => {
-                const reason = `[${reportConfirm.type.toUpperCase()}] ${reportConfirm.name ? reportConfirm.name + " — " : ""}${reportConfirm.reason || "Reported as inappropriate"}`;
-                try {
-                  if (reportConfirm.type === "user") {
-                    await api.reportUser(reportConfirm.id, reason);
-                  } else {
-                    await api.reportPost(reportConfirm.id, reason);
-                  }
-                  setReportedIds(prev => { const s = new Set(prev); s.add(reportConfirm.id); return s; });
-                  setReportConfirm(null);
-                  alert("Reported successfully. Our team will review this content.");
-                } catch(e) {
-                  console.error("Report failed:", e);
-                  alert(apiErrorMessage(e, "Your report couldn't be sent. Please try again."));
-                  setReportConfirm(null);
-                }
-              }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: reportConfirm.type === "user" && !reportConfirm.reason ? "#FECACA" : "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: reportConfirm.type === "user" && !reportConfirm.reason ? "default" : "pointer", fontFamily: font }}>Report</button>
-            </div>
-          </div>
-        </div>
+        <ReportDialog target={reportConfirm} font={font} onClose={() => setReportConfirm(null)}
+          onReported={(t) => setReportedIds(prev => { const s = new Set(prev); s.add(t.id); s.add(`${t.type}:${t.id}`); return s; })} />
       )}
 
       {/* Blocked Users Modal */}

@@ -168,11 +168,11 @@ export function termsDoc(version = TERMS_VERSION) {
       { id: "reporting", title: "9. Reporting content", blocks: [
         { p: "Anyone, member or not, can tell us about content on NRIClub they believe is illegal or against these Terms:" },
         { ul: [
-          "Members: use Report on a post, profile, event, question, guide or Market listing. For a comment, an answer, a place or a message, report the member who wrote it, or write to us.",
-          ["Everyone: write to ", a(CONTACT_EMAIL, REPORT_HREF), "."],
+          "Members: use Report on the item itself: a post, comment, answer, question, guide or comment on a guide, event, Market listing, place, mentoring review, profile, or a message you received.",
+          ["Everyone: use the form at ", a("nriclub.app/report", REPORT_HREF), ", or write to ", mail("Report illegal content"), "."],
         ] },
         { p: "Please tell us: where the content is (a link, or the group, member, title and date); why you believe it is illegal or against our rules; your name and email address (not needed if your report is about the sexual abuse of a child); and that your report is accurate and complete to the best of your knowledge." },
-        { p: "We confirm that we've received your report, a person on our team looks at it, and we tell you our decision and how you can challenge it. We don't tell the person you reported who you are, unless the law requires it." },
+        { p: "We confirm that we've received your report, a person on our team looks at it, and we tell you our decision and how you can challenge it: in NRIClub if you reported in the app, otherwise by email. We don't tell the person you reported who you are, unless the law requires it." },
         { p: "If someone's life or safety is in danger, call 112 or your local emergency number first." },
       ] },
 
@@ -181,10 +181,10 @@ export function termsDoc(version = TERMS_VERSION) {
           "A person on our team looks at every report and makes every decision. We don't use automated moderation. The only automatic steps are the hold on sign-ups in section 5 and the limits in section 11.",
           "We act when content is illegal or breaks these Terms, or when an account puts other members at risk. Depending on how serious it is, we may remove content, warn you, limit what you can do, block your account for a time or until further notice, or end your membership (section 12).",
           "We decide carefully, objectively and in proportion, and consider the rights of everyone involved, including freedom of expression.",
-          "When we remove your content or restrict your account, we tell you what we did and for how long, the rule or law it is based on, the facts, whether it followed a report or our own check, and how you can challenge it.",
+          "When we remove your content, warn you or restrict your account, we tell you in NRIClub what we did and for how long, the rule or law it is based on, the facts, whether it followed a report or our own check, and how you can challenge it. If your account is blocked, you see the reason when you sign in.",
           "Before we block your account, we tell you why and give you 14 days to reply. In serious cases (threats, violence, fraud, clearly illegal content, or danger to someone) we block straight away and tell you why at the same time.",
           "Whoever reported the content hears our decision.",
-          "If a mentor's account is blocked, their booked sessions are cancelled and the members who booked them are told.",
+          "If a mentor's account is blocked, or our team doesn't approve their membership, their booked sessions are cancelled and the members who booked them are told.",
           ["Think we got it wrong? Write to ", mail("Please review a decision"), " within 6 months of our decision. A person will look at it again and tell you the result. You can also go to court at any time."],
           "If information suggests a crime that threatens someone's life or safety, we tell the police (Art. 18 of the EU Digital Services Act).",
         ] },

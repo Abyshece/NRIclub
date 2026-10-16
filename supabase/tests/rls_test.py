@@ -20,6 +20,8 @@ ACCESS_CONSENT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", 
                               "20261019000000_access_consent.sql")
 NOTIFICATIONS_LIMITS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                                     "20261020000000_notifications_limits_privacy.sql")
+MODERATION = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                          "20261021000000_moderation_dsa.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -134,6 +136,36 @@ def sign_up(uid, email, meta, accept_terms=False, confirmed=True):
         ok, _, err = psql(f"SELECT public.accept_terms('{TERMS_VERSION}', true)", "authenticated", uid)
         if not ok:
             sys.exit(f"accept_terms for {email} failed: {err}")
+
+
+def moderate(kind, target, action, ground="terms", rule="Spam, scams or advertising (§ 6)",
+             facts="it sent the same advert to many members", reports=None, urgent=None, notice=None, member=None):
+    """A call of public.admin_moderate (migration 20261021000000), the way the
+    admin panel makes it."""
+    args = [f"p_kind => '{kind}'", f"p_id => '{target}'", f"p_action => '{action}'"]
+    if action != "unblock":
+        args += [f"p_ground => '{ground}'", f"p_rule => '{rule}'", f"p_explanation => '{facts}'"]
+    if reports:
+        args.append("p_report_ids => ARRAY[" + ", ".join(f"'{r}'::uuid" for r in reports) + "]")
+    if urgent:
+        args.append(f"p_urgent => '{urgent}'")
+    if notice:
+        args.append(f"p_notice => '{notice}'")
+    if member:
+        args.append(f"p_member => '{member}'")
+    return f"public.admin_moderate({', '.join(args)})"
+
+
+def block(uid, urgent="fraud"):
+    """An admin blocks a member straight away (a serious case), then the
+    member's status is read."""
+    return f"DO $$BEGIN PERFORM {moderate('member', uid, 'block', urgent=urgent)}; END$$; " \
+           f"SELECT status FROM profile_private WHERE id = '{uid}'"
+
+
+def unblock(uid):
+    return f"DO $$BEGIN PERFORM {moderate('member', uid, 'unblock')}; END$$; " \
+           f"SELECT status FROM profile_private WHERE id = '{uid}'"
 
 
 def migration_section(banner, path=REVIEW_FIXES):
@@ -255,13 +287,20 @@ def main():
           "UPDATE profile_private SET email = 'x@evil.com' WHERE id = auth.uid() RETURNING email",
           as_user=ALICE, expect="alice@example.com")
     check("admin can read all private data", "SELECT count(*) FROM profile_private", as_user=ADMIN, expect="4")
-    check("admin can approve a member -> Verified badge",
-          f"UPDATE profile_private SET verification_status = 'approved' WHERE id = '{BOB}'; "
+    check("admins can't change a member's status directly (C23)",
+          f"UPDATE profile_private SET verification_status = 'approved', status = 'blocked' WHERE id = '{BOB}' "
+          "RETURNING 1", as_user=ADMIN, expect="")
+    check("... nor their profile", f"UPDATE profiles SET name = 'Bobby', avatar_url = '' WHERE id = '{BOB}' RETURNING 1",
+          as_user=ADMIN, expect="")
+    check("admin approves a member (review_member) -> Verified badge",
+          f"SELECT public.review_member('{BOB}', 'approved', '', ''); "
           f"SELECT linkedin_verified::text FROM profiles WHERE id = '{BOB}'",
-          as_user=ADMIN, expect="true")
+          as_user=ADMIN, expect="approved\ntrue")
     check("admin approves alice and carol too",
-          f"UPDATE profile_private SET verification_status = 'approved' WHERE id IN ('{ALICE}', '{CAROL}') "
-          "RETURNING verification_status", as_user=ADMIN, expect="approved\napproved")
+          f"SELECT public.review_member('{ALICE}', 'approved', '', ''); SELECT public.review_member('{CAROL}', 'approved', '', '')",
+          as_user=ADMIN, expect="approved\napproved")
+    # (Their "You're verified" notifications aren't part of the checks below.)
+    psql("DELETE FROM notifications WHERE type = 'verification'")
     check("profiles cannot be deleted via the API",
           "DELETE FROM profiles WHERE id = auth.uid() RETURNING id", as_user=ALICE, expect="")
 
@@ -294,9 +333,15 @@ def main():
           as_user=BOB, expect="error")
     check("member cannot approve groups",
           "UPDATE groups SET is_approved = true WHERE name = 'Indians in Testville' RETURNING id", as_user=ALICE, expect="")
-    check("admin approves group",
+    check("admins can't approve groups by hand (C23)",
           "UPDATE groups SET is_approved = true WHERE name = 'Indians in Testville' RETURNING is_approved::text",
+          as_user=ADMIN, expect="")
+    check("admin approves group (admin_set_group)",
+          "SELECT public.admin_set_group(id, 'approve') ->> 'is_approved' FROM groups WHERE name = 'Indians in Testville'",
           as_user=ADMIN, expect="true")
+    check("... and the member who asked is told",
+          f"SELECT type || '|' || text FROM notifications WHERE user_id = '{ALICE}'",
+          expect='group|Your community "Indians in Testville" has been approved!')
     check("joining forces role=member and bumps count",
           f"INSERT INTO group_members (group_id, user_id, role) SELECT id, '{BOB}', 'admin' FROM groups WHERE name = 'Indians in Testville' RETURNING role; "
           , as_user=BOB, expect="member")
@@ -411,9 +456,9 @@ def main():
     check("members cannot send verification or system notifications",
           f"INSERT INTO notifications (user_id, type, actor_id, text) VALUES ('{BOB}', 'verification', '{ALICE}', 'You are verified')",
           as_user=ALICE, expect="error")
-    check("admin can send system notifications",
+    check("admins can't write notifications either: the database's functions send our team's messages (C23)",
           f"INSERT INTO notifications (user_id, type, text) VALUES ('{ALICE}', 'group', 'Your community was approved') RETURNING 1",
-          as_user=ADMIN, expect="1")
+          as_user=ADMIN, expect="error")
     check("cannot read others' notifications", "SELECT count(*) FROM notifications", as_user=CAROL, expect="0")
     check("recipient marks read but can't rewrite text",
           "UPDATE notifications SET read = true, text = 'changed' WHERE user_id = auth.uid() RETURNING read::text || text",
@@ -429,10 +474,19 @@ def main():
     check("others can't read reports", "SELECT count(*) FROM reports", as_user=ALICE, expect="0")
     check("member cannot resolve/delete reports",
           "DELETE FROM reports RETURNING id", as_user=BOB, expect="")
-    check("admin sees and resolves reports",
-          "UPDATE reports SET status = 'resolved' RETURNING 1", as_user=ADMIN, expect="1\n1")
-    check("admin can delete reported post",
-          "DELETE FROM posts WHERE id = '10000000-0000-0000-0000-000000000001' RETURNING 1", as_user=ADMIN, expect="1")
+    check("admin sees the reports", "SELECT count(*) FROM reports", as_user=ADMIN, expect="2")
+    check("... but can't close them by hand (C23)", "UPDATE reports SET status = 'resolved' RETURNING 1",
+          as_user=ADMIN, expect="")
+    check("... nor delete them", "DELETE FROM reports RETURNING 1", as_user=ADMIN, expect="")
+    check("admin closes them, saying why (admin_close_reports)",
+          "SELECT count(*) FROM public.admin_close_reports(ARRAY(SELECT id FROM reports), 'reviewed', "
+          "'we found no breach of our rules')", as_user=ADMIN, expect="2")
+    psql(f"DELETE FROM notifications WHERE type = 'report' AND user_id = '{BOB}'")  # (not part of the checks below)
+    check("admins can't delete content directly (C23)",
+          "DELETE FROM posts WHERE id = '10000000-0000-0000-0000-000000000001' RETURNING 1", as_user=ADMIN, expect="")
+    check("admin removes a post (admin_moderate), and its author gets the reasons",
+          f"SELECT ({moderate('post', '10000000-0000-0000-0000-000000000001', 'remove')} ->> 'statement') "
+          "LIKE 'We removed your post \"%\" on %'", as_user=ADMIN, expect="t")
 
     # --- events / help / marketplace / docs ---------------------------------
     check("event counters forced, organizer must be self",
@@ -465,8 +519,7 @@ def main():
     check("carol posts before being blocked",
           f"INSERT INTO posts (id, user_id, content) VALUES ('10000000-0000-0000-0000-000000000003', '{CAROL}', 'hello') RETURNING 1",
           as_user=CAROL, expect="1")
-    check("admin blocks carol",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{CAROL}' RETURNING status", as_user=ADMIN, expect="blocked")
+    check("admin blocks carol", block(CAROL), as_user=ADMIN, expect="blocked")
     check("other members can't see who is blocked",
           f"SELECT count(*) FROM profile_private WHERE id = '{CAROL}'", as_user=ALICE, expect="0")
     check("blocked member cannot post",
@@ -1006,9 +1059,7 @@ def main():
     check("... the admin sees the change in the history",
           f"SELECT admin_note FROM verification_log WHERE member_id = '{FRANK}' AND admin_note <> ''", as_user=ADMIN,
           expect="Changed their name or LinkedIn while waiting for review. Before: Frank F, no LinkedIn.")
-    check("admin blocks and unblocks frank",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{FRANK}'; "
-          f"UPDATE profile_private SET status = 'active' WHERE id = '{FRANK}' RETURNING status", as_user=ADMIN, expect="active")
+    check("admin blocks and unblocks frank", f"{block(FRANK)}; {unblock(FRANK)}", as_user=ADMIN, expect="blocked\nactive")
     check("... which leaves no block record",
           f"SELECT count(*) FROM private.moderation_record WHERE member_id = '{FRANK}'", expect="0")
     check("a member restored as blocked gets a moderation record too", f"""
@@ -1021,8 +1072,7 @@ def main():
 
     # --- blocked members can't submit (F30) ---------------------------------
     sign_up(BO, "bo@example.com", {"full_name": "Bo B"}, accept_terms=True)
-    check("admin blocks bo before he submits",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{BO}' RETURNING status", as_user=ADMIN, expect="blocked")
+    check("admin blocks bo before he submits", block(BO), as_user=ADMIN, expect="blocked")
     check("a blocked member can't submit their details",
           "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/bo-b', '', '', NULL)",
           as_user=BO, error_has="has been blocked")
@@ -1207,7 +1257,8 @@ def main():
           expect="account,answer_thanks,blocks,comments,connections,conversations,conversations_hidden,doc_comments,docs,"
                  "event_rsvps,events_organised,exported_at,files,group_memberships,groups_requested,help_requests,"
                  "help_responses,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
-                 "mentoring_sessions,messages,name_changes,notifications,place_recommendations,places_added,posts,profile,"
+                 "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,place_recommendations,"
+                 "places_added,posts,profile,"
                  "profile_private,rate_limit_log,readme,reports_about_me,reports_filed,sessions,terms_acceptances,"
                  "urgent_questions_sent,user_settings,verification_log")
     check("... with the member's profile, private details, consent and rows of each kind",
@@ -1260,6 +1311,7 @@ def main():
     review_fixes_3()
     access_consent()
     notifications_limits_privacy()
+    moderation_dsa()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -1397,9 +1449,7 @@ def review_fixes_2():
           "SELECT string_agg(DISTINCT linkedin_slug || '|' || admin_note, ',') || '|' || count(*) || '|' "
           f"|| count(DISTINCT created_at) FROM private.moderation_record WHERE member_id = '{MALLORY}'",
           expect="mallory-m|fake profile|2|1")
-    check("blocking her also keeps the reviewed link",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{MALLORY}' RETURNING status", as_user=ADMIN,
-          expect="blocked")
+    check("blocking her also keeps the reviewed link", block(MALLORY), as_user=ADMIN, expect="blocked")
     check("... and so does another email change while blocked",
           f"UPDATE auth.users SET email = 'mallory3@example.com' WHERE id = '{MALLORY}'; "
           "SELECT count(*) FILTER (WHERE linkedin_slug = 'mallory-m') || '|' || count(*) "
@@ -1621,8 +1671,7 @@ def review_fixes_3():
     check("admin rejects the unfinished signup",
           f"SELECT public.review_member('{SPAMMER}', 'rejected', 'Spam', 'spam signup', NULL, NULL, 'incomplete')",
           as_user=ADMIN, expect="rejected")
-    check("admin blocks it too", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{SPAMMER}' RETURNING status",
-          as_user=ADMIN, expect="blocked")
+    check("admin blocks it too", block(SPAMMER), as_user=ADMIN, expect="blocked")
     check("the records keep the link and the note, but not the unconfirmed address (Q5)",
           "SELECT string_agg(concat_ws('|', decision, linkedin_slug, admin_note, (email_hash IS NULL)::text), ',' "
           f"ORDER BY decision) FROM private.moderation_record WHERE member_id = '{SPAMMER}'",
@@ -1645,9 +1694,7 @@ def review_fixes_3():
           f"INSERT INTO private.reviewed_link (member_id, linkedin_url) VALUES ('{TROLL}', 'x')",
           as_user=TROLL, expect="error")
     check("... (or read them)", "SELECT count(*) FROM private.reviewed_link", as_user=TROLL, expect="error")
-    check("admin blocks them from the Reports page (which sends only the status)",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{TROLL}' RETURNING status", as_user=ADMIN,
-          expect="blocked")
+    check("admin blocks them from the Reports page", block(TROLL), as_user=ADMIN, expect="blocked")
     check("the record has the link the admin approved, not the one put there since (Q6)",
           f"SELECT decision || '|' || linkedin_slug FROM private.moderation_record WHERE member_id = '{TROLL}'",
           expect="blocked|troll-own")
@@ -1666,9 +1713,7 @@ def review_fixes_3():
     check("a member blocked before any admin looked at their details",
           "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/someone-famous', '', '', NULL)",
           as_user=ROGUE, expect="pending")
-    check("... (from the Reports page)",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{ROGUE}' RETURNING status", as_user=ADMIN,
-          expect="blocked")
+    check("... (from the Reports page)", block(ROGUE), as_user=ADMIN, expect="blocked")
     check("... records the link they had when blocked (the Reports page shows it)",
           f"SELECT decision || '|' || COALESCE(linkedin_slug, 'none') FROM private.moderation_record "
           f"WHERE member_id = '{ROGUE}'", expect="blocked|someone-famous")
@@ -1731,7 +1776,7 @@ def access_consent():
     sign_up(AMBA, "amba@example.com", {"full_name": "Amba A"}, accept_terms=True)
     check("amba sends her details", "SELECT public.submit_verification('Berlin', 'DE', '', 'linkedin.com/in/amba-a', "
           "'', '', NULL)", as_user=AMBA, expect="pending")
-    make_ambassador = f"UPDATE profiles SET ambassador_city = 'Berlin' WHERE id = '{AMBA}' RETURNING ambassador_city"
+    make_ambassador = f"SELECT public.admin_set_ambassador('{AMBA}', 'Berlin')"
     is_ambassador = f"SELECT ambassador_city FROM profiles WHERE id = '{AMBA}'"
     check("a member waiting for review can't be made an ambassador", make_ambassador, as_user=ADMIN,
           error_has="Only active, verified members can be ambassadors.")
@@ -1741,16 +1786,13 @@ def access_consent():
     check("members can't make themselves ambassadors",
           "UPDATE profiles SET ambassador_city = 'Munich' WHERE id = auth.uid() RETURNING ambassador_city",
           as_user=AMBA, expect="Berlin")
-    check("blocking an ambassador ends the role",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{AMBA}'; {is_ambassador}", as_user=ADMIN, expect="")
-    check("... and a blocked member can't be made one",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{AMBA}'; {make_ambassador}", as_user=ADMIN,
+    check("blocking an ambassador ends the role", f"{block(AMBA)}; {is_ambassador}", as_user=ADMIN, expect="blocked")
+    check("... and a blocked member can't be made one", make_ambassador, as_user=ADMIN,
           error_has="Only active, verified members")
-    check("admins can still change a blocked member's profile (e.g. remove a photo)",
-          f"UPDATE profiles SET bio = '' WHERE id = '{AMBA}' RETURNING 1", as_user=ADMIN, expect="1")
-    check("unblocked, she can be made one again",
-          f"UPDATE profile_private SET status = 'active' WHERE id = '{AMBA}'; {make_ambassador}", as_user=ADMIN,
-          expect="Berlin")
+    check("admins can't set it by hand (C23)",
+          f"UPDATE profiles SET ambassador_city = 'Berlin', bio = '' WHERE id = '{AMBA}' RETURNING 1", as_user=ADMIN, expect="")
+    check("unblocked, she can be made one again", f"{unblock(AMBA)}; {make_ambassador}", as_user=ADMIN,
+          expect="active\nBerlin")
     check("moving an ambassador back to review ends the role",
           f"SELECT public.review_member('{AMBA}', 'pending', '', ''); {is_ambassador}", as_user=ADMIN,
           expect="pending")
@@ -1903,9 +1945,9 @@ def notifications_limits_privacy():
           "UPDATE profiles SET name = 'Pia Q' WHERE id = auth.uid()", as_user=pia,
           error_has="You can change your name 3 times in 30 days.")
     check("members can't see or reset the count", "DELETE FROM private.name_changes", as_user=pia, expect="error")
-    check("an admin can still rename her (it isn't counted)",
+    check("an admin can't rename her (admins change members only through the audited functions, C23)",
           f"UPDATE profiles SET name = 'Pia Patel-Rao' WHERE id = '{pia}' RETURNING name", as_user=ADMIN,
-          expect="Pia Patel-Rao")
+          expect="")
     check("... and approve her again (a new name sends a member back to review)",
           f"SELECT public.review_member('{pia}', 'approved', '', '')", as_user=ADMIN, expect="approved")
     check("... and use a team name for an account",
@@ -2233,6 +2275,496 @@ def notifications_limits_privacy():
             (SELECT string_agg(k, ',' ORDER BY k) FROM auth.users u, jsonb_object_keys(u.raw_user_meta_data) k WHERE u.id = '{oldie}'),
             (SELECT content FROM posts WHERE id = '{oldie_post}'));
           ROLLBACK;""", expect="Old One|full_name,sub|Questions? Write to hello@nriclub.app (or hello@nriclub.app).")
+
+
+def moderation_dsa():
+    """Notices from the public report page (C6a), reports of every kind
+    (C6b, C27), what our team does and the record of it (C7), admin writes
+    only through those functions (C23), mentoring (C24), ambassadors (C26),
+    clean-up and "Download my data": migration 20261021000000_moderation_dsa."""
+    ravi, sita, usha, meera, neel, kira, vik, mohan = (
+        f"00000000-0000-0000-0000-0000000006{n}" for n in ("01", "02", "03", "04", "05", "06", "07", "08"))
+    for uid, name in ((ravi, "Ravi R"), (sita, "Sita S"), (usha, "Usha U"), (meera, "Meera M"), (neel, "Neel N"),
+                      (kira, "Kira K"), (vik, "Vik V"), (mohan, "Mohan M")):
+        approved_member(uid, f"{name.split()[0].lower()}@example.com", name)
+    psql(f"INSERT INTO public.admins (user_id) VALUES ('{kira}')")
+    post, comment = "10000000-0000-0000-0000-000000000601", "20000000-0000-0000-0000-000000000601"
+    convo, hello, insult = ("30000000-0000-0000-0000-000000000601", "31000000-0000-0000-0000-000000000601",
+                            "31000000-0000-0000-0000-000000000602")
+    redress = ("Think we got it wrong? Write to hello@nriclub.app within 6 months, and a person on our team will look at "
+               "it again. You can also go to court.")
+
+    # --- notices from the public page (C6a) ----------------------------------
+    def notice(email="reporter@example.org", name="Rita Reporter", category="defamation",
+               explanation="It says I stole money, which is false.", good_faith="true"):
+        return (f"public.submit_notice('https://nriclub.app/post/{post}', '{category}', '{explanation}', '{name}', "
+                f"'{email}', {good_faith})")
+    from_ip = """DO $$BEGIN PERFORM set_config('request.headers', '{"x-forwarded-for": "203.0.113.7, 10.0.0.1"}', false); END$$; """
+    check("anyone can report illegal content on the public page, signed out (C6a)",
+          f"SELECT {notice()} ~ '^R-[0-9A-F]{{8}}$'", role="anon", expect="t")
+    check("... it waits for our team, and both admins are told in the app",
+          "SELECT (SELECT count(*) FROM private.notices WHERE status = 'open') || '|' || "
+          "(SELECT bool_and(text LIKE 'New report of illegal content R-% from the public report page.%') FROM notifications WHERE type = 'alert') || '|' || "
+          "(SELECT count(DISTINCT user_id) FROM notifications WHERE type = 'alert')", expect="1|true|2")
+    check("a notice needs the sender's name and email", f"SELECT {notice(name='', email='')}", role="anon",
+          error_has="Please give your name and email address, so we can tell you what we decided.")
+    check("... except about the sexual abuse of a child (Art. 16(2)(c) DSA)",
+          f"SELECT {notice(name='', email='', category='child_abuse')} LIKE 'R-%'", role="anon", expect="t")
+    check("... a known reason", f"SELECT {notice(category='nonsense')}", role="anon",
+          error_has="Please choose what the problem is.")
+    check("... an explanation", f"SELECT {notice(explanation='bad')}", role="anon",
+          error_has="Please explain in a sentence or two")
+    check("... a real email address", f"SELECT {notice(email='not-an-address')}", role="anon",
+          error_has="Please check your name and email address.")
+    check("... and the good-faith confirmation", f"SELECT {notice(good_faith='false')}", role="anon",
+          error_has="Please confirm that your report is accurate and made in good faith.")
+    check("5 notices a day from one email address",
+          f"SELECT count({notice()}) FROM generate_series(1, 4) g", role="anon", expect="4")
+    check("... the 6th isn't taken (the same address in another form neither)",
+          f"SELECT {notice(email='Reporter+again@Example.org')}", role="anon",
+          error_has="You've sent several reports today.")
+    check("10 a day from one internet address (the first in X-Forwarded-For)",
+          from_ip + f"SELECT count({notice(email='p' + chr(39) + ' || g || ' + chr(39) + '@example.org')}) "
+          "FROM generate_series(1, 10) g",
+          role="anon", expect="10")
+    check("... the 11th isn't", from_ip + f"SELECT {notice(email='someone.else@example.org')}", role="anon",
+          error_has="You've sent several reports today.")
+    cf_ip = """DO $$BEGIN PERFORM set_config('request.headers', '{"cf-connecting-ip": "198.51.100.9", "x-forwarded-for": "203.0.113.7"}', false); END$$; """
+    check("... behind Cloudflare its address counts, not the first in X-Forwarded-For",
+          cf_ip + f"SELECT {notice(email='cf.sender@example.org')} LIKE 'R-%'", role="anon", expect="t")
+    check("the limits keep only a keyed hash, never the address",
+          "SELECT count(*) > 0 AND bool_and(key !~ '203\\.0\\.113|example\\.org') FROM private.notice_log", expect="t")
+    check("nobody reads notices through the API", "SELECT count(*) FROM private.notices", role="anon", expect="error")
+    check("... members neither", "SELECT count(*) FROM private.notices", as_user=usha, expect="error")
+    check("... nor the admin list", "SELECT count(*) FROM public.admin_notices()", as_user=usha, error_has="Admins only")
+    check("admins see them", "SELECT count(*) FROM public.admin_notices() WHERE status = 'open'", as_user=ADMIN,
+          expect="17")
+    first_notice = "(SELECT id FROM public.admin_notices() ORDER BY created_at, reference LIMIT 1)"
+    check("the decision can't be marked as sent before there is one",
+          f"SELECT public.admin_update_notice({first_notice}, 'decision_sent')", as_user=ADMIN,
+          error_has="Decide on the notice first.")
+    check("our team records the receipt, the decision (kept, and why) and that they emailed it",
+          f"SELECT public.admin_update_notice({first_notice}, 'receipt_sent'); "
+          f"SELECT public.admin_update_notice({first_notice}, 'decide', 'kept', 'it is a fair review of a business. '); "
+          f"SELECT public.admin_update_notice({first_notice}, 'decision_sent')", as_user=ADMIN,
+          expect="open\nclosed\nclosed")
+    check("... (on the notice)",
+          "SELECT concat_ws('|', decision, decision_reason, receipt_sent_at IS NOT NULL, decision_sent_at IS NOT NULL, "
+          f"decided_by = '{ADMIN}') FROM private.notices ORDER BY created_at, reference LIMIT 1",
+          expect="kept|it is a fair review of a business|t|t|t")
+    check("removing, warning or blocking is recorded from the content itself",
+          f"SELECT public.admin_update_notice((SELECT id FROM public.admin_notices() WHERE status = 'open' LIMIT 1), 'decide', "
+          "'removed', 'it is defamatory')", as_user=ADMIN, error_has="Remove, warn or block from the content itself")
+    check("members can't touch notices", f"SELECT public.admin_update_notice({first_notice}, 'reopen')", as_user=usha,
+          error_has="Admins only")
+    check("a notice about something already gone (e.g. removed after a member's report of it) is closed as such",
+          "SELECT public.admin_update_notice((SELECT id FROM public.admin_notices() WHERE status = 'open' "
+          "ORDER BY created_at, reference LIMIT 1), 'decide', 'gone', 'we removed it after a member reported it')",
+          as_user=ADMIN, expect="closed")
+    check("... (on the notice)", "SELECT count(*) FROM private.notices WHERE decision = 'gone' "
+          "AND decision_reason = 'we removed it after a member reported it'", expect="1")
+    check("an IPv6 address counts by its /64 (one connection has a whole /64 to choose from): 10 a day",
+          "DO $$BEGIN FOR g IN 1..10 LOOP PERFORM set_config('request.headers', json_build_object('x-forwarded-for', "
+          f"'2001:db8:7:9::' || to_hex(g))::text, false); PERFORM {notice(email='v6-' + chr(39) + ' || g || ' + chr(39) + '@example.org')}; "
+          "END LOOP; END$$; SELECT 1", role="anon", expect="1")
+    check("... the 11th from another address in that network isn't",
+          """DO $$BEGIN PERFORM set_config('request.headers', '{"x-forwarded-for": "2001:db8:7:9:ffff::1"}', false); END$$; """
+          + f"SELECT {notice(email='v6-last@example.org')}", role="anon", error_has="You've sent several reports today.")
+    check("an email address can't carry mailto: fields of its own (cc, body) into our team's reply",
+          f"SELECT {notice(email='eve@example.org?cc=third.party%40example.net&body=hi')}", role="anon",
+          error_has="Please check your name and email address.")
+    check("at most 100 notices a day in all; then the page points to email",
+          "INSERT INTO private.notices (reference, location, category, explanation, good_faith) "
+          "SELECT 'R-CAP' || lpad(g::text, 5, '0'), 'x', 'spam', 'a filler notice', true FROM generate_series(1, 100) g; "
+          f"SET ROLE anon; SELECT {notice(email='late.sender@example.org')}",
+          error_has="We've received a lot of reports today. Please write to hello@nriclub.app instead")
+
+    # --- reports of every kind (C6b) -------------------------------------------
+    check("ravi posts; sita comments on it, rudely", f"""
+          INSERT INTO posts (id, user_id, content) VALUES ('{post}', '{ravi}', 'Diwali party at my place on Saturday');""",
+          as_user=ravi)
+    check("... (the comment)", f"INSERT INTO comments (id, post_id, user_id, content) VALUES ('{comment}', '{post}', "
+          f"'{sita}', 'Nobody wants to come to your party, idiot') RETURNING 1", as_user=sita, expect="1")
+    report = lambda kind, target, category="harassment", explanation="She insults Ravi under every post he writes.", \
+        good_faith="true", user=None: (
+        f"INSERT INTO reports (reporter_id, reported_post_id, reported_user_id, reason, content_type, category, explanation, "
+        f"good_faith) VALUES (auth.uid(), {'NULL' if kind == 'profile' else repr(target)}, "
+        f"{repr(user) if user else (repr(target) if kind == 'profile' else 'NULL')}, '[{kind.upper()}] Reported', '{kind}', "
+        f"'{category}', '{explanation}', {good_faith})")
+    check("usha reports the comment: its kind, her reason and words, and who wrote it (looked up, not taken from her)",
+          report("comment", comment, user=ravi) + " RETURNING content_type || '|' || category || '|' || reported_user_id",
+          as_user=usha, expect=f"comment|harassment|{sita}")
+    check("a reason needs an explanation of 10 characters or more",
+          report("post", post, explanation="bad"), as_user=vik, expect="error")
+    check("... and the good-faith confirmation", report("post", post, good_faith="false"), as_user=vik, expect="error")
+    check("... and must be one of the form's reasons", report("post", post, category="boring"), as_user=vik, expect="error")
+    check("one open report per member and item: the second is dropped",
+          report("comment", comment) + f"; SELECT count(*) FROM reports WHERE reporter_id = auth.uid() "
+          f"AND reported_post_id = '{comment}'", as_user=usha, expect="1")
+    check("a report the way the site sent it before (the kind in the prefix) still works",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES (auth.uid(), '{post}', "
+          "'[POST] Diwali party — Spam') RETURNING content_type || '|' || reported_user_id", as_user=vik,
+          expect=f"post|{ravi}")
+    check("ravi writes to sita", f"""
+          INSERT INTO conversations (id, participant_1, participant_2) VALUES ('{convo}', '{ravi}', '{sita}');
+          INSERT INTO messages (id, conversation_id, sender_id, content) VALUES ('{hello}', '{convo}', '{ravi}', 'hello there');
+          INSERT INTO messages (id, conversation_id, sender_id, content) VALUES ('{insult}', '{convo}', '{ravi}', 'You owe me, pay up or else');
+          SELECT last_message_text FROM conversations WHERE id = '{convo}'""", as_user=ravi,
+          expect="You owe me, pay up or else")
+    check("only the member a message was sent to can report it",
+          report("message", insult, category="harassment"), as_user=vik,
+          error_has="You can only report messages sent to you.")
+    check("... not the sender", report("message", insult), as_user=ravi, error_has="You can only report messages sent to you.")
+    check("... sita can", report("message", insult, explanation="He threatens me over money he says I owe him.")
+          + " RETURNING content_type || '|' || reported_user_id", as_user=sita, expect=f"message|{ravi}")
+    check("a report of a threat to someone's life or safety tells every admin at once (C27)",
+          report("profile", ravi, category="safety", explanation="He wrote that he knows where I live and will come.")
+          + "; SELECT 1", as_user=sita, expect="1")
+    check("... (both admins)", "SELECT count(DISTINCT user_id) FROM notifications WHERE type = 'alert' "
+          "AND text LIKE 'Safety report: a member reported a threat%'", expect="2")
+    check("feedback is kept apart", f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES "
+          f"(auth.uid(), auth.uid(), '[BUG] Feed: the heart is grey') RETURNING content_type", as_user=usha,
+          expect="feedback")
+    pia = "00000000-0000-0000-0000-000000000611"
+    sign_up(pia, "pia@example.com", {"full_name": "Pia P"}, accept_terms=True)
+    check("pia, new, sends her details and waits for review",
+          "SELECT public.submit_verification('Berlin', 'DE', '', 'linkedin.com/in/pia-p-waiting', '', '', NULL)",
+          as_user=pia, expect="pending")
+    check("a member waiting for review can't pass a (safety) report about someone off as feedback: the prefix decides",
+          f"INSERT INTO reports (reporter_id, reported_user_id, reason, content_type, category, explanation, good_faith) "
+          f"VALUES (auth.uid(), '{ravi}', '[BUG] he threatens people', 'profile', 'safety', 'He threatens people here.', "
+          "true) RETURNING content_type || '|' || (category IS NULL)", as_user=pia, expect="feedback|true")
+    check("... and no admin is alerted", "SELECT count(*) FROM notifications WHERE type = 'alert' AND reference_id IN "
+          f"(SELECT id FROM reports WHERE reporter_id = '{pia}')", expect="0")
+    check("... nor can a report pass as feedback",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith) "
+          f"VALUES (auth.uid(), '{post}', '[POST] Diwali party — Spam', 'feedback', 'spam', "
+          "'It advertises his own business here.', true) RETURNING content_type", as_user=neel, expect="post")
+    check("members can't read our team's notes on reports", "SELECT count(*) FROM private.report_note", as_user=usha,
+          expect="error")
+    safety = f"(SELECT id FROM reports WHERE category = 'safety' AND reported_user_id = '{ravi}')"
+    check("admins note what they did about a safety report",
+          f"SELECT public.admin_set_report_note({safety}, 'Told the police (BKA) on 21 Oct, reference 123.'); "
+          f"SELECT note FROM public.admin_report_notes(ARRAY[{safety}])", as_user=ADMIN,
+          expect="Told the police (BKA) on 21 Oct, reference 123.")
+    check("... members can't", f"SELECT public.admin_set_report_note({safety}, 'x')", as_user=sita, error_has="Admins only")
+
+    # --- what our team does, and the record of it (C7) ----------------------------
+    usha_report = f"(SELECT id FROM reports WHERE reporter_id = '{usha}' AND reported_post_id = '{comment}')"
+    check("members can't moderate", f"SELECT {moderate('comment', comment, 'remove')}", as_user=usha,
+          error_has="Admins only")
+    check("... nor can anyone signed out", f"SELECT {moderate('comment', comment, 'remove')}", role="anon", expect="error")
+    check("reasons are needed: the ground, the rule and the facts",
+          f"SELECT {moderate('comment', comment, 'remove', facts='rude')}", as_user=ADMIN,
+          error_has="Say in a sentence (10 to 600 characters) what it said or did.")
+    check("ravi was told about sita's comment", f"SELECT count(*) FROM notifications WHERE user_id = '{ravi}' "
+          "AND type = 'comment'", expect="1")
+    check("admin removes the reported comment, answering usha's report",
+          f"SELECT jsonb_array_length({moderate('comment', comment, 'remove', rule='Insults, hate or discrimination (§ 6)', facts='it calls another member an idiot.', reports=['__R__'])} -> 'closed_reports')"
+          .replace("'__R__'::uuid", usha_report), as_user=ADMIN, expect="1")
+    check("... the comment is gone, the report closed, and the notification that quoted it too",
+          f"SELECT concat_ws('|', (SELECT count(*) FROM comments WHERE id = '{comment}'), "
+          f"(SELECT status FROM reports WHERE id = {usha_report}), "
+          f"(SELECT count(*) FROM notifications WHERE user_id = '{ravi}' AND type = 'comment'))", expect="0|resolved|0")
+    check("... sita gets the statement of reasons (Art. 17 DSA)",
+          f"SELECT text FROM notifications WHERE user_id = '{sita}' AND type = 'moderation'",
+          expect=f'We removed your comment "Nobody wants to come to your party, idiot" on {berlin_date()}. Reason: it '
+                 'breaks our Terms of Use, Insults, hate or discrimination (§ 6), because it calls another member an idiot. '
+                 'This followed a report from someone else. No automated tools were used: a person on our team decided. '
+                 + redress)
+    check("... usha gets the outcome (Art. 16(5) DSA)",
+          f"SELECT text FROM notifications WHERE user_id = '{usha}' AND type = 'report'",
+          expect='We looked at your report about the comment "Nobody wants to come to your party, idiot": we removed it '
+                 'because it calls another member an idiot. ' + redress)
+    check("... and it's on record: who, what, why, a copy of it",
+          "SELECT concat_ws('|', actor_id, action, target_kind, target_user, ground, rule, explanation, source, "
+          "cardinality(report_ids), snapshot -> 'row' ->> 'content') FROM private.moderation_action "
+          f"WHERE target_id = '{comment}'",
+          expect=f"{ADMIN}|remove|comment|{sita}|terms|Insults, hate or discrimination (§ 6)|it calls another member an idiot|"
+                 "report|1|Nobody wants to come to your party, idiot")
+    check("members can't read the record", "SELECT count(*) FROM private.moderation_action", as_user=sita, expect="error")
+    check("removing it again: it's gone", f"SELECT {moderate('comment', comment, 'remove')}", as_user=ADMIN,
+          error_has="Not found: it may already have been deleted.")
+    check("reports someone else handled meanwhile stop a second decision",
+          f"SELECT {moderate('post', post, 'remove', reports=['__R__'])}".replace("'__R__'::uuid", usha_report),
+          as_user=ADMIN, error_has="These reports were already handled by someone else.")
+    sita_report = f"(SELECT id FROM reports WHERE reporter_id = '{sita}' AND reported_post_id = '{insult}')"
+    check("admins see only the reported message, never the conversation",
+          f"SELECT string_agg(content, ',') FROM public.admin_get_reported_message({sita_report})", as_user=ADMIN,
+          expect="You owe me, pay up or else")
+    check("... members can't use that", f"SELECT count(*) FROM public.admin_get_reported_message({sita_report})",
+          as_user=vik, error_has="Admins only")
+    check("a message nobody reported can't be removed",
+          f"SELECT {moderate('message', hello, 'remove')}", as_user=ADMIN,
+          error_has="Only a message someone reported can be removed.")
+    check("the reported one can",
+          f"SELECT public.admin_delete_reported_message({sita_report}, 'terms', 'Threats, harassment or calls for violence "
+          "(§ 6)', 'it pressures the member it was sent to with a threat') ->> 'statement' LIKE 'We removed your message %'",
+          as_user=ADMIN, expect="t")
+    check("... only that one, and the conversation's preview no longer shows it",
+          f"SELECT string_agg(content, ',') || '|' || (SELECT last_message_text FROM conversations WHERE id = '{convo}') "
+          f"FROM messages WHERE conversation_id = '{convo}'", expect="hello there|hello there")
+    check("an admin can't act on their own account", f"SELECT {moderate('member', ADMIN, 'warn')}", as_user=ADMIN,
+          error_has="You can't act on your own account or content.")
+    check("... nor on another admin's (C4)", f"SELECT {moderate('member', kira, 'block', urgent='threat')}",
+          as_user=ADMIN, error_has="This belongs to an admin.")
+
+    # --- warnings and blocks (C7) ----------------------------------------------------
+    check("a block comes after a warning", f"SELECT {moderate('member', sita, 'block')}", as_user=ADMIN,
+          error_has="Warn the member first and give them 14 days to reply")
+    check("admin warns sita",
+          f"SELECT {moderate('member', sita, 'warn', rule='Insults, hate or discrimination (§ 6)', facts='you insulted other members in several comments')} ->> 'statement'",
+          as_user=ADMIN,
+          expect="We're writing about how you use NRIClub. Please read this warning. Reason: it breaks our Terms of Use, "
+                 "Insults, hate or discrimination (§ 6), because you insulted other members in several comments. This "
+                 "followed our own check. No automated tools were used: a person on our team decided. If this happens "
+                 "again we may block your account. Please reply to hello@nriclub.app within 14 days if you want to tell "
+                 "us your side. " + redress)
+    check("... a block before the 14 days are up needs a serious reason",
+          f"SELECT {moderate('member', sita, 'block')}", as_user=ADMIN, error_has="Warn the member first")
+    psql(f"UPDATE private.moderation_action SET created_at = now() - interval '15 days' WHERE target_user = '{sita}' "
+         "AND action = 'warn'")
+    check("after 14 days the block goes ahead",
+          f"DO $$BEGIN PERFORM {moderate('member', sita, 'block', rule='Insults, hate or discrimination (§ 6)', facts='you went on insulting members after our warning')}; END$$; "
+          f"SELECT concat_ws('|', status, block_rule, block_reason, blocked_at IS NOT NULL) FROM profile_private WHERE id = '{sita}'",
+          as_user=ADMIN, expect="blocked|Terms of Use: Insults, hate or discrimination (§ 6)|you went on insulting members "
+                                "after our warning|t")
+    check("... sita sees why, and can't change it",
+          "UPDATE profile_private SET block_reason = '', block_rule = '', blocked_at = NULL WHERE id = auth.uid(); "
+          "SELECT block_rule || '|' || block_reason FROM profile_private", as_user=sita,
+          expect="Terms of Use: Insults, hate or discrimination (§ 6)|you went on insulting members after our warning")
+    check("admin unblocks her; the reason goes",
+          f"{unblock(sita)}; SELECT block_reason || block_rule || (blocked_at IS NULL)::text FROM profile_private "
+          f"WHERE id = '{sita}'", as_user=ADMIN, expect="active\ntrue")
+    check("... and she's told", f"SELECT text FROM notifications WHERE user_id = '{sita}' AND text LIKE 'We unblocked%'",
+          expect=f"We unblocked your account on {berlin_date()}. You can use NRIClub again.")
+    omar = "00000000-0000-0000-0000-000000000612"
+    approved_member(omar, "omar@example.com", "Omar O")
+    check("admin warns omar", f"SELECT {moderate('member', omar, 'warn')} ->> 'statement' LIKE 'We''re writing about%'",
+          as_user=ADMIN, expect="t")
+    psql(f"UPDATE private.moderation_action SET created_at = now() - interval '30 days' WHERE target_user = '{omar}'")
+    check("... and again a month later, about something new",
+          f"SELECT {moderate('member', omar, 'warn', facts='you posted the same advert in every group again')} ->> "
+          "'statement' LIKE 'We''re writing about%'", as_user=ADMIN, expect="t")
+    check("... a block must wait for the 14 days of the latest warning, not just of any earlier one",
+          f"SELECT {moderate('member', omar, 'block')}", as_user=ADMIN, error_has="Warn the member first")
+    long_law, long_facts = "' || repeat('§ 185 StGB ', 27) || '", "' || repeat('it insults ', 53) || 'members"
+    check("a long statement of reasons reaches the member whole, with how to reply and how to challenge it",
+          f"SELECT char_length({moderate('member', omar, 'warn', ground='illegal', rule=long_law, facts=long_facts)} "
+          "->> 'statement') > 1000", as_user=ADMIN, expect="t")
+    check("... (whole)", "SELECT text LIKE '%within 14 days%You can also go to court.' FROM notifications "
+          f"WHERE user_id = '{omar}' AND type = 'moderation' ORDER BY created_at DESC LIMIT 1", expect="t")
+    check("a serious case is blocked straight away, and the statement says why",
+          f"SELECT {moderate('member', vik, 'block', urgent='threat', rule='Threats, harassment or calls for violence (§ 6)', facts='you threatened to hurt a member')} ->> 'statement' "
+          "LIKE '%Because this is a serious case (threats), we blocked your account straight away, without a warning "
+          "first.%You can still sign in to download your data and delete your account.'", as_user=ADMIN, expect="t")
+    check("... (recorded)", f"SELECT urgent FROM private.moderation_action WHERE target_user = '{vik}' AND action = 'block'",
+          expect="threat")
+    psql(f"UPDATE profiles SET avatar_url = '{STORE}/avatars/{ravi}/a.jpg', bio = 'Call me for cheap visas' WHERE id = '{ravi}'")
+    check("admin removes a profile photo (the file's path stays on record; Storage cleans up the file)",
+          f"DO $$BEGIN PERFORM {moderate('profile_photo', ravi, 'remove', rule='Pretending to be someone else (§ 6)', facts='the photo shows another person')}; END$$; "
+          f"SELECT '[' || avatar_url || ']' FROM profiles WHERE id = '{ravi}'", as_user=ADMIN, expect="[]")
+    check("... (the record)", "SELECT snapshot -> 'files' ->> 0 FROM private.moderation_action "
+          f"WHERE target_kind = 'profile_photo' AND target_user = '{ravi}'", expect=f"avatars/{ravi}/a.jpg")
+    check("neel reports ravi's profile", report("profile", ravi, category="spam", explanation="His bio advertises a paid visa service.")
+          + " RETURNING 1", as_user=neel, expect="1")
+    neel_report = f"(SELECT id FROM reports WHERE reporter_id = '{neel}' AND content_type = 'profile')"
+    check("... and a bio", f"SELECT {moderate('profile_bio', ravi, 'remove', facts='it advertises a paid visa service', reports=['__R__'])} "
+          f"->> 'statement' LIKE 'We removed the bio on your profile on %'; SELECT bio FROM profiles WHERE id = '{ravi}'"
+          .replace("'__R__'::uuid", neel_report), as_user=ADMIN, expect="t")
+    check("... neel hears that the bio was removed (not \"the member\")",
+          f"SELECT text FROM notifications WHERE user_id = '{neel}' AND type = 'report'",
+          expect="We looked at your report about the bio of the member Ravi R: we removed it because it advertises a paid "
+                 "visa service. " + redress)
+
+    # --- closing reports without action, and Undo (C7, C36) ----------------------------
+    check("usha reports ravi's post", report("post", post, category="spam", explanation="It advertises his own business.")
+          + " RETURNING 1", as_user=usha, expect="1")
+    usha_post_report = f"(SELECT id FROM reports WHERE reporter_id = '{usha}' AND reported_post_id = '{post}')"
+    check("members can't close reports", f"SELECT count(*) FROM public.admin_close_reports(ARRAY[{usha_post_report}], "
+          "'reviewed', 'it is fine')", as_user=usha, error_has="Admins only")
+    check("closing without action needs a reason",
+          f"SELECT count(*) FROM public.admin_close_reports(ARRAY[{usha_post_report}], 'reviewed', '')", as_user=ADMIN,
+          error_has="Say in a few words why")
+    check("admin keeps the post",
+          f"SELECT count(*) FROM public.admin_close_reports(ARRAY[{usha_post_report}], 'reviewed', "
+          "'it is an invitation, not an advert')", as_user=ADMIN, expect="1")
+    check("... and usha is told why",
+          f"SELECT text FROM notifications WHERE user_id = '{usha}' AND reference_id = {usha_post_report}",
+          expect="We looked at your report about the post \"Diwali party at my place on Saturday\": we kept it because it "
+                 "is an invitation, not an advert. " + redress)
+    check("Undo opens it again",
+          f"SELECT count(*) FROM public.admin_reopen_reports(ARRAY[{usha_post_report}], 'reviewed'); "
+          f"SELECT status FROM reports WHERE id = {usha_post_report}", as_user=ADMIN, expect="1\npending")
+    check("... and takes the message back",
+          f"SELECT count(*) FROM notifications WHERE user_id = '{usha}' AND reference_id = {usha_post_report}", expect="0")
+    check("admins still mark feedback done by hand",
+          "UPDATE reports SET status = 'resolved' WHERE content_type = 'feedback' AND reason = '[BUG] Feed: the heart is grey' "
+          "RETURNING 1",
+          as_user=ADMIN, expect="1")
+
+    # --- what the admin panel shows with a member; "Download my data" (C7, C21) ---------
+    check("the admin panel shows what our team did about a member, newest first",
+          f"SELECT string_agg(e ->> 'action', ',' ORDER BY o) FROM jsonb_array_elements("
+          f"public.admin_member_overview('{sita}') -> 'history') WITH ORDINALITY x(e, o)", as_user=ADMIN,
+          expect="unblock,block,remove,warn")
+    check("... members can't see it", f"SELECT public.admin_member_overview('{sita}')", as_user=sita,
+          error_has="Admins only")
+    check("... with the open reports about her profile counted apart from those about what she posted",
+          f"SELECT (o ->> 'open_profile_reports')::int <= (o ->> 'open_reports')::int "
+          f"FROM public.admin_member_overview('{sita}') o", as_user=ADMIN, expect="t")
+    check("sita's download has what our team did about her, with the statements, but not who on our team",
+          "SELECT string_agg(e ->> 'action', ',' ORDER BY e ->> 'created_at') || '|' || bool_and(NOT (e ? 'actor_id') "
+          "AND NOT (e ? 'by')) || '|' || count(e -> 'statement_sent_to_you') FROM "
+          "jsonb_array_elements(public.export_my_data() -> 'moderation_actions_about_me') e", as_user=sita,
+          expect="warn,remove,block,unblock|true|4")
+    check("meera reports ravi the way the site sent reports before the update (her own words in the reason line)",
+          f"INSERT INTO reports (reporter_id, reported_user_id, reason) VALUES (auth.uid(), '{ravi}', "
+          "'[USER] Ravi R — Against our rules: Harassment or bullying: I am Meera from flat 3, he shouts at me') "
+          "RETURNING content_type", as_user=meera, expect="profile")
+    check("ravi's download has the reasons, but not the words of the members who reported him",
+          "SELECT bool_and(e ->> 'reason' NOT LIKE '%flat 3%' AND NOT (e ? 'explanation')) || '|' || "
+          "bool_or(e ->> 'reason' = '[USER] Ravi R — Against our rules: Harassment or bullying') FROM "
+          "jsonb_array_elements(public.export_my_data() -> 'reports_about_me') e", as_user=ravi, expect="true|true")
+    check("ravi's download lists the reports about him, without who sent them (none about his message: only sita "
+          "could have sent that one)",
+          "SELECT bool_and(NOT (e ? 'reporter_id')) || '|' || string_agg(DISTINCT e ->> 'about', ',' ORDER BY e ->> 'about') FROM "
+          "jsonb_array_elements(public.export_my_data() -> 'reports_about_me') e", as_user=ravi,
+          expect="true|post,profile")
+    check("sita reports ravi's other message too", report("message", hello, category="spam",
+          explanation="He sends me the same greeting again and again.") + " RETURNING 1", as_user=sita, expect="1")
+    check("... our team keeps it", "SELECT count(*) FROM public.admin_close_reports(ARRAY(SELECT id FROM reports "
+          f"WHERE reported_post_id = '{hello}'), 'reviewed', 'a greeting is not spam')", as_user=ADMIN, expect="1")
+    check("... ravi's download doesn't show that a message of his was reported or kept (it would say who reported it, "
+          "Art. 15(4) GDPR); the message we removed is there, as he was told then",
+          "SELECT (SELECT count(*) FROM jsonb_array_elements(d -> 'reports_about_me') e WHERE e ->> 'about' = 'message') "
+          "|| '|' || (SELECT string_agg(e ->> 'action', ',') FROM jsonb_array_elements(d -> 'moderation_actions_about_me') e "
+          "WHERE e ->> 'about' = 'message') || '|' || (d -> 'readme' ->> 'left_out' LIKE '%reports about messages you sent%') "
+          "FROM public.export_my_data() d", as_user=ravi, expect="0|remove|true")
+
+    # --- a report stays when its sender deletes their account (C6b) ---------------------
+    check("usha deletes her account", "SELECT public.delete_my_account()", as_user=usha)
+    check("... her reports stay, no longer linked to her; her feedback goes",
+          "SELECT string_agg(content_type || ':' || (reporter_id IS NULL)::text, ',' ORDER BY content_type) FROM reports "
+          "WHERE explanation IN ('She insults Ravi under every post he writes.', 'It advertises his own business.') "
+          "OR reason = '[BUG] Feed: the heart is grey'", expect="comment:true,post:true")
+
+    # --- admins act only through the functions (C23) -----------------------------------
+    check("an admin's own writes don't set server columns either",
+          "INSERT INTO groups (name, created_by, is_approved) VALUES ('Indians in Adminville', auth.uid(), true) "
+          "RETURNING is_approved::text", as_user=ADMIN, expect="false")
+    check("communities: approve, Undo while nobody has joined, and the creator hears about each",
+          "SELECT public.admin_set_group(id, 'approve') ->> 'is_approved' FROM groups WHERE name = 'Indians in Adminville'; "
+          "SELECT public.admin_set_group(id, 'unapprove') ->> 'is_approved' FROM groups WHERE name = 'Indians in Adminville'; "
+          "SELECT public.admin_set_group(id, 'approve') ->> 'is_approved' FROM groups WHERE name = 'Indians in Adminville'",
+          as_user=ADMIN, expect="true\nfalse\ntrue")
+    check("... once a member has joined, the approval stays",
+          "INSERT INTO group_members (group_id, user_id) SELECT id, auth.uid() FROM groups WHERE name = 'Indians in Adminville' "
+          "RETURNING 1", as_user=ravi, expect="1")
+    check("... (Undo refused)", "SELECT public.admin_set_group(id, 'unapprove') FROM groups WHERE name = 'Indians in Adminville'",
+          as_user=ADMIN, error_has="Members have already joined or posted")
+    check("deleting a community needs a reason",
+          "SELECT public.admin_set_group(id, 'delete') FROM groups WHERE name = 'Indians in Adminville'", as_user=ADMIN,
+          error_has="Say in a few words why the community is deleted.")
+    check("... and is recorded",
+          "SELECT public.admin_set_group(id, 'delete', 'it duplicates Indians in Berlin') IS NULL FROM groups "
+          "WHERE name = 'Indians in Adminville'", as_user=ADMIN, expect="t")
+    check("... (the record)", "SELECT string_agg(action, ',' ORDER BY created_at) FROM private.moderation_action "
+          "WHERE target_kind = 'group' AND snapshot -> 'row' ->> 'name' = 'Indians in Adminville'",
+          expect="group_approve,group_unapprove,group_approve,group_delete")
+    check("members can't use the community or ambassador functions",
+          f"SELECT public.admin_set_ambassador('{ravi}', 'Berlin')", as_user=ravi, error_has="Admins only")
+
+    # --- ambassadors only active and verified (C26) ------------------------------------
+    check("ravi becomes Berlin's ambassador (recorded)",
+          f"SELECT public.admin_set_ambassador('{ravi}', 'Berlin')", as_user=ADMIN, expect="Berlin")
+    check("... (the record)", "SELECT explanation FROM private.moderation_action "
+          f"WHERE action = 'ambassador' AND target_user = '{ravi}'", expect="Ambassador for Berlin")
+    check("members see the city's active, verified ambassadors",
+          "SELECT string_agg(name, ',') FROM public.city_ambassadors('berlin')", as_user=neel, expect="Ravi R")
+    check("... members who can't take part see none", "SELECT count(*) FROM public.city_ambassadors('Berlin')",
+          as_user=vik, expect="0")
+    check("... nor anyone signed out", "SELECT count(*) FROM public.city_ambassadors('Berlin')", role="anon",
+          expect="error")
+
+    # --- mentoring (C24) -----------------------------------------------------------------
+    for mentor in (meera, mohan):
+        psql(f"""UPDATE profiles SET mentor_open = true WHERE id = '{mentor}';
+          WITH s AS (INSERT INTO mentor_slots (mentor_id, starts_at, duration_min, booked)
+                     VALUES ('{mentor}', now() + interval '2 days', 30, true) RETURNING id, starts_at)
+          INSERT INTO mentor_bookings (slot_id, mentor_id, mentee_id, starts_at, duration_min, topic)
+          SELECT id, '{mentor}', '{neel}', starts_at, 30, 'CV review' FROM s;
+          INSERT INTO mentor_slots (mentor_id, starts_at) VALUES ('{mentor}', now() + interval '3 days')""")
+    check("the admin panel counts a mentor's upcoming sessions and open times",
+          f"SELECT (o ->> 'upcoming_sessions') || '|' || (o ->> 'free_slots') FROM public.admin_member_overview('{meera}') o",
+          as_user=ADMIN, expect="1|1")
+    check("rejecting a mentor cancels their booked sessions, and the member is told",
+          f"SELECT public.review_member('{meera}', 'rejected', 'We couldn''t verify you.', '')", as_user=ADMIN,
+          expect="rejected")
+    check("... (cancelled, told)", f"SELECT status FROM mentor_bookings WHERE mentor_id = '{meera}'; "
+          f"SELECT count(*) FROM notifications WHERE user_id = '{neel}' AND type = 'booking_cancelled'",
+          expect="cancelled\n1")
+    check("moving a mentor back to review keeps their booked sessions (their open times go)",
+          f"SELECT public.review_member('{mohan}', 'pending', '', '')", as_user=ADMIN, expect="pending")
+    check("... (kept)", f"SELECT string_agg(status, ',') FROM mentor_bookings WHERE mentor_id = '{mohan}'; "
+          f"SELECT count(*) FROM mentor_slots WHERE mentor_id = '{mohan}' AND NOT booked", expect="booked\n0")
+
+    # --- clean-up (C20) ---------------------------------------------------------------------
+    check("the clean-up deletes closed notices after 12 months unless held, the copies in the record after 6 "
+          "months and the record after 24 unless a report it answers is held, and the notice limits after a day", f"""
+          BEGIN;
+          INSERT INTO private.notices (reference, location, category, explanation, good_faith, status, created_at, hold_reason) VALUES
+            ('R-OLD00001', 'x', 'spam', 'closed 13 months', true, 'closed', now() - interval '13 months', ''),
+            ('R-OLD00002', 'x', 'spam', 'closed 13 months, held', true, 'closed', now() - interval '13 months', 'police'),
+            ('R-OLD00003', 'x', 'spam', 'open 13 months', true, 'open', now() - interval '13 months', ''),
+            ('R-NEW00004', 'x', 'spam', 'closed 11 months', true, 'closed', now() - interval '11 months', '');
+          INSERT INTO reports (id, reporter_id, reported_post_id, reason, status) VALUES
+            ('99000000-0000-0000-0000-000000000601', NULL, '{post}', '[POST] held', 'resolved');
+          INSERT INTO private.report_hold (report_id, reason) VALUES ('99000000-0000-0000-0000-000000000601', 'police');
+          INSERT INTO private.moderation_action (action, target_kind, source, snapshot, created_at, explanation, report_ids) VALUES
+            ('remove', 'post', 'report', '{{"row": {{}}}}', now() - interval '7 months', 'a7', '{{}}'),
+            ('remove', 'post', 'report', '{{"row": {{}}}}', now() - interval '7 months', 'a7 held', '{{99000000-0000-0000-0000-000000000601}}'),
+            ('remove', 'post', 'report', '{{"row": {{}}}}', now() - interval '5 months', 'a5', '{{}}'),
+            ('remove', 'post', 'report', NULL, now() - interval '25 months', 'a25', '{{}}'),
+            ('remove', 'post', 'report', NULL, now() - interval '25 months', 'a25 held', '{{99000000-0000-0000-0000-000000000601}}');
+          INSERT INTO private.notice_log (key, at) VALUES ('k-old', now() - interval '25 hours'), ('k-new', now() - interval '1 hour');
+          SELECT concat_ws(',', c ->> 'closed_notices', c ->> 'moderation_copies_cleared', c ->> 'moderation_actions')
+            FROM (SELECT private.daily_cleanup() AS c) x;
+          SELECT string_agg(reference, ',' ORDER BY reference) FROM private.notices WHERE reference ~ '^R-(OLD|NEW)0';
+          SELECT string_agg(explanation || ':' || (snapshot IS NOT NULL)::text, ',' ORDER BY explanation COLLATE "C")
+            FROM private.moderation_action WHERE explanation ~ '^a[0-9]';
+          SELECT string_agg(key, ',') FROM private.notice_log WHERE key LIKE 'k-%';
+          ROLLBACK;""",
+          expect="1,1,1\nR-NEW00004,R-OLD00002,R-OLD00003\na25 held:false,a5:true,a7:false,a7 held:true\nk-new")
+
+    # --- the migration's changes to existing rows --------------------------------------------
+    r1, r2, r3, r4 = (f"99000000-0000-0000-0000-00000000070{n}" for n in range(1, 5))
+    check("existing rows: reports get their kind from the prefix, and a member's second open report about the same "
+          "item is closed as a duplicate", f"""
+          BEGIN;
+          DROP INDEX public.reports_one_open_per_member;
+          ALTER TABLE public.reports DISABLE TRIGGER fill_report_details;
+          INSERT INTO reports (id, reporter_id, reported_post_id, reported_user_id, reason, status, created_at) VALUES
+            ('{r1}', '{ravi}', '{post}', NULL, '[DOC] Visa guide — Spam', 'pending', now() - interval '3 hours'),
+            ('{r2}', '{ravi}', '{post}', NULL, '[DOC] Visa guide — Spam again', 'pending', now() - interval '2 hours'),
+            ('{r3}', '{ravi}', NULL, '{neel}', '[USER] Neel — Harassment', 'pending', now() - interval '1 hour'),
+            ('{r4}', '{ravi}', '{ravi}', NULL, '[BUG] Feed: broken', 'pending', now());
+          ALTER TABLE public.reports ENABLE TRIGGER fill_report_details;
+          {migration_section("EXISTING DATA", MODERATION)}
+          SELECT string_agg(content_type || ':' || status, ',' ORDER BY created_at) FROM reports
+            WHERE id IN ('{r1}', '{r2}', '{r3}', '{r4}');
+          SELECT note FROM private.report_note WHERE report_id = '{r2}';
+          ROLLBACK;""",
+          expect="doc:pending,doc:reviewed,profile:pending,feedback:pending\n"
+                 "Closed as a duplicate: the same member had already reported this, and that report is still open.")
+
+
+def berlin_date():
+    """Today in Germany, as the database writes dates in its messages."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    d = datetime.now(ZoneInfo("Europe/Berlin"))
+    return f"{d.day} {d.strftime('%B')} {d.year}"
 
 
 if __name__ == "__main__":

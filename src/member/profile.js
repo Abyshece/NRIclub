@@ -62,6 +62,12 @@ export function mapProfile(p) {
     // screens say no more than that either.
     reviewFlag: p.review_flag || "",
     status: p.status || "active",
+    // Why our team blocked the member (the facts and the rule or law), as
+    // the statement of reasons said, and when. Empty before the 2026-10-21
+    // database update and for blocks from before it.
+    blockReason: p.block_reason || "",
+    blockRule: p.block_rule || "",
+    blockedAt: p.blocked_at || null,
     createdAt: p.created_at || null,
     isNRI: countryCode ? countryCode !== "IN" : yearsAbroad !== "Not lived abroad",
   };
