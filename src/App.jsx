@@ -3,8 +3,7 @@ import * as api from "./supabaseApi";
 import LandingPage from "./LandingPage";
 import FlagIcon from "./FlagIcon";
 import "./member/base.css";
-import { TERMS_VERSION } from "./member/LegalModals";
-import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
+import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToAccept } from "./member/profile";
 import { rateLimiter } from "./rateLimiter";
 import { hasImprint } from "./content/imprint";
 
@@ -195,6 +194,9 @@ const startsSignedOut = () => {
 export default function App() {
   const [authState, setAuthState] = useState(() => (startsSignedOut() ? "landing" : "loading"));
   const [user, setUser] = useState(null);
+  // The version of the Terms members must have accepted, as the database
+  // says (api.getCurrentTermsVersion); null until known.
+  const [termsVersion, setTermsVersion] = useState(null);
   const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead" or a reset this browser asked for
   const [loginNotice, setLoginNotice] = useState(""); // e.g. after a new password
   const [isAdmin, setIsAdmin] = useState(false);
@@ -299,8 +301,11 @@ export default function App() {
     try { session = await api.getSession(); } catch (e) {}
     if (session?.user) {
       try {
-        const dbProfile = await api.getMyProfile();
+        // With the current Terms version, so a tab opened before the Terms
+        // changed asks for them again once reloaded.
+        const [dbProfile, version] = await Promise.all([api.getMyProfile(), api.getCurrentTermsVersion()]);
         if (dbProfile) {
+          setTermsVersion(version);
           setUser(mapProfile(dbProfile));
           setAuthState("authenticated");
           return;
@@ -341,6 +346,30 @@ export default function App() {
     }
     restoreSession();
   }, []);
+
+  // Signed in on the login or signup page: the current Terms version is
+  // asked for here (restoreSession asks along with the profile). If it can't
+  // be, the member gets the retry screen, as for a profile that can't be read.
+  useEffect(() => {
+    if (authState !== "authenticated" || termsVersion) return;
+    let active = true;
+    api.getCurrentTermsVersion()
+      .then((version) => { if (active) setTermsVersion(version); })
+      .catch(() => { if (active) setAuthState("profile-error"); });
+    return () => { active = false; };
+  }, [authState, termsVersion]);
+  // Coming back to the tab, ask again: when the Terms change (e.g. with the
+  // database update that follows a new version of the site), a member with
+  // NRIClub open gets the Terms screen without having to reload.
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      api.getCurrentTermsVersion({ refresh: true }).then(setTermsVersion).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [authState]);
 
   // After a new password: log in with it. The email is filled in only if this
   // browser asked for the reset link: someone else may have made the link,
@@ -462,15 +491,20 @@ export default function App() {
       // In this order: blocked members only see the blocked card (whatever
       // their verification status); members who haven't given their
       // verification details do that first; then anyone who hasn't confirmed
-      // they're 18+ and accepted the current Terms (TERMS_VERSION: the
-      // database doesn't count them as active members until they have).
-      // Rejected members see the rejected card in the dashboard (a Terms
-      // screen would be pointless). The dashboard loads nothing behind a
-      // blocked or rejected card.
+      // they're 18+, accepted the current Terms (the version the database
+      // gives) and given the Art. 9 consent (the database doesn't let them
+      // take part until they have). Rejected members see the rejected card
+      // in the dashboard (a Terms screen would be pointless). The dashboard
+      // loads nothing behind a blocked or rejected card, and members waiting
+      // for review see only what they can use until an admin approves them.
       if (user.status === "blocked") return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
-      if (user.verificationStatus === "incomplete") return <GetVerified user={user} onDone={setUser} onSignOut={handleLogout} />;
-      if (user.verificationStatus !== "rejected" && (!user.ageConfirmedAt || !user.termsAcceptedAt || user.termsVersion !== TERMS_VERSION)) {
-        return <TermsGate user={user} onDone={setUser} onSignOut={handleLogout} />;
+      if (!termsVersion) return <LoadingScreen />;
+      if (user.verificationStatus === "incomplete") return <GetVerified user={user} termsVersion={termsVersion} onDone={setUser} onSignOut={handleLogout} />;
+      const toAccept = stillToAccept(user, termsVersion);
+      if (user.verificationStatus !== "rejected" && (toAccept.terms || toAccept.art9)) {
+        // A fresh screen whenever what's asked for changes (e.g. the consent
+        // after the Terms, when the database was updated in between).
+        return <TermsGate key={`${termsVersion}:${toAccept.terms}:${toAccept.art9}`} user={user} termsVersion={termsVersion} onDone={setUser} onSignOut={handleLogout} />;
       }
       return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
     }

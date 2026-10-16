@@ -42,17 +42,22 @@ export function mapProfile(p) {
     verificationNote: p.verification_note || "",
     voucher: p.voucher || "",
     // "18 or older" and Terms acceptance, and which version of the Terms was
-    // accepted. Accounts without them, or with another version than
-    // TERMS_VERSION (LegalModals), confirm them in Get verified or on the
-    // Terms screen (TermsGate) before the dashboard.
+    // accepted. Accounts without them, or with another version than the
+    // database's current one (api.getCurrentTermsVersion), confirm them in
+    // Get verified or on the Terms screen (TermsGate) before the dashboard.
     ageConfirmedAt: p.age_confirmed_at || null,
     termsAcceptedAt: p.terms_accepted_at || null,
     termsVersion: p.terms_version || "",
+    // When the member gave the separate consent to processing what can show
+    // their origin, religion or health (Art. 9 GDPR). Until the 2026-10-19
+    // database update there's no such field (hasArt9Consent false), and
+    // nobody is asked for it yet.
+    art9ConsentAt: p.art9_consent_at || null,
+    hasArt9Consent: Object.prototype.hasOwnProperty.call(p, "art9_consent_at"),
     // "held" (set by the server) while an admin checks the member before
     // they can take part; "" otherwise. It says nothing about why, and the
     // screens say no more than that either.
     reviewFlag: p.review_flag || "",
-    marketingConsent: !!p.marketing_consent,
     status: p.status || "active",
     createdAt: p.created_at || null,
     isNRI: countryCode ? countryCode !== "IN" : yearsAbroad !== "Not lived abroad",
@@ -60,6 +65,24 @@ export function mapProfile(p) {
 }
 
 export const firstName = (name) => (name || "").trim().split(/\s+/)[0] || "there";
+
+// What the member still has to accept before they can take part:
+// { terms: "18 or older" and the current version of the Terms
+// (currentVersion, from api.getCurrentTermsVersion; unknown counts as
+// accepted, the database checks anyway), art9: the Art. 9 consent, once the
+// database records it }.
+export function stillToAccept(user, currentVersion) {
+  return {
+    terms: !user.ageConfirmedAt || !user.termsAcceptedAt || (!!currentVersion && user.termsVersion !== currentVersion),
+    art9: !!user.hasArt9Consent && !user.art9ConsentAt,
+  };
+}
+
+// Members waiting for review (pending, or asked for more information): until
+// an admin approves them they see only their own profile, the groups and the
+// guides (the database shows them nothing else).
+export const isWaitingForReview = (user) =>
+  user?.status !== "blocked" && (user?.verificationStatus === "pending" || user?.verificationStatus === "needs_info");
 
 // ---------------------------------------------------------------------------
 // Countries

@@ -673,10 +673,11 @@ export async function getProfile(userId) {
   return data?.[0] || null;
 }
 
-// Email, consent and verification status live in profile_private, which
-// only the owner and admins can read; the app still sees them as fields of
-// the user's own profile.
-const PRIVATE_PROFILE_FIELDS = ["email", "gdpr_consent", "gdpr_consent_date", "marketing_consent"];
+// Email, verification status, the Terms record and the Art. 9 consent live
+// in profile_private, which only the owner and admins can read; the app
+// still sees them as fields of the user's own profile. Of those, the member
+// can't change anything there directly (the database keeps them).
+const PRIVATE_PROFILE_FIELDS = ["email"];
 
 // Throws if the private row can't be read: without it the member would look
 // like a new, unverified, unblocked account. Callers keep what they have.
@@ -714,7 +715,6 @@ export async function updateProfile(updates) {
   }
   // email is managed by Supabase Auth and email_verified mirrors it; neither is client-writable.
   delete privateUpdates.email;
-  delete privateUpdates.gdpr_consent_date;
   delete publicUpdates.email_verified;
   if (Object.keys(privateUpdates).length) {
     await restCall("PATCH", `/rest/v1/profile_private?id=eq.${currentUser.id}`, privateUpdates);
@@ -739,11 +739,59 @@ export async function submitVerification({ city, countryCode, location, linkedin
   });
 }
 
-// Records "18 or older" and the Terms (with consent to the Privacy Policy):
-// at signup once the email code is confirmed, and for members who haven't
-// confirmed them (older accounts). version must be the current one
-// (TERMS_VERSION); returns it.
-export async function acceptTerms(version) {
+// Whether a request failed because the database doesn't have the function or
+// column it asked for yet (the site goes live a little before the database
+// update that adds them): PostgREST's "not found" codes, or Postgres's.
+export function isMissingInDatabase(err) {
+  try {
+    const body = JSON.parse(err?.message || "");
+    return ["PGRST202", "PGRST204", "42883", "42703"].includes(body?.code);
+  } catch {
+    return false;
+  }
+}
+
+// The version of the Terms of Use members must have accepted, as the
+// database says (public.current_terms_version). Remembered once known;
+// refresh asks again if the last answer is more than a minute old. Until the
+// 2026-10-19 database update that function doesn't exist and the version is
+// "2026-10", so members are asked to accept the new Terms only once the
+// database expects them to. Any other failure (e.g. no connection) throws,
+// and the next call asks again.
+const TERMS_VERSION_BEFORE_UPDATE = "2026-10";
+let termsVersionRequest = null;
+let termsVersionAskedAt = 0;
+export function getCurrentTermsVersion({ refresh = false } = {}) {
+  if (refresh && Date.now() - termsVersionAskedAt > 60000) termsVersionRequest = null;
+  if (!termsVersionRequest) {
+    termsVersionAskedAt = Date.now();
+    termsVersionRequest = restCall("POST", "/rest/v1/rpc/current_terms_version", {})
+      .then((version) => (typeof version === "string" && version ? version : TERMS_VERSION_BEFORE_UPDATE))
+      .catch((err) => {
+        if (isMissingInDatabase(err)) return TERMS_VERSION_BEFORE_UPDATE;
+        termsVersionRequest = null;
+        throw err;
+      });
+  }
+  return termsVersionRequest;
+}
+
+// Records "18 or older" and the Terms: at signup once the email code is
+// confirmed, and for members who haven't accepted the current version.
+// version must be the current one (getCurrentTermsVersion); returns it.
+// art9: the member also ticked the separate consent to processing what can
+// show their origin, religion or health; the database records it with its
+// time and wording's version. Before the 2026-10-19 database update there's
+// nowhere to record it, and only the Terms are recorded (the member is asked
+// for the consent once the update is in).
+export async function acceptTerms(version, art9 = false) {
+  if (art9) {
+    try {
+      return await restCall("POST", "/rest/v1/rpc/accept_terms", { p_version: version, p_art9: true });
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+    }
+  }
   return restCall("POST", "/rest/v1/rpc/accept_terms", { p_version: version });
 }
 
@@ -963,13 +1011,15 @@ export async function pinGroupPost(groupId, postId) {
   return restCall("POST", "/rest/v1/rpc/pin_group_post", { p_group: groupId, p_post: postId });
 }
 
-// The ambassadors of a city (name and photo).
+// The ambassadors of a city (name and photo): verified members only. (The
+// database also ends the role when an ambassador is blocked, rejected or
+// back in review.)
 export async function getCityAmbassadors(city) {
   // ilike without wildcards: "%" and "*" become "_" (one character), so
   // only this city matches, brackets and commas included.
   const q = String(city || "").trim().replace(/[%_*\\]/g, "_");
   if (!q) return [];
-  return (await restCall("GET", `/rest/v1/profiles?ambassador_city=ilike.${encodeURIComponent(q)}&select=id,name,avatar_url&limit=5`)) || [];
+  return (await restCall("GET", `/rest/v1/profiles?ambassador_city=ilike.${encodeURIComponent(q)}&linkedin_verified=is.true&select=id,name,avatar_url&limit=5`)) || [];
 }
 
 // ============================================================================

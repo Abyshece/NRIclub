@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import CodeEntry from "./CodeEntry";
-import { TermsModal, PrivacyModal, TERMS_VERSION } from "./LegalModals";
-import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, GlobeTile, ArrowRight, helperStyle, fieldErrorStyle } from "./ui";
+import { TermsModal, PrivacyModal } from "./LegalModals";
+import { TermsCheckbox, Art9Checkbox, PrivacyNote, TERMS_ERROR, ART9_ERROR } from "./Consent";
+import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, GlobeTile, ArrowRight, helperStyle } from "./ui";
 import { mapProfile, authErrorMessage, isExistingAccountResponse, isExistingAccountError } from "./profile";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -17,7 +18,6 @@ const RESUMED_CLEAR = ["location", "country_code", "hometown", "profession", "oc
 // The answers from the signup form, as the profile stores them.
 const answersFrom = (form) => ({
   name: form.name,
-  marketing_consent: form.marketing,
 });
 
 // Runs step, and once more after a short pause if it fails (the first
@@ -32,26 +32,31 @@ const tryTwice = async (step) => {
   }
 };
 
-// Signup: name, email, password -> 6-digit email code.
+// Signup: name, email, password, "18 or older and the Terms" and the
+// separate Art. 9 consent -> 6-digit email code.
 // Calls onComplete(user) once the code is verified, the account is set up
 // and the member is signed in; the app then asks for verification details
 // (Get verified), including the country. onBack goes back to the landing page.
+// An address that already has an account gets the same next step (a code,
+// which logs its owner in), so this page never says whether someone is a
+// member: being one can say something about a person's origin.
 export default function SignUpFlow({ onComplete, onLogin, onBack }) {
   const [step, setStep] = useState("account"); // account | code | stopped
   const [stopMessage, setStopMessage] = useState(""); // why signup stopped (step "stopped")
-  const [form, setForm] = useState({ name: "", email: "", password: "", agree: false, marketing: false });
+  const [form, setForm] = useState({ name: "", email: "", password: "", agree: false, art9: false });
   const [errors, setErrors] = useState({});
-  const [submitError, setSubmitError] = useState(null); // { text, existing }
+  const [submitError, setSubmitError] = useState(null); // { text }
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [modal, setModal] = useState(null); // "terms" | "privacy"
   // The account created during this visit ({ email, password, resumed,
   // answers }: the password and answers it was created with), so going back
-  // to fix something doesn't create a second account for the same address.
+  // to fix something doesn't create a second account for the same address;
+  // or { email, existing: true } for an address that already had one.
   const [account, setAccount] = useState(null);
   const [resendAt, setResendAt] = useState(0);
 
-  const fieldRefs = { name: useRef(null), email: useRef(null), password: useRef(null), agree: useRef(null) };
+  const fieldRefs = { name: useRef(null), email: useRef(null), password: useRef(null), agree: useRef(null), art9: useRef(null) };
   const submitErrorRef = useRef(null);
   const focusOnAccountStep = useRef("name");
   const stopTitleRef = useRef(null);
@@ -84,7 +89,8 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
     else if (!EMAIL_RE.test(v.email)) e.email = "That email address doesn't look right. Check it for typos.";
     if (!v.password) e.password = "Please choose a password.";
     else if (v.password.length < 8) e.password = "Use at least 8 characters.";
-    if (!v.agree) e.agree = "Please confirm you're 18 or older and accept the Terms of Use.";
+    if (!v.agree) e.agree = TERMS_ERROR;
+    if (!v.art9) e.art9 = ART9_ERROR;
     return e;
   };
 
@@ -98,7 +104,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
     setSubmitError(null);
     const found = validate(v);
     setErrors(found);
-    const first = ["name", "email", "password", "agree"].find((k) => found[k]);
+    const first = ["name", "email", "password", "agree", "art9"].find((k) => found[k]);
     if (first) {
       fieldRefs[first].current?.focus();
       return;
@@ -117,26 +123,36 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
     setSubmitting(true);
     try {
       // Only the name: the signup step ignores anything else, as anyone can
-      // sign up any address through the API. The marketing choice and the
-      // 18+/Terms tick are recorded once the code is confirmed (verifyCode).
+      // sign up any address through the API. The 18+/Terms tick and the
+      // Art. 9 consent are recorded once the code is confirmed (verifyCode).
       const metadata = { full_name: v.name };
-      const result = await api.signUp(v.email, v.password, metadata);
-      if (isExistingAccountResponse(result)) throw new Error("already exists");
-      // An unfinished signup from an earlier visit comes back with its old
-      // creation time (Supabase only re-sends the code).
-      const u = result?.user ?? result;
-      const lastSent = Math.max(Date.parse(u?.confirmation_sent_at) || 0, Date.parse(u?.updated_at) || 0);
-      const resumed = !!u?.created_at && lastSent - Date.parse(u.created_at) > 30000;
-      // A new account starts with marketing off.
-      setAccount({ email: v.email, password: v.password, resumed, answers: { ...answersFrom(v), marketing_consent: false } });
+      let result = null;
+      let existing = false;
+      try {
+        result = await api.signUp(v.email, v.password, metadata);
+        existing = isExistingAccountResponse(result);
+      } catch (err) {
+        if (!isExistingAccountError(err)) throw err;
+        existing = true;
+      }
+      if (existing) {
+        // Already a member: a code to log in with, and the same code screen
+        // as for a new account. A failure here (e.g. a code was sent a
+        // moment ago) looks the same too; "Resend code" tries again.
+        await api.sendOtp(v.email).catch(() => {});
+        setAccount({ email: v.email, existing: true });
+      } else {
+        // An unfinished signup from an earlier visit comes back with its old
+        // creation time (Supabase only re-sends the code).
+        const u = result?.user ?? result;
+        const lastSent = Math.max(Date.parse(u?.confirmation_sent_at) || 0, Date.parse(u?.updated_at) || 0);
+        const resumed = !!u?.created_at && lastSent - Date.parse(u.created_at) > 30000;
+        setAccount({ email: v.email, password: v.password, resumed, answers: answersFrom(v) });
+      }
       setResendAt(Date.now() + RESEND_MS);
       setStep("code");
     } catch (err) {
-      if (isExistingAccountError(err)) {
-        setSubmitError({ text: "There's already an account with this email.", existing: true });
-      } else {
-        setSubmitError({ text: authErrorMessage(err) || "We couldn't create your account. Please try again." });
-      }
+      setSubmitError({ text: authErrorMessage(err) || "We couldn't create your account. Please try again." });
     }
     setSubmitting(false);
   };
@@ -176,11 +192,29 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
   };
 
   // Puts this visit's answers in place (profilePatch) and records the 18+ and
-  // Terms tick, with the session the code gave. Both can be sent again.
+  // Terms tick and the Art. 9 consent, with the session the code gave (the
+  // Terms version the database expects; the consent once the database can
+  // record it). Both can be sent again.
   const setUpAccount = async () => {
     const patch = profilePatch();
     if (Object.keys(patch).length) await api.updateProfile(patch);
-    await api.acceptTerms(TERMS_VERSION);
+    await api.acceptTerms(await api.getCurrentTermsVersion(), true);
+  };
+
+  // Loads the profile of the account the code signed in to, then keeps the
+  // session (so it lasts across reloads and tabs) and goes on.
+  const finish = async (giveUp) => {
+    const db = await tryTwice(async () => {
+      const profile = await api.getMyProfile();
+      if (!profile) throw new Error("Profile not found");
+      return profile;
+    }).catch(() => null);
+    if (!db) {
+      await giveUp("Your account is ready, but we couldn't load your profile, so we've signed you out. Please log in with your email and the password you just chose.");
+      return;
+    }
+    await api.adoptSession();
+    onComplete(mapProfile(db));
   };
 
   const verifyCode = async (code) => {
@@ -198,6 +232,20 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
       stop(message);
     };
     try {
+      // An address that already had an account: the code logged its owner
+      // in. Nothing on the account changes here (not the name or password
+      // typed on this page); the app asks for anything still missing, such
+      // as the current Terms.
+      if (account.existing) {
+        if (!session?.access_token) {
+          stop("We couldn't sign you in. Please log in with your email and password. If your password doesn't work, choose “Forgot password?” to set a new one.");
+          return;
+        }
+        await finish(async () => {
+          await giveUp("We couldn't load your profile, so we've signed you out. Please log in with your email and password.");
+        });
+        return;
+      }
       if (!session?.access_token) session = await api.signIn(email, form.password, { persist: false }).catch(() => null);
       if (!session?.access_token) {
         stop("We couldn't sign you in. Please log in with your email and password. If your password doesn't work, choose “Forgot password?” to set a new one.");
@@ -230,19 +278,8 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
         return;
       }
 
-      const db = await tryTwice(async () => {
-        const profile = await api.getMyProfile();
-        if (!profile) throw new Error("Profile not found");
-        return profile;
-      }).catch(() => null);
-      if (!db) {
-        await giveUp("Your account is ready, but we couldn't load your profile, so we've signed you out. Please log in with your email and the password you just chose.");
-        return;
-      }
-
-      // Only now is the session saved, so it lasts across reloads and tabs.
-      await api.adoptSession();
-      onComplete(mapProfile(db));
+      // Only then is the session saved, so it lasts across reloads and tabs.
+      await finish(giveUp);
     } catch {
       // E.g. the session ended meanwhile (adoptSession).
       await giveUp("Something went wrong signing you in, so we've signed you out. Please log in with your email and the password you just chose.");
@@ -286,13 +323,15 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
           resendAt={resendAt}
           onChangeEmail={() => { setStep("account"); focusOnAccountStep.current = "email"; }}
         />
+        {/* For everyone, so the page doesn't say which it was. */}
+        <p style={{ ...helperStyle, textAlign: "center", marginTop: 20 }}>
+          Already have an account with this email? Then the code logs you in to it.
+        </p>
       </div>
     );
   }
 
   // ---- CREATE YOUR ACCOUNT ----
-  const checkboxStyle = { marginTop: 2, accentColor: "#37352F", width: 18, height: 18, flexShrink: 0, cursor: "pointer" };
-  const inlineLink = { ...linkButtonStyle, fontWeight: 500, color: "#3D5A9F" };
   return page(
     <div style={{ maxWidth: 460, width: "100%" }}>
       <button type="button" onClick={onBack} style={{ ...linkButtonStyle, textDecoration: "none", fontWeight: 500, color: COLORS.helper, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
@@ -342,24 +381,9 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
         </Field>
 
         <div style={{ marginBottom: 28 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-            <input
-              id="signup-agree" ref={fieldRefs.agree} type="checkbox" checked={form.agree}
-              onChange={(e) => update("agree", e.target.checked)} style={checkboxStyle}
-              aria-invalid={!!errors.agree} aria-describedby={errors.agree ? "signup-agree-error" : "signup-privacy"}
-            />
-            <div>
-              <label htmlFor="signup-agree" style={{ fontSize: 14, color: COLORS.text, lineHeight: 1.5, cursor: "pointer" }}>
-                I'm 18 or older and accept the{" "}
-                <button type="button" onClick={(e) => { e.preventDefault(); setModal("terms"); }} style={inlineLink}>Terms of Use</button>
-              </label>
-              <p id="signup-privacy" style={{ ...helperStyle, marginTop: 4 }}>
-                We handle your data as described in our{" "}
-                <button type="button" onClick={() => setModal("privacy")} style={inlineLink}>Privacy Policy</button>.
-              </p>
-              {errors.agree && <p id="signup-agree-error" style={fieldErrorStyle}>{errors.agree}</p>}
-            </div>
-          </div>
+          <TermsCheckbox id="signup-agree" inputRef={fieldRefs.agree} checked={form.agree} onChange={(v) => update("agree", v)} error={errors.agree} onOpen={setModal} style={{ marginBottom: 14 }} />
+          <Art9Checkbox id="signup-art9" inputRef={fieldRefs.art9} checked={form.art9} onChange={(v) => update("art9", v)} error={errors.art9} style={{ marginBottom: 14 }} />
+          <PrivacyNote onOpen={setModal} />
         </div>
 
         <button type="submit" disabled={submitting} aria-describedby={submitError ? "signup-submit-error" : undefined} style={primaryButtonStyle(submitting)}>
@@ -368,15 +392,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
         </button>
 
         {submitError && (
-          <ErrorBox id="signup-submit-error" boxRef={submitErrorRef} style={{ marginTop: 12 }}>
-            {submitError.text}
-            {submitError.existing && (
-              <>
-                {" "}
-                <button type="button" onClick={() => onLogin(form.email)} style={{ ...linkButtonStyle, color: COLORS.redText }}>Log in instead</button>
-              </>
-            )}
-          </ErrorBox>
+          <ErrorBox id="signup-submit-error" boxRef={submitErrorRef} style={{ marginTop: 12 }}>{submitError.text}</ErrorBox>
         )}
       </form>
 

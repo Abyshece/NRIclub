@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
-import { TermsModal, PrivacyModal, TERMS_VERSION } from "./LegalModals";
+import { TermsModal, PrivacyModal } from "./LegalModals";
 import { AccountFooter } from "./AccountActions";
 import { VERIFICATION_BANNER_ID } from "./VerificationBanner";
-import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, helperStyle, fieldErrorStyle } from "./ui";
+import { TermsCheckbox, Art9Checkbox, PrivacyNote, TERMS_ERROR, ART9_ERROR } from "./Consent";
+import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy } from "./ui";
 import {
   mapProfile, countryName, getCountryOptions, MAJOR_INDIAN_CITIES,
-  cityFromGroupName, linkedinProblem, apiErrorMessage,
+  cityFromGroupName, linkedinProblem, apiErrorMessage, stillToAccept,
 } from "./profile";
 
 const NOTE_MIN = 20;
@@ -19,9 +20,10 @@ const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), selec
 // verification_status is 'incomplete' (mode "required": besides the form they
 // can sign out, download their data or delete their account); also opened
 // from the dashboard to answer an admin's request for more information (mode
-// "update", prefilled, can be cancelled).
+// "update", prefilled, can be cancelled). termsVersion: the current version
+// of the Terms (the app passes it; asked for here otherwise).
 // Calls onDone(updatedUser) after a successful submit.
-export default function GetVerified({ user, mode = "required", onDone, onCancel, onSignOut }) {
+export default function GetVerified({ user, mode = "required", termsVersion, onDone, onCancel, onSignOut }) {
   const isUpdate = mode === "update";
   // In India: country 'IN', or no country yet and never lived abroad.
   const isIndia = user.countryCode === "IN" || (!user.countryCode && user.isNRI === false);
@@ -29,8 +31,14 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
   // Accounts with no 18+ and Terms record (from before signup asked for them,
   // or whose signup stopped before they were recorded, e.g. one finished
   // with "Forgot password?"), or that accepted an earlier version of the
-  // Terms, confirm them here.
-  const needsTerms = !user.ageConfirmedAt || !user.termsAcceptedAt || user.termsVersion !== TERMS_VERSION;
+  // Terms, confirm them here; and give the Art. 9 consent if they haven't.
+  const [currentTerms, setCurrentTerms] = useState(termsVersion || null);
+  useEffect(() => {
+    if (currentTerms) return;
+    api.getCurrentTermsVersion().then(setCurrentTerms).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const needs = stillToAccept(user, currentTerms);
 
   const [country, setCountry] = useState(isIndia ? "IN" : user.countryCode || "");
   const [city, setCity] = useState(user.city || (user.location || "").split(",")[0].trim());
@@ -47,6 +55,7 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
   const [voucher, setVoucher] = useState(user.voucher || invitedBy);
   const [profession, setProfession] = useState(user.profession || "");
   const [agree, setAgree] = useState(false);
+  const [art9, setArt9] = useState(false);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -54,7 +63,7 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
   const [modal, setModal] = useState(null); // "terms" | "privacy"
   const inIndia = country === "IN";
 
-  const refs = { country: useRef(null), city: useRef(null), linkedin: useRef(null), note: useRef(null), agree: useRef(null) };
+  const refs = { country: useRef(null), city: useRef(null), linkedin: useRef(null), note: useRef(null), agree: useRef(null), art9: useRef(null) };
   const submitErrorRef = useRef(null);
   const dialogRef = useRef(null);
   const titleRef = useRef(null);
@@ -132,7 +141,8 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
       if (!n) e.note = "Tell us in a sentence or two how you're connected to the community.";
       else if (n < NOTE_MIN) e.note = `Please write a little more (at least ${NOTE_MIN} characters, you have ${n}).`;
     }
-    if (needsTerms && !agree) e.agree = "Please confirm you're 18 or older and accept the Terms of Use.";
+    if (needs.terms && !agree) e.agree = TERMS_ERROR;
+    if (needs.art9 && !art9) e.art9 = ART9_ERROR;
     return e;
   };
 
@@ -142,7 +152,7 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
     setSubmitError("");
     const found = validate();
     setErrors(found);
-    const first = ["country", "city", "linkedin", "note", "agree"].find((k) => found[k]);
+    const first = ["country", "city", "linkedin", "note", "agree", "art9"].find((k) => found[k]);
     if (first) { refs[first].current?.focus(); return; }
 
     const cityName = city.trim().replace(/\s+/g, " ");
@@ -154,10 +164,16 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
       note: useLinkedin ? "" : note.trim(),
       voucher: useLinkedin ? invitedBy : voucher.trim(),
       profession: profession.trim(),
-      acceptTerms: needsTerms,
     };
     setSubmitting(true);
+    let version = currentTerms;
     try {
+      // The 18+/Terms tick and the Art. 9 consent first (accepting the same
+      // again changes nothing, if the details need another try).
+      if (needs.terms || needs.art9) {
+        version = version || await api.getCurrentTermsVersion();
+        version = (await api.acceptTerms(version, needs.art9)) || version;
+      }
       await api.submitVerification(details);
     } catch (err) {
       setSubmitError(apiErrorMessage(err, "We couldn't send your details. Please try again."));
@@ -173,18 +189,17 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
       ...user, city: details.city, countryCode: country, location: details.location, linkedinUrl: details.linkedinUrl,
       verificationNote: details.note, voucher: details.voucher, profession: details.profession,
       verificationStatus: "pending", verificationMessage: "", isNRI: country !== "IN",
-      ...(needsTerms && {
+      ...(needs.terms && {
         ageConfirmedAt: user.ageConfirmedAt || now,
-        termsAcceptedAt: (user.termsVersion === TERMS_VERSION && user.termsAcceptedAt) || now,
-        termsVersion: TERMS_VERSION,
+        termsAcceptedAt: (user.termsVersion === version && user.termsAcceptedAt) || now,
+        termsVersion: version,
       }),
+      ...(needs.art9 && { art9ConsentAt: now }),
     });
   };
 
   const textareaStyle = { ...inputStyle(!!errors.note), minHeight: 96, resize: "vertical", lineHeight: 1.5 };
   const swapLinkStyle = { ...linkButtonStyle, fontWeight: 500, color: "#3D5A9F", fontSize: 13 };
-  const checkboxStyle = { marginTop: 2, accentColor: "#37352F", width: 18, height: 18, flexShrink: 0, cursor: "pointer" };
-  const inlineLink = { ...linkButtonStyle, fontWeight: 500, color: "#3D5A9F" };
 
   return (
     <div
@@ -213,12 +228,8 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
               below says why), so the first-time intro isn't repeated. */}
           {!isUpdate && (
             <p style={{ color: COLORS.helper, fontSize: 15, lineHeight: 1.55, margin: 0 }}>
-              NRIClub is for real people only, so our team checks every new member.{" "}
-              {/* A member held for review (user.reviewFlag) waits for approval;
-                  they're told no more than that. */}
-              {user.reviewFlag
-                ? "It takes a minute to fill in. Our team will check your membership before you can take part. This usually takes a day."
-                : "It takes a minute, and you can use NRIClub while we review."}
+              NRIClub is for real people only, so our team checks every new member before they can take part.
+              It takes a minute to fill in, and our check usually takes a day.
             </p>
           )}
         </div>
@@ -261,7 +272,7 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
           </Field>
 
           {useLinkedin ? (
-            <Field id="gv-linkedin" label="LinkedIn profile" helper="Copy the link from your LinkedIn profile page." error={errors.linkedin} style={{ marginBottom: 10 }}>
+            <Field id="gv-linkedin" label="LinkedIn profile" helper="Copy the link from your LinkedIn profile page. Our team uses it to check you, and other members see it on your profile." error={errors.linkedin} style={{ marginBottom: 10 }}>
               <input
                 id="gv-linkedin" ref={refs.linkedin} type="text" inputMode="url" autoComplete="url" autoCapitalize="none" spellCheck={false}
                 value={linkedin} onChange={(e) => { setLinkedin(e.target.value); clearError("linkedin"); }}
@@ -273,7 +284,7 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
             </Field>
           ) : (
             <>
-              <Field id="gv-note" label={inIndia ? "How are you connected to the NRI community?" : "How are you connected to the Indian community here?"} helper={`For example your university, employer or a community group you're part of. At least ${NOTE_MIN} characters.`} error={errors.note}>
+              <Field id="gv-note" label={inIndia ? "How are you connected to the NRI community?" : "How are you connected to the Indian community here?"} helper={`For example your university, employer or a community group you're part of. Your origin, nationality or religion doesn't matter. At least ${NOTE_MIN} characters.`} error={errors.note}>
                 <textarea
                   id="gv-note" ref={refs.note} value={note} maxLength={1000}
                   onChange={(e) => { setNote(e.target.value); clearError("note"); }}
@@ -305,24 +316,15 @@ export default function GetVerified({ user, mode = "required", onDone, onCancel,
             />
           </Field>
 
-          {needsTerms && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 22 }}>
-              <input
-                id="gv-agree" ref={refs.agree} type="checkbox" checked={agree}
-                onChange={(e) => { setAgree(e.target.checked); clearError("agree"); }} style={checkboxStyle}
-                aria-invalid={!!errors.agree} aria-describedby={errors.agree ? "gv-agree-error" : "gv-privacy"}
-              />
-              <div>
-                <label htmlFor="gv-agree" style={{ fontSize: 14, color: COLORS.text, lineHeight: 1.5, cursor: "pointer" }}>
-                  I'm 18 or older and accept the{" "}
-                  <button type="button" onClick={(e) => { e.preventDefault(); setModal("terms"); }} style={inlineLink}>Terms of Use</button>
-                </label>
-                <p id="gv-privacy" style={{ ...helperStyle, marginTop: 4 }}>
-                  We handle your data as described in our{" "}
-                  <button type="button" onClick={() => setModal("privacy")} style={inlineLink}>Privacy Policy</button>.
-                </p>
-                {errors.agree && <p id="gv-agree-error" style={fieldErrorStyle}>{errors.agree}</p>}
-              </div>
+          {(needs.terms || needs.art9) && (
+            <div style={{ marginBottom: 22 }}>
+              {needs.terms && (
+                <TermsCheckbox id="gv-agree" inputRef={refs.agree} checked={agree} onChange={(v) => { setAgree(v); clearError("agree"); }} error={errors.agree} onOpen={setModal} style={{ marginBottom: 14 }} />
+              )}
+              {needs.art9 && (
+                <Art9Checkbox id="gv-art9" inputRef={refs.art9} checked={art9} onChange={(v) => { setArt9(v); clearError("art9"); }} error={errors.art9} style={{ marginBottom: 14 }} />
+              )}
+              <PrivacyNote onOpen={setModal} />
             </div>
           )}
 

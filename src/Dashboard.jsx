@@ -4,7 +4,7 @@ import FlagIcon from "./FlagIcon";
 import "./member/base.css";
 import GetVerified from "./member/GetVerified";
 import CodeEntry from "./member/CodeEntry";
-import { VerificationBanner, RejectedScreen } from "./member/VerificationBanner";
+import { VerificationBanner, RejectedScreen, WaitingForReview } from "./member/VerificationBanner";
 import ProfileChecklist, { setupSteps, useProfileCardDismissed } from "./member/ProfileChecklist";
 import { TermsContent, PrivacyContent, ImpressumContent, TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
 import { hasImprint } from "./content/imprint";
@@ -14,7 +14,7 @@ import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
 import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
-import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName } from "./member/profile";
+import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview } from "./member/profile";
 import { findCity } from "./content/findCity";
 
 
@@ -1062,10 +1062,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // Rejected and blocked members only see a full-screen card: make
   // everything behind it unreachable (Tab, screen readers) and focus the card.
   const locked = user?.status === "blocked" || user?.verificationStatus === "rejected";
+  // Members waiting for review (pending or needs_info) see WaitingForReview
+  // instead of the feed and the other pages until an admin approves them.
+  const waiting = !locked && isWaitingForReview(user);
   // Whether the database lets this member see other members and what they
-  // post (private.can_browse()): not while locked, and not while a member
-  // flagged for review waits for approval. Nothing is loaded until then.
-  const canBrowse = !locked && (!user?.reviewFlag || user?.verificationStatus === "approved");
+  // post (private.can_browse()): only approved members (and not while
+  // locked). Nothing is loaded until then.
+  const canBrowse = !locked && user?.verificationStatus === "approved";
   useEffect(() => {
     const root = dashboardRef.current;
     if (!locked || !root) return;
@@ -2189,7 +2192,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
   // "Complete your profile" card
   const saidHello = posts.some(p => p.userId === user.id) || sentNamaste.size > 0 || acceptedConnections.size > 0;
-  const profileItems = profileCardDismissed ? [] : setupSteps(user, groups, { said: saidHello });
+  // (Joining groups and saying hello wait for approval, so no steps until then.)
+  const profileItems = profileCardDismissed || waiting ? [] : setupSteps(user, groups, { said: saidHello });
   const handleProfileItem = (item) => {
     if (item.key === "photo") document.getElementById("avatar-upload")?.click();
     else if (item.key === "groups") { setSelectedGroup(null); setView("groups"); }
@@ -4847,9 +4851,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           </aside>
         )}
 
-        <div>{renderContent()}</div>
+        <div>{waiting ? <WaitingForReview user={user} onEditProfile={() => openProfileEditor()} onUpdateDetails={() => setVerifyOpen(true)} /> : renderContent()}</div>
 
-        {view !== "profile" && view !== "trending" && (
+        {view !== "profile" && view !== "trending" && !waiting && (
           <aside className="sidebar-right" style={{ position: "sticky", top: 80, alignSelf: "start" }}>
             <div style={{ marginBottom: 28 }}>
               <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>Groups</h4>
@@ -5354,6 +5358,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>Blocked members ({blockedIds.size})</h4>
                 <button onClick={() => setSettingsModal("blocked")} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, flexShrink: 0 }}>Manage</button>
               </div>
+              {/* The separate consent (Art. 9 GDPR) and how to withdraw it. */}
+              {user.art9ConsentAt && (
+                <div style={{ padding: "16px 0 0", marginTop: 16, borderTop: "1px solid #F0EFED" }}>
+                  <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>Your consent</h4>
+                  <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 4, lineHeight: 1.5, fontFamily: font }}>
+                    On {new Date(user.art9ConsentAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })} you agreed that NRIClub shows other members what you share that can say something about your origin, religion or health. To withdraw this, delete those posts, answers, places or group memberships, or delete your account under Account Settings.
+                  </p>
+                </div>
+              )}
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #F0EFED", display: "flex", justifyContent: "flex-end", gap: 10, background: "#FAFAF8" }}>
               <button onClick={() => { setSettingsModal(null); setSettingsSaveError(""); }} style={{ ...btnPrimary, padding: "10px 20px" }}>Done</button>
@@ -6101,7 +6114,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {!locked && (
         <>
-          {notice?.kind === "welcome" && <WelcomeNotice user={user} verified={!!notice.verified} cityGroup={cityGroup?.name} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
+          {/* A member waiting for review gets the welcome for members held for
+              review: they can't join groups or say hello before approval. */}
+          {notice?.kind === "welcome" && <WelcomeNotice user={waiting ? { ...user, reviewFlag: user.reviewFlag || "held" } : user} verified={!!notice.verified} cityGroup={cityGroup?.name} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
           {notice?.kind === "verified" && <VerifiedNotice user={user} cityGroup={cityGroup?.name} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
           {notice?.kind === "info" && <NeedsInfoNotice user={user} onClose={closeNotice} onUpdate={() => { closeNotice(); leaveOverlays(); setVerifyOpen(true); }} />}
           {notice?.kind === "catchup" && <CatchUpNotice user={user} items={notice.items} onClose={closeNotice} />}
