@@ -742,6 +742,9 @@ def main():
     check("... she can't book while she waits",
           "SELECT public.book_mentor_session('90000000-0000-0000-0000-000000000301', 'CV', '')", as_user=WAIT,
           error_has="once your membership is confirmed")
+    check("... and gets no notifications about what other members do (their words stay with members)",
+          f"SELECT private.notify('{WAIT}', 'answer', '{ALICE}', 'needs urgent help in Berlin: a doctor', NULL); "
+          f"SELECT count(*) FROM notifications WHERE user_id = '{WAIT}' AND type = 'answer'", expect="0")
     check("asked for more information, she still waits",
           f"SELECT public.review_member('{WAIT}', 'needs_info', 'Your LinkedIn link does not open.', '')", as_user=ADMIN,
           expect="needs_info")
@@ -763,6 +766,9 @@ def main():
     check("... and can book a mentor",
           "SELECT (public.book_mentor_session('90000000-0000-0000-0000-000000000301', 'CV', '') IS NOT NULL)::text",
           as_user=WAIT, expect="true")
+    check("... and gets notifications",
+          f"SELECT private.notify('{WAIT}', 'answer', '{ALICE}', 'answered your question', NULL); "
+          f"SELECT count(*) FROM notifications WHERE user_id = '{WAIT}' AND type = 'answer'", expect="1")
     check("an approved member without the Art. 9 consent can't take part (C8)",
           f"UPDATE profile_private SET art9_consent_at = NULL, art9_consent_version = NULL WHERE id = '{WAIT}'; SELECT 1",
           expect="1")

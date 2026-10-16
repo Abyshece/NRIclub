@@ -5,8 +5,9 @@
 --     wait until an admin approves them. Until then they can edit their own
 --     profile, finish Get verified, see the list of approved groups and read
 --     the guides, but they can't see other members or what they post, post
---     anything themselves or contact anyone. The site says our team checks
---     every new member; now nobody takes part before that check (C3).
+--     anything themselves or contact anyone, and they get no notifications
+--     about what other members do. The site says our team checks every new
+--     member; now nobody takes part before that check (C3).
 --   * Taking part also needs the member's explicit consent to NRIClub
 --     processing what they share that can show their ethnic origin,
 --     religion or health (Art. 9(2)(a) GDPR). It is asked separately at
@@ -194,6 +195,29 @@ CREATE POLICY "Users can send Namaste requests" ON public.connections
     AND (SELECT private.is_verified_member())
     AND private.can_request(requester_id, recipient_id)
   );
+
+-- Notifications the database sends for what other members do (an urgent
+-- question in the member's city group, an answer, an RSVP, a booking...)
+-- carry their words, such as the title of a question about health. They go
+-- only to approved, active members now (replaces the 2026-10-17 version,
+-- which also sent them to members waiting for review): a member who joined a
+-- city group while waiting was allowed under the old rules would otherwise
+-- still read what members post there. Members who haven't accepted the
+-- current Terms yet still get them, and read them once they have.
+CREATE OR REPLACE FUNCTION private.notify(p_user UUID, p_type TEXT, p_actor UUID, p_text TEXT, p_ref UUID)
+RETURNS VOID LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$
+  INSERT INTO public.notifications (user_id, type, actor_id, text, reference_id)
+  SELECT p_user, p_type, p_actor, LEFT(p_text, 1000), p_ref
+  WHERE p_user IS NOT NULL AND p_user IS DISTINCT FROM p_actor
+    AND (p_actor IS NULL OR NOT private.is_blocked_between(p_actor, p_user))
+    AND EXISTS (
+      SELECT 1 FROM public.profile_private pp
+      WHERE pp.id = p_user AND pp.status = 'active' AND pp.verification_status = 'approved')
+    AND NOT EXISTS (
+      SELECT 1 FROM public.notifications n
+      WHERE n.user_id = p_user AND n.type = p_type
+        AND n.actor_id IS NOT DISTINCT FROM p_actor AND n.reference_id IS NOT DISTINCT FROM p_ref);
+$$;
 
 -- ============================================================================
 -- BLOCKED AND INACTIVE ACCOUNTS (C14)
