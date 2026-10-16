@@ -142,6 +142,9 @@ END;
 $$;
 CREATE TRIGGER forget_post_notifications AFTER DELETE ON public.posts
   FOR EACH ROW EXECUTE FUNCTION private.forget_post_notifications();
+-- (They're found by the post they're about, also when an account with many
+-- posts is deleted.)
+CREATE INDEX idx_notifications_reference ON public.notifications (reference_id);
 
 -- Members can't write notifications any more: the database writes them
 -- (above, and the triggers and functions of 2026-10-17 and 2026-10-18).
@@ -173,25 +176,32 @@ CREATE TABLE private.name_changes (
 CREATE INDEX idx_name_changes_member ON private.name_changes (member_id, changed_at);
 REVOKE ALL ON private.name_changes FROM PUBLIC, anon, authenticated;
 
--- A name without invisible characters: zero-width spaces and joiners, and
--- the direction marks and overrides that can make a name read differently
--- from what it is (U+200B-U+200F, U+202A-U+202E, U+2060-U+2069, U+061C,
--- U+FEFF); runs of spaces become one.
+-- A name without invisible characters: zero-width spaces and joiners, the
+-- direction marks and overrides that can make a name read differently from
+-- what it is (U+200B-U+200F, U+202A-U+202E, U+2060-U+2069, U+061C, U+FEFF),
+-- and characters that show as nothing or as a blank (soft hyphen U+00AD,
+-- U+034F, U+115F, U+1160, U+17B4, U+17B5, U+180E, U+3164, U+FFA0), so
+-- "Ad<soft hyphen>min" or an empty-looking name can't get through; runs of
+-- spaces become one.
 CREATE FUNCTION private.clean_name(p_name TEXT)
 RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
   SELECT btrim(regexp_replace(
-    regexp_replace(COALESCE(p_name, ''), '[​-‏‪-‮⁠-⁩؜﻿]', '', 'g'),
+    regexp_replace(COALESCE(p_name, ''),
+      '[\u200B-\u200F\u202A-\u202E\u2060-\u2069\u061C\uFEFF\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u3164\uFFA0]', '', 'g'),
     '\s+', ' ', 'g'));
 $$;
 
 -- Names that sound like the NRIClub team: "NRIClub" (also "N.R.I. Club"),
 -- or the words admin, administrator, support, moderator, moderation, team,
 -- official, staff or helpdesk on their own (so "Steam" or "Badminton" are
--- fine).
+-- fine). Checked on the name's plain letters: wide, circled or accented
+-- look-alikes ("ＮＲＩＣｌｕｂ", "Ⓐdmin", "Admín") count as the letters they look
+-- like.
 CREATE FUNCTION private.is_reserved_name(p_name TEXT)
 RETURNS BOOLEAN LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT COALESCE(p_name, '') ~* '(^|[^[:alpha:]])n[^[:alpha:]]*r[^[:alpha:]]*i[^[:alpha:]]*c[^[:alpha:]]*l[^[:alpha:]]*u[^[:alpha:]]*b'
-      OR COALESCE(p_name, '') ~* '\m(admins?|administrators?|support|moderators?|moderation|team|official|staff|helpdesk)\M';
+  SELECT n ~* '(^|[^[:alpha:]])n[^[:alpha:]]*r[^[:alpha:]]*i[^[:alpha:]]*c[^[:alpha:]]*l[^[:alpha:]]*u[^[:alpha:]]*b'
+      OR n ~* '\m(admins?|administrators?|support|moderators?|moderation|team|official|staff|helpdesk)\M'
+  FROM (SELECT regexp_replace(normalize(COALESCE(p_name, ''), NFKD), '[\u0300-\u036f]', '', 'g') AS n) x;
 $$;
 
 -- Every name is cleaned (above). A member changing their own name: a name
@@ -604,12 +614,16 @@ BEGIN
     RETURNING 1)
   SELECT count(*) INTO unconfirmed FROM gone;
 
-  -- Accounts that never sent their check details: 90 days after signing up
-  -- (or after our team sent them back to unfinished).
+  -- Accounts that never sent their check details: 90 days after signing up,
+  -- or after our team last sent them back to unfinished (that decision
+  -- clears reviewed_at, so its date comes from verification_log).
   WITH gone AS (
     DELETE FROM auth.users u USING public.profile_private pp
     WHERE pp.id = u.id AND pp.verification_status = 'incomplete'
-      AND GREATEST(pp.created_at, COALESCE(pp.reviewed_at, pp.created_at)) < NOW() - INTERVAL '90 days'
+      AND pp.created_at < NOW() - INTERVAL '90 days'
+      AND NOT EXISTS (SELECT 1 FROM public.verification_log l
+                      WHERE l.member_id = pp.id AND l.decision = 'incomplete'
+                        AND l.created_at >= NOW() - INTERVAL '90 days')
       AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = u.id)
     RETURNING 1)
   SELECT count(*) INTO unfinished FROM gone;

@@ -1885,7 +1885,8 @@ def notifications_limits_privacy():
 
     # --- names (C5) -----------------------------------------------------------
     for name in ("NRIClub Support", "N.R.I. Club", "nri-club team", "Admin", "Om (Moderator)", "Official NRIClub",
-                 "Priya from the Team", "Staff"):
+                 "Priya from the Team", "Staff", "\uff2e\uff32\uff29\uff23\uff4c\uff55\uff42", "\u24b6dmin Arjun",
+                 "Adm\u00edn", "Ad\u00admin"):
         check(f"a member can't call themselves {name!r}",
               f"UPDATE profiles SET name = '{name}' WHERE id = auth.uid()", as_user=pia,
               error_has="Names like NRIClub, Admin, Support or Team are kept for the NRIClub team.")
@@ -1893,8 +1894,8 @@ def notifications_limits_privacy():
           "UPDATE profiles SET name = 'Henri Clubb Steamworth' WHERE id = auth.uid(); "
           "UPDATE profiles SET name = 'Henri Clubb Steamworth' WHERE id = auth.uid() RETURNING name",
           as_user=pia, expect="Henri Clubb Steamworth")
-    check("invisible direction and zero-width characters are removed from names",
-          "UPDATE profiles SET name = E'Pia\u202E\u200B  P\u2066' WHERE id = auth.uid() RETURNING name",
+    check("invisible direction and zero-width characters are removed from names (blank-looking ones too)",
+          "UPDATE profiles SET name = E'Pia\u202E\u200B  P\u2066\u00AD\u3164' WHERE id = auth.uid() RETURNING name",
           as_user=pia, expect="Pia P")
     check("a third change in 30 days works",
           "UPDATE profiles SET name = 'Pia Patel' WHERE id = auth.uid() RETURNING name", as_user=pia, expect="Pia Patel")
@@ -2124,6 +2125,19 @@ def notifications_limits_privacy():
 
     # --- clean-up (C20) ----------------------------------------------------------------
     check("members can't run the clean-up", "SELECT private.daily_cleanup()", as_user=nia, expect="error")
+    late = "00000000-0000-0000-0000-000000000510"
+    check("an account our team sends back to unfinished today isn't deleted that night, though it signed up long ago", f"""
+          BEGIN;
+          INSERT INTO auth.users (id, email, raw_user_meta_data, email_confirmed_at, created_at) VALUES
+            ('{late}', 'sent-back-today@example.com', '{{}}', now(), now() - interval '120 days');
+          UPDATE profile_private SET created_at = now() - interval '120 days', verification_status = 'rejected',
+            reviewed_at = now() - interval '5 days' WHERE id = '{late}';
+          SET ROLE authenticated; SET request.jwt.claims = '{{"sub": "{ADMIN}", "role": "authenticated"}}';
+          SELECT public.review_member('{late}', 'incomplete', '', '');
+          RESET ROLE;
+          SELECT (r->>'unfinished_accounts') || '|' || EXISTS (SELECT 1 FROM auth.users WHERE id = '{late}')
+          FROM (SELECT private.daily_cleanup() r) x;
+          ROLLBACK;""", expect="incomplete\n0|true")
     old = [f"00000000-0000-0000-0000-0000000005{n:02d}" for n in range(1, 8)]
     check("the clean-up deletes what the Privacy Policy says is deleted after a time, and nothing else", f"""
           BEGIN;
@@ -2137,7 +2151,9 @@ def notifications_limits_privacy():
             ('{old[6]}', 'admin-unconfirmed@example.com', '{{}}', NULL, now() - interval '400 days');
           INSERT INTO public.admins (user_id) VALUES ('{old[6]}');
           UPDATE profile_private SET created_at = now() - interval '91 days' WHERE id = '{old[2]}';
-          UPDATE profile_private SET created_at = now() - interval '200 days', reviewed_at = now() - interval '10 days' WHERE id = '{old[3]}';
+          UPDATE profile_private SET created_at = now() - interval '200 days', reviewed_at = NULL WHERE id = '{old[3]}';
+          INSERT INTO public.verification_log (member_id, decision, created_at) VALUES
+            ('{old[3]}', 'rejected', now() - interval '20 days'), ('{old[3]}', 'incomplete', now() - interval '10 days');
           UPDATE profile_private SET verification_status = 'rejected' WHERE id IN ('{old[4]}', '{old[5]}');
           UPDATE profile_private SET reviewed_at = now() - interval '7 months' WHERE id = '{old[4]}';
           UPDATE profile_private SET reviewed_at = now() - interval '5 months' WHERE id = '{old[5]}';
