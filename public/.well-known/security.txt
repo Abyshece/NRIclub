@@ -1,0 +1,7 @@
+# How to report a security problem in NRIClub (https://nriclub.app).
+# Please write to us before you publish anything, and don't access other
+# members' data or disrupt the service while you look.
+Contact: mailto:hello@nriclub.app
+Expires: 2027-10-15T00:00:00.000Z
+Preferred-Languages: en, de
+Canonical: https://nriclub.app/.well-known/security.txt
