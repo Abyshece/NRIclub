@@ -90,7 +90,7 @@ export function privacyDoc() {
       { box: { title: "In short", blocks: [{ ul: [
         "NRIClub is a members-only community for Indians abroad. We use your data to run it for you, and for nothing else.",
         "No advertising, no tracking, no analytics and no cookies. We never sell or rent your data.",
-        "Your data is stored in the EU (Ireland).",
+        "Our database, with your profile, content and messages, is in the EU (Ireland).",
         "Only members our team has approved can see your profile and what you post (a photo also opens for anyone who has its exact web address, see section 4). Our admin tools don't show your messages.",
         "You can download your data or delete your account at any time in Settings.",
         ["Questions? Write to ", mail("Privacy"), "."],
@@ -239,7 +239,7 @@ export function privacyDoc() {
             ["What for", "hosting the website and delivering its files through a worldwide network of servers, so a request can be answered by a server outside the EU, including in the USA. It logs requests (section 2, \"Server and security logs\")."],
           ] },
           { title: "Resend", fields: [
-            ["Company", "Resend, USA."],
+            ["Company", "Resend, a company in the USA."],
             ["What for", "sending our sign-in and password emails, through Amazon Web Services' email service in Ireland (EU)."],
           ] },
           { title: "Our mailbox", fields: [
@@ -285,7 +285,7 @@ export function privacyDoc() {
         { p: "We keep data only as long as we need it for the purposes in section 2." },
         { ul: [
           [strong("Your account, profile and content"), " stay until you delete them or your account."],
-          [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, events and replies to them, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
+          [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
           photoFilesText(),
           [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports other members made about you, no longer linked to your account; the record in section 2 if we declined or blocked you; copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
         ] },
