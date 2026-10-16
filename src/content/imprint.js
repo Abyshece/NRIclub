@@ -3,7 +3,10 @@
 // and in the app (Settings > Impressum), so only fill in what may be public.
 //
 // While `name` or `address` is empty, NRIClub shows no Impressum at all: no
-// page, no links, nothing half-filled.
+// page, no links, nothing half-filled. The Privacy Policy and the Terms of
+// Use name the operator from here too: once `name` and `address` are filled
+// in, they show them; until then they say that NRIClub is run by its founder
+// in Germany. The build never stops because these are empty.
 export const IMPRINT = {
   // Your full name; for a company, its name with the legal form
   // (e.g. "NRIClub UG (haftungsbeschränkt)").
@@ -32,7 +35,33 @@ export const IMPRINT = {
   contentResponsible: "",
 };
 
+// Details only the Privacy Policy uses (src/content/legal/privacy.js); they
+// are not part of the Impressum.
+export const PRIVACY_DETAILS = {
+  // The data protection authority (Datenschutz-Aufsichtsbehörde) responsible
+  // for NRIClub: the one of the German federal state (Bundesland) where you
+  // live while you run NRIClub as a private person, later the one where the
+  // company has its seat. Its name and postal address on one line, copied
+  // from the authority's own website, e.g. for Bavaria "Bayerisches
+  // Landesamt für Datenschutzaufsicht (BayLDA), <street>, 91522 Ansbach,
+  // Germany". While empty, the Policy describes it instead of naming it.
+  supervisoryAuthority: "",
+  // The authority's website, e.g. "https://www.lda.bayern.de".
+  supervisoryAuthorityUrl: "",
+  // Who hosts the hello@nriclub.app mailbox: the company and its country,
+  // e.g. "Example Mail GmbH, Germany". While empty, the Policy says "the
+  // provider that hosts our mailbox".
+  mailProvider: "",
+};
+
 export const hasImprint = () => !!(IMPRINT.name.trim() && IMPRINT.address.some((l) => l.trim()));
+
+// The operator's name and address as lines (name, representative, address),
+// or [] while the Impressum isn't filled in. Used by the Terms and the
+// Privacy Policy.
+export const operatorLines = () => (hasImprint()
+  ? [IMPRINT.name, IMPRINT.representative, ...IMPRINT.address].map((l) => String(l || "").trim()).filter(Boolean)
+  : []);
 
 // The Impressum as sections of lines ({ text, href }), for the page, the
 // app's Settings and the page the build writes (vite.config.js).
@@ -51,5 +80,15 @@ export function imprintSections() {
     // A company can't be "the person responsible": then only contentResponsible counts.
     { title: "Responsible for the content under § 18 (2) MStV (Verantwortlich nach § 18 Abs. 2 MStV)",
       lines: lines(I.contentResponsible.trim() ? [{ text: I.contentResponsible }] : I.representative.trim() ? [] : person) },
+    // Art. 11 and 12 of the EU Digital Services Act: one point of contact
+    // for authorities and one for users, with the languages they can use.
+    { title: "Points of contact under the Digital Services Act (Zentrale Kontaktstelle nach Art. 11 und 12 DSA)", lines: lines([
+      I.email && { text: `For authorities, members and anyone else: ${I.email}`, href: `mailto:${I.email}` },
+      { text: "Languages: English, German (Deutsch)" },
+      { text: "To report illegal content: use Report in the app, or write to the address above." },
+    ]) },
+    { title: "Consumer dispute resolution (Verbraucherstreitbeilegung)", lines: lines([
+      { text: "We are not obliged and not willing to take part in dispute resolution proceedings before a consumer arbitration board (Verbraucherschlichtungsstelle)." },
+    ]) },
   ].filter((s) => s.lines.length);
 }

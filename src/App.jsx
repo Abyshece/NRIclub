@@ -25,6 +25,7 @@ const AdminPanel = lazy(() => import("./admin/AdminPanel"));
 const CityPage = lazy(() => import("./CityPage"));
 const GuidePage = lazy(() => import("./GuidePage"));
 const ImpressumPage = lazy(() => import("./ImpressumPage"));
+const LegalPage = lazy(() => import("./LegalPage"));
 
 // A public page's address: /city/<city>, /guides or /guides/<slug>.
 const publicPage = () => {
@@ -41,6 +42,14 @@ const publicPage = () => {
   if (guide) return { kind: "guide", slug: guide[1] || "" };
   if (/^\/impressum\/?$/.test(path) && hasImprint()) return { kind: "impressum" };
   return null;
+};
+
+// The Terms of Use (/terms, earlier versions at /terms/<version>) and the
+// Privacy Policy (/privacy): pages anyone can open, signed in or not.
+const legalPage = () => {
+  const m = /^\/(terms|privacy)(?:\/([0-9]{4}-[0-9]{2}(?:-[0-9]{2})?))?\/?$/.exec(window.location.pathname);
+  if (!m || (m[1] === "privacy" && m[2])) return null;
+  return { kind: m[1], version: m[2] || "" };
 };
 
 const LoadingScreen = () => (
@@ -364,6 +373,25 @@ export default function App() {
     setUser(null);
     setAuthState("landing");
   };
+
+  // The Terms and the Privacy Policy show for anyone who opens their address,
+  // whatever else is going on (except on the admin site). Log in and Join
+  // free move to the app's own address first; a member who is signed in
+  // gets "Open NRIClub", which loads the app.
+  const legal = !isAdminRoute() && legalPage();
+  if (legal) {
+    const leave = (state) => {
+      try { window.history.replaceState(null, "", "/"); } catch (e) {}
+      setAuthState(state);
+    };
+    const signedIn = api.hasStoredSession();
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <LegalPage kind={legal.kind} version={legal.version} signedIn={signedIn}
+          onLogin={signedIn ? () => window.location.assign("/") : () => leave("login")} onJoin={() => leave("signup")} />
+      </Suspense>
+    );
+  }
 
   if (authState === "loading") {
     return (

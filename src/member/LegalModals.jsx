@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
-import { FONT, linkButtonStyle } from "./ui";
-import { IMPRINT, hasImprint, imprintSections } from "../content/imprint";
+import { Fragment, useEffect, useRef } from "react";
+import { FONT } from "./ui";
+import { imprintSections } from "../content/imprint";
+import { termsDoc } from "../content/legal/terms";
+import { privacyDoc } from "../content/legal/privacy";
 
 const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
@@ -60,89 +62,121 @@ export function LegalModal({ title, onClose, children }) {
 }
 
 const h4 = { fontSize: 15, fontWeight: 700, color: "#37352F", margin: "0 0 6px" };
-const para = { margin: "0 0 16px" };
 
-// DRAFT: plain-language Terms of Use written for the product. It has NOT been
-// reviewed by a lawyer and must get legal review before launch (together with
-// TERMS_VERSION below, which signup stores with each member).
-// TERMS_VERSION must always equal private.current_terms_version() in the
-// database (migration 20261013000000_review_fixes.sql): change both together,
-// the database one in a new migration. Members whose accepted version is a
-// different one see the Terms screen again and can't take part until they
-// accept the current one (accept_terms only records the database's version).
-export const TERMS_VERSION = "2026-10";
+// The version of the Terms of Use this site shows (the text is in
+// src/content/legal/terms.js, whose TERMS_VERSION must be the same: the build
+// checks). The database's private.current_terms_version() says which version
+// members must have accepted; the site asks public.current_terms_version()
+// rather than comparing with this constant, so deploying a new text before
+// the database knows it never locks members out. Change both together, the
+// database one in a new migration.
+export const TERMS_VERSION = "2026-10-19";
 
-// The Privacy Policy can be opened from inside the Terms, so it can be read
-// wherever the Terms are shown (also Settings > Terms & Policies).
-export function TermsContent() {
-  const [showPrivacy, setShowPrivacy] = useState(false);
+export { TERMS_CHANGES, PREVIOUS_TERMS_VERSION, TERMS_DATE } from "../content/legal/terms";
+export { ART9_CONSENT_TEXT, ART9_CONSENT_VERSION } from "../content/legal/consent";
+export { REPORT_HREF, REPORT_LINK_LABEL } from "../content/legal/reporting";
+
+const INK = "#37352F";
+
+// Rich text from the legal texts (src/content/legal/doc.js): strings, links
+// and bold parts. Links to other sites, and in a dialog also links to our own
+// pages, open in a new tab, so a half-filled form stays as it is.
+function Rich({ value, inDialog }) {
+  const parts = Array.isArray(value) ? value : [value];
+  return parts.map((part, i) => {
+    if (part == null || part === false) return null;
+    if (typeof part === "string") return <Fragment key={i}>{part}</Fragment>;
+    if (part.href) {
+      const newTab = /^https?:/.test(part.href) || (inDialog && part.href.startsWith("/"));
+      return (
+        <a key={i} href={part.href} {...(newTab ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+          style={{ color: INK, fontWeight: 600, textDecoration: "underline", overflowWrap: "anywhere" }}>{part.text}</a>
+      );
+    }
+    if (part.strong) return <strong key={i} style={{ color: INK }}>{part.strong}</strong>;
+    return null;
+  });
+}
+
+// Sizes for the two places the texts appear: a dialog (small print, the
+// dialog's own title above) and the page (nriclub.app/terms, /privacy).
+const SIZES = {
+  dialog: { section: { ...h4, margin: "20px 0 6px" }, sub: { fontSize: 13, fontWeight: 700, color: INK, margin: "14px 0 4px" }, gap: 12 },
+  page: { section: { fontSize: 22, fontWeight: 700, color: INK, letterSpacing: "-0.01em", margin: "36px 0 10px", lineHeight: 1.3 }, sub: { fontSize: 16, fontWeight: 700, color: INK, margin: "20px 0 6px" }, gap: 14 },
+};
+
+function Block({ block, inDialog }) {
+  const z = inDialog ? SIZES.dialog : SIZES.page;
+  const Sub = inDialog ? "h5" : "h3";
+  const para = { margin: `0 0 ${z.gap}px` };
+  if (block.p) return <p style={para}><Rich value={block.p} inDialog={inDialog} /></p>;
+  if (block.ul || block.ol) {
+    const List = block.ol ? "ol" : "ul";
+    return (
+      <List style={{ margin: `0 0 ${z.gap}px`, paddingLeft: 22 }}>
+        {(block.ul || block.ol).map((item, i) => <li key={i} style={{ marginBottom: 6 }}><Rich value={item} inDialog={inDialog} /></li>)}
+      </List>
+    );
+  }
+  if (block.h) return <Sub style={z.sub}>{block.h}</Sub>;
+  if (block.entries) {
+    return block.entries.map((entry, i) => (
+      <div key={i} style={{ margin: `0 0 ${z.gap}px`, paddingLeft: 12, borderLeft: "3px solid #ECEBE8" }}>
+        <Sub style={{ ...z.sub, marginTop: 0, overflowWrap: "anywhere" }}>{entry.title}</Sub>
+        {entry.fields.map(([label, value]) => (
+          <p key={label} style={{ margin: "0 0 4px" }}><strong style={{ color: INK }}>{label}:</strong> <Rich value={value} inDialog={inDialog} /></p>
+        ))}
+      </div>
+    ));
+  }
+  if (block.box) {
+    return (
+      <div style={{ border: "1px solid #D9D7D2", borderRadius: 10, padding: inDialog ? "10px 14px 2px" : "14px 18px 4px", margin: `0 0 ${z.gap + 4}px`, background: "#FAFAF8" }}>
+        {block.box.title && <Sub style={{ ...z.sub, marginTop: 0 }}>{block.box.title}</Sub>}
+        {block.box.blocks.map((b, i) => <Block key={i} block={b} inDialog={inDialog} />)}
+      </div>
+    );
+  }
+  return null;
+}
+
+// A legal text (src/content/legal/doc.js). In a dialog: version line, then
+// the sections. On the page (LegalPage.jsx shows the title and version line
+// above it): a list of contents, then the sections with their anchors.
+export function LegalDoc({ doc, inDialog = false }) {
+  const z = inDialog ? SIZES.dialog : SIZES.page;
+  const Section = inDialog ? "h4" : "h2";
   return (
     <>
-      <h4 style={h4}>1. Who NRIClub is for</h4>
-      <p style={para}>NRIClub is a community for people with a real connection to the Indian community, whether you live abroad or in India and want to connect with those who do.</p>
-      <h4 style={h4}>2. You must be 18 or older</h4>
-      <p style={para}>You can only create an account if you are at least 18 years old.</p>
-      <h4 style={h4}>3. Be yourself</h4>
-      <p style={para}>Use your real name and your own details. Our admins verify new members using a LinkedIn profile or, if you don't have one, a short explanation of how you're connected to the community. Until then you can use NRIClub, but your profile won't show the Verified badge. We may decline or remove accounts we can't verify.</p>
-      <h4 style={h4}>4. Be respectful</h4>
-      <p style={para}>Treat other members with respect. No harassment, hate speech, discrimination or threats. Don't share other people's private information.</p>
-      <h4 style={h4}>5. No spam or scams</h4>
-      <p style={para}>No spam, misleading offers, fake listings, pyramid schemes or attempts to get money or personal data from members under false pretences.</p>
-      <h4 style={h4}>6. Marketplace</h4>
-      <p style={para}>Marketplace listings and any deals are between the members involved. NRIClub isn't a party to them and can't guarantee items, payments or housing. Meet safely and never pay in advance to someone you don't know.</p>
-      <h4 style={h4}>7. Your content</h4>
-      <p style={para}>You're responsible for what you post. You keep ownership of it and allow us to show it to other members as part of the service.</p>
-      <h4 style={h4}>8. Moderation</h4>
-      <p style={para}>Admins may remove content or restrict, block or delete accounts that break these rules or put other members at risk.</p>
-      <h4 style={h4}>9. Leaving</h4>
-      <p style={para}>You can delete your account at any time from your account settings.</p>
-      <h4 style={h4}>10. Privacy</h4>
-      <p style={para}>
-        Our Privacy Policy explains what data we collect, how we use it and your rights.{" "}
-        <button type="button" onClick={() => setShowPrivacy((v) => !v)} aria-expanded={showPrivacy} aria-controls="terms-privacy-policy" style={{ ...linkButtonStyle, color: "#37352F" }}>
-          {showPrivacy ? "Hide the Privacy Policy" : "Read the Privacy Policy"}
-        </button>
-      </p>
-      {showPrivacy && (
-        <div id="terms-privacy-policy" style={{ background: "#F7F7F5", borderRadius: 8, padding: "16px 18px", margin: "0 0 16px" }}>
-          <PrivacyContent />
-        </div>
+      {inDialog && doc.subtitle && <p style={{ margin: "0 0 14px", fontSize: 12, color: "#6B6A67" }}><Rich value={doc.subtitle} inDialog /></p>}
+      {(doc.intro || []).map((b, i) => <Block key={i} block={b} inDialog={inDialog} />)}
+      {!inDialog && doc.sections.length > 3 && (
+        <nav aria-label="Contents" style={{ margin: "8px 0 0" }}>
+          <p style={{ margin: "0 0 6px", fontWeight: 700, color: INK }}>Contents</p>
+          <ul style={{ margin: 0, paddingLeft: 22, columns: "16em 2", columnGap: 32 }}>
+            {doc.sections.map((s) => <li key={s.id} style={{ marginBottom: 4, breakInside: "avoid" }}><a href={`#${s.id}`} style={{ color: INK }}>{s.title}</a></li>)}
+          </ul>
+        </nav>
       )}
-      <h4 style={h4}>11. Contact</h4>
-      <p style={{ margin: 0 }}>Questions? Write to <a href="mailto:hello@nriclub.app" style={{ color: "#37352F", fontWeight: 600 }}>hello@nriclub.app</a>.</p>
+      {doc.sections.map((s) => (
+        <section key={s.id} id={inDialog ? undefined : s.id} aria-labelledby={inDialog ? undefined : `${s.id}-title`} style={{ scrollMarginTop: 80 }}>
+          <Section id={inDialog ? undefined : `${s.id}-title`} style={z.section}>{s.title}</Section>
+          {s.blocks.map((b, i) => <Block key={i} block={b} inDialog={inDialog} />)}
+        </section>
+      ))}
     </>
   );
 }
 
+// The Terms of Use and the Privacy Policy as shown in dialogs and in
+// Settings > Terms & Policies. The same texts are pages at nriclub.app/terms
+// and nriclub.app/privacy, which the dialogs link to.
+export function TermsContent() {
+  return <LegalDoc doc={termsDoc()} inDialog />;
+}
+
 export function PrivacyContent() {
-  return (
-    <>
-      <h4 style={h4}>1. Data We Collect</h4>
-      <p style={para}>We collect the personal information you provide when you sign up and verify your profile: your name, email, city and country, and either your LinkedIn profile link or a short note on how you're connected to the community (and, if you give one, the member who can vouch for you). Optional profile details such as hometown, profession and status are added by you later. We also collect usage data such as posts, comments, and interactions within the platform.</p>
-      <h4 style={h4}>2. How We Use Your Data</h4>
-      <p style={para}>Your data is used to: provide and personalize the NRIClub service, verify that members are real people, connect you with relevant community members, show you notifications inside NRIClub, and email you what your account needs, such as sign-up codes and password links. We don't send newsletters or notification emails.</p>
-      <h4 style={h4}>3. Legal Basis (GDPR Art. 6)</h4>
-      <p style={para}>We process your data based on: your explicit consent (Art. 6(1)(a)), performance of our service contract (Art. 6(1)(b)), and our legitimate interest in operating the platform (Art. 6(1)(f)).</p>
-      <h4 style={h4}>4. Your Rights</h4>
-      <p style={para}>Under GDPR, you have the right to: access your personal data, rectify inaccurate data, request erasure ("right to be forgotten"), restrict processing, data portability (export your data), object to processing, and withdraw consent at any time. You can exercise these rights from your Account Settings, where “Download my data” gives you a copy of what your account holds. Notes our team wrote about you (for example while checking your membership) and the moderation record described below aren't in that file; you can ask for them at hello@nriclub.app.</p>
-      <h4 style={h4}>5. Data Retention</h4>
-      <p style={para}>We retain your data for as long as your account is active. Upon account deletion, all personal data is permanently erased within 30 days.</p>
-      {/* LEGAL REVIEW NEEDED: the moderation record (private.moderation_record,
-          migration 20261013000000_review_fixes.sql) is kept after the account
-          is deleted. Confirm the legal basis (legitimate interest, Art.
-          6(1)(f)), set a retention period, and decide whether the admin's
-          note may be kept in it. Also confirm that a keyed hash of the
-          email address is enough, and whether admins' notes about a member
-          must be in "Download my data" instead of on request (section 4). */}
-      <p style={para}>One exception: if our team rejected or blocked an account, we keep a minimal record so the same person can't simply sign up again. It holds a coded form of the email address if the account confirmed it (and of any address the account changes to afterwards), the LinkedIn profile link the account had when our team last reviewed its details (or, if we never had, when we blocked it), and our decision with its date and any note we made on it. The email address itself isn't kept: the coded form is made with a secret key, so we can only check whether an address we already know matches it. The record is linked to the account until the account is deleted, and then that link is removed. We use the record only when someone signs up, sends their verification details or is moved back into review by our team: if their email address or LinkedIn link matches it, our team checks their membership before they can take part.</p>
-      <h4 style={h4}>6. Data Sharing</h4>
-      <p style={para}>We do not sell your personal data. Data is only shared with essential service providers (email delivery, hosting) under data processing agreements compliant with GDPR.</p>
-      <h4 style={h4}>7. Contact</h4>
-      {hasImprint() && <p style={para}>The controller responsible for your data is {[IMPRINT.name, ...IMPRINT.address].map((l) => l.trim()).filter(Boolean).join(", ")}.</p>}
-      <p style={{ margin: 0 }}>For any data protection inquiries, contact our Data Protection Officer at hello@nriclub.app.</p>
-      <p style={{ marginTop: 20, marginBottom: 0, fontSize: 11, color: "#6B6A67", fontStyle: "italic" }}>Last updated: October 2026</p>
-    </>
-  );
+  return <LegalDoc doc={privacyDoc()} inDialog />;
 }
 
 // The Impressum (legal notice), from src/content/imprint.js. Only shown

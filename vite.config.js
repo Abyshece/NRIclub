@@ -2,12 +2,17 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { ESSENTIALS } from './src/content/essentials.js';
 import { CITIES } from './src/content/cities.js';
 import { slug } from './src/content/slug.js';
 import { guideBlocks } from './src/content/guideBlocks.js';
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES } from './src/content/home.js';
 import { IMPRINT, hasImprint, imprintSections } from './src/content/imprint.js';
+import { docToHtml } from './src/content/legal/doc.js';
+import { privacyDoc } from './src/content/legal/privacy.js';
+import { termsDoc, TERMS_VERSION, TERMS_ARCHIVE } from './src/content/legal/terms.js';
+import { REPORT_HREF, REPORT_LINK_LABEL } from './src/content/legal/reporting.js';
 
 const SITE = 'https://nriclub.app';
 
@@ -89,11 +94,33 @@ function homeStatic() {
 // text in #root is replaced as soon as it starts. The homepage gets its top
 // part too (homeStatic, below), so it shows before the app has loaded.
 function publicPages() {
-  let outDir;
+  let outDir, root;
   return {
     name: 'nriclub-public-pages',
     apply: 'build',
-    configResolved(config) { outDir = path.resolve(config.root, config.build.outDir); },
+    configResolved(config) { root = config.root; outDir = path.resolve(config.root, config.build.outDir); },
+    // Mistakes that would break the live site quietly stop the build instead.
+    // (An empty Impressum never does: the texts then say who runs NRIClub
+    // without a name, see src/content/imprint.js.)
+    buildStart() {
+      // The Terms version the site shows: the text (src/content/legal/terms.js)
+      // and the constant the app uses (src/member/LegalModals.jsx).
+      const modals = fs.readFileSync(path.join(root, 'src/member/LegalModals.jsx'), 'utf8');
+      const shown = /export const TERMS_VERSION = "([^"]+)"/.exec(modals)?.[1];
+      if (shown !== TERMS_VERSION) {
+        throw new Error(`TERMS_VERSION is "${shown}" in src/member/LegalModals.jsx but "${TERMS_VERSION}" in src/content/legal/terms.js: make them the same.`);
+      }
+      // The homepage's start-up script is allowed by its hash in the
+      // Content-Security-Policy (vercel.json); a changed script would be
+      // blocked on the live site.
+      const hash = `'sha256-${crypto.createHash('sha256').update(HOME_GUARD).digest('base64')}'`;
+      if (!fs.readFileSync(path.join(root, 'vercel.json'), 'utf8').includes(hash)) {
+        throw new Error(`The homepage script (HOME_GUARD in vite.config.js) changed: put ${hash} in place of the old hash in script-src in vercel.json.`);
+      }
+      if (!hasImprint()) {
+        this.warn('src/content/imprint.js has no name and address yet: no Impressum page, and the Terms and Privacy Policy say NRIClub is run by its founder in Germany.');
+      }
+    },
     // After the bundle (and index.html) is written; never on a failed build.
     writeBundle() {
       const shell = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
@@ -110,11 +137,14 @@ function publicPages() {
         ].reduce((h, f) => f(h), shell)
           .replace(/<title>[^<]*<\/title>/, () => `<title>${esc(title)}</title>`)
           .replace('</head>', () => `  <link rel="canonical" href="${SITE}${route}" />\n${head ? `  ${head}\n` : ''}</head>`)
-          .replace('<div id="root"></div>', () => `<div id="root"><main style="max-width:720px;margin:0 auto;padding:32px 20px;font-family:system-ui,sans-serif;color:#37352F;line-height:1.6">${body}</main></div>`);
+          .replace('<div id="root"></div>', () => `<div id="root"><main style="max-width:720px;margin:0 auto;padding:32px 20px;font-family:system-ui,sans-serif;color:#37352F;line-height:1.6">${body}${legalLinks}</main></div>`);
         const file = path.join(outDir, route.slice(1), 'index.html');
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, html);
       };
+      // At the foot of every page written here, as in the site's footer.
+      const legalLinks = `<p style="font-size:14px;margin-top:32px"><a href="/terms">Terms of Use</a> · <a href="/privacy">Privacy Policy</a>`
+        + `${hasImprint() ? ' · <a href="/impressum">Impressum</a>' : ''} · <a href="${esc(REPORT_HREF)}">${esc(REPORT_LINK_LABEL)}</a></p>`;
       const join = `<p><a href="/">Join NRIClub</a>: a free community for Indians abroad. Our team checks every new member.</p>`;
       const guideLinks = ESSENTIALS.map((g) => `<li><a href="/guides/${g.slug}">${esc(g.title)}</a></li>`).join('');
 
@@ -143,6 +173,21 @@ function publicPages() {
           .map((l) => (l.href ? `<a href="${esc(l.href)}">${esc(l.text)}</a>` : esc(l.text))).join('<br>')}</p>`).join('');
         page('/impressum', 'Impressum · NRIClub', 'Legal notice (Impressum) of NRIClub.',
           `<h1>Impressum</h1><p>Legal notice</p>${body}`, '<meta name="robots" content="noindex" />');
+      }
+
+      // The Terms of Use (and each earlier version) and the Privacy Policy,
+      // from src/content/legal/. Out of search results and the sitemap like
+      // the Impressum: they name the operator with a postal address.
+      const noindex = '<meta name="robots" content="noindex" />';
+      page('/privacy', 'Privacy Policy · NRIClub',
+        'How NRIClub handles your data: what we process and why, who can see it, how long we keep it, and your rights.',
+        docToHtml(privacyDoc()), noindex);
+      page('/terms', 'Terms of Use · NRIClub',
+        `The Terms of Use of NRIClub, the free members-only community for Indians abroad (version ${TERMS_VERSION}).`,
+        docToHtml(termsDoc()), noindex);
+      for (const version of Object.keys(TERMS_ARCHIVE)) {
+        page(`/terms/${version}`, `Terms of Use, version ${version} · NRIClub`,
+          `An earlier version (${version}) of the Terms of Use of NRIClub.`, docToHtml(termsDoc(version)), noindex);
       }
 
       // The plain page, for every other address of the app (vercel.json

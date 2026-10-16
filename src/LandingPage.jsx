@@ -5,8 +5,8 @@ import { slug } from "./content/slug";
 import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT } from "./content/home";
-import { TermsModal, PrivacyModal } from "./member/LegalModals";
 import { hasImprint } from "./content/imprint";
+import { REPORT_HREF, REPORT_LINK_LABEL } from "./content/legal/reporting";
 import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, AMBASSADOR_MAIL, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
 
 // ============================================================================
@@ -150,7 +150,6 @@ const lead = { fontSize: 17, lineHeight: 1.7, color: MUTED, maxWidth: 640, margi
 const trust = { fontSize: 14, color: MUTED, margin: "14px 0 0" };
 
 export default function LandingPage({ onJoin, onLogin }) {
-  const [legal, setLegal] = useState(null); // "terms" | "privacy"
   useCanonical("/"); // also when shown at another address (e.g. /post/<id> while signed out)
   const [groups, setGroups] = useState([]); // [{ city, members }]: the live city groups
   const [cityQuery, setCityQuery] = useState("");
@@ -382,14 +381,13 @@ export default function LandingPage({ onJoin, onLogin }) {
         <div style={{ display: "flex", flexWrap: "wrap" }}>
           <a href="/guides" style={footerLink}>NRI guides</a>
           <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact</a>
-          <button type="button" onClick={() => setLegal("terms")} style={footerLink}>Terms of Use</button>
-          <button type="button" onClick={() => setLegal("privacy")} style={footerLink}>Privacy Policy</button>
+          <a href="/terms" style={footerLink}>Terms of Use</a>
+          <a href="/privacy" style={footerLink}>Privacy Policy</a>
           {hasImprint() && <a href="/impressum" style={footerLink}>Impressum</a>}
+          <a href={REPORT_HREF} style={footerLink}>{REPORT_LINK_LABEL}</a>
         </div>
         <span>Made for Indians everywhere</span>
       </footer>
-      {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
-      {legal === "privacy" && <PrivacyModal onClose={() => setLegal(null)} />}
     </div>
   );
 }
