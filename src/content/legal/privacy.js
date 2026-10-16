@@ -35,14 +35,15 @@ export const RETENTION = {
   moderationNoteMonths: 12, // the note in that record is cleared after this
   requestEmailYears: 3, // emails about rights and reports of illegal content, after the matter is closed
   otherEmailMonths: 12, // all other emails, after the matter is closed
-  // Photo files: false while the code doesn't delete them with their post,
-  // listing, event, profile photo or account (plan C1); our team then
-  // deletes them by hand within photoFilesByHandDays (the weekly query in
-  // docs/compliance/deletion-routine.md). true once the code does, with
-  // photoCleanupHours for the clean-up of files left behind.
-  photoFilesDeleted: false,
+  // Photo files: true since the site deletes them with their post, listing,
+  // event or profile photo and with the account (plan C1), and the photo
+  // clean-up in the admin panel (src/admin/PhotoCleanup.jsx) deletes what is
+  // left behind: once a day when an admin opens the panel, and at least
+  // every photoCleanupDays days (docs/compliance/deletion-routine.md). If
+  // it were ever false again: deleted by hand within photoFilesByHandDays.
+  photoFilesDeleted: true,
+  photoCleanupDays: 7,
   photoFilesByHandDays: 7,
-  photoCleanupHours: null,
 };
 const R = RETENTION;
 const months = (n) => `${n} month${n === 1 ? "" : "s"}`;
@@ -66,7 +67,7 @@ function accountRetention() {
 
 export function photoFilesText() {
   if (R.photoFilesDeleted) {
-    return `Photo files are deleted together with the post, listing, event, profile photo or account they belong to${R.photoCleanupHours ? `; any left behind are removed within ${R.photoCleanupHours} hours` : ""}.`;
+    return [strong("Photo files"), ` are deleted when you delete the post, listing or event they belong to, or replace or remove your profile photo. Deleting your account deletes all your photo files first. Files left behind, for example of content our team removed, are deleted automatically within a few days (at most ${R.photoCleanupDays}).`];
   }
   return `Photo files: when you delete a post, a listing, an event, your profile photo or your account, we delete its photo files too, by hand within ${R.photoFilesByHandDays} days for now. Until then the file still opens for anyone who has its exact web address (section 4).`;
 }
@@ -171,7 +172,7 @@ export function privacyDoc() {
             ["How long", "until you change it or delete your account."],
           ] },
           { title: "What you post and do on NRIClub", fields: [
-            ["What", "posts, comments and likes; photos; guides you write and comments on them; questions and answers, including urgent questions, thanks and best answers; events you create and whether you're going; Market listings; places you add or recommend; groups you create, join or ask for; Namaste requests and connections; messages; mentoring times and sessions, with the topic, note and meeting link; ratings and reviews; members you block; your settings (for example who can message you); and the in-app notices we show you."],
+            ["What", "posts, comments and likes; photos (before uploading one, the site makes it smaller and saves it again, which removes hidden details such as where and when it was taken); guides you write and comments on them; questions and answers, including urgent questions, thanks and best answers; events you create and whether you're going; Market listings; places you add or recommend; groups you create, join or ask for; Namaste requests and connections; your invite code, if you open \"Invite a friend\"; messages; mentoring times and sessions, with the topic, note and meeting link; ratings and reviews; members you block; your settings (for example who can message you); and the in-app notices we show you."],
             ["Why", "to provide the features you use."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
             ["How long", `until you delete it or your account, with the exceptions in section 9. In-app notices you've read are deleted after ${months(R.readNoticesMonths)}.`],
@@ -225,7 +226,7 @@ export function privacyDoc() {
         { entries: [
           { title: "Anyone, without an account", fields: [
             ["What", "nothing about you personally: the public pages contain no member data."],
-            ["Photos", "a photo you upload is stored at a long web address that isn't listed anywhere. Anyone who has that exact address can open the photo without signing in, for example if a member copies it."],
+            ["Photos", "a photo you upload is stored at a long web address that isn't listed anywhere. New photos get an address with a random code, which can't be guessed. Anyone who has a photo's exact address can open it without signing in, for example if a member copies it."],
           ] },
           { title: "Approved members", fields: [
             ["What", "your profile (section 2, \"Your profile\", including your LinkedIn link if you add it, and when you were last active); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; the places you add and recommend; the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
@@ -245,6 +246,7 @@ export function privacyDoc() {
             ["Messages", "only you and the member you write with. Messages are encrypted on the way and stored encrypted by our database provider, but they are not end-to-end encrypted. Our admin tools don't show them, and we don't read them, with one exception: if the member you write with reports one of your messages to us, our team sees that one message to decide on the report."],
             ["Mentoring sessions", "the topic, note and meeting link of a session: only you and the other member."],
             ["Just you", "your in-app notices, your settings and the members you've blocked."],
+            ["Your invite link", "it carries a random code, not your member ID. Someone who signs up through it sees your first name and member ID in the details they send for our check, where we fill in who invited them."],
           ] },
           { title: "Our team", fields: [
             ["What", "everything approved members see, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, our decisions about your content and account, your account status and the record of your confirmations and consent. Not your messages, except one reported to us (above)."],
@@ -296,7 +298,7 @@ export function privacyDoc() {
 
       { id: "storage", title: "8. Cookies and storage on your device", blocks: [
         { p: "NRIClub sets no cookies and uses no analytics, advertising or tracking tools. The site's own files, including its fonts, come from our server; member photos come from our database provider. Nothing is loaded from other websites." },
-        { p: "To work, the site keeps a few items in your browser's local storage. They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device. Only the sign-in items are sent to our servers, to sign you in." },
+        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for the invite). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device, with two exceptions: the sign-in items are sent to our servers to sign you in, and the invite code to look up who invited you." },
         { entries: [
           { title: "nriclub_token, nriclub_refresh", fields: [
             ["Purpose", "your sign-in: a short-lived access key and a key to renew it."],
@@ -304,22 +306,18 @@ export function privacyDoc() {
           ] },
           { title: "nriclub_reset_requested", fields: [
             ["Purpose", "the email address and time when this browser asked for a password-reset link, so that after the reset only this browser fills in the address on the login form."],
-            ["Kept", "used for 24 hours; replaced when you ask for another link, otherwise it stays until you clear the site's data."],
+            ["Kept", "until you've set the new password, at most 24 hours (it's deleted the next time you open NRIClub after that)."],
           ] },
           { title: "nriclub_invite", fields: [
-            ["Purpose", "if you opened a member's invite link: that member's ID and first name, so we can fill in who invited you when you sign up."],
-            ["Kept", "until you clear the site's data."],
-          ] },
-          { title: "nriclub_profile_cache", fields: [
-            ["Purpose", "a copy of your profile, written after you change your photo."],
-            ["Kept", "until you sign out."],
+            ["Purpose", "if you opened a member's invite link: the invite code from the link (on older links: that member's ID and first name). When you fill in your details for our check, the site sends the code to our servers to look up who invited you, and tells our team when you send the details."],
+            ["Kept", "in session storage, only in that browser tab: until you send those details, or close the tab."],
           ] },
           { title: "nriclub_welcome_…, nriclub_welcome_done_…, nriclub_catchup_…, nriclub_intro_done_…, nriclub_city_group_…, nriclub_profile_card_dismissed_… (each ending in your member ID) and nriclub_festival_… (ending in a date)", fields: [
             ["Purpose", "which welcome messages, tips and cards you've already seen or closed, and when you last saw the catch-up, so they don't show again. They hold no other personal data."],
-            ["Kept", "until you clear the site's data (they stay after you sign out)."],
+            ["Kept", "until you clear the site's data, or delete your account in this browser (they stay after you sign out, so the same messages don't show again next time)."],
           ] },
         ] },
-        { p: "An earlier version of the site stored a cookie-banner choice (nriclub_cookie_consent); the site now deletes it." },
+        { p: "Earlier versions of the site stored a cookie-banner choice (nriclub_cookie_consent) and a copy of your profile (nriclub_profile_cache); the site now deletes them." },
         { p: "You can delete all of these in your browser's settings by clearing the site data for nriclub.app. You'll then be signed out." },
       ] },
 
@@ -330,7 +328,7 @@ export function privacyDoc() {
           [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
           photoFilesText(),
           [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports you sent about content or members, and reports other members made about you, no longer linked to your account (their text can still contain your name); the record of our decisions about your content and account, no longer linked to it; copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; emails you sent us (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
-          ...(R.byHand ? ["Until these deletions run automatically, our team carries them out by hand: photo files every week, everything else once a month, so data can stay up to a month longer than the period given."] : []),
+          ...(R.byHand ? [`Until these deletions run automatically, our team carries them out by hand${R.photoFilesDeleted ? " once a month" : ": photo files every week, everything else once a month"}, so data can stay up to a month longer than the period given.`] : []),
         ] },
       ] },
 

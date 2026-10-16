@@ -22,6 +22,8 @@ NOTIFICATIONS_LIMITS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                     "20261020000000_notifications_limits_privacy.sql")
 MODERATION = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                           "20261021000000_moderation_dsa.sql")
+STORAGE_IMAGES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                              "20261022000000_storage_images.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1312,6 +1314,7 @@ def main():
     access_consent()
     notifications_limits_privacy()
     moderation_dsa()
+    storage_images()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -2765,6 +2768,254 @@ def berlin_date():
     from zoneinfo import ZoneInfo
     d = datetime.now(ZoneInfo("Europe/Berlin"))
     return f"{d.day} {d.strftime('%B')} {d.year}"
+
+
+def migration_part(start, end, path):
+    """The part of a migration from its line '-- <start>' up to (not
+    including) its line '-- <end>'."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    return text[text.index(f"-- {start}"):text.index(f"-- {end}")]
+
+
+def storage_images():
+    """Photo files (C1, C2) and invite codes (C19): migration
+    20261022000000_storage_images."""
+    tara, uma, vik, wen = (f"00000000-0000-0000-0000-0000000006{n}" for n in ("01", "02", "03", "04"))
+    gone = "00000000-0000-0000-0000-000000000699"  # an account deleted long ago
+    approved_member(tara, "tara@example.com", "Tara T")
+    approved_member(uma, "uma@example.com", "Uma U")
+    approved_member(wen, "wen@example.com", "Wen W")
+    sign_up(vik, "vik@example.com", {"full_name": "Vik V"}, accept_terms=True)
+    new_name = "0b9d0c4e-5d6f-4a8b-9c1d-2e3f4a5b6c7d.jpg"  # as the site names uploads now
+    old = "now() - interval '2 days'"
+
+    # --- buckets and file names (C2) --------------------------------------------
+    check("the photo buckets take JPEG, PNG and WebP (no GIF), profile photos up to 2 MB, other photos up to 4 MB",
+          "SELECT string_agg(id || ':' || file_size_limit || ':' || array_to_string(allowed_mime_types, ','), ' ' ORDER BY id) "
+          "FROM storage.buckets WHERE id IN ('avatars', 'post-images', 'marketplace-images')",
+          expect="avatars:2097152:image/jpeg,image/png,image/webp "
+                 "marketplace-images:4194304:image/jpeg,image/png,image/webp "
+                 "post-images:4194304:image/jpeg,image/png,image/webp")
+    check("a member uploads a photo with a random name into their own folder",
+          f"INSERT INTO storage.objects (bucket_id, name) VALUES ('avatars', '{tara}/{new_name}') RETURNING 1",
+          as_user=tara, expect="1")
+    check("... and uses it as their profile photo (random names pass the photo-link check)",
+          f"UPDATE profiles SET avatar_url = '{STORE}/avatars/{tara}/{new_name}' WHERE id = auth.uid() RETURNING 1",
+          as_user=tara, expect="1")
+    check("... and for a post",
+          f"INSERT INTO posts (user_id, content, image_url) VALUES (auth.uid(), 'new name', '{STORE}/post-images/{tara}/{new_name}') "
+          "RETURNING 1", as_user=tara, expect="1")
+    check("setup: a post with an old-style photo link, from before random names",
+          f"INSERT INTO posts (id, user_id, content, image_url) VALUES ('10000000-0000-0000-0000-000000000601', '{tara}', 'old', "
+          f"'{STORE}/post-images/{tara}/1776988015790.jpeg')")
+    check("... old links keep working when the post is edited",
+          "UPDATE posts SET content = 'old, edited' WHERE id = '10000000-0000-0000-0000-000000000601' RETURNING 1",
+          as_user=tara, expect="1")
+
+    # --- the photo clean-up (C1) --------------------------------------------------
+    escaped_store = STORE.replace("/", "\\/")  # a link written with JSON escapes
+    check("setup: photo files, and the rows that use some of them", f"""
+          INSERT INTO storage.buckets (id, name, public) VALUES ('photos', 'photos', true), ('documents', 'documents', false);
+          INSERT INTO storage.objects (bucket_id, name, created_at) VALUES
+            ('avatars', '{tara}/avatar_1700000000000.png', {old}),
+            ('avatars', '{tara}/now-used.jpg', {old}),
+            ('post-images', '{tara}/fresh.jpg', now()),
+            ('post-images', '{tara}/post.jpg', {old}),
+            ('post-images', '{tara}/event.jpg', {old}),
+            ('post-images', '{tara}/group.jpg', {old}),
+            ('marketplace-images', '{tara}/m1.jpg', {old}),
+            ('marketplace-images', '{tara}/m 2.jpg', {old}),
+            ('marketplace-images', '{tara}/m3.jpg', {old}),
+            ('marketplace-images', '{uma}/single.jpg', {old}),
+            ('post-images', '{gone}/a.jpg', now()),
+            ('avatars', '{gone}/b.jpg', {old}),
+            ('photos', '{gone}/c.jpg', {old}),
+            ('post-images', 'starter/new.jpg', now()),
+            ('post-images', 'starter/old.jpg', {old}),
+            ('documents', '{gone}/d.pdf', {old});
+          UPDATE profiles SET avatar_url = '{STORE}/avatars/{tara}/now-used.jpg?t=1700000000001' WHERE id = '{tara}';
+          INSERT INTO posts (user_id, content, image_url) VALUES ('{tara}', 'with photo', '{STORE}/post-images/{tara}/post.jpg');
+          INSERT INTO events (organizer_id, title, date, image_url) VALUES ('{tara}', 'Garba', '2030-10-01', '{STORE}/post-images/{tara}/event.jpg');
+          INSERT INTO groups (name, image_url) VALUES ('Indians who take photos', '{STORE}/post-images/{tara}/group.jpg');
+          INSERT INTO marketplace (user_id, title, price, image_url) VALUES
+            ('{tara}', 'Lamp', '€5', '["{STORE}/marketplace-images/{tara}/m1.jpg", "{STORE}/marketplace-images/{tara}/m%202.jpg"]'),
+            ('{uma}', 'Chair', '€5', '{STORE}/marketplace-images/{uma}/single.jpg'),
+            ('{uma}', 'Odd', '€5', '{{"length": 5}}'),
+            ('{tara}', 'Escaped', '€5', '["{escaped_store}\\/marketplace-images\\/{tara}\\/m\\u0033.jpg"]');""")
+    mine = (f"WHERE name LIKE '{tara}/%' OR name LIKE '{uma}/%' OR name LIKE '{gone}/%' OR name LIKE 'starter/%'")
+    check("members can't list the files to delete", "SELECT * FROM public.admin_storage_orphans()", as_user=tara,
+          error_has="Admins only")
+    check("... nor signed-out visitors", "SELECT * FROM public.admin_storage_orphans()", role="anon", expect="error")
+    check("the clean-up lists files of deleted accounts (at once) and day-old files nothing uses, and nothing else",
+          "SELECT string_agg(bucket_id || '/' || name || ':' || reason, ' ' ORDER BY reason, bucket_id, name) "
+          f"FROM public.admin_storage_orphans(1000) {mine}", as_user=ADMIN,
+          expect=f"avatars/{gone}/b.jpg:account_deleted photos/{gone}/c.jpg:account_deleted "
+                 f"post-images/{gone}/a.jpg:account_deleted avatars/{tara}/avatar_1700000000000.png:unused "
+                 "post-images/starter/old.jpg:unused")
+    check("... a few at a time", "SELECT count(*) FROM public.admin_storage_orphans(2)", as_user=ADMIN, expect="2")
+    check("admins see every photo file (Storage needs it to delete one)",
+          f"SELECT count(*) FROM storage.objects WHERE name LIKE '{uma}/%'", as_user=ADMIN, expect="1")
+    check("... members only their own", f"SELECT count(*) FROM storage.objects WHERE name LIKE '{uma}/%'", as_user=tara,
+          expect="0")
+    for label, name in [("a profile photo (link with ?t=)", f"{tara}/now-used.jpg"), ("a post's photo", f"{tara}/post.jpg"),
+                        ("an event's photo", f"{tara}/event.jpg"), ("a group's photo", f"{tara}/group.jpg"),
+                        ("a listing's photo", f"{tara}/m1.jpg"), ("a listing's photo, linked with %20", f"{tara}/m 2.jpg"),
+                        ("a listing's photo, linked with JSON escapes", f"{tara}/m3.jpg"),
+                        ("a listing's only photo (not a list)", f"{uma}/single.jpg")]:
+        check(f"an admin can't delete a photo file that is used: {label}",
+              f"DELETE FROM storage.objects WHERE name = '{name}' RETURNING 1", as_user=ADMIN, expect="")
+    check("an admin deletes files nothing uses",
+          f"WITH d AS (DELETE FROM storage.objects WHERE bucket_id = 'avatars' "
+          f"AND name IN ('{tara}/avatar_1700000000000.png', '{gone}/b.jpg') RETURNING name) "
+          "SELECT string_agg(name, ',' ORDER BY name) FROM d", as_user=ADMIN,
+          expect=f"{tara}/avatar_1700000000000.png,{gone}/b.jpg")
+    check("... also in the old bucket 'photos'",
+          f"DELETE FROM storage.objects WHERE bucket_id = 'photos' RETURNING name", as_user=ADMIN, expect=f"{gone}/c.jpg")
+    check("... but not files in other buckets",
+          f"DELETE FROM storage.objects WHERE bucket_id = 'documents' RETURNING name", as_user=ADMIN, expect="")
+    # The policy's list of names in use is made once per request, not once
+    # per file: with a few thousand rows (here listings full of %-escaped
+    # links, which any member can store) a 100-file Storage request must
+    # still finish within Supabase's 8-second limit for signed-in requests.
+    ok, plan, err = psql(f"""
+          BEGIN;
+          SELECT set_config('request.jwt.claims', '{{"sub": "{ADMIN}", "role": "authenticated"}}', true) IS NULL;
+          SET LOCAL ROLE authenticated;
+          EXPLAIN (VERBOSE, COSTS OFF) DELETE FROM storage.objects WHERE bucket_id = 'avatars' AND name = ANY ('{{a/b.jpg,c/d.jpg}}');
+          ROLLBACK;""")
+    filters = [l for l in plan.splitlines() if "Filter:" in l]
+    verdict("an admin's delete looks up the photos in use once per request (InitPlan), not for each file",
+            ok and "InitPlan" in plan and "admin_image_refs" in plan and filters
+            and not any("admin_image_refs" in l or "image_names" in l for l in filters), plan[:600] + err[:300])
+    check("... and 100 files go within Supabase's 8 seconds, with 4,000 posts and 300 listings of %-escaped links", f"""
+          BEGIN;
+          SET LOCAL session_replication_role = replica;
+          INSERT INTO posts (user_id, content, image_url)
+            SELECT '{uma}', 'load ' || g, '{STORE}/post-images/{uma}/load%5F' || g || '.jpg' FROM generate_series(1, 4000) g;
+          INSERT INTO marketplace (user_id, title, price, image_url)
+            SELECT '{uma}', 'load ' || g, '1',
+                   (SELECT json_agg('{STORE}/marketplace-images/{uma}/l%20' || g || '-' || k || '.jpg')::text FROM generate_series(1, 20) k)
+            FROM generate_series(1, 300) g;
+          INSERT INTO storage.objects (bucket_id, name, created_at)
+            SELECT 'post-images', '{uma}/load_' || g || '.jpg', {old} FROM generate_series(1, 4000) g
+            UNION ALL SELECT 'post-images', '{uma}/gone' || g || '.jpg', {old} FROM generate_series(1, 95) g;
+          SET LOCAL session_replication_role = origin;
+          SELECT set_config('request.jwt.claims', '{{"sub": "{ADMIN}", "role": "authenticated"}}', true) IS NULL;
+          SET LOCAL ROLE authenticated;
+          SET LOCAL statement_timeout = '8s';
+          WITH d AS (
+            DELETE FROM storage.objects WHERE bucket_id = 'post-images' AND name = ANY (
+              ARRAY(SELECT '{uma}/gone' || g || '.jpg' FROM generate_series(1, 95) g)
+              || ARRAY(SELECT '{uma}/load_' || g || '.jpg' FROM generate_series(1, 5) g))
+            RETURNING name)
+          SELECT count(*) || ' deleted, ' || count(*) FILTER (WHERE name LIKE '%/load_%') || ' in use' FROM d;
+          ROLLBACK;""", expect="f\n95 deleted, 0 in use")
+    check("%-escapes of printable ASCII are decoded (Storage names are ASCII); anything else stays as it is",
+          "SELECT private.percent_decode('m%202.jpg') || '|' || private.percent_decode('a%2Fb%5f') || '|' "
+          "|| private.percent_decode('%zz%e2%82%ac%00%') || '|' || private.percent_decode('plain')",
+          expect="m 2.jpg|a/b_|%zz%e2%82%ac%00%|plain")
+    check("the list of photos in use is for admins only", "SELECT private.admin_image_refs() IS NULL", as_user=tara,
+          expect="t")
+    check("... (an admin gets it)", f"SELECT '{tara}/post.jpg' = ANY (private.admin_image_refs())", as_user=ADMIN,
+          expect="t")
+    check("a member can't delete another member's file, used or not",
+          f"DELETE FROM storage.objects WHERE name IN ('{gone}/a.jpg', '{uma}/single.jpg') RETURNING 1", as_user=tara, expect="")
+    check("tara deletes the post with the photo",
+          "DELETE FROM posts WHERE content = 'with photo' AND user_id = auth.uid() RETURNING 1", as_user=tara, expect="1")
+    check("... now the clean-up lists its photo, and an admin can delete it",
+          f"SELECT count(*) FROM public.admin_storage_orphans(1000) WHERE name = '{tara}/post.jpg'; "
+          f"DELETE FROM storage.objects WHERE name = '{tara}/post.jpg' RETURNING 1", as_user=ADMIN, expect="1\n1")
+    check("a member deletes their own files, used or not (the site deletes them with what used them)",
+          f"DELETE FROM storage.objects WHERE name IN ('{tara}/fresh.jpg', '{tara}/m1.jpg') RETURNING 1", as_user=tara,
+          expect="1\n1")
+    check("setup: wen is blocked", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{wen}'; "
+          f"INSERT INTO storage.objects (bucket_id, name) VALUES ('avatars', '{wen}/me.jpg')")
+    check("... a blocked member can still delete their own files (before deleting the account)",
+          f"DELETE FROM storage.objects WHERE name = '{wen}/me.jpg' RETURNING 1", as_user=wen, expect="1")
+    check("members can't start the daily clean-up", "SELECT public.admin_photo_cleanup_due()", as_user=tara,
+          error_has="Admins only")
+    check("the first admin to open the panel on a day runs the daily clean-up, nobody after them that day",
+          "SELECT public.admin_photo_cleanup_due()::text || ',' || public.admin_photo_cleanup_due()::text", as_user=ADMIN,
+          expect="true,false")
+    check("... the next day it runs again",
+          "UPDATE private.app_config SET value = '2020-01-01' WHERE key = 'photo_cleanup_on'; "
+          "SET ROLE authenticated; "
+          f"SELECT set_config('request.jwt.claims', '{{\"sub\": \"{ADMIN}\", \"role\": \"authenticated\"}}', true) IS NOT NULL; "
+          "SELECT public.admin_photo_cleanup_due()", expect="t\nt")
+    stub_delete = """
+          CREATE FUNCTION storage.no_deletes() RETURNS trigger LANGUAGE plpgsql AS $f$
+            BEGIN RAISE EXCEPTION 'Direct deletion from storage tables is not allowed. Use the Storage API instead.'; END $f$;
+          CREATE TRIGGER protect_buckets_delete BEFORE DELETE ON storage.buckets FOR EACH STATEMENT EXECUTE FUNCTION storage.no_deletes();"""
+    photos_bucket = migration_part('The bucket "photos"', "Admins see every photo file", STORAGE_IMAGES)
+    check("the migration deletes the empty bucket 'photos'", f"""
+          BEGIN;
+          {photos_bucket}
+          SELECT count(*) FROM storage.buckets WHERE id = 'photos';
+          ROLLBACK;""", expect="0")
+    check("... keeps it while it has files", f"""
+          BEGIN;
+          INSERT INTO storage.objects (bucket_id, name) VALUES ('photos', 'x/y.jpg');
+          {photos_bucket}
+          SELECT count(*) FROM storage.buckets WHERE id = 'photos';
+          ROLLBACK;""", expect="1")
+    check("... and goes on where the database refuses to delete it (as Supabase can)", f"""
+          BEGIN;
+          {stub_delete}
+          {photos_bucket}
+          SELECT count(*) FROM storage.buckets WHERE id = 'photos';
+          ROLLBACK;""", expect="1")
+    buckets_block = migration_part("What the buckets accept", 'The bucket "photos"', STORAGE_IMAGES)
+    ok, _, err = psql(f"""
+          BEGIN;
+          {buckets_block}
+          ROLLBACK;""")
+    verdict("the migration changes all three photo buckets without a notice", ok and "NRIClub" not in err, err[:300])
+    ok, _, err = psql(f"""
+          BEGIN;
+          CREATE FUNCTION storage.skip_avatars() RETURNS trigger LANGUAGE plpgsql AS $f$
+            BEGIN IF NEW.id = 'avatars' THEN RETURN NULL; END IF; RETURN NEW; END $f$;
+          CREATE TRIGGER skip_avatars BEFORE UPDATE ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.skip_avatars();
+          {buckets_block}
+          ROLLBACK;""")
+    verdict("... and says so where it can change only some of them (set the rest in the dashboard)",
+            ok and "only 2 of the photo buckets" in err, err[:300])
+
+    # --- invite codes (C19) ---------------------------------------------------------
+    check("a member's invite code: 12 random letters and digits, the same every time",
+          "SELECT (public.my_invite_code() ~ '^[a-z2-9]{12}$')::text || ',' || (public.my_invite_code() = public.my_invite_code())::text",
+          as_user=tara, expect="true,true")
+    check("... another member gets another", "SELECT public.my_invite_code() IS NOT NULL", as_user=uma, expect="t")
+    check("... (two codes)", f"SELECT count(DISTINCT code) FROM invites WHERE member_id IN ('{tara}', '{uma}')", expect="2")
+    check("signed-out visitors get no code", "SELECT public.my_invite_code()", role="anon", expect="error")
+    check("a blocked member gets no code", "SELECT public.my_invite_code()", as_user=wen, error_has="blocked")
+    check("members see only their own invite code", "SELECT count(*) FROM invites", as_user=uma, expect="1")
+    check("... admins all of them", "SELECT (count(*) >= 2)::text FROM invites", as_user=ADMIN, expect="true")
+    check("members can't make up a code", "INSERT INTO invites (code, member_id) VALUES ('abcdefghijkm', auth.uid())",
+          as_user=vik, expect="error")
+    check("... or change theirs", "UPDATE invites SET code = 'abcdefghijkm' WHERE member_id = auth.uid()", as_user=tara,
+          expect="error")
+    ok, tara_code, err = psql(f"SELECT code FROM invites WHERE member_id = '{tara}'")
+    if not ok or not tara_code:
+        sys.exit("reading tara's invite code failed: " + err)
+    check("a new member's invite code tells who invited them",
+          f"SELECT member_id || ',' || first_name FROM public.resolve_invite('{tara_code}')", as_user=vik,
+          expect=f"{tara},Tara")
+    check("... also in capitals", f"SELECT first_name FROM public.resolve_invite(' {tara_code.upper()} ')", as_user=vik,
+          expect="Tara")
+    check("an unknown code finds nobody", "SELECT count(*) FROM public.resolve_invite('zzzzzzzzzzzz')", as_user=vik, expect="0")
+    check("... nor does the member's own", f"SELECT count(*) FROM public.resolve_invite('{tara_code}')", as_user=tara,
+          expect="0")
+    check("signed-out visitors can't look codes up", f"SELECT * FROM public.resolve_invite('{tara_code}')", role="anon",
+          expect="error")
+    check("codes can't be tried out: 30 lookups a day",
+          "SELECT count(*) FROM generate_series(1, 40) g, LATERAL public.resolve_invite('zzzzzzzzzzzz' || g) r", as_user=vik,
+          error_has="too often")
+    check("uma deletes her account", "SELECT public.delete_my_account()", as_user=uma)
+    check("... (no code left)", f"SELECT count(*) FROM invites WHERE member_id = '{uma}'", expect="0")
+    check("... and the clean-up lists the account's files at once, although a listing used them until now",
+          "SELECT string_agg(name || ':' || reason, ' ') FROM public.admin_storage_orphans(1000) "
+          f"WHERE name LIKE '{uma}/%'", as_user=ADMIN, expect=f"{uma}/single.jpg:account_deleted")
 
 
 if __name__ == "__main__":

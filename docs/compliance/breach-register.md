@@ -74,7 +74,11 @@ the lawyer** (see below).
   from public Storage URLs (19 of 33 files on 15 October), and two post
   images still carried GPS coordinates in their EXIF data. This is an
   erasure and minimisation gap rather than a breach, but decide whether
-  any of it should be recorded here.
+  any of it should be recorded here. Fixed in the code with
+  `20261022000000_storage_images.sql` (photo clean-up in the admin panel,
+  photos re-encoded without EXIF); record **[fill in: date]** when the
+  first clean-up ran on live and what it deleted, and what was done about
+  the two GPS-tagged images if a post still used them.
 - Until migration `20261019000000_access_consent.sql`, members waiting for
   review could read every profile. That was the intended design at the
   time, not unauthorised access, but it is why the change was made.

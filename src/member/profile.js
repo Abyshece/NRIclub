@@ -206,6 +206,8 @@ export const NETWORK_MESSAGE = "We couldn't reach NRIClub. Check your connection
 // supabaseApi throws the raw PostgREST JSON as the error message.
 export function apiErrorMessage(err, fallback = "Something went wrong. Please try again.") {
   if (isNetworkError(err)) return NETWORK_MESSAGE;
+  // Written for members by the site itself (e.g. "This photo couldn't be read.").
+  if (err?.userMessage) return err.userMessage;
   try {
     const body = JSON.parse(err?.message || "");
     if (body && body.code === "P0001" && body.message) return body.message;

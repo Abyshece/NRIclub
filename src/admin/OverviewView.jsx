@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import * as api from "../supabaseApi";
 import { slug } from "../content/slug";
 import { PageHeader, SectionTitle } from "./ui";
+import { PhotoFilesSection } from "./PhotoCleanup";
 import { DAY, msSince } from "./format";
 
 const MONTHS = 12;
@@ -122,7 +123,7 @@ function CityStats() {
 
 // users: the newest members loaded (at most 1,000); membersTotal and
 // blockedTotal count all of them.
-export default function OverviewView({ users, membersTotal = users.length, blockedTotal = null, counts, openReports, pendingGroups, onNavigate }) {
+export default function OverviewView({ users, membersTotal = users.length, blockedTotal = null, counts, openReports, pendingGroups, onNavigate, photoCleanup }) {
   const blocked = blockedTotal ?? users.filter((u) => u.status === "blocked").length;
   const cut = users.length < membersTotal;
   const stats = [
@@ -175,6 +176,8 @@ export default function OverviewView({ users, membersTotal = users.length, block
         <SectionTitle>Cities</SectionTitle>
         <CityStats />
       </div>
+
+      {photoCleanup && <PhotoFilesSection cleanup={photoCleanup} />}
     </>
   );
 }
