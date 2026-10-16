@@ -975,6 +975,12 @@ const BlockedOverlay = ({ onSignOut, font }) => {
   );
 };
 
+// Under the name and LinkedIn fields for approved members: changing either
+// sends them back to review (private.reverify_on_identity_change), and
+// members waiting for review can't take part until approved again.
+const REVIEW_AGAIN_NOTE = (what) =>
+  `Changing your ${what} sends your profile back for a quick review. Until our team has checked it, you can't see other members or take part.`;
+
 // The fields of the user object (mapProfile) that decide what the member may
 // do: the ones api.refreshMyStatus reads.
 const STATUS_FIELDS = ["verificationStatus", "status", "reviewFlag", "termsVersion", "ageConfirmedAt", "termsAcceptedAt"];
@@ -5245,7 +5251,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Personal Information</h4>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Full Name</label>
-                <input style={inputStyle} value={accountName} onChange={(e) => setAccountName(e.target.value)} />
+                <input style={inputStyle} value={accountName} onChange={(e) => setAccountName(e.target.value)} aria-describedby={user.verificationStatus === "approved" ? "account-name-help" : undefined} />
+                {user.verificationStatus === "approved" && (
+                  <p id="account-name-help" style={{ fontSize: 11, color: "#6B6A67", marginTop: 4, lineHeight: 1.45, fontFamily: font }}>{REVIEW_AGAIN_NOTE("name")}</p>
+                )}
               </div>
               <div style={{ marginBottom: 6 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Email Address</label>
@@ -5304,7 +5313,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   try {
                     if (name !== user.name) {
                       await api.updateProfile({ name });
-                      onUserUpdate({ ...user, name });
+                      // An approved member is now back in review: the profile
+                      // as the database has it shows the waiting view at once.
+                      let refreshed = null;
+                      try { refreshed = mapProfile(await api.getMyProfile()); } catch (e) {}
+                      onUserUpdate(refreshed || { ...user, name });
                     }
                     if (accountPassword) await api.updatePassword(accountPassword);
                   } catch (e) {
@@ -6168,7 +6181,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 })}
                 {textField("linkedinUrl", "LinkedIn profile", "linkedin.com/in/your-name", {
                   input: { inputMode: "url", autoCapitalize: "none", spellCheck: false },
-                  help: user.verificationStatus === "approved" ? "Changing your LinkedIn sends your profile back for a quick review." : null,
+                  help: user.verificationStatus === "approved" ? REVIEW_AGAIN_NOTE("LinkedIn") : null,
                 })}
                 {profileErrors.form && <div role="alert" style={{ padding: "10px 12px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, fontSize: 13, color: "#B91C1C", marginBottom: 12, fontFamily: font }}>{profileErrors.form}</div>}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8 }}>

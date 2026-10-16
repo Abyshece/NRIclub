@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import * as api from "./supabaseApi";
 import LandingPage from "./LandingPage";
 import FlagIcon from "./FlagIcon";
@@ -358,17 +358,36 @@ export default function App() {
       .catch(() => { if (active) setAuthState("profile-error"); });
     return () => { active = false; };
   }, [authState, termsVersion]);
-  // Coming back to the tab, ask again: when the Terms change (e.g. with the
-  // database update that follows a new version of the site), a member with
-  // NRIClub open gets the Terms screen without having to reload.
+  // Coming back to the tab, and every few minutes while it's open, ask again:
+  // when the Terms change (e.g. with the database update that follows a new
+  // version of the site), a member with NRIClub open gets the Terms screen
+  // without having to reload. With a new version the profile is read again
+  // too, so that screen asks in one go for anything else the update added
+  // (such as the separate consent).
+  const termsVersionRef = useRef(termsVersion);
+  termsVersionRef.current = termsVersion;
   useEffect(() => {
     if (authState !== "authenticated") return;
+    let active = true;
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      api.getCurrentTermsVersion({ refresh: true }).then(setTermsVersion).catch(() => {});
+      api.getCurrentTermsVersion({ refresh: true }).then(async (version) => {
+        if (termsVersionRef.current && version !== termsVersionRef.current) {
+          try {
+            const dbProfile = await api.getMyProfile();
+            if (active && dbProfile) setUser(mapProfile(dbProfile));
+          } catch {}
+        }
+        if (active) setTermsVersion(version);
+      }).catch(() => {});
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    const timer = setInterval(onVisible, 5 * 60000);
+    return () => {
+      active = false;
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(timer);
+    };
   }, [authState]);
 
   // After a new password: log in with it. The email is filled in only if this

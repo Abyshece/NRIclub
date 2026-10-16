@@ -82,7 +82,7 @@ export function WaitingForReview({ user, onEditProfile, onUpdateDetails }) {
         <p style={text}>
           {needsInfo
             ? "Our team needs a little more information before they can approve you: see their note at the top of the page."
-            : "You'll see it here as soon as our team has approved you, usually within a day."}
+            : "Our team is checking your membership, usually within a day, and you'll see here when you're approved."}
           {" "}Then you can see other members, post, message, say Namaste, join groups and events, and use the Market, places and mentoring.
         </p>
         {needsInfo && <button type="button" onClick={onUpdateDetails} style={{ ...button, marginTop: 14 }}>Update details</button>}
