@@ -4,8 +4,7 @@
 
 | Path | What it is |
 |------|-----------|
-| `supabase/migrations/20261012000000_nriclub_schema.sql` | The whole database: tables, security policies, triggers, storage buckets, realtime |
-| `supabase/migrations/20261013000000_review_fixes.sql` | Fixes from the Phase 1 review and from the review of those fixes, applied after the schema above |
+| `supabase/migrations/` | The whole database, one file per update, applied in name order: the schema (`20261012000000_nriclub_schema.sql`: tables, security policies, triggers, storage buckets, realtime), the Phase 1 review fixes (`20261013…`), the features up to mentoring (`20261014…` to `20261018…`), compliance round 1 (`20261019000000_access_consent.sql`, `20261020000000_notifications_limits_privacy.sql`) and round 2 (`20261021000000_moderation_dsa.sql`, `20261022000000_storage_images.sql`, `20261023000000_admin_access.sql`) |
 | `supabase/seed.sql` | Starter data for a new project: the city communities, with no members (no example events) |
 | `supabase/tests/` | Automated security tests for the database (see "Testing the database") |
 | `supabase/oneoff/` | One-time scripts for the existing project (already applied ones are documented there) |
@@ -23,9 +22,10 @@
 
 **New Supabase project:** open **SQL Editor → New query**, paste the whole of
 `supabase/migrations/20261012000000_nriclub_schema.sql` and run it. Do the
-same with `supabase/migrations/20261013000000_review_fixes.sql`, then with
-`supabase/seed.sql`. (With the Supabase CLI, `supabase db push` applies the
-two migrations; run the seed as above.) The seed is only for a new project.
+same with every other file in `supabase/migrations/`, in name order (oldest
+first), then with `supabase/seed.sql`. (With the Supabase CLI,
+`supabase db push` applies the migrations; run the seed as above.) The seed
+is only for a new project.
 
 Then tell the database the project's public Storage address (the project URL
 from **Project Settings → API**, plus `/storage/v1/object/public/`). Photo
@@ -46,7 +46,15 @@ sign up again.
 with the one-off script in `supabase/oneoff/2026-10-12-phase1-live-reset/`
 (already run; see the README there for what is still open). The review fixes
 are applied to it as described in `supabase/oneoff/2026-10-13-review-fixes/`:
-the migration goes on before the pull request that needs it is merged.
+the migration goes on before the pull request that needs it is merged. Later
+updates each have one file to run in the SQL editor, in date order, in
+`supabase/oneoff/` (each says at the top what it does and what to do
+afterwards). Compliance round 1 is
+`2026-10-19-compliance-round1/run_in_sql_editor.sql`; compliance round 2 is
+`2026-10-21-compliance-round2/run_in_sql_editor.sql` (see "Compliance round
+2: what to do, in order" below). Since round 1, the site goes live first
+and the SQL runs right after, the same day: the site works with the
+database before and after the update.
 
 ## Step 2: Authentication settings
 
@@ -225,8 +233,10 @@ key in the frontend or in a `VITE_` variable.
   long Vercel keeps request logs on your plan.
 - **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` and
   `PRIVACY_DATE` in `src/content/legal/privacy.js` say "16 October 2026",
-  the day this version went live. When you change a text, set its date to
-  the day the change goes live.
+  the day these versions went live (the Terms 2026-10-19; the Privacy Policy
+  2026-10-21, compliance round 2). When you change a text, set its date to
+  the day the change goes live: if round 2 goes live later than 16 October,
+  change `PRIVACY_DATE` to that day in the same deploy.
 - **Deleting old data:** the Privacy Policy promises retention periods
   that, for now, you keep by hand once a month
   (`docs/compliance/deletion-routine.md`). Photo files nothing uses any
@@ -235,9 +245,9 @@ key in the frontend or in a `VITE_` variable.
   in `privacy.js`; change both together.
 - **Who members see:** `VISIBILITY.onlyApprovedListed` in `privacy.js`
   says whether other members see only approved accounts' profiles. It is
-  `false` while approved members can still see the profile of an account
-  that is waiting, unfinished, declined or blocked; set it to `true` in the
-  same pull request as the database change that hides those.
+  `true` since compliance round 2 (`20261023000000_admin_access.sql` hides
+  accounts that are waiting, unfinished, declined or blocked); `false`
+  would say that approved members see every profile.
 - **Where the texts are:** `src/content/legal/terms.js` and `privacy.js`.
   The build writes them into static pages (nriclub.app/terms and /privacy)
   and the app shows the same text in its dialogs.
@@ -285,12 +295,62 @@ With two member accounts and one admin account:
 - [ ] Block a member → neither of you can message the other
 - [ ] Join a community, request a new one → it appears in the admin panel under Communities
 - [ ] RSVP to an event, post a marketplace listing, a doc and a help request
-- [ ] Report a post and file a bug report → both appear in the admin panel; **Dismiss** the report → it moves to *Handled*; **Resolve** the bug report → it moves to *Resolved*
-- [ ] Admin panel: a non-admin account is refused; approve a member, approve/reject a community, remove reported content
-- [ ] Block a member from the admin panel → they can no longer post or see other members
+- [ ] Report a post (pick a reason, say why, confirm good faith) and file a bug report → both appear in the admin panel; **Dismiss…** the report with a reason → it moves to *Handled* and the reporter is told; **Resolve** the bug report → it moves to *Resolved*
+- [ ] Signed out, report something at nriclub.app/report → a reference code; it appears under Reports with that code; send the receipt and the decision from hello@ with the prefilled emails and click **Mark as sent**
+- [ ] Admin panel: a non-admin account is refused; approve a member, approve/reject a community, **Remove…** reported content with a rule and the facts → the author gets the message in the app (with how to challenge it), the reporter the outcome
+- [ ] **Block…** a member from the admin panel (after a warning 14 days ago, or for a serious reason) → they can no longer post or see other members, and see the reason and how to challenge it when they sign in
+- [ ] Admin panel → **Security**: set up two-step login, sign out, sign in again → the 6-digit code is asked
+- [ ] Overview → **Photo files** → **Clean up photo files** → it says what it deleted (or that there was nothing)
 - [ ] Settings → **Download My Data** → the file has your profile, settings, posts and verification history
 - [ ] Delete an account from Settings → the account can no longer log in
 - [ ] Test on a phone
+
+## Compliance round 2: what to do, in order
+
+Round 2 (October 2026) adds reporting and moderation under the Digital
+Services Act, the photo clean-up and photos without location data, invite
+codes, admin two-step login, and hides accounts that aren't approved from
+other members.
+
+1. **Before the deploy:** add `admin.nriclub.app` to the Vercel project (with
+   the DNS record Vercel asks for) and check that it opens the site. From this
+   version on, the admin panel opens only there (`https://nriclub.app/#admin`
+   forwards to it). In Supabase → Authentication → URL Configuration, keep
+   `https://admin.nriclub.app/**` in the redirect URLs.
+2. **Deploy the site** (merge the pull request "Compliance round 2"). It
+   works with the database before and after the SQL below.
+3. If the round 1 file hasn't run yet, run
+   `supabase/oneoff/2026-10-19-compliance-round1/run_in_sql_editor.sql` now
+   (it needs the Impressum details first, see "Before inviting the public").
+4. **The same day:** run
+   `supabase/oneoff/2026-10-21-compliance-round2/run_in_sql_editor.sql` in
+   the SQL editor, the whole file at once. It refuses to run before round 1,
+   and a second time. Read the messages under the result: "0 of them without
+   admin rights" (otherwise unblock that admin as the file says); if it says
+   the bucket "photos" couldn't be deleted, delete that empty bucket under
+   Storage. If an admin page still says it needs the database update a few
+   minutes later, run `NOTIFY pgrst, 'reload schema';`.
+5. **Open the admin panel** at https://admin.nriclub.app. The photo clean-up
+   runs by itself (Overview → Photo files shows what it deleted). Then check
+   the photos uploaded before the update for location data
+   (`docs/compliance/deletion-routine.md`, "Once, after the 2026-10-22
+   update") and note the result in `docs/compliance/breach-register.md`.
+6. **Two-step login:** every admin sets it up under **Security** (Step 3).
+   Then turn on **Require two-step login for admin rights**, set
+   `SECURITY.adminTwoStep` to `true` in `src/content/legal/privacy.js` and
+   deploy.
+7. **Moderation:** read "Reports and notices" and "Blocks" in
+   `docs/compliance/moderation-guidelines.md` with every admin. Reports
+   from nriclub.app/report are answered by email by hand: open the
+   prefilled email in the admin panel, send it from hello@nriclub.app, then
+   click **Mark as sent**.
+8. **Check as members:** an approved member sees only approved members in
+   Find, and posts of waiting or blocked accounts show "NRIClub member"; a
+   member waiting for review sees Home, Guides and Profile; Settings →
+   Account → **Sign out of all devices** works.
+9. Ask the lawyer whether the round-2 changes to sections 9 and 10 of the
+   Terms (reporting, decisions, blocks, a declined mentor's sessions) need a
+   new Terms version (`docs/compliance/questions-for-the-lawyer.md`).
 
 ## Before inviting the public
 
@@ -350,6 +410,9 @@ Launch tasks from the Phase 1 review (2026-10-12):
       if it says so (`docs/compliance/dpia-threshold-check.md`).
 - [ ] The record of processing activities is filled in, signed and dated
       (`docs/compliance/records-of-processing.md`).
+- [ ] Admin rights need two-step login: every admin has set it up, the
+      switch under Security is on, and `SECURITY.adminTwoStep` in
+      `src/content/legal/privacy.js` is `true` (Step 3).
 - [ ] After the deploy: the site works with the security headers (no
       "Content Security Policy" errors in the browser console on the
       homepage, a guide, signup, the member app and the admin panel), and
@@ -363,10 +426,27 @@ the Supabase platform:
 ```
 createdb nriclub_test
 psql -d nriclub_test -f supabase/tests/supabase_stub.sql
-psql -d nriclub_test -f supabase/migrations/20261012000000_nriclub_schema.sql
-psql -d nriclub_test -f supabase/migrations/20261013000000_review_fixes.sql
+for f in supabase/migrations/*.sql; do
+  psql -v ON_ERROR_STOP=1 -1 -d nriclub_test -f "$f" || break
+done
 python3 supabase/tests/rls_test.py "dbname=nriclub_test"
 ```
+
+The migrations run in name order, each in one transaction:
+`20261012000000_nriclub_schema.sql`, `20261013000000_review_fixes.sql`,
+`20261014000000_messages_read_and_hide.sql`,
+`20261015000000_places_referrals_travel.sql`,
+`20261016000000_city_pages_ambassadors.sql`,
+`20261017000000_answers_topics_ambassador_tools.sql`,
+`20261018000000_mentoring.sql`, `20261019000000_access_consent.sql`,
+`20261020000000_notifications_limits_privacy.sql`,
+`20261021000000_moderation_dsa.sql`, `20261022000000_storage_images.sql`,
+`20261023000000_admin_access.sql`. The test should end with
+"0 failure(s)". To check a one-off file the way the live project gets it,
+build a database with the migrations up to the one before it, then run the
+file with `psql -v ON_ERROR_STOP=1 -1 -f <file>`: it must succeed once and
+refuse a second run, and `pg_dump -s` of the result must equal that of a
+database built from all migrations.
 
 Each check runs as a signed-out visitor, a member, a blocked member or an
 admin, and confirms what that person can and cannot read or change.

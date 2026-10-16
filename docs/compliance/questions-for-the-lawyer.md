@@ -161,13 +161,29 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
    in April) still holds; the register now says 24 April for item (4) and
    asks the founder to confirm.
 9. **Dates.** `TERMS_DATE` and `PRIVACY_DATE` say "16 October 2026", the
-   day this version went live (the lawyer's advice). The version strings
-   stay `2026-10-19`.
+   day this version went live (the lawyer's advice). The Terms version
+   stays `2026-10-19`; the Privacy Policy is `2026-10-21` since round 2
+   (item 12).
 10. **"Ended" memberships.** The database knows "blocked", not "ended". The
     Policy promises deletion 6 months after we end a membership; the
     routine lists blocked accounts older than 6 months and the admin
     deletes the ones whose membership ended (`deletion-routine.md`,
     step 3). A separate status would make this exact.
+11. **Terms changed within version 2026-10-19 (compliance round 2).**
+    Sections 9 and 10 now describe the Report button on every item, the
+    form at nriclub.app/report, decisions in the app or by email, the
+    reason for a block shown at sign-in, and that declining a mentor's
+    membership cancels their booked sessions; section 8 that photo files
+    left behind are deleted within 7 days. The version string and date were
+    not changed: when this was written, version 2026-10-19 was live but its
+    database update (round 1) had not run, so no member could have
+    accepted it yet. Confirm that no new version is needed (in particular
+    for the mentoring sentence), or publish these changes as a new version
+    ("Legal texts and the Impressum" in `LAUNCH-GUIDE.md`).
+12. **The Privacy Policy** is version 2026-10-21 since round 2 (reporting
+    and moderation records, photo files, invite codes, who sees whom, admin
+    access). Members don't accept it; tell them in the app about the
+    important changes.
 
 ### In the code, outside the legal texts (the texts allow for them)
 
@@ -212,9 +228,11 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
   Policy (section 8) says so. Also: `nriclub_reset_requested` goes after
   24 hours or the reset, `nriclub_profile_cache` is no longer written, and
   a member's own per-member flags go when they delete their account.
-- **Report page** (plan C6): then `REPORT_HREF = "/report"` and
-  `REPORT_LINK_TEXT = REPORT_LINK_LABEL` in `src/content/legal/reporting.js`,
-  and Terms section 9 names the page.
+- *Done (2026-10-21):* **Report page** (plan C6): nriclub.app/report
+  (`REPORT_HREF = "/report"` in `src/content/legal/reporting.js`), named in
+  the footers, the Impressum and Terms section 9. Receipts and decisions for
+  reports sent there are emailed by hand from hello@nriclub.app
+  (`moderation-guidelines.md`).
 
 ## 3. What changed after the review
 

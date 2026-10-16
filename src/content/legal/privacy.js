@@ -12,7 +12,7 @@ import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
 
-export const PRIVACY_VERSION = "2026-10-19";
+export const PRIVACY_VERSION = "2026-10-21";
 export const PRIVACY_DATE = "16 October 2026";
 
 // How long data is kept: the periods this Policy promises. Until clean-up
