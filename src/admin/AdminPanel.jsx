@@ -1,11 +1,13 @@
 // NRIClub Admin: a minimal, Notion-like admin panel.
-// Sections: Verification, Members, Communities, Reports, Feedback, Overview.
+// Sections: Verification, Members, Communities, Reports, Feedback, Overview,
+// Security (two-step login).
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import VerificationView from "./VerificationView";
 import MembersView from "./MembersView";
 import CommunitiesView from "./CommunitiesView";
 import OverviewView from "./OverviewView";
+import SecurityView from "./SecurityView";
 import { FeedbackView, ReportsView, contentPreview, isFeedback, isOpenBug, isOpenIdea, isOpenReport, personOf, targetKey } from "./ReportsView";
 import { ADMIN_CSS, ErrorNote, Icon, SkeletonRows, Toast } from "./ui";
 import { friendlyError } from "./format";
@@ -92,16 +94,16 @@ export default function AdminPanel({ onLogout }) {
     const countsMark = ++countsSeq.current;
     const [dash, queue, totals] = await Promise.allSettled([
       api.adminGetDashboardData(),
-      api.adminVerificationQueue(["pending"]),
+      api.adminVerificationPage("pending", 0),
       api.adminCountMembers(),
     ]);
     // A later reload has started: its answers are newer.
     if (req !== loadSeq.current) return;
     let pendingCount = 0;
     if (queue.status === "fulfilled") {
-      const rows = Array.isArray(queue.value) ? queue.value : [];
-      queueCache.current.pending = { rows, at: Date.now() };
-      pendingCount = rows.length;
+      const { rows, total, paged } = queue.value;
+      queueCache.current.pending = { rows, at: Date.now(), total, paged };
+      pendingCount = total ?? rows.length;
     }
     if (countsMark === countsSeq.current) setMemberCounts(totals.status === "fulfilled" ? totals.value : null);
     if (dash.status === "fulfilled") {
@@ -261,6 +263,7 @@ export default function AdminPanel({ onLogout }) {
     { key: "reports", label: "Reports", icon: "flag", count: openReports },
     { key: "bugs", label: "Feedback", icon: "bug", count: feedbackCount },
     { key: "overview", label: "Overview", icon: "chart" },
+    { key: "security", label: "Security", icon: "lock" },
   ];
 
   const go = (key) => {
@@ -292,6 +295,8 @@ export default function AdminPanel({ onLogout }) {
     content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} />;
   } else if (page === "reports") {
     content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} moreOpen={moreOpen.reports.after ? moreOpen.reports.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(false)} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
+  } else if (page === "security") {
+    content = <SecurityView showToast={showToast} />;
   } else if (page === "bugs") {
     content = <FeedbackView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} moreOpen={moreOpen.feedback.after ? moreOpen.feedback.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(true)} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
   } else {
@@ -312,7 +317,7 @@ export default function AdminPanel({ onLogout }) {
         <nav className="adm-nav">
           {nav.map((n, i) => (
             <Fragment key={n.key}>
-              {i === nav.length - 1 && <div className="adm-nav-divider" aria-hidden="true" />}
+              {n.key === "overview" && <div className="adm-nav-divider" aria-hidden="true" />}
               <button type="button" className="adm-nav-item" aria-current={page === n.key ? "page" : undefined} onClick={() => go(n.key)}>
                 <Icon name={n.icon} size={16} />
                 <span>{n.label}</span>

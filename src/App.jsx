@@ -4,7 +4,6 @@ import LandingPage from "./LandingPage";
 import FlagIcon from "./FlagIcon";
 import "./member/base.css";
 import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToAccept } from "./member/profile";
-import { rateLimiter } from "./rateLimiter";
 import { hasImprint } from "./content/imprint";
 
 // NRIClub sets no cookies and loads no analytics, so there is no consent
@@ -21,6 +20,7 @@ const SignUpFlow = lazy(() => import("./member/SignUpFlow"));
 const GetVerified = lazy(() => import("./member/GetVerified"));
 const TermsGate = lazy(() => import("./member/TermsGate"));
 const AdminPanel = lazy(() => import("./admin/AdminPanel"));
+const AdminLogin = lazy(() => import("./admin/AdminLogin"));
 const CityPage = lazy(() => import("./CityPage"));
 const GuidePage = lazy(() => import("./GuidePage"));
 const ImpressumPage = lazy(() => import("./ImpressumPage"));
@@ -174,10 +174,22 @@ const ExpiredLinkPage = ({ onContinue }) => {
   );
 };
 
+// The admin panel lives only on admin.nriclub.app, so an admin's session
+// never shares the browser storage of the site that shows members' posts.
+// On this computer (localhost, and the dev server) #admin opens it too, for
+// testing. #admin on nriclub.app goes to admin.nriclub.app.
+const ADMIN_HOST = "admin.nriclub.app";
+const isLocalHost = (host) => host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".localhost");
 const isAdminRoute = () => {
-  const isAdminDomain = window.location.hostname === "admin.nriclub.app" || window.location.hostname.startsWith("admin.");
-  return isAdminDomain || window.location.hash === "#admin";
+  const host = window.location.hostname;
+  if (host === ADMIN_HOST || host === "admin.localhost") return true;
+  return window.location.hash === "#admin" && (isLocalHost(host) || !!import.meta.env.DEV);
 };
+try {
+  if (window.location.hash === "#admin" && !isAdminRoute() && /(^|\.)nriclub\.app$/.test(window.location.hostname)) {
+    window.location.replace(`https://${ADMIN_HOST}/`);
+  }
+} catch (e) {}
 
 // Nobody is signed in in this browser and the page wasn't opened from one of
 // our emails: show the landing page at once (index.html already has its
@@ -200,66 +212,38 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead" or a reset this browser asked for
   const [loginNotice, setLoginNotice] = useState(""); // e.g. after a new password
   const [isAdmin, setIsAdmin] = useState(false);
+  // The admin login (admin/AdminLogin.jsx): the email to fill in and a notice
+  // (after a password reset), and whether a session is already there to
+  // check (a reload). adminLoginKey starts it afresh.
   const [adminEmail, setAdminEmail] = useState("");
-  const [adminPass, setAdminPass] = useState("");
-  const [adminErr, setAdminErr] = useState("");
-  const [adminLoading, setAdminLoading] = useState(false);
   const [adminNotice, setAdminNotice] = useState("");
+  const [adminResume, setAdminResume] = useState(false);
+  const [adminLoginKey, setAdminLoginKey] = useState(0);
 
-  // Admins sign in with their normal NRIClub account; the database decides
-  // whether that account is an admin (public.admins), so nothing here can be
-  // faked from the browser.
-  const handleAdminLogin = async () => {
-    if (adminLoading) return;
-    const rl = rateLimiter.check("admin_login", 5, 900000);
-    if (!rl.allowed) { setAdminErr(`Too many attempts. Wait ${Math.ceil(rl.waitSecs / 60)} min.`); return; }
-    setAdminLoading(true);
-    setAdminErr("");
-    try {
-      await api.signIn(adminEmail.trim().toLowerCase(), adminPass);
-    } catch (e) {
-      setAdminErr(e.message || "Invalid email or password.");
-      setAdminLoading(false);
-      return;
-    }
-    let admin = false;
-    try {
-      admin = await api.isAdmin();
-    } catch (e) {
-      await api.signOut();
-      setAdminErr("Couldn't check admin access. Please try again.");
-      setAdminLoading(false);
-      return;
-    }
-    if (admin) {
-      rateLimiter.reset("admin_login");
-      setAdminPass("");
-      setIsAdmin(true);
-      setAuthState("admin");
-    } else {
-      await api.signOut();
-      setAdminErr("This account does not have admin access.");
-    }
-    setAdminLoading(false);
-  };
-
-  const handleAdminForgotPassword = async () => {
-    const email = adminEmail.trim().toLowerCase();
-    if (!email.includes("@")) { setAdminErr("Enter your email first, then click Forgot password."); return; }
-    try {
-      await api.resetPassword(email);
-      setAdminErr("");
-      setAdminNotice("If that account exists, we've emailed it a link to set a new password.");
-    } catch (e) {
-      setAdminErr(e.message || "Couldn't send the reset email. Please try again.");
-    }
+  // Admins sign in with their normal NRIClub account (and, with two-step
+  // login, the code from their app); the database decides whether that
+  // account has admin rights, so nothing here can be faked from the browser.
+  const showAdminLogin = ({ resume = false, email = "", notice = "" } = {}) => {
+    setAdminResume(resume);
+    setAdminEmail(email);
+    setAdminNotice(notice);
+    setAdminLoginKey((k) => k + 1);
+    setIsAdmin(false);
+    setAuthState("admin-login");
   };
 
   // Signs out at once; the server is told in the background.
   const handleAdminLogout = () => {
     api.signOut().catch(() => {});
-    setIsAdmin(false);
-    setAuthState("admin-login");
+    showAdminLogin();
+  };
+
+  // "Back to NRIClub" from the admin login: the site itself (on this
+  // computer, the landing page here).
+  const leaveAdmin = () => {
+    if (window.location.hostname === ADMIN_HOST) { window.location.assign("https://nriclub.app/"); return; }
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
+    setAuthState("landing");
   };
 
   // Leave the signed-in screens if the session ends by itself (revoked,
@@ -286,15 +270,11 @@ export default function App() {
     // startsSignedOut): stay there rather than flash "Loading...".
     setAuthState((state) => (state === "landing" && fallback === "landing" && !isAdminRoute() && !api.hasStoredSession() ? state : "loading"));
     if (isAdminRoute()) {
-      try {
-        const session = await api.getSession();
-        if (session?.user && await api.isAdmin()) {
-          setIsAdmin(true);
-          setAuthState("admin");
-          return;
-        }
-      } catch (e) {}
-      setAuthState("admin-login");
+      // With a session, the login finds the next step itself (the panel, or
+      // the code from the app); without one it asks for the password.
+      let session = null;
+      try { session = await api.getSession(); } catch (e) {}
+      showAdminLogin({ resume: !!session?.user });
       return;
     }
     let session = null;
@@ -397,10 +377,7 @@ export default function App() {
     const notice = "Your password has been changed. Log in with your new password.";
     const knownEmail = email && api.resetWasRequestedFor(email) ? email : "";
     if (isAdminRoute()) {
-      setAdminEmail(knownEmail);
-      setAdminErr("");
-      setAdminNotice(notice);
-      setAuthState("admin-login");
+      showAdminLogin({ email: knownEmail, notice });
       return;
     }
     setLoginEmail(knownEmail);
@@ -472,21 +449,8 @@ export default function App() {
   const content = (() => {
     if (authState === "admin-login") {
       return (
-        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#1A1A1A", fontFamily: "'DM Sans', sans-serif" }}>
-          <div style={{ maxWidth: 360, width: "100%", background: "#fff", borderRadius: 16, padding: 32 }}>
-            <div style={{ textAlign: "center", marginBottom: 24 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 800, color: "#37352F" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></h2>
-              <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 4 }}>Admin Panel Login</p>
-            </div>
-            {adminErr && <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminErr}</div>}
-            {adminNotice && !adminErr && <div style={{ background: "#E3FCEF", border: "1px solid #ABF5D1", color: "#22A06B", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 16 }}>{adminNotice}</div>}
-            <input type="email" autoComplete="username" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
-            <input type="password" autoComplete="current-password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} placeholder="Password" style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 14, marginBottom: 20, boxSizing: "border-box", outline: "none" }} onKeyDown={(e) => { if (e.key === "Enter") handleAdminLogin(); }} />
-            <button onClick={handleAdminLogin} disabled={adminLoading} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: adminLoading ? "default" : "pointer", opacity: adminLoading ? 0.7 : 1 }}>{adminLoading ? "Signing in..." : "Sign In"}</button>
-            <p style={{ fontSize: 11, textAlign: "center", marginTop: 12 }}><button type="button" onClick={handleAdminForgotPassword} style={{ background: "none", border: "none", color: "#5B9CFF", fontSize: 11, cursor: "pointer", padding: 0 }}>Forgot password?</button></p>
-            <p style={{ fontSize: 11, color: "#9B9A97", textAlign: "center", marginTop: 16 }}><a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ""; setAuthState("landing"); }} style={{ color: "#5B9CFF" }}>← Back to NRIClub</a></p>
-          </div>
-        </div>
+        <AdminLogin key={adminLoginKey} initialEmail={adminEmail} notice={adminNotice} resume={adminResume}
+          onSignedIn={() => { setIsAdmin(true); setAuthState("admin"); }} onBack={leaveAdmin} />
       );
     }
     if (authState === "reset-password") {
