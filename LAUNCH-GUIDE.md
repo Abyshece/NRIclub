@@ -302,7 +302,9 @@ Launch tasks from the Phase 1 review (2026-10-12):
       panel at least once a week (its photo clean-up deletes unused photo
       files). After `20261022000000_storage_images.sql`, run Overview →
       Photo files → Clean up photo files once: it also removes the files of
-      accounts deleted before October 2026.
+      accounts deleted before October 2026. Then check the photos uploaded
+      before that update that are still shown for location data
+      (`deletion-routine.md`, "Once, after the 2026-10-22 update").
 - [ ] Data processing agreements in place with Supabase, Vercel, Resend and
       the mailbox provider, and `PRIVACY_DETAILS.agreements` in
       `src/content/imprint.js` says so (Vercel's agreement applies only on

@@ -74,6 +74,39 @@ Storage → the bucket → open the folder (the first part of the name) → tick
 the files → Delete. Never delete rows from `storage.objects` with SQL: the
 file itself would stay, and the live project refuses it anyway.
 
+### Once, after the 2026-10-22 update: photos uploaded before it
+
+Since that update the site saves every photo again before uploading it,
+which removes hidden details such as where it was taken (EXIF/GPS). Photos
+uploaded before were often kept as they were (two post photos on live had
+GPS data, and some profile photos were HEIC files from iPhones). The
+clean-up deletes those nothing uses; the ones still shown stay. List them
+(it changes nothing):
+
+```sql
+-- NRIClub once: photo files from before 2026-10-22 (not named <random>.jpg).
+SELECT o.bucket_id, o.name, o.metadata->>'mimetype' AS type, o.created_at
+FROM storage.objects o
+WHERE o.bucket_id IN ('avatars', 'post-images', 'marketplace-images')
+  AND o.name !~ '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$'
+ORDER BY o.created_at;
+```
+
+Open each JPEG or HEIC file (Storage → the bucket → the file → Download)
+and look for a location in its details (for example with exiftool, or on a
+Mac in Preview → Tools → Show Inspector). For each one with a location:
+
+- take it off what shows it, in the SQL Editor:
+  - a post: `UPDATE public.posts SET image_url = NULL WHERE image_url LIKE '%/<file name>';`
+  - an event: `UPDATE public.events SET image_url = '' WHERE image_url LIKE '%/<file name>';`
+  - a profile photo: `UPDATE public.profiles SET avatar_url = '' WHERE avatar_url LIKE '%/<file name>%';`
+  - a Market listing: ask the member to delete the listing and post it again;
+- then press **Clean up photo files** (the file is older than a day, so it
+  goes at once), and ask the member to add the photo again: the site now
+  removes the location;
+- note the date and the files in `breach-register.md` (the line marked
+  **[fill in]**).
+
 ## Once a month: the database
 
 ### Step 1: see what will go (changes nothing)
@@ -181,5 +214,5 @@ Keep a request log (date, who, what, deadline, date answered; see
 Photo files aren't logged here: the admin panel deletes them by itself.
 
 | Date | Accounts deleted | Notices, reports, records | Mailbox | By |
-|---|---|---|---|---|---|
-| | | | | | |
+|---|---|---|---|---|
+| | | | | |
