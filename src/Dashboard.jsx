@@ -16,6 +16,7 @@ import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview } from "./member/profile";
 import { findCity } from "./content/findCity";
+import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
 
 
 // ============================================================================
@@ -5396,8 +5397,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <div style={{ padding: "16px 0 0", marginTop: 16, borderTop: "1px solid #F0EFED" }}>
                   <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>Your consent</h4>
                   <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 4, lineHeight: 1.5, fontFamily: font }}>
-                    On {new Date(user.art9ConsentAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })} you agreed that NRIClub shows other members what you share that can say something about your origin, religion or health. To withdraw this, delete those posts, answers, places or group memberships, or delete your account under Account Settings.
+                    On {new Date(user.art9ConsentAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })} you agreed:
                   </p>
+                  <blockquote style={{ fontSize: 12, color: "#5F5E5B", margin: "6px 0 0", padding: "6px 10px", borderLeft: "3px solid #E0E0DE", lineHeight: 1.5, fontFamily: font }}>{ART9_CONSENT_TEXT}</blockquote>
+                  <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 6, lineHeight: 1.5, fontFamily: font }}>{ART9_WITHDRAW_TEXT}</p>
                 </div>
               )}
             </div>

@@ -11,7 +11,7 @@ import { COLORS, linkButtonStyle, helperStyle, fieldErrorStyle } from "./ui";
 // The Privacy Policy is information, linked under them, with nothing to tick.
 
 export const TERMS_ERROR = "Please confirm you're 18 or older and accept the Terms of Use.";
-export const ART9_ERROR = "Please tick this box too. NRIClub needs this consent to show what you share to other members.";
+export const ART9_ERROR = "Please tick this box too: NRIClub can't be used without this consent.";
 
 const checkboxStyle = { marginTop: 2, accentColor: "#37352F", width: 18, height: 18, flexShrink: 0, cursor: "pointer" };
 const inlineLink = { ...linkButtonStyle, fontWeight: 500, color: "#3D5A9F" };
