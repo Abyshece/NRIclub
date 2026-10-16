@@ -127,20 +127,35 @@ export default function VerificationView({ usersById, counts, countsExact = fals
     load(filter, { silent: !!cached });
   }, [filter, load, cache]);
 
-  // The next page of this list. (Members decided on in the meantime move the
-  // pages a little; a member already listed isn't added twice.)
+  // How many members list f has in all, when it comes in pages: a decision
+  // here that takes a member out of it, or an Undo that brings them back,
+  // changes it at once.
+  const shiftTotal = (f, by) => {
+    const c = cache.current[f];
+    if (!c || c.total == null) return;
+    cache.current[f] = { ...c, total: Math.max(0, c.total + by) };
+    if (filterRef.current === f) setPageInfo(pageOf(cache.current[f]));
+  };
+
+  // The next page of this list. It starts after the members listed here who
+  // are still in it on the server (a member whose status changed elsewhere
+  // keeps their row, showing the new status); a member already listed isn't
+  // added twice. A short page is the end of the list.
   const loadMore = async () => {
     const f = filterRef.current;
     const have = rowsRef.current || [];
     if (loadingMore) return;
     setLoadingMore(true);
     try {
-      const data = await api.adminVerificationPage(f, have.length);
+      const data = await api.adminVerificationPage(f, have.filter((r) => r.verification_status === f).length);
       if (filterRef.current !== f) return;
       const ids = new Set(have.map((r) => r.id));
-      commitRows([...have, ...data.rows.filter((r) => !ids.has(r.id))], f);
-      if (data.total != null) {
-        cache.current[f] = { ...cache.current[f], total: data.total };
+      const merged = [...have, ...data.rows.filter((r) => !ids.has(r.id))];
+      commitRows(merged, f);
+      const total = data.paged && data.rows.length < api.VERIFICATION_PAGE
+        ? merged.filter((r) => r.verification_status === f).length : data.total;
+      if (total != null) {
+        cache.current[f] = { ...cache.current[f], total };
         setPageInfo(pageOf(cache.current[f]));
       }
     } catch (e) {
@@ -252,6 +267,7 @@ export default function VerificationView({ usersById, counts, countsExact = fals
     const stays = decision === f;
     const next = stays ? current.map((r) => (r.id === m.id ? updated : r)) : current.filter((r) => r.id !== m.id);
     commitRows(next, f);
+    if (!stays && index >= 0) shiftTotal(f, -1);
     // The list the member moved to loads again next time, with them in it.
     if (!stays) delete cache.current[decision];
     const after = stays ? next[index + 1] : (next[index] || next[index - 1]);
@@ -293,7 +309,9 @@ export default function VerificationView({ usersById, counts, countsExact = fals
           previous_decisions: updated.previous_decisions,
           ...(before === "incomplete" ? NO_HOLD : {}),
         };
+        const back = !(cache.current[f]?.rows || []).some((r) => r.id === m.id);
         restoreRow(restored, index < 0 ? 0 : index, f);
+        if (back) shiftTotal(f, 1);
         onMemberChange(m.id, { verification_status: before, linkedin_verified: false, review_flag: restored.review_flag }, updated);
         refreshMember(m.id, { full: true });
         return before === "pending" ? `Undone. ${who} is back in the queue.` : `Undone. ${who} is back to unfinished.`;
@@ -352,7 +370,8 @@ export default function VerificationView({ usersById, counts, countsExact = fals
       {error && <ErrorNote onRetry={() => load(filter)}>{error}</ErrorNote>}
       {cut && (
         <p className="adm-muted adm-small" style={{ margin: "0 0 10px" }}>
-          {`Showing ${rows.length.toLocaleString("en-GB")} of ${filterTotal.toLocaleString("en-GB")}, ${ORDER_NOTE[filter]}.`}
+          {/* Before the 2026-10-23 database update every list but unfinished sign-ups came oldest first. */}
+          {`Showing ${rows.length.toLocaleString("en-GB")} of ${filterTotal.toLocaleString("en-GB")}, ${paged ? ORDER_NOTE[filter] : filter === "incomplete" ? "newest first" : "oldest first"}.`}
         </p>
       )}
 

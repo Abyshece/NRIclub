@@ -97,25 +97,31 @@ export default function MembersView({ users, total = users.length, blockedTotal 
     });
   }, [users, q, show]);
   // (A member unblocked here leaves the Blocked list at once, as it would
-  // from the loaded members.)
-  const filtered = useRemote ? remote.members.filter((m) => show !== "blocked" || m.status === "blocked") : localFiltered;
+  // from the loaded members, and isn't counted: on the server they've left
+  // it too.)
+  const stillMatches = (m) => show !== "blocked" || m.status === "blocked";
+  const filtered = useRemote ? remote.members.filter(stillMatches) : localFiltered;
   const visible = useRemote ? filtered : filtered.slice(0, limit);
-  const remoteMore = useRemote ? Math.max(0, remote.total - remote.members.length) : 0;
+  const remoteTotal = useRemote ? Math.max(0, remote.total - (remote.members.length - filtered.length)) : 0;
+  const remoteMore = useRemote ? Math.max(0, remoteTotal - filtered.length) : 0;
 
   useEffect(() => { setLimit(PAGE); }, [query, show]);
 
-  // The next page of the server's answer.
+  // The next page of the server's answer, after the members listed here that
+  // are still in it.
   const loadMoreRemote = async () => {
     const r = remoteRef.current;
     if (!r || loadingMore) return;
     setLoadingMore(true);
     try {
-      const res = await api.adminSearchMembers({ query: q, blocked: show === "blocked" ? true : null, offset: r.members.length });
+      const res = await api.adminSearchMembers({ query: q, blocked: show === "blocked" ? true : null, offset: r.members.filter(stillMatches).length });
       if (res && remoteRef.current?.key === r.key) {
         setRemote((cur) => {
           if (!cur || cur.key !== r.key) return cur;
           const have = new Set(cur.members.map((m) => m.id));
-          return { ...cur, members: [...cur.members, ...res.members.filter((m) => !have.has(m.id))], total: res.total };
+          // total counts the members listed here that left the list too.
+          const gone = cur.members.filter((m) => !stillMatches(m)).length;
+          return { ...cur, members: [...cur.members, ...res.members.filter((m) => !have.has(m.id))], total: res.total + gone };
         });
       }
     } catch (e) {
@@ -364,8 +370,8 @@ export default function MembersView({ users, total = users.length, blockedTotal 
       {useRemote ? (
         <p className="adm-muted adm-small" role="status" style={{ margin: "0 0 10px" }}>
           {show === "blocked" && !q
-            ? `${fmt(remote.total)} blocked account${remote.total === 1 ? "" : "s"}`
-            : `${fmt(remote.total)} member${remote.total === 1 ? "" : "s"} match${remote.total === 1 ? "es" : ""}`}
+            ? `${fmt(remoteTotal)} blocked account${remoteTotal === 1 ? "" : "s"}`
+            : `${fmt(remoteTotal)} member${remoteTotal === 1 ? "" : "s"} match${remoteTotal === 1 ? "es" : ""}`}
         </p>
       ) : searching && remoteLoading ? (
         <p className="adm-muted adm-small" role="status" style={{ margin: "0 0 10px" }}>Searching all members…</p>
