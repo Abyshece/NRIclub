@@ -2342,6 +2342,51 @@ def storage_images():
           f"DELETE FROM storage.objects WHERE bucket_id = 'photos' RETURNING name", as_user=ADMIN, expect=f"{gone}/c.jpg")
     check("... but not files in other buckets",
           f"DELETE FROM storage.objects WHERE bucket_id = 'documents' RETURNING name", as_user=ADMIN, expect="")
+    # The policy's list of names in use is made once per request, not once
+    # per file: with a few thousand rows (here listings full of %-escaped
+    # links, which any member can store) a 100-file Storage request must
+    # still finish within Supabase's 8-second limit for signed-in requests.
+    ok, plan, err = psql(f"""
+          BEGIN;
+          SELECT set_config('request.jwt.claims', '{{"sub": "{ADMIN}", "role": "authenticated"}}', true) IS NULL;
+          SET LOCAL ROLE authenticated;
+          EXPLAIN (VERBOSE, COSTS OFF) DELETE FROM storage.objects WHERE bucket_id = 'avatars' AND name = ANY ('{{a/b.jpg,c/d.jpg}}');
+          ROLLBACK;""")
+    filters = [l for l in plan.splitlines() if "Filter:" in l]
+    verdict("an admin's delete looks up the photos in use once per request (InitPlan), not for each file",
+            ok and "InitPlan" in plan and "admin_image_refs" in plan and filters
+            and not any("admin_image_refs" in l or "image_names" in l for l in filters), plan[:600] + err[:300])
+    check("... and 100 files go within Supabase's 8 seconds, with 4,000 posts and 300 listings of %-escaped links", f"""
+          BEGIN;
+          SET LOCAL session_replication_role = replica;
+          INSERT INTO posts (user_id, content, image_url)
+            SELECT '{uma}', 'load ' || g, '{STORE}/post-images/{uma}/load%5F' || g || '.jpg' FROM generate_series(1, 4000) g;
+          INSERT INTO marketplace (user_id, title, price, image_url)
+            SELECT '{uma}', 'load ' || g, '1',
+                   (SELECT json_agg('{STORE}/marketplace-images/{uma}/l%20' || g || '-' || k || '.jpg')::text FROM generate_series(1, 20) k)
+            FROM generate_series(1, 300) g;
+          INSERT INTO storage.objects (bucket_id, name, created_at)
+            SELECT 'post-images', '{uma}/load_' || g || '.jpg', {old} FROM generate_series(1, 4000) g
+            UNION ALL SELECT 'post-images', '{uma}/gone' || g || '.jpg', {old} FROM generate_series(1, 95) g;
+          SET LOCAL session_replication_role = origin;
+          SELECT set_config('request.jwt.claims', '{{"sub": "{ADMIN}", "role": "authenticated"}}', true) IS NULL;
+          SET LOCAL ROLE authenticated;
+          SET LOCAL statement_timeout = '8s';
+          WITH d AS (
+            DELETE FROM storage.objects WHERE bucket_id = 'post-images' AND name = ANY (
+              ARRAY(SELECT '{uma}/gone' || g || '.jpg' FROM generate_series(1, 95) g)
+              || ARRAY(SELECT '{uma}/load_' || g || '.jpg' FROM generate_series(1, 5) g))
+            RETURNING name)
+          SELECT count(*) || ' deleted, ' || count(*) FILTER (WHERE name LIKE '%/load_%') || ' in use' FROM d;
+          ROLLBACK;""", expect="f\n95 deleted, 0 in use")
+    check("%-escapes of printable ASCII are decoded (Storage names are ASCII); anything else stays as it is",
+          "SELECT private.percent_decode('m%202.jpg') || '|' || private.percent_decode('a%2Fb%5f') || '|' "
+          "|| private.percent_decode('%zz%e2%82%ac%00%') || '|' || private.percent_decode('plain')",
+          expect="m 2.jpg|a/b_|%zz%e2%82%ac%00%|plain")
+    check("the list of photos in use is for admins only", "SELECT private.admin_image_refs() IS NULL", as_user=tara,
+          expect="t")
+    check("... (an admin gets it)", f"SELECT '{tara}/post.jpg' = ANY (private.admin_image_refs())", as_user=ADMIN,
+          expect="t")
     check("a member can't delete another member's file, used or not",
           f"DELETE FROM storage.objects WHERE name IN ('{gone}/a.jpg', '{uma}/single.jpg') RETURNING 1", as_user=tara, expect="")
     check("tara deletes the post with the photo",

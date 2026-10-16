@@ -211,7 +211,7 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Keep the member signed in; remember dismissed tips and an invite |
 | Legal basis | § 25(2) No. 2 TDDDG (strictly necessary, no consent); Art. 6(1)(b) |
-| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested` (at most 24 hours), `nriclub_invite` (session storage, until the check details are sent), per-member flags (removed when the account is deleted in that browser); list in the Privacy Policy, section 8. `nriclub_profile_cache` and `nriclub_cookie_consent` are no longer written, and the site deletes them. No cookies, no analytics |
+| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested` (at most 24 hours), `nriclub_invite` (session storage, until the check details are sent; Get verified sends its code to `public.resolve_invite` to fill in the inviter), per-member flags (removed when the account is deleted in that browser); list in the Privacy Policy, section 8. `nriclub_profile_cache` and `nriclub_cookie_consent` are no longer written, and the site deletes them. No cookies, no analytics |
 | Retention | See the Privacy Policy, section 8 |
 
 ### 15. Compliance records

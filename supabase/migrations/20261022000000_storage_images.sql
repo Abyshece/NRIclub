@@ -35,24 +35,16 @@
 -- WHICH PHOTO FILES ARE IN USE
 -- ============================================================================
 
--- A text with %xx escapes decoded (UTF-8), or unchanged if it has none or
--- isn't valid.
+-- A text with its %xx escapes of printable ASCII decoded (%20 is a space);
+-- other escapes stay as they are. Storage only takes ASCII object names, so
+-- nothing else can be part of one. Plain SQL without an error handler: it
+-- runs for every stored photo link on each clean-up request.
 CREATE FUNCTION private.percent_decode(p_text TEXT)
-RETURNS TEXT LANGUAGE plpgsql IMMUTABLE SET search_path = '' AS $$
-DECLARE
-  decoded TEXT;
-BEGIN
-  IF p_text IS NULL OR strpos(p_text, '%') = 0 THEN
-    RETURN p_text;
-  END IF;
-  SELECT convert_from(string_agg(CASE WHEN m[1] IS NOT NULL THEN decode(substr(m[1], 2), 'hex')
-                                      ELSE convert_to(m[2], 'UTF8') END, ''::bytea ORDER BY ord), 'UTF8')
-  INTO decoded
-  FROM regexp_matches(p_text, '(%[0-9A-Fa-f]{2})|([^%]+|%)', 'g') WITH ORDINALITY AS t(m, ord);
-  RETURN COALESCE(decoded, p_text);
-EXCEPTION WHEN OTHERS THEN
-  RETURN p_text;
-END;
+RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+  SELECT CASE WHEN p_text IS NULL OR strpos(p_text, '%') = 0 THEN p_text ELSE (
+    SELECT string_agg(CASE WHEN m[1] IS NOT NULL THEN chr(('x' || substr(m[1], 2))::BIT(8)::INTEGER) ELSE m[2] END,
+                      '' ORDER BY ord)
+    FROM regexp_matches(p_text, '(%[2-7][0-9A-Fa-f])|([^%]+|%)', 'g') WITH ORDINALITY AS t(m, ord)) END;
 $$;
 
 -- The Storage object names (<member id>/<file>) a stored photo value points
@@ -65,6 +57,7 @@ RETURNS SETOF TEXT LANGUAGE plpgsql IMMUTABLE SET search_path = '' AS $$
 DECLARE
   items TEXT[] := ARRAY[p_value];
   item TEXT;
+  decoded TEXT;
   j JSONB;
 BEGIN
   IF p_value IS NULL OR btrim(p_value) = '' THEN
@@ -93,8 +86,9 @@ BEGIN
     item := ltrim(item, '/');
     IF item IS NOT NULL AND item <> '' THEN
       RETURN NEXT item;
-      IF private.percent_decode(item) <> item THEN
-        RETURN NEXT private.percent_decode(item);
+      decoded := private.percent_decode(item);
+      IF decoded <> item THEN
+        RETURN NEXT decoded;
       END IF;
     END IF;
   END LOOP;
@@ -116,34 +110,18 @@ RETURNS TABLE (ref TEXT) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = 
   ) s, LATERAL private.image_names(s.v) n;
 $$;
 
--- Whether a row uses the Storage object p_name (as private.image_refs, but
--- only looking closely at values that can contain it: those with its file
--- name, or with escapes that may hide it).
-CREATE FUNCTION private.image_in_use(p_name TEXT)
-RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM (
-      SELECT p.avatar_url AS v FROM public.profiles p WHERE p.avatar_url <> ''
-      UNION ALL SELECT x.image_url FROM public.posts x WHERE x.image_url <> ''
-      UNION ALL SELECT x.image_url FROM public.events x WHERE x.image_url <> ''
-      UNION ALL SELECT x.image_url FROM public.groups x WHERE x.image_url <> ''
-      UNION ALL SELECT x.image_url FROM public.marketplace x WHERE x.image_url <> ''
-    ) s
-    WHERE (strpos(s.v, regexp_replace(p_name, '^.*/', '')) > 0 OR strpos(s.v, '%') > 0 OR strpos(s.v, '\u') > 0)
-      AND p_name IN (SELECT private.image_names(s.v))
-  );
-$$;
-
--- For the Storage policy below: the signed-in member is an admin and no
--- row uses the object (checked in this order).
-CREATE FUNCTION private.admin_may_delete_image(p_name TEXT)
-RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+-- For the Storage policy below: the names private.image_refs lists, as one
+-- array, for admins (NULL for anyone else, which lets nothing through). The
+-- policy asks for it once per request, not once per file: a request deletes
+-- up to 100 files, and going through every row for each of them took longer
+-- than Supabase lets a request run once there are a few thousand rows.
+CREATE FUNCTION private.admin_image_refs()
+RETURNS TEXT[] LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
   IF NOT private.is_admin() THEN
-    RETURN FALSE;
+    RETURN NULL;
   END IF;
-  RETURN NOT private.image_in_use(p_name);
+  RETURN ARRAY(SELECT r.ref FROM private.image_refs() r);
 END;
 $$;
 
@@ -214,10 +192,13 @@ CREATE POLICY "NRIclub: admins can see photo files" ON storage.objects
 -- Admins delete a photo file only while nothing uses it: to remove a photo
 -- that is shown, first clear or delete what shows it (the profile photo,
 -- the post...), then delete the file. Members delete their own files under
--- "NRIclub: users can delete their own uploads".
+-- "NRIclub: users can delete their own uploads". The (SELECT ...) parts
+-- run once per request (the names in use too), and only for admins.
 CREATE POLICY "NRIclub: admins can delete photo files nothing uses" ON storage.objects
   FOR DELETE TO authenticated
-  USING (bucket_id IN ('avatars', 'post-images', 'marketplace-images', 'photos') AND private.admin_may_delete_image(name));
+  USING (bucket_id IN ('avatars', 'post-images', 'marketplace-images', 'photos')
+    AND (SELECT private.is_admin())
+    AND NOT (name = ANY ((SELECT private.admin_image_refs())::TEXT[])));
 
 -- ============================================================================
 -- RPC: the photo clean-up (admins only)
@@ -372,10 +353,10 @@ $$;
 -- member (by the Storage policy). Members can't call anything in private
 -- through the API (the schema isn't exposed).
 REVOKE ALL ON FUNCTION private.percent_decode(TEXT), private.image_names(TEXT), private.image_refs(),
-  private.image_in_use(TEXT), private.admin_may_delete_image(TEXT), private.new_invite_code() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION private.admin_may_delete_image(TEXT) TO authenticated, service_role;
+  private.admin_image_refs(), private.new_invite_code() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION private.admin_image_refs() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION private.percent_decode(TEXT), private.image_names(TEXT), private.image_refs(),
-  private.image_in_use(TEXT), private.new_invite_code() TO service_role;
+  private.new_invite_code() TO service_role;
 REVOKE ALL ON FUNCTION public.admin_storage_orphans(INTEGER), public.admin_photo_cleanup_due(),
   public.my_invite_code(), public.resolve_invite(TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_storage_orphans(INTEGER), public.admin_photo_cleanup_due(),

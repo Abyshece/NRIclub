@@ -294,7 +294,7 @@ export function privacyDoc() {
 
       { id: "storage", title: "8. Cookies and storage on your device", blocks: [
         { p: "NRIClub sets no cookies and uses no analytics, advertising or tracking tools. The site's own files, including its fonts, come from our server; member photos come from our database provider. Nothing is loaded from other websites." },
-        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for the invite). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device. Only the sign-in items are sent to our servers, to sign you in." },
+        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for the invite). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device, with two exceptions: the sign-in items are sent to our servers to sign you in, and the invite code to look up who invited you." },
         { entries: [
           { title: "nriclub_token, nriclub_refresh", fields: [
             ["Purpose", "your sign-in: a short-lived access key and a key to renew it."],
@@ -305,7 +305,7 @@ export function privacyDoc() {
             ["Kept", "until you've set the new password, at most 24 hours (it's deleted the next time you open NRIClub after that)."],
           ] },
           { title: "nriclub_invite", fields: [
-            ["Purpose", "if you opened a member's invite link: the invite code from the link (on older links: that member's ID and first name), so we can tell our team who invited you when you send your details for our check."],
+            ["Purpose", "if you opened a member's invite link: the invite code from the link (on older links: that member's ID and first name). When you fill in your details for our check, the site sends the code to our servers to look up who invited you, and tells our team when you send the details."],
             ["Kept", "in session storage, only in that browser tab: until you send those details, or close the tab."],
           ] },
           { title: "nriclub_welcome_…, nriclub_welcome_done_…, nriclub_catchup_…, nriclub_intro_done_…, nriclub_city_group_…, nriclub_profile_card_dismissed_… (each ending in your member ID) and nriclub_festival_… (ending in a date)", fields: [
