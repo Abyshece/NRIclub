@@ -11,6 +11,10 @@
 | `supabase/oneoff/` | One-time scripts for the existing project (already applied ones are documented there) |
 | `src/supabaseApi.js` | API layer: auth, posts, messages, groups, events, marketplace, admin, etc. |
 | `src/App.jsx` | The frontend |
+| `src/content/legal/` | The Terms of Use, the Privacy Policy, the Art. 9 consent wording and the reporting texts (shown at nriclub.app/terms and /privacy and in the app) |
+| `src/content/imprint.js` | The Impressum, and the operator details the Terms and the Privacy Policy show |
+| `vercel.json` | Hosting rules and the security headers (Content-Security-Policy and others) |
+| `docs/compliance/` | Records the operator must keep (GDPR, Digital Services Act) and questions for the lawyer |
 | `.env.example` | The environment variables the app needs |
 
 ---
@@ -70,7 +74,12 @@ In the Supabase dashboard → **Authentication**:
      (Resend's free plan: 3,000 a month but only 100 a day; Brevo's: 300 a
      day): a launch day with more sign-ups than that needs a paid plan or
      Amazon SES (about $0.10 per 1,000 emails).
-   - Sender address e.g. `no-reply@nriclub.app`, sender name `NRIClub`.
+   - Sender address e.g. `no-reply@nriclub.app`, sender name `NRIClub`,
+     reply-to `hello@nriclub.app` (never `support@` or `privacy@`: they
+     don't exist).
+   - In the email provider, switch **off** open and click tracking, so
+     password links aren't rewritten through the provider, and accept its
+     data processing agreement (`docs/compliance/processor-agreements.md`).
    - Test it: sign up with an address that isn't on your Supabase team (a
      friend's, or a new free mailbox) and check the code arrives.
 3. **Rate Limits**: raise the limit for emails sent per hour (e.g. to 100; it
@@ -84,6 +93,15 @@ In the Supabase dashboard → **Authentication**:
    code; the site only works with the code. The *Reset password* template
    keeps its link (`{{ .ConfirmationURL }}`); it opens the site's "Set a new
    password" screen.
+   Below the code in *Confirm signup*, add the contract confirmation (the
+   lawyer confirms whether the withdrawal sentence is needed,
+   `docs/compliance/lawyer-questions.md`): "Welcome to NRIClub. By
+   confirming you accept our Terms of Use (version 2026-10-19), which you
+   can read and save at https://nriclub.app/terms. Provider: <name,
+   address>, hello@nriclub.app. You can withdraw within 14 days by telling
+   us or by deleting your account." Keep the version in step with the
+   Terms. Once the company is registered, add its details (§ 35a GmbHG) to
+   every template.
 5. **Attack Protection**: turn on *Leaked password protection* (prevent use of
    leaked passwords). It may need a paid plan (Pro); if yours doesn't offer
    it, skip it.
@@ -150,6 +168,43 @@ key in the frontend or in a `VITE_` variable.
    `VITE_SUPABASE_ANON_KEY`.
 3. Deploy, then set the Supabase Site URL / redirect URLs to the Vercel or
    custom domain (Step 2.6).
+4. `vercel.json` sends security headers with every page. Its
+   Content-Security-Policy names the Supabase project's address
+   (`https://uzzkdmybsbwknpsucuvv.supabase.co` and `wss://...`): for another
+   project, change both there, or the site can't reach the database. After
+   a deploy that changes `vercel.json`, open the site, sign in and check the
+   browser console for "Content Security Policy" errors.
+
+## Legal texts and the Impressum
+
+- **Impressum, operator and controller:** fill in `IMPRINT` in
+  `src/content/imprint.js` (your full name, a postal address where letters
+  reach you, a phone number) and deploy. The Impressum page and its links
+  appear, and the Terms and the Privacy Policy name you as provider and
+  controller. Until then they say that NRIClub is run by its founder in
+  Germany, and the build only warns. In the same file, `PRIVACY_DETAILS`
+  takes the data protection authority of your federal state and the
+  mailbox provider for the Privacy Policy.
+- **Where the texts are:** `src/content/legal/terms.js` and `privacy.js`.
+  The build writes them into static pages (nriclub.app/terms and /privacy)
+  and the app shows the same text in its dialogs.
+- **A new version of the Terms:** copy the current text into a new file in
+  `src/content/legal/` (like `terms-2026-10.js`) and add it to
+  `TERMS_ARCHIVE`, so it stays at nriclub.app/terms/<version>; change the
+  text, `TERMS_VERSION` and `TERMS_DATE` in `terms.js`, `TERMS_VERSION` in
+  `src/member/LegalModals.jsx` (the build stops if the two differ) and
+  `TERMS_CHANGES` (shown on the "Before you continue" screen); and change
+  `private.current_terms_version()` in a new migration. Deploy the site,
+  then apply the migration the same day: members are asked to accept the
+  new version once the database says it is current. The Terms promise at
+  least 2 weeks' notice in the app before new Terms apply.
+- **A change to the Privacy Policy:** change `privacy.js`, its version and
+  date, and the matching entry in `docs/compliance/records-of-processing.md`.
+  Members don't accept it, but tell them about important changes in the
+  app.
+- **Compliance records:** `docs/compliance/` (record of processing,
+  security measures, breach runbook and register, DPIA check, processor
+  agreements, moderation guidelines, questions for the lawyer).
 
 ## Step 6: Testing checklist
 
@@ -193,14 +248,38 @@ Launch tasks from the Phase 1 review (2026-10-12):
       "Approval audit").
 - [ ] The `phase1_backup` copy is dropped **on or before 2026-11-11**:
       `DROP SCHEMA phase1_backup CASCADE;` in the SQL editor.
-- [ ] `hello@nriclub.app` is a real mailbox that
-      someone reads (the site, the Terms and the Privacy Policy send people
-      there).
-- [ ] The Terms of Use and Privacy Policy have had their legal review
-      (`docs/BACKLOG.md`, Phase 5). If the Terms text changes, its version
-      changes in two places at once: `TERMS_VERSION` in
-      `src/member/LegalModals.jsx` and `private.current_terms_version()` in
-      the database (BACKLOG says how).
+- [ ] `hello@nriclub.app` is a real mailbox, with an EU provider that
+      signs a data processing agreement, that someone reads every working
+      day (the site, the Terms, the Privacy Policy and the Impressum send
+      people there, including reports of illegal content and data
+      requests, which have deadlines). DNS for nriclub.app: the provider's
+      MX records, SPF, DKIM, and DMARC (`p=none` first, then `quarantine`,
+      then `reject`); leave the send.nriclub.app records for Resend alone.
+      Send a test from an outside address
+      (`docs/compliance/processor-agreements.md`).
+- [ ] The Impressum details are filled in (`src/content/imprint.js`, see
+      "Legal texts and the Impressum") and deployed: /impressum shows, and
+      the Terms and the Privacy Policy name the operator.
+- [ ] The Terms of Use and the Privacy Policy have had their legal review
+      (`docs/compliance/lawyer-questions.md`), including the Art. 9
+      consent, real names, the withdrawal right and the retention periods.
+      If the Terms text changes, publish it as a new version ("Legal texts
+      and the Impressum").
+- [ ] Data processing agreements accepted with Supabase, Vercel, Resend and
+      the mailbox provider; Supabase's AI options off; Resend tracking off;
+      Vercel on a plan that allows business use
+      (`docs/compliance/processor-agreements.md`).
+- [ ] The breach record for the exposure before 12 October 2026 is
+      complete and the notification decision is made with the lawyer
+      (`docs/compliance/breach-register.md`).
+- [ ] The DPIA decision is made, and a data protection officer appointed
+      if it says so (`docs/compliance/dpia-threshold-check.md`).
+- [ ] The record of processing activities is filled in, signed and dated
+      (`docs/compliance/records-of-processing.md`).
+- [ ] After the deploy: the site works with the security headers (no
+      "Content Security Policy" errors in the browser console on the
+      homepage, a guide, signup, the member app and the admin panel), and
+      https://nriclub.app/.well-known/security.txt opens.
 
 ## Testing the database
 
@@ -250,11 +329,17 @@ them as **Held for review**, with what they matched and any note on the
 earlier decision. Approve them if they're genuine. The hold stays until an
 admin decides: sending their details again doesn't end it.
 
-**Every member sees "Before you continue" again, or members suddenly see an
-empty feed:** the Terms version on the site (`TERMS_VERSION` in
-`src/member/LegalModals.jsx`) and in the database
-(`private.current_terms_version()`) must be the same. After a Terms change,
-apply the database change and deploy the site straight after it.
+**Every member sees "Before you continue" again:** the database says a new
+version of the Terms is current (`private.current_terms_version()`); every
+member accepts it once. That's expected after a Terms change. The text the
+site shows comes from `src/content/legal/terms.js`; deploy the site with the
+new text before (or on the same day as) the migration.
+
+**A page is blank or the browser console shows "Content Security Policy"
+errors:** the security headers in `vercel.json` block something. If the
+Supabase project changed, put its address in the Content-Security-Policy.
+If the homepage script in `vite.config.js` (`HOME_GUARD`) changed, the build
+stops and names the new hash to put in `vercel.json`.
 
 **Signup code email not arriving, or "We couldn't create your account":**
 without custom SMTP (Step 2.2), Supabase only emails your own team's
