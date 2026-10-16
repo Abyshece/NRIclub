@@ -726,7 +726,7 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
       await api.toggleLike(post.id);
       if (!liked && post.userId && post.userId !== user?.id) {
         const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
-        try { await api.createNotification(post.userId, "like", `${user?.name || "Someone"} liked your post "${post.content.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
+        try { await api.notifyMember(post.userId, "like", `${user?.name || "Someone"} liked your post "${post.content.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
       }
     } catch (e) {}
   };
@@ -743,12 +743,12 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
       // Take the comment back out and give the text back.
       setComments(prev => prev.filter(x => x.id !== c.id));
       setNewComment(prev => prev || commentText);
-      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your comment couldn't be posted. Please try again.");
+      alert(apiErrorMessage(e, "Your comment couldn't be posted. Please try again."));
       return;
     }
     if (post.userId && post.userId !== user?.id) {
       const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
-      try { await api.createNotification(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
+      try { await api.notifyMember(post.userId, "comment", `${user?.name || "Someone"} commented: "${commentText.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
     }
   };
 
@@ -1103,7 +1103,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!fresh && lastVerificationNotifRef.current === id) lastVerificationNotifRef.current = null;
   };
   const [acceptedNotifs, setAcceptedNotifs] = useState([]); // Namaste requests just accepted, shown as "✓ Accepted" for a moment
-  const [privSettings, setPrivSettings] = useState({ visibility: "Everyone", onlineStatus: true, namasteRequests: "Everyone", receiveMessages: "Everyone" });
+  const [privSettings, setPrivSettings] = useState({ namasteRequests: "Everyone", receiveMessages: "Everyone" });
   const [privSettingsLoaded, setPrivSettingsLoaded] = useState(false);
   const [notifPrefsLoaded, setNotifPrefsLoaded] = useState(false); // false | "ok" | "failed" (choices unknown)
   // In-app notices (user_settings): push = pop-ups for new things while the
@@ -1281,11 +1281,18 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       const result = await api.sendNamaste(userId);
       connId = result?.[0]?.id || null;
     } catch (e) {
+      // Too many requests today: say so, and the button is back.
+      const refused = apiErrorMessage(e, null);
+      if (refused && !isNetworkError(e)) {
+        setSentNamaste((prev) => { const s = new Set(prev); s.delete(userId); return s; });
+        alert(refused);
+        return;
+      }
       console.log("Connection may already exist:", e.message);
     }
     if (!connId) return;
     try {
-      await api.createNotification(userId, "request", `${user.name} sent you a Namaste request`, user.id, connId);
+      await api.notifyMember(userId, "request", `${user.name} sent you a Namaste request`, user.id, connId);
     } catch(ne) { console.log("Notification failed:", ne.message); }
   };
 
@@ -1315,7 +1322,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // refusal (42501) from a member who takes messages from connections only
   // means the two aren't connected (yet).
   const messageErrorText = async (e, otherUserId) => {
-    if (isNetworkError(e)) return NETWORK_MESSAGE;
+    // No connection, or a limit ("You're doing that too often...").
+    const said = apiErrorMessage(e, null);
+    if (said) return said;
     if (!/42501/.test(e?.message || "")) return "Your message couldn't be sent. Please try again.";
     try {
       const targetSettings = otherUserId ? await api.getOtherUserSettings(otherUserId) : null;
@@ -1568,8 +1577,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         const dbSettings = await api.getUserSettings();
         if (dbSettings) {
           setPrivSettings({
-            visibility: dbSettings.profile_visibility || "Everyone",
-            onlineStatus: dbSettings.online_status !== false,
             namasteRequests: dbSettings.namaste_requests || "Everyone",
             receiveMessages: dbSettings.receive_messages || "Everyone",
           });
@@ -1772,9 +1779,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       // Take the post back out and give the text back to the composer.
       setPosts(prev => prev.filter(p => p.id !== post.id));
       setNewPost(prev => prev || post.content);
-      alert(isNetworkError(e) ? NETWORK_MESSAGE
-        : /42501/.test(e.message || "") ? "Your account can't post right now. If you think this is a mistake, contact hello@nriclub.app."
-        : "Your post couldn't be published. Please try again.");
+      alert(/42501/.test(e.message || "") ? "Your account can't post right now. If you think this is a mistake, contact hello@nriclub.app."
+        : apiErrorMessage(e, "Your post couldn't be published. Please try again."));
     }
   };
 
@@ -1808,7 +1814,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       if (r?.[0]) setEvents(prev => prev.map(x => x.id === e.id ? { ...x, id: r[0].id, attendees: r[0].attendees_count } : x));
     } catch (er) {
       setEvents(prev => prev.filter(x => x.id !== e.id));
-      alert(isNetworkError(er) ? NETWORK_MESSAGE : "Your event couldn't be saved. Please try again.");
+      alert(apiErrorMessage(er, "Your event couldn't be saved. Please try again."));
     }
   };
 
@@ -1881,7 +1887,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       setIntroDone(true);
       try { localStorage.setItem(introKey, "1"); } catch (e) {}
     } catch (e) {
-      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your post couldn't be published. Please try again.");
+      alert(apiErrorMessage(e, "Your post couldn't be published. Please try again."));
     }
     setIntroBusy(false);
   };
@@ -1922,7 +1928,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         alert("You can post one urgent question a day. Post this one without “Urgent”, or message your city's ambassador directly.");
         return;
       }
-      alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your question couldn't be posted. Please try again.");
+      alert(apiErrorMessage(e, "Your question couldn't be posted. Please try again."));
     }
   };
 
@@ -2095,7 +2101,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       if (row) setPlaces(prev => ({ city, list: [{ ...row, recs: [] }, ...(prev.city === city ? prev.list : [])] }));
       setNewPlace({ name: "", kind: newPlace.kind, address: "", note: "", languages: "" });
     } catch (e) {
-      alert(isNetworkError(e) ? NETWORK_MESSAGE : /42501|row-level/.test(e.message || "") ? "Places can be added once your membership is confirmed." : "Couldn't add the place. Please try again.");
+      alert(/42501|row-level/.test(e.message || "") ? "Places can be added once your membership is confirmed." : apiErrorMessage(e, "Couldn't add the place. Please try again."));
     }
   };
   const togglePlaceRec = async (pl, on) => {
@@ -2146,11 +2152,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     return () => { gone = true; };
   }, [view, memberId, canBrowse]);
 
+  // Whether other members see the member's LinkedIn link (they choose; our
+  // team always sees it). Known once the database has the choice (the
+  // 2026-10-20 update): then the editor shows it as editProfile.linkedinPublic.
+  const linkedinPublicWas = useRef(undefined);
   const openProfileEditor = (focusField = null) => {
     setEditProfile({ ...user });
     setProfileErrors({});
     setProfileFocus(focusField);
     setProfileModal(true);
+    linkedinPublicWas.current = undefined;
+    api.getProfileLinks([user.id]).then((links) => {
+      const mine = links[user.id];
+      if (!mine || !("linkedin_public" in mine)) return;
+      linkedinPublicWas.current = mine.linkedin_public;
+      setEditProfile((p) => (p && p.linkedinPublic === undefined ? { ...p, linkedinPublic: mine.linkedin_public } : p));
+    }).catch(() => {});
   };
 
   const saveProfileChanges = async () => {
@@ -2168,6 +2185,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       const linkedinError = linkedinUrl ? linkedinProblem(linkedinUrl) : null;
       if (linkedinError) { setProfileErrors({ linkedinUrl: linkedinError }); return; }
       updates.linkedin_url = linkedinUrl;
+    }
+    if (typeof editProfile.linkedinPublic === "boolean" && editProfile.linkedinPublic !== linkedinPublicWas.current) {
+      updates.linkedin_public = editProfile.linkedinPublic;
     }
     const topics = topicList(editProfile.askMeAbout).join(", ");
     if (user.hasTopics && topics !== (user.askMeAbout || "")) updates.ask_me_about = topics;
@@ -3483,7 +3503,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             const text = helpResponse;
                             let saved = null;
                             try { saved = (await api.addHelpResponse(h.id, text))?.[0] || null; } catch(e) {
-                              alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your answer couldn't be posted. Please try again.");
+                              alert(apiErrorMessage(e, "Your answer couldn't be posted. Please try again."));
                               return;
                             }
                             setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, responses: (x.responses || 0) + 1 } : x));
@@ -3558,7 +3578,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           setDocs(prev => prev.map(without));
                           setSelectedDoc(prev => prev && without(prev));
                           setDocComment(prev => prev || text);
-                          alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your comment couldn't be posted. Please try again.");
+                          alert(apiErrorMessage(e, "Your comment couldn't be posted. Please try again."));
                         }
                       }} style={{ ...btnPrimary, padding: "8px 18px", opacity: docComment.trim() ? 1 : 0.4 }}>Post Comment</button>
                     </div>
@@ -5498,7 +5518,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             setSettingsModal(null);
             alert(feedbackKind === "bug" ? "Thanks! Your report was sent to the NRIClub team." : "Thanks for the idea! The NRIClub team reads every one.");
           } catch (e) {
-            alert(isNetworkError(e) ? NETWORK_MESSAGE : "That couldn't be sent. Please try again.");
+            alert(apiErrorMessage(e, "That couldn't be sent. Please try again."));
           }
           setFeedbackSending(false);
         };
@@ -5687,7 +5707,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   alert("Reported successfully. Our team will review this content.");
                 } catch(e) {
                   console.error("Report failed:", e);
-                  alert(isNetworkError(e) ? NETWORK_MESSAGE : "Your report couldn't be sent. Please try again.");
+                  alert(apiErrorMessage(e, "Your report couldn't be sent. Please try again."));
                   setReportConfirm(null);
                 }
               }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: reportConfirm.type === "user" && !reportConfirm.reason ? "#FECACA" : "#DC2626", fontSize: 13, fontWeight: 600, color: "#fff", cursor: reportConfirm.type === "user" && !reportConfirm.reason ? "default" : "pointer", fontFamily: font }}>Report</button>
@@ -5812,7 +5832,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => setDocModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button onClick={async () => { if (!newDoc.title || !newDoc.city) return; const tempDoc = { id: "d_"+Date.now(), ...newDoc, content: newDoc.excerpt, readTime: "1 min read", author: user.name, authorLocation: user.location || "", likes: 0, timestamp: new Date().toLocaleDateString(), comments: [] }; setDocs([tempDoc, ...docs]); try { const r = await api.createDoc({ title: newDoc.title, city: newDoc.city, category: newDoc.category, excerpt: newDoc.excerpt, content: newDoc.excerpt }); if (r?.[0]) setDocs(prev => prev.map(d => d.id === tempDoc.id ? { ...d, id: r[0].id } : d)); } catch(e) {} setNewDoc({ title: "", city: "", category: "General", excerpt: "" }); setDocModal(false); }} disabled={!newDoc.title || !newDoc.city} style={{ ...btnPrimary, opacity: newDoc.title && newDoc.city ? 1 : 0.4 }}>Create Doc</button>
+                <button onClick={async () => { if (!newDoc.title || !newDoc.city) return; const tempDoc = { id: "d_"+Date.now(), ...newDoc, content: newDoc.excerpt, readTime: "1 min read", author: user.name, authorLocation: user.location || "", likes: 0, timestamp: new Date().toLocaleDateString(), comments: [] }; setDocs([tempDoc, ...docs]); try { const r = await api.createDoc({ title: newDoc.title, city: newDoc.city, category: newDoc.category, excerpt: newDoc.excerpt, content: newDoc.excerpt }); if (r?.[0]) setDocs(prev => prev.map(d => d.id === tempDoc.id ? { ...d, id: r[0].id } : d)); } catch(e) { setDocs(prev => prev.filter(d => d.id !== tempDoc.id)); alert(apiErrorMessage(e, "Your guide couldn't be saved. Please try again.")); return; } setNewDoc({ title: "", city: "", category: "General", excerpt: "" }); setDocModal(false); }} disabled={!newDoc.title || !newDoc.city} style={{ ...btnPrimary, opacity: newDoc.title && newDoc.city ? 1 : 0.4 }}>Create Doc</button>
               </div>
             </div>
           </div>
@@ -5903,7 +5923,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     // Add to local state immediately
                     setMarketItems(prev => [{ id: created?.[0]?.id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
                   } catch(e) {
-                    alert("Your listing couldn't be posted. Please try again.");
+                    alert(apiErrorMessage(e, "Your listing couldn't be posted. Please try again."));
                     return;
                   }
                   setNewMarket({ title: "", price: "", category: "Items", city: "", description: "" }); setMarketPhotos([]); setMarketModal(false);
@@ -5984,9 +6004,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       setGroupRequestSent(true);
                       setNewGroupCity("");
                     } catch(e) {
-                      setGroupRequestError(isNetworkError(e) ? NETWORK_MESSAGE
-                        : /23505/.test(e.message || "") ? `There's already a group or a request for ${requestCity}.`
-                        : "Your request couldn't be sent. Please try again.");
+                      setGroupRequestError(/23505/.test(e.message || "") ? `There's already a group or a request for ${requestCity}.`
+                        : apiErrorMessage(e, "Your request couldn't be sent. Please try again."));
                     }
                   }}
                   disabled={!canSubmit}
@@ -6183,6 +6202,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   input: { inputMode: "url", autoCapitalize: "none", spellCheck: false },
                   help: user.verificationStatus === "approved" ? REVIEW_AGAIN_NOTE("LinkedIn") : null,
                 })}
+                {typeof editProfile.linkedinPublic === "boolean" && (
+                  <label style={{ display: "flex", gap: 10, alignItems: "flex-start", margin: "-4px 0 16px", fontSize: 13, lineHeight: 1.45, color: "#37352F", cursor: "pointer", fontFamily: font }}>
+                    <input type="checkbox" checked={editProfile.linkedinPublic} onChange={(e) => setField("linkedinPublic", e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: "#37352F" }} />
+                    <span>Show my LinkedIn link on my profile to other members<span style={{ display: "block", fontSize: 12, color: "#6B6A67", marginTop: 2 }}>Our team always sees it, to check members. Other members see it only if you tick this.</span></span>
+                  </label>
+                )}
                 {profileErrors.form && <div role="alert" style={{ padding: "10px 12px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, fontSize: 13, color: "#B91C1C", marginBottom: 12, fontFamily: font }}>{profileErrors.form}</div>}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8 }}>
                   <button type="button" onClick={() => setProfileModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>

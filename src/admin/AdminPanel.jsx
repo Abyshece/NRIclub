@@ -6,7 +6,7 @@ import VerificationView from "./VerificationView";
 import MembersView from "./MembersView";
 import CommunitiesView from "./CommunitiesView";
 import OverviewView from "./OverviewView";
-import { FeedbackView, ReportsView, contentPreview, isOpenBug, isOpenIdea, isOpenReport, personOf, targetKey } from "./ReportsView";
+import { FeedbackView, ReportsView, contentPreview, isFeedback, isOpenBug, isOpenIdea, isOpenReport, personOf, targetKey } from "./ReportsView";
 import { ADMIN_CSS, ErrorNote, Icon, SkeletonRows, Toast } from "./ui";
 import { friendlyError } from "./format";
 
@@ -60,10 +60,14 @@ export default function AdminPanel({ onLogout }) {
   // they couldn't be loaded; the counts then come from the loaded members.
   const [memberCounts, setMemberCounts] = useState(null);
   const [groups, setGroups] = useState([]);
-  // Every open report, plus the newest handled ones: handledTotals says how
-  // many handled reports and bug reports there are in all.
+  // The oldest open reports (a page of each kind), plus the newest handled
+  // ones: handledTotals says how many handled reports and bug reports there
+  // are in all. moreOpen: for open member reports and open feedback, how
+  // many aren't loaded yet and where the next page starts.
   const [reports, setReports] = useState([]);
   const [handledTotals, setHandledTotals] = useState({ reports: 0, bugs: 0 });
+  const [moreOpen, setMoreOpen] = useState({ reports: { hidden: 0, after: null }, feedback: { hidden: 0, after: null } });
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [toast, setToast] = useState(null);
@@ -115,6 +119,11 @@ export default function AdminPanel({ onLogout }) {
       setGroups(data.groups);
       setReports((prev) => keepChangedReports(enrichReports(data), prev, reportChanged));
       setHandledTotals({ reports: data.handledReportsTotal ?? 0, bugs: data.handledBugsTotal ?? 0 });
+      const loadedOpen = (feedback) => data.reports.filter((r) => r.status === "pending" && isFeedback(r) === feedback).length;
+      setMoreOpen({
+        reports: { hidden: Math.max(0, (data.openReportsTotal ?? 0) - loadedOpen(false)), after: data.openReportsAfter ?? null },
+        feedback: { hidden: Math.max(0, (data.openFeedbackTotal ?? 0) - loadedOpen(true)), after: data.openFeedbackAfter ?? null },
+      });
       if (queue.status !== "fulfilled") {
         pendingCount = totals.status === "fulfilled" ? totals.value.byStatus.pending : data.users.filter((u) => u.verification_status === "pending").length;
       }
@@ -194,6 +203,37 @@ export default function AdminPanel({ onLogout }) {
     refreshCounts();
   }, [refreshCounts]);
 
+  // The next page of open member reports (or of feedback), oldest first.
+  // Their content and the reported member are looked up by the Reports page.
+  const loadMoreOpen = useCallback(async (feedback) => {
+    const key = feedback ? "feedback" : "reports";
+    const after = moreOpen[key].after;
+    if (!after || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const { rows } = await api.adminGetOpenReports(feedback, after);
+      const byId = Object.fromEntries(usersRef.current.map((u) => [u.id, u]));
+      setReports((prev) => {
+        const have = new Set(prev.map((r) => r.id));
+        const added = rows.filter((r) => !have.has(r.id)).map((r) => ({
+          ...r, reporter: personOf(byId[r.reporter_id]), reported_user: personOf(byId[r.reported_user_id]),
+          reportedContent: null, contentAuthor: null,
+        }));
+        return [...prev, ...added].sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
+      });
+      setMoreOpen((m) => ({
+        ...m,
+        [key]: {
+          hidden: Math.max(0, m[key].hidden - rows.length),
+          after: rows.length < api.OPEN_REPORTS_PAGE ? null : rows[rows.length - 1],
+        },
+      }));
+    } catch (e) {
+      showToast({ text: `Couldn't load more: ${friendlyError(e)}`, tone: "error" });
+    }
+    setLoadingMore(false);
+  }, [moreOpen, loadingMore, showToast]);
+
   // The reports (ids) whose status this panel just changed on the server.
   const onReportsChange = useCallback((ids) => {
     ids.forEach((id) => { reportChanges.current[id] = (reportChanges.current[id] || 0) + 1; });
@@ -209,8 +249,9 @@ export default function AdminPanel({ onLogout }) {
   }, [users, memberCounts]);
   const membersTotal = Math.max(memberCounts?.total ?? usersTotal, users.length);
   const blockedTotal = memberCounts ? memberCounts.blocked : users.filter((u) => u.status === "blocked").length;
-  const openReports = reports.filter(isOpenReport).length;
-  const feedbackCount = reports.filter((r) => isOpenBug(r) || isOpenIdea(r)).length;
+  // Open ones loaded here, plus those not loaded yet.
+  const openReports = reports.filter(isOpenReport).length + moreOpen.reports.hidden;
+  const feedbackCount = reports.filter((r) => isOpenBug(r) || isOpenIdea(r)).length + moreOpen.feedback.hidden;
   const pendingGroups = groups.filter((g) => !g.is_approved).length;
 
   const nav = [
@@ -250,9 +291,9 @@ export default function AdminPanel({ onLogout }) {
   } else if (page === "communities") {
     content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} />;
   } else if (page === "reports") {
-    content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
+    content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} moreOpen={moreOpen.reports.after ? moreOpen.reports.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(false)} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
   } else if (page === "bugs") {
-    content = <FeedbackView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
+    content = <FeedbackView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} moreOpen={moreOpen.feedback.after ? moreOpen.feedback.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(true)} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
   } else {
     content = <OverviewView users={users} membersTotal={membersTotal} blockedTotal={blockedTotal} counts={counts} openReports={openReports} pendingGroups={pendingGroups} onNavigate={go} />;
   }
