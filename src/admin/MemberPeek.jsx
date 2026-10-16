@@ -242,7 +242,13 @@ export default function MemberPeek({
               {ambassadorDraft === null ? (
                 <>
                   {member.ambassador_city || <span className="adm-faint">—</span>}
-                  <Button variant="ghost" size="sm" onClick={() => setAmbassadorDraft(member.ambassador_city || placeLabel(member).split(",")[0] || "")}>{member.ambassador_city ? "Change" : "Make ambassador"}</Button>
+                  {/* Only active, approved members can be made ambassadors (the
+                      database refuses anyone else and ends the role on a block,
+                      rejection or new review); a role a member still has can
+                      always be changed or removed. */}
+                  {member.ambassador_city || (status === "approved" && !blocked)
+                    ? <Button variant="ghost" size="sm" onClick={() => setAmbassadorDraft(member.ambassador_city || placeLabel(member).split(",")[0] || "")}>{member.ambassador_city ? "Change" : "Make ambassador"}</Button>
+                    : <span className="adm-faint adm-small">once approved</span>}
                 </>
               ) : (
                 <form onSubmit={(e) => { e.preventDefault(); const city = ambassadorDraft.trim(); run("ambassador", () => onSetAmbassador(member, city)).then((ok) => { if (ok) setAmbassadorDraft(null); }); }} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>

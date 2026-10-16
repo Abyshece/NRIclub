@@ -668,23 +668,119 @@ export function getToken() { return accessToken; }
 // PROFILES
 // ============================================================================
 
-export async function getProfile(userId) {
-  const data = await restCall("GET", `/rest/v1/profiles?id=eq.${userId}&select=*`);
-  return data?.[0] || null;
+// The profile columns members read. Since the 2026-10-20 database update
+// members may read every column of profiles but linkedin_url (a request for
+// all columns, select=*, is refused), so they are named here: a column added
+// to profiles goes here once the live database has it.
+const PROFILE_FIELDS = "id,name,avatar_url,location,hometown,profession,occupation_status,years_abroad,city,country_code,"
+  + "bio,email_verified,linkedin_verified,created_at,updated_at,ambassador_city,ask_me_about,mentor_open,mentor_areas,"
+  + "mentee_open,mentee_needs";
+
+// A database function the database doesn't have yet (or a column) was asked
+// for at this time (Date.now()): the old way is used for a few minutes, then
+// the new one is tried again, so the site switches over soon after the
+// database update without a reload.
+const ASK_AGAIN_MS = 5 * 60 * 1000;
+const missingSince = {};
+const knownMissing = (name) => Date.now() - (missingSince[name] || 0) < ASK_AGAIN_MS;
+
+// LinkedIn links the signed-in member may see, by member id:
+// { [id]: { linkedin_url, linkedin_public } }. The link was asked for so our
+// team can check members, so since the 2026-10-20 database update a member
+// sees their own, admins see every member's, and other members see only the
+// links members chose to show (linkedin_public, in Edit profile). Before that
+// update every link was readable and comes straight from profiles (and
+// there's no linkedin_public, so the answer has none). If the links can't be
+// loaded, they're left out, or with strict the error is thrown (for the
+// member's own profile, which must not look as if it had no link).
+export async function getProfileLinks(ids, { strict = false } = {}) {
+  const list = [...new Set((ids || []).filter((id) => UUID.test(id || "")))];
+  const byId = {};
+  if (!list.length) return byId;
+  const viaFunction = async () => {
+    for (let i = 0; i < list.length; i += 1000) {
+      const rows = await restCall("POST", "/rest/v1/rpc/profile_links", { p_ids: list.slice(i, i + 1000) });
+      (rows || []).forEach((r) => { byId[r.id] = { linkedin_url: r.linkedin_url || "", linkedin_public: !!r.linkedin_public }; });
+    }
+  };
+  const viaProfiles = async () => {
+    for (let i = 0; i < list.length; i += 100) {
+      const rows = await restCall("GET", `/rest/v1/profiles?id=in.(${list.slice(i, i + 100).join(",")})&select=id,linkedin_url`);
+      (rows || []).forEach((r) => { byId[r.id] = { linkedin_url: r.linkedin_url || "" }; });
+    }
+  };
+  try {
+    if (!knownMissing("profile_links")) {
+      try {
+        await viaFunction();
+      } catch (err) {
+        if (!isMissingInDatabase(err)) throw err;
+        missingSince.profile_links = Date.now();
+        await viaProfiles();
+      }
+    } else {
+      // The database had no profile_links a few minutes ago. If the update
+      // has run since, profiles refuses linkedin_url: then the function.
+      try {
+        await viaProfiles();
+      } catch {
+        delete missingSince.profile_links;
+        await viaFunction();
+      }
+    }
+  } catch (err) {
+    if (strict) throw err;
+  }
+  return byId;
 }
 
-// Email, consent and verification status live in profile_private, which
-// only the owner and admins can read; the app still sees them as fields of
-// the user's own profile.
-const PRIVATE_PROFILE_FIELDS = ["email", "gdpr_consent", "gdpr_consent_date", "marketing_consent"];
+// Adds linkedin_url (and, when the database has it, linkedin_public) to
+// profile rows from getProfileLinks: "" for links the member can't see.
+function withLinks(rows, links) {
+  return (rows || []).map((r) => ({ ...r, linkedin_url: links[r.id]?.linkedin_url || "",
+    ...(links[r.id] && "linkedin_public" in links[r.id] ? { linkedin_public: links[r.id].linkedin_public } : {}) }));
+}
+
+export async function getProfile(userId, { strict = false } = {}) {
+  const [data, links] = await Promise.all([
+    restCall("GET", `/rest/v1/profiles?id=eq.${userId}&select=${PROFILE_FIELDS}`),
+    getProfileLinks([userId], { strict }),
+  ]);
+  return withLinks(data, links)[0] || null;
+}
+
+// When the member last opened NRIClub, for the admin overview. Since the
+// 2026-10-20 database update it's kept with their private details (only they
+// and admins see it, and the server's clock decides the time); before, it
+// was a column of profiles, which every member could read.
+function touchLastActive(userId) {
+  const body = { last_active: new Date().toISOString() };
+  // (If profiles has no last_active any more, the update has run meanwhile:
+  // next time, profile_private.)
+  const onProfiles = () => restCall("PATCH", `/rest/v1/profiles?id=eq.${userId}`, body).catch(() => { delete missingSince.private_last_active; });
+  if (knownMissing("private_last_active")) { onProfiles(); return; }
+  restCall("PATCH", `/rest/v1/profile_private?id=eq.${userId}`, body).catch((err) => {
+    if (!isMissingInDatabase(err)) return;
+    missingSince.private_last_active = Date.now();
+    onProfiles();
+  });
+}
+
+// Email, verification status, the Terms record and the Art. 9 consent live
+// in profile_private, which only the owner and admins can read; the app
+// still sees them as fields of the user's own profile. Of those, the member
+// can't change anything there directly (the database keeps them).
+const PRIVATE_PROFILE_FIELDS = ["email"];
 
 // Throws if the private row can't be read: without it the member would look
 // like a new, unverified, unblocked account. Callers keep what they have.
+// The same if their LinkedIn link can't be read (it would look removed, and
+// Get verified would send it as removed).
 export async function getMyProfile() {
   if (!currentUser) return null;
-  restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { last_active: new Date().toISOString() }).catch(() => {});
+  touchLastActive(currentUser.id);
   const [profile, privateRows] = await Promise.all([
-    getProfile(currentUser.id),
+    getProfile(currentUser.id, { strict: true }),
     restCall("GET", `/rest/v1/profile_private?id=eq.${currentUser.id}&select=*`),
   ]);
   if (!profile) return null;
@@ -714,13 +810,12 @@ export async function updateProfile(updates) {
   }
   // email is managed by Supabase Auth and email_verified mirrors it; neither is client-writable.
   delete privateUpdates.email;
-  delete privateUpdates.gdpr_consent_date;
   delete publicUpdates.email_verified;
   if (Object.keys(privateUpdates).length) {
     await restCall("PATCH", `/rest/v1/profile_private?id=eq.${currentUser.id}`, privateUpdates);
   }
   if (!Object.keys(publicUpdates).length) return [];
-  return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, publicUpdates, { Prefer: "return=representation" });
+  return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}&select=${PROFILE_FIELDS}`, publicUpdates, { Prefer: "return=representation" });
 }
 
 // ============================================================================
@@ -739,11 +834,59 @@ export async function submitVerification({ city, countryCode, location, linkedin
   });
 }
 
-// Records "18 or older" and the Terms (with consent to the Privacy Policy):
-// at signup once the email code is confirmed, and for members who haven't
-// confirmed them (older accounts). version must be the current one
-// (TERMS_VERSION); returns it.
-export async function acceptTerms(version) {
+// Whether a request failed because the database doesn't have the function or
+// column it asked for yet (the site goes live a little before the database
+// update that adds them): PostgREST's "not found" codes, or Postgres's.
+export function isMissingInDatabase(err) {
+  try {
+    const body = JSON.parse(err?.message || "");
+    return ["PGRST202", "PGRST204", "42883", "42703"].includes(body?.code);
+  } catch {
+    return false;
+  }
+}
+
+// The version of the Terms of Use members must have accepted, as the
+// database says (public.current_terms_version). Remembered once known;
+// refresh asks again if the last answer is more than a minute old. Until the
+// 2026-10-19 database update that function doesn't exist and the version is
+// "2026-10", so members are asked to accept the new Terms only once the
+// database expects them to. Any other failure (e.g. no connection) throws,
+// and the next call asks again.
+const TERMS_VERSION_BEFORE_UPDATE = "2026-10";
+let termsVersionRequest = null;
+let termsVersionAskedAt = 0;
+export function getCurrentTermsVersion({ refresh = false } = {}) {
+  if (refresh && Date.now() - termsVersionAskedAt > 60000) termsVersionRequest = null;
+  if (!termsVersionRequest) {
+    termsVersionAskedAt = Date.now();
+    termsVersionRequest = restCall("POST", "/rest/v1/rpc/current_terms_version", {})
+      .then((version) => (typeof version === "string" && version ? version : TERMS_VERSION_BEFORE_UPDATE))
+      .catch((err) => {
+        if (isMissingInDatabase(err)) return TERMS_VERSION_BEFORE_UPDATE;
+        termsVersionRequest = null;
+        throw err;
+      });
+  }
+  return termsVersionRequest;
+}
+
+// Records "18 or older" and the Terms: at signup once the email code is
+// confirmed, and for members who haven't accepted the current version.
+// version must be the current one (getCurrentTermsVersion); returns it.
+// art9: the member also ticked the separate consent to processing what can
+// show their origin, religion or health; the database records it with its
+// time and wording's version. Before the 2026-10-19 database update there's
+// nowhere to record it, and only the Terms are recorded (the member is asked
+// for the consent once the update is in).
+export async function acceptTerms(version, art9 = false) {
+  if (art9) {
+    try {
+      return await restCall("POST", "/rest/v1/rpc/accept_terms", { p_version: version, p_art9: true });
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+    }
+  }
   return restCall("POST", "/rest/v1/rpc/accept_terms", { p_version: version });
 }
 
@@ -761,7 +904,7 @@ export async function deleteAccount() {
 }
 
 export async function searchProfiles(query = "", filters = {}) {
-  let url = `/rest/v1/profiles?select=*&order=created_at.desc`;
+  let url = `/rest/v1/profiles?select=${PROFILE_FIELDS}&order=created_at.desc`;
   if (query) url += `&or=(name.ilike.%25${query}%25,profession.ilike.%25${query}%25)`;
   if (filters.city && filters.city !== "All") url += `&location=ilike.%25${filters.city}%25`;
   if (filters.hometown && filters.hometown !== "All") url += `&hometown=ilike.%25${filters.hometown}%25`;
@@ -775,7 +918,7 @@ export async function searchProfiles(query = "", filters = {}) {
 // ============================================================================
 
 export async function getPosts(limit = 30, groupId = null) {
-  let url = `/rest/v1/posts?select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown,linkedin_url)&order=created_at.desc&limit=${limit}`;
+  let url = `/rest/v1/posts?select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)&order=created_at.desc&limit=${limit}`;
   if (groupId) url += `&group_id=eq.${groupId}`;
   return restCall("GET", url);
 }
@@ -783,13 +926,13 @@ export async function getPosts(limit = 30, groupId = null) {
 // One post with its author, or null: for a shared link (#post=<id>) to a
 // post older than the ones the feed loads.
 export async function getPost(postId) {
-  const rows = await restCall("GET", `/rest/v1/posts?id=eq.${encodeURIComponent(postId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown,linkedin_url)`);
+  const rows = await restCall("GET", `/rest/v1/posts?id=eq.${encodeURIComponent(postId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)`);
   return rows?.[0] || null;
 }
 
 // A member's latest posts (with author), for their profile page.
 export async function getUserPosts(userId, limit = 20) {
-  return restCall("GET", `/rest/v1/posts?user_id=eq.${encodeURIComponent(userId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown,linkedin_url)&order=created_at.desc&limit=${limit}`);
+  return restCall("GET", `/rest/v1/posts?user_id=eq.${encodeURIComponent(userId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)&order=created_at.desc&limit=${limit}`);
 }
 
 // The groups a member belongs to (ids), for "Groups in common".
@@ -963,13 +1106,15 @@ export async function pinGroupPost(groupId, postId) {
   return restCall("POST", "/rest/v1/rpc/pin_group_post", { p_group: groupId, p_post: postId });
 }
 
-// The ambassadors of a city (name and photo).
+// The ambassadors of a city (name and photo): verified members only. (The
+// database also ends the role when an ambassador is blocked, rejected or
+// back in review.)
 export async function getCityAmbassadors(city) {
   // ilike without wildcards: "%" and "*" become "_" (one character), so
   // only this city matches, brackets and commas included.
   const q = String(city || "").trim().replace(/[%_*\\]/g, "_");
   if (!q) return [];
-  return (await restCall("GET", `/rest/v1/profiles?ambassador_city=ilike.${encodeURIComponent(q)}&select=id,name,avatar_url&limit=5`)) || [];
+  return (await restCall("GET", `/rest/v1/profiles?ambassador_city=ilike.${encodeURIComponent(q)}&linkedin_verified=is.true&select=id,name,avatar_url&limit=5`)) || [];
 }
 
 // ============================================================================
@@ -1001,9 +1146,29 @@ export async function toggleRsvp(eventId) {
 }
 
 // ---- Desi places (per city, recommended by members) ----
+// Each place comes with recs: who recommends it, for the count and the
+// member's own 👍. Since the 2026-10-20 database update members don't see who
+// recommended a place (a temple, a doctor), only how many did
+// (place_recommendation_counts): recs then holds the member's own id if they
+// do, and null for each other member. Before it, recs holds every member's id.
 export async function getPlaces(city) {
-  const rows = await restCall("GET", `/rest/v1/places?city=ilike.${encodeURIComponent(city)}&select=*,place_recommendations(user_id)&order=created_at.desc&limit=200`);
-  return (rows || []).map(p => ({ ...p, recs: (p.place_recommendations || []).map(r => r.user_id) }));
+  const [rows, counts] = await Promise.all([
+    restCall("GET", `/rest/v1/places?city=ilike.${encodeURIComponent(city)}&select=*,place_recommendations(user_id)&order=created_at.desc&limit=200`),
+    knownMissing("place_counts") ? null
+      : restCall("POST", "/rest/v1/rpc/place_recommendation_counts", { p_city: city }).catch((err) => {
+        if (isMissingInDatabase(err)) missingSince.place_counts = Date.now();
+        return null;
+      }),
+  ]);
+  const byPlace = counts ? Object.fromEntries(counts.map((c) => [c.place_id, c])) : null;
+  return (rows || []).map(({ place_recommendations: recs, ...p }) => {
+    const ids = (recs || []).map(r => r.user_id);
+    if (!byPlace) return { ...p, recs: ids };
+    const c = byPlace[p.id];
+    const mine = c ? !!c.mine : ids.includes(currentUser?.id);
+    const others = Math.max(0, (c?.recommendations ?? ids.length) - (mine ? 1 : 0));
+    return { ...p, recs: [...(mine ? [currentUser?.id] : []), ...Array(others).fill(null)] };
+  });
 }
 export async function addPlace({ city, name, kind, address, note, languages = "" }) {
   if (!currentUser) throw new Error("Not logged in");
@@ -1294,6 +1459,40 @@ export async function createNotification(userId, type, text, actorId = null, ref
   return restCall("POST", "/rest/v1/notifications", body);
 }
 
+// The kinds of notification the database writes itself (like, comment and
+// Namaste request since the 2026-10-20 database update, which also stops
+// members writing them). Remembered once known; until that update there are
+// none, and the database is asked again after a few minutes.
+let serverTypesRequest = null;
+function serverNotificationTypes() {
+  if (!serverTypesRequest || (missingSince.server_notification_types && !knownMissing("server_notification_types"))) {
+    delete missingSince.server_notification_types;
+    serverTypesRequest = restCall("POST", "/rest/v1/rpc/server_notification_types", {})
+      .then((types) => (Array.isArray(types) ? types : []))
+      .catch((err) => {
+        if (isMissingInDatabase(err)) {
+          missingSince.server_notification_types = Date.now();
+          return [];
+        }
+        serverTypesRequest = null;
+        throw err;
+      });
+  }
+  return serverTypesRequest;
+}
+
+// Tells another member about a like, comment or Namaste request, as the site
+// did before the 2026-10-20 database update. Since that update the database
+// writes these notifications itself, in its own words, and this sends
+// nothing. If it isn't known which is the case (no connection), it sends
+// nothing either.
+export async function notifyMember(userId, type, text, actorId = null, refId = null) {
+  let types;
+  try { types = await serverNotificationTypes(); } catch { return; }
+  if (types.includes(type)) return;
+  return createNotification(userId, type, text, actorId, refId);
+}
+
 // ============================================================================
 // REPORTS & BLOCKS
 // ============================================================================
@@ -1523,8 +1722,12 @@ export async function isAdmin() {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Members come with their private row embedded, so a status or email can
-// never land on the wrong person.
-const ADMIN_MEMBER_SELECT = "select=*,profile_private(email,verification_status,status,review_flag)";
+// never land on the wrong person. Since the 2026-10-20 database update the
+// last activity is part of that private row, and LinkedIn links come from
+// getProfileLinks (admins get every one); before it, both were columns of
+// profiles (ADMIN_MEMBER_SELECT_BEFORE).
+const ADMIN_MEMBER_SELECT = `select=${PROFILE_FIELDS},profile_private(email,verification_status,status,review_flag,last_active)`;
+const ADMIN_MEMBER_SELECT_BEFORE = "select=*,profile_private(email,verification_status,status,review_flag)";
 
 function adminMember(row) {
   const { profile_private: embedded, ...p } = row;
@@ -1535,7 +1738,37 @@ function adminMember(row) {
     verification_status: pp.verification_status || "incomplete",
     status: pp.status || "active",
     review_flag: pp.review_flag || "",
+    last_active: pp.last_active ?? p.last_active ?? null,
   };
+}
+
+// Members for the admin panel: query is the rest of the address (filter,
+// order, limit). { rows, total }; total only when counted.
+async function adminMemberRows(query, { counted = false } = {}, retried = false) {
+  const get = async (select) => {
+    const path = `/rest/v1/profiles?${select}&${query}`;
+    return counted ? getCounted(path) : { rows: (await restCall("GET", path)) || [], total: null };
+  };
+  if (!knownMissing("admin_member_select")) {
+    try {
+      const res = await get(ADMIN_MEMBER_SELECT);
+      const links = await getProfileLinks(res.rows.map((r) => r.id));
+      return { ...res, rows: withLinks(res.rows, links).map(adminMember) };
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.admin_member_select = Date.now();
+    }
+  }
+  try {
+    const res = await get(ADMIN_MEMBER_SELECT_BEFORE);
+    return { ...res, rows: res.rows.map(adminMember) };
+  } catch (err) {
+    // The database had no last_active in profile_private a few minutes ago;
+    // if the update has run since, select=* is refused: the new way, once.
+    if (retried || !missingSince.admin_member_select) throw err;
+    delete missingSince.admin_member_select;
+    return adminMemberRows(query, { counted }, true);
+  }
 }
 
 // A GET sent with "Prefer: count=exact": { rows, total }.
@@ -1545,23 +1778,25 @@ async function getCounted(path) {
   return { rows: text ? JSON.parse(text) : [], total: totalFrom(res) };
 }
 
-// Every open report (bug reports included), however many there are: the
-// server returns at most 1,000 rows per request, so they come in pages, by
-// id, so one handled meanwhile can't push another out of the pages.
-const REPORTS_PAGE = 1000;
+// Open reports come oldest first, OPEN_REPORTS_PAGE at a time, reports about
+// members and content apart from feedback (bug reports and ideas), so a
+// flood of one can't hide the other or make the panel load everything.
+export const OPEN_REPORTS_PAGE = 200;
 
-async function getAllPendingReports() {
-  const path = `/rest/v1/reports?select=*&status=eq.pending&order=id.asc&limit=${REPORTS_PAGE}`;
-  const first = await getCounted(path);
-  const rows = [...first.rows];
-  let page = first.rows;
-  // A short page is the last one, unless the server capped it below the
-  // total it reported.
-  while (page.length && (page.length === REPORTS_PAGE || (first.total !== null && rows.length < first.total))) {
-    page = (await restCall("GET", `${path}&id=gt.${page[page.length - 1].id}`)) || [];
-    rows.push(...page);
+// One page of open reports (feedback: bug reports and ideas, otherwise
+// reports about members and content), oldest first, after the report
+// "after" ({ created_at, id }) if given: { rows, total } (total: how many are
+// open in all, counted with the first page only).
+export async function adminGetOpenReports(feedback, after = null) {
+  const kind = feedback ? `or=(reason.like.${BUG_REASON},reason.like.${IDEA_REASON})`
+    : `reason=not.like.${BUG_REASON}&reason=not.like.${IDEA_REASON}`;
+  let path = `/rest/v1/reports?select=*&status=eq.pending&${kind}&order=created_at.asc,id.asc&limit=${OPEN_REPORTS_PAGE}`;
+  if (after) {
+    const at = encodeURIComponent(`"${after.created_at}"`);
+    path += `&and=(or(created_at.gt.${at},and(created_at.eq.${at},id.gt.${after.id})))`;
+    return { rows: (await restCall("GET", path)) || [], total: null };
   }
-  return rows;
+  return getCounted(path);
 }
 
 // Handled reports stay on record, so only the newest are loaded.
@@ -1572,16 +1807,20 @@ const BUG_REASON = encodeURIComponent("[BUG]*");
 const IDEA_REASON = encodeURIComponent("[IDEA]*");
 
 // users holds the newest 1,000 members; usersTotal is how many there are.
-// reports holds every open report plus the newest 200 handled member reports
+// reports holds the oldest 200 open member reports (openReportsTotal is how
+// many are open) and the oldest 200 open bug reports and ideas
+// (openFeedbackTotal), plus the newest 200 handled member reports
 // (handledReportsTotal is how many there are) and the newest 200 handled bug
-// reports (handledBugsTotal); newest first.
+// reports (handledBugsTotal); newest first. More open ones:
+// adminGetOpenReports.
 export async function adminGetDashboardData() {
   const get = (path) => restCall("GET", path);
   const handled = `/rest/v1/reports?select=*&status=neq.pending&order=created_at.desc&limit=${HANDLED_REPORTS_SHOWN}`;
-  const [members, groups, pendingReports, handledReports, handledBugs, posts, docs, events, helpRequests, marketItems] = await Promise.all([
-    getCounted(`/rest/v1/profiles?${ADMIN_MEMBER_SELECT}&order=created_at.desc&limit=1000`),
+  const [members, groups, openReports, openFeedback, handledReports, handledBugs, posts, docs, events, helpRequests, marketItems] = await Promise.all([
+    adminMemberRows("order=created_at.desc&limit=1000", { counted: true }),
     get("/rest/v1/groups?select=*&order=members_count.desc"),
-    getAllPendingReports(),
+    adminGetOpenReports(false),
+    adminGetOpenReports(true),
     getCounted(`${handled}&reason=not.like.${BUG_REASON}&reason=not.like.${IDEA_REASON}`),
     getCounted(`${handled}&or=(reason.like.${BUG_REASON},reason.like.${IDEA_REASON})`),
     get("/rest/v1/posts?select=id,content,image_url,user_id,created_at&order=created_at.desc&limit=200"),
@@ -1590,12 +1829,12 @@ export async function adminGetDashboardData() {
     get("/rest/v1/help_requests?select=id,title,description,user_id&order=created_at.desc&limit=100"),
     get("/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100"),
   ]);
-  const users = (members.rows || []).map(adminMember);
+  const users = members.rows || [];
   // One list, newest first, each report once (one may have been handled
   // between the requests).
   const reports = [];
   const seen = new Set();
-  [...handledReports.rows, ...handledBugs.rows, ...pendingReports].forEach((r) => {
+  [...handledReports.rows, ...handledBugs.rows, ...openReports.rows, ...openFeedback.rows].forEach((r) => {
     if (!seen.has(r.id)) { seen.add(r.id); reports.push(r); }
   });
   reports.sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
@@ -1604,6 +1843,11 @@ export async function adminGetDashboardData() {
     usersTotal: members.total ?? users.length,
     groups: groups || [],
     reports,
+    openReportsTotal: openReports.total ?? openReports.rows.length,
+    openFeedbackTotal: openFeedback.total ?? openFeedback.rows.length,
+    // Where the next page of open reports starts (null: all are loaded).
+    openReportsAfter: openReports.rows.length < OPEN_REPORTS_PAGE ? null : openReports.rows[openReports.rows.length - 1],
+    openFeedbackAfter: openFeedback.rows.length < OPEN_REPORTS_PAGE ? null : openFeedback.rows[openFeedback.rows.length - 1],
     handledReportsTotal: handledReports.total ?? handledReports.rows.length,
     handledBugsTotal: handledBugs.total ?? handledBugs.rows.length,
     posts: posts || [],
@@ -1650,8 +1894,8 @@ export async function adminGetReportedItem(kind, id) {
   if (kind !== "profile" && !REPORTED_ITEMS[kind]) throw new Error(`Unknown kind of content: ${kind}`);
   if (!UUID.test(id || "")) return null;
   if (kind === "profile") {
-    const rows = await restCall("GET", `/rest/v1/profiles?id=eq.${id}&${ADMIN_MEMBER_SELECT}`);
-    return rows?.[0] ? adminMember(rows[0]) : null;
+    const { rows } = await adminMemberRows(`id=eq.${id}`);
+    return rows[0] || null;
   }
   const [table, fields] = REPORTED_ITEMS[kind];
   const rows = await restCall("GET", `/rest/v1/${table}?id=eq.${id}&select=${fields}`);
@@ -1681,7 +1925,7 @@ export async function adminCityStats() {
 
 // Makes a member the NRIClub ambassador for a city ('' to stop).
 export async function adminSetAmbassador(userId, city) {
-  return adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}`, { ambassador_city: city });
+  return adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}&select=id,ambassador_city`, { ambassador_city: city });
 }
 
 // Members waiting for a decision (or any other verification statuses), with

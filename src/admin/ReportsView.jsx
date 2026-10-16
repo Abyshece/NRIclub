@@ -2,8 +2,8 @@
 // ideas from members). All live in the reports table; the kind is the
 // "[TYPE]" prefix of the reason ("[BUG]", "[IDEA]"). Handling a
 // report changes its status ("reviewed" when dismissed, "resolved" when acted
-// on), so it stays on record under Handled. The panel has every open report
-// but only the newest handled ones.
+// on), so it stays on record under Handled. The panel loads the oldest open
+// reports, a page at a time ("Load more"), and only the newest handled ones.
 import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import { Button, ConfirmDialog, EmptyState, PageHeader, Pill, SectionTitle } from "./ui";
@@ -38,6 +38,18 @@ function markHandled(prev, changedRows) {
 function HandledNote({ shown, total }) {
   if (total <= shown) return null;
   return <p className="adm-muted adm-small" style={{ margin: "0 0 8px" }}>Showing the newest {fmt(shown)} of {fmt(total)}.</p>;
+}
+
+// Open reports load oldest first, a page at a time: how many more there are,
+// and a button for the next page.
+function MoreOpen({ count, what, busy, onLoadMore }) {
+  if (!count) return null;
+  return (
+    <div className="adm-more" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <span className="adm-muted adm-small">{fmt(count)} more open {what} (newer than these).</span>
+      <Button variant="secondary" size="sm" disabled={busy} onClick={onLoadMore}>{busy ? "Loading…" : `Load ${fmt(Math.min(count, api.OPEN_REPORTS_PAGE))} more`}</Button>
+    </div>
+  );
 }
 
 const ALREADY_HANDLED = "Already handled by someone else. Reloading the list.";
@@ -149,7 +161,7 @@ function ContentPreview({ r, lookup, onRetry }) {
 // newest are loaded). onReload loads the panel's data again;
 // onReportsChange(ids) tells the panel which reports' status was just
 // changed here, so a reload that started earlier keeps them as they are now.
-export function ReportsView({ reports, setReports, handledTotal = 0, usersById, onMemberChange, onReportsChange, showToast, onReload }) {
+export function ReportsView({ reports, setReports, handledTotal = 0, moreOpen = 0, loadingMore = false, onLoadMore, usersById, onMemberChange, onReportsChange, showToast, onReload }) {
   const [busyId, setBusyId] = useState(null);
   const [confirm, setConfirm] = useState(null); // { report, kind: "remove" | "block" }
   const [confirmError, setConfirmError] = useState("");
@@ -340,7 +352,7 @@ export function ReportsView({ reports, setReports, handledTotal = 0, usersById, 
   return (
     <>
       <PageHeader title="Reports" description="Content and profiles members flagged. Remove what breaks the rules and dismiss the rest." />
-      {open.length === 0 ? (
+      {open.length === 0 && !moreOpen ? (
         <EmptyState icon="flag" title="No open reports">When members flag a post, listing or profile, it shows up here.</EmptyState>
       ) : CATEGORIES.filter((c) => grouped[c]?.length).map((c) => (
         <section key={c}>
@@ -348,6 +360,7 @@ export function ReportsView({ reports, setReports, handledTotal = 0, usersById, 
           {grouped[c].map((r) => renderReport(r, true))}
         </section>
       ))}
+      <MoreOpen count={moreOpen} what="reports" busy={loadingMore} onLoadMore={onLoadMore} />
       {handled.length > 0 && (
         <section>
           <SectionTitle count={handledCount}>Handled</SectionTitle>
@@ -408,7 +421,7 @@ function parseIdea(r) {
 // built, or closed. handledTotal: how many handled ones there are in all
 // (only the newest are loaded). onReload and onReportsChange: as for
 // ReportsView.
-export function FeedbackView({ reports, setReports, handledTotal = 0, onReportsChange, showToast, onReload }) {
+export function FeedbackView({ reports, setReports, handledTotal = 0, moreOpen = 0, loadingMore = false, onLoadMore, onReportsChange, showToast, onReload }) {
   const [busyId, setBusyId] = useState(null);
   const [tab, setTab] = useState("bugs"); // bugs | ideas
   const [handledLimit, setHandledLimit] = useState(HANDLED_PAGE);
@@ -481,11 +494,12 @@ export function FeedbackView({ reports, setReports, handledTotal = 0, onReportsC
           <Button key={k} role="tab" aria-selected={tab === k} variant={tab === k ? "primary" : "secondary"} size="sm" onClick={() => { setTab(k); setHandledLimit(HANDLED_PAGE); }}>{l}</Button>
         ))}
       </div>
-      {open.length === 0 ? (
+      {open.length === 0 && !moreOpen ? (
         <EmptyState icon={tab === "bugs" ? "bug" : "message"} title={tab === "bugs" ? "No open problems" : "No new ideas"}>
           {tab === "bugs" ? "Problems members report from Settings → Send feedback appear here." : "Ideas members send from Settings → Send feedback appear here."}
         </EmptyState>
       ) : open.map((r) => renderItem(r, true))}
+      <MoreOpen count={moreOpen} what="problems and ideas" busy={loadingMore} onLoadMore={onLoadMore} />
       {handled.length > 0 && (
         <section>
           <SectionTitle count={handled.length}>{tab === "bugs" ? "Resolved" : "Done or closed"}</SectionTitle>

@@ -3,10 +3,14 @@ import * as api from "./supabaseApi";
 import LandingPage from "./LandingPage";
 import FlagIcon from "./FlagIcon";
 import "./member/base.css";
-import { TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
-import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
+import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToAccept } from "./member/profile";
 import { rateLimiter } from "./rateLimiter";
 import { hasImprint } from "./content/imprint";
+
+// NRIClub sets no cookies and loads no analytics, so there is no consent
+// banner (the Privacy Policy lists what the site keeps in the browser).
+// Browsers that saw the old banner still hold its choice: remove it.
+try { localStorage.removeItem("nriclub_cookie_consent"); } catch (e) {}
 
 // The landing page and this file load first; everything else (the member
 // site, signup, the admin panel) loads when it's needed, so a visitor's
@@ -20,6 +24,7 @@ const AdminPanel = lazy(() => import("./admin/AdminPanel"));
 const CityPage = lazy(() => import("./CityPage"));
 const GuidePage = lazy(() => import("./GuidePage"));
 const ImpressumPage = lazy(() => import("./ImpressumPage"));
+const LegalPage = lazy(() => import("./LegalPage"));
 
 // A public page's address: /city/<city>, /guides or /guides/<slug>.
 const publicPage = () => {
@@ -38,6 +43,14 @@ const publicPage = () => {
   return null;
 };
 
+// The Terms of Use (/terms, earlier versions at /terms/<version>) and the
+// Privacy Policy (/privacy): pages anyone can open, signed in or not.
+const legalPage = () => {
+  const m = /^\/(terms|privacy)(?:\/([0-9]{4}-[0-9]{2}(?:-[0-9]{2})?))?\/?$/.exec(window.location.pathname);
+  if (!m || (m[1] === "privacy" && m[2])) return null;
+  return { kind: m[1], version: m[2] || "" };
+};
+
 const LoadingScreen = () => (
   <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
     <div style={{ textAlign: "center" }}>
@@ -50,119 +63,6 @@ const LoadingScreen = () => (
 // ============================================================================
 // APP (Root)
 // ============================================================================
-// Cookie Consent Banner Component
-const CookieConsent = () => {
-  const [visible, setVisible] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
-  const [legal, setLegal] = useState(null); // "terms" | "privacy"
-  const bannerRef = useRef(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const result = localStorage.getItem("nriclub_cookie_consent");
-        if (!result) setVisible(true);
-      } catch {
-        setVisible(true);
-      }
-    })();
-  }, []);
-
-  // While the banner shows, pad the page by its height so it never covers
-  // the last buttons on a page (Continue, Log in...).
-  useEffect(() => {
-    if (!visible || !bannerRef.current) return;
-    const el = bannerRef.current;
-    const pad = () => { document.body.style.paddingBottom = `${el.offsetHeight}px`; };
-    pad();
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(pad) : null;
-    ro?.observe(el);
-    return () => { ro?.disconnect(); document.body.style.paddingBottom = ""; };
-  }, [visible]);
-
-  const acceptAll = async () => {
-    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: true, date: new Date().toISOString() })); } catch (e) {}
-    setVisible(false);
-  };
-  const acceptEssential = async () => {
-    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: false, date: new Date().toISOString() })); } catch (e) {}
-    setVisible(false);
-  };
-
-  if (!visible) return null;
-
-  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-
-  return (
-    <div ref={bannerRef} role="region" aria-label="Cookie consent" style={{
-      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
-      background: "#fff", borderTop: "1px solid #E0E0DE",
-      boxShadow: "0 -4px 24px rgba(0,0,0,0.08)", padding: "0",
-      fontFamily: font,
-    }}>
-      <div className="nc-cookie-inner" style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 24px" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-          <div className="nc-cookie-text" style={{ flex: 1, minWidth: 280 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-              <h4 style={{ fontSize: 14, fontWeight: 700, color: "#37352F", margin: 0 }}>We value your privacy</h4>
-            </div>
-            <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, margin: 0 }}>
-              We use essential cookies to make NRIClub work. With your consent, we may also use analytics cookies to improve your experience.
-              {" "}
-              <button onClick={() => setShowDetails(!showDetails)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
-                {showDetails ? "Hide details" : "Learn more"}
-              </button>
-              {" · "}
-              <button type="button" onClick={() => setLegal("privacy")} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: "inherit", padding: 0 }}>Privacy Policy</button>
-              {" · "}
-              <button type="button" onClick={() => setLegal("terms")} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: "inherit", padding: 0 }}>Terms of Use</button>
-            </p>
-
-            {showDetails && (
-              <div style={{ marginTop: 14, padding: "14px 16px", background: "#F7F7F5", borderRadius: 8, border: "1px solid #EDEDEB" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <div>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>Essential Cookies</span>
-                    <p style={{ fontSize: 11, color: "#9B9A97", margin: "2px 0 0" }}>Required for the platform to function. Cannot be disabled.</p>
-                  </div>
-                  <span style={{ fontSize: 11, color: "#22A06B", fontWeight: 600, background: "#E3FCEF", padding: "3px 8px", borderRadius: 4 }}>Always on</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10, borderTop: "1px solid #E8E7E4" }}>
-                  <div>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>Analytics Cookies</span>
-                    <p style={{ fontSize: 11, color: "#9B9A97", margin: "2px 0 0" }}>Help us understand how you use NRIClub to improve the experience.</p>
-                  </div>
-                  <span style={{ fontSize: 11, color: "#6B6A67", fontWeight: 600, background: "#F0EFED", padding: "3px 8px", borderRadius: 4 }}>Optional</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="nc-cookie-actions" style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
-            <button onClick={acceptEssential} style={{
-              padding: "10px 18px", borderRadius: 8, border: "1px solid #E0E0DE",
-              background: "#fff", fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
-            }}>
-              Essential Only
-            </button>
-            <button onClick={acceptAll} style={{
-              padding: "10px 18px", borderRadius: 8, border: "none",
-              background: "#37352F", fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font,
-            }}>
-              Accept All
-            </button>
-          </div>
-        </div>
-      </div>
-      {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
-      {legal === "privacy" && <PrivacyModal onClose={() => setLegal(null)} />}
-    </div>
-  );
-};
-
 // "a***@example.com": enough to recognise an email address without showing it.
 const maskEmail = (email) => {
   const [local, domain] = String(email || "").split("@");
@@ -294,6 +194,9 @@ const startsSignedOut = () => {
 export default function App() {
   const [authState, setAuthState] = useState(() => (startsSignedOut() ? "landing" : "loading"));
   const [user, setUser] = useState(null);
+  // The version of the Terms members must have accepted, as the database
+  // says (api.getCurrentTermsVersion); null until known.
+  const [termsVersion, setTermsVersion] = useState(null);
   const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead" or a reset this browser asked for
   const [loginNotice, setLoginNotice] = useState(""); // e.g. after a new password
   const [isAdmin, setIsAdmin] = useState(false);
@@ -398,8 +301,11 @@ export default function App() {
     try { session = await api.getSession(); } catch (e) {}
     if (session?.user) {
       try {
-        const dbProfile = await api.getMyProfile();
+        // With the current Terms version, so a tab opened before the Terms
+        // changed asks for them again once reloaded.
+        const [dbProfile, version] = await Promise.all([api.getMyProfile(), api.getCurrentTermsVersion()]);
         if (dbProfile) {
+          setTermsVersion(version);
           setUser(mapProfile(dbProfile));
           setAuthState("authenticated");
           return;
@@ -441,6 +347,49 @@ export default function App() {
     restoreSession();
   }, []);
 
+  // Signed in on the login or signup page: the current Terms version is
+  // asked for here (restoreSession asks along with the profile). If it can't
+  // be, the member gets the retry screen, as for a profile that can't be read.
+  useEffect(() => {
+    if (authState !== "authenticated" || termsVersion) return;
+    let active = true;
+    api.getCurrentTermsVersion()
+      .then((version) => { if (active) setTermsVersion(version); })
+      .catch(() => { if (active) setAuthState("profile-error"); });
+    return () => { active = false; };
+  }, [authState, termsVersion]);
+  // Coming back to the tab, and every few minutes while it's open, ask again:
+  // when the Terms change (e.g. with the database update that follows a new
+  // version of the site), a member with NRIClub open gets the Terms screen
+  // without having to reload. With a new version the profile is read again
+  // too, so that screen asks in one go for anything else the update added
+  // (such as the separate consent).
+  const termsVersionRef = useRef(termsVersion);
+  termsVersionRef.current = termsVersion;
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    let active = true;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      api.getCurrentTermsVersion({ refresh: true }).then(async (version) => {
+        if (termsVersionRef.current && version !== termsVersionRef.current) {
+          try {
+            const dbProfile = await api.getMyProfile();
+            if (active && dbProfile) setUser(mapProfile(dbProfile));
+          } catch {}
+        }
+        if (active) setTermsVersion(version);
+      }).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = setInterval(onVisible, 5 * 60000);
+    return () => {
+      active = false;
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(timer);
+    };
+  }, [authState]);
+
   // After a new password: log in with it. The email is filled in only if this
   // browser asked for the reset link: someone else may have made the link,
   // for their own account, so their address must not be offered.
@@ -472,6 +421,25 @@ export default function App() {
     setUser(null);
     setAuthState("landing");
   };
+
+  // The Terms and the Privacy Policy show for anyone who opens their address,
+  // whatever else is going on (except on the admin site). Log in and Join
+  // free move to the app's own address first; a member who is signed in
+  // gets "Open NRIClub", which loads the app.
+  const legal = !isAdminRoute() && legalPage();
+  if (legal) {
+    const leave = (state) => {
+      try { window.history.replaceState(null, "", "/"); } catch (e) {}
+      setAuthState(state);
+    };
+    const signedIn = api.hasStoredSession();
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <LegalPage kind={legal.kind} version={legal.version} signedIn={signedIn}
+          onLogin={signedIn ? () => window.location.assign("/") : () => leave("login")} onJoin={() => leave("signup")} />
+      </Suspense>
+    );
+  }
 
   if (authState === "loading") {
     return (
@@ -542,15 +510,20 @@ export default function App() {
       // In this order: blocked members only see the blocked card (whatever
       // their verification status); members who haven't given their
       // verification details do that first; then anyone who hasn't confirmed
-      // they're 18+ and accepted the current Terms (TERMS_VERSION: the
-      // database doesn't count them as active members until they have).
-      // Rejected members see the rejected card in the dashboard (a Terms
-      // screen would be pointless). The dashboard loads nothing behind a
-      // blocked or rejected card.
+      // they're 18+, accepted the current Terms (the version the database
+      // gives) and given the Art. 9 consent (the database doesn't let them
+      // take part until they have). Rejected members see the rejected card
+      // in the dashboard (a Terms screen would be pointless). The dashboard
+      // loads nothing behind a blocked or rejected card, and members waiting
+      // for review see only what they can use until an admin approves them.
       if (user.status === "blocked") return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
-      if (user.verificationStatus === "incomplete") return <GetVerified user={user} onDone={setUser} onSignOut={handleLogout} />;
-      if (user.verificationStatus !== "rejected" && (!user.ageConfirmedAt || !user.termsAcceptedAt || user.termsVersion !== TERMS_VERSION)) {
-        return <TermsGate user={user} onDone={setUser} onSignOut={handleLogout} />;
+      if (!termsVersion) return <LoadingScreen />;
+      if (user.verificationStatus === "incomplete") return <GetVerified user={user} termsVersion={termsVersion} onDone={setUser} onSignOut={handleLogout} />;
+      const toAccept = stillToAccept(user, termsVersion);
+      if (user.verificationStatus !== "rejected" && (toAccept.terms || toAccept.art9)) {
+        // A fresh screen whenever what's asked for changes (e.g. the consent
+        // after the Terms, when the database was updated in between).
+        return <TermsGate key={`${termsVersion}:${toAccept.terms}:${toAccept.art9}`} user={user} termsVersion={termsVersion} onDone={setUser} onSignOut={handleLogout} />;
       }
       return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
     }
@@ -560,7 +533,6 @@ export default function App() {
   return (
     <>
       <Suspense fallback={<LoadingScreen />}>{content}</Suspense>
-      <CookieConsent />
     </>
   );
 }

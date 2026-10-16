@@ -16,7 +16,10 @@ import { slug, HOME_TITLE } from "./content/slug";
 // ============================================================================
 
 const titleCase = (s) => s.replace(/(^|[\s-])(\p{L})/gu, (_, p, c) => p + (c === "ß" ? c : c.toLocaleUpperCase()));
-// Below this many members the page says the group is just starting.
+// Below this many members the page says the group is just starting. The
+// database doesn't give out smaller numbers of members or events either
+// (they come as null since the 2026-10-20 database update), so a page never
+// shows that one or two members live in a small town.
 const SHOW_COUNTS_FROM = 5;
 
 const Stat = ({ value, label, color }) => (
@@ -91,7 +94,7 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
         <section style={{ ...section, paddingTop: 8, paddingBottom: 40 }}>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
             <Stat value={members} label="members" color={SAFFRON_TEXT} />
-            <Stat value={summary.events || 0} label={summary.events === 1 ? "event" : "events"} color={NAVY} />
+            {summary.events != null && summary.events >= SHOW_COUNTS_FROM && <Stat value={summary.events} label="events" color={NAVY} />}
             <Stat value={summary.places || 0} label={summary.places === 1 ? "desi place" : "desi places"} color={GREEN_TEXT} />
           </div>
         </section>

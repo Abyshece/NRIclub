@@ -1,12 +1,13 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect } from "react";
 import FlagIcon from "./FlagIcon";
-import { TermsModal, PrivacyModal } from "./member/LegalModals";
 import { hasImprint } from "./content/imprint";
+import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
 
 // ============================================================================
-// The frame of the public pages (city pages and guides): the tricolour line,
-// a header that stays in view with Log in and Join free, a hero, and a footer
-// with the Terms and Privacy.
+// The frame of the public pages (city pages, guides and the legal pages): the
+// tricolour line, a header that stays in view with Log in and Join free, a
+// hero, and a footer with the Terms, the Privacy Policy, the Impressum and
+// how to report illegal content.
 // ============================================================================
 
 export const INK = "#37352F";
@@ -25,7 +26,7 @@ export const primaryBtn = {
   border: "none", cursor: "pointer", fontFamily: "inherit",
 };
 
-export const SUPPORT_EMAIL = "support@nriclub.app";
+export const SUPPORT_EMAIL = "hello@nriclub.app";
 export const AMBASSADOR_MAIL = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("I'd like to be a city ambassador")}`
   + `&body=${encodeURIComponent("My city: \nMy LinkedIn (or a few words about me): \nHow I'd help: \n")}`;
 // "Free · Our team checks… · Your phone…", wrapping only between the parts.
@@ -51,7 +52,7 @@ export function useCanonical(path) {
 
 // The bar along the top of the public pages; it stays in view while the page
 // scrolls (the page around it must not have overflow hidden, or it won't).
-export function PublicNav({ onLogin, onJoin, maxWidth = 1100 }) {
+export function PublicNav({ onLogin, onJoin, maxWidth = 1100, loginLabel = "Log in" }) {
   const btn = { fontSize: 14, fontWeight: 600, minHeight: 44, padding: "0 16px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
   return (
     <header style={{ position: "sticky", top: 0, zIndex: 20, background: "#fff", borderBottom: "1px solid #F0EFED" }}>
@@ -62,7 +63,7 @@ export function PublicNav({ onLogin, onJoin, maxWidth = 1100 }) {
           <span className="pub-logo-text" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></span>
         </a>
         <div style={{ display: "flex", gap: 8 }}>
-          <button type="button" onClick={onLogin} style={{ ...btn, border: "1px solid #C9C8C5", background: "#fff", color: INK }}>Log in</button>
+          <button type="button" onClick={onLogin} style={{ ...btn, border: "1px solid #C9C8C5", background: "#fff", color: INK }}>{loginLabel}</button>
           {onJoin && <button type="button" onClick={onJoin} style={{ ...btn, border: "1px solid " + INK, background: INK, color: "#fff" }}>Join free</button>}
         </div>
       </nav>
@@ -70,14 +71,13 @@ export function PublicNav({ onLogin, onJoin, maxWidth = 1100 }) {
   );
 }
 
-export default function PublicShell({ onLogin, onJoin, hero, children }) {
-  const [legal, setLegal] = useState(null); // "terms" | "privacy"
+export default function PublicShell({ onLogin, onJoin, loginLabel, hero, children }) {
   const footerLink = { background: "none", border: "none", padding: "10px 8px", cursor: "pointer", color: MUTED, fontSize: 13, fontFamily: "inherit", textDecoration: "underline", display: "inline-block" };
   return (
     <div className="pub-root" style={{ minHeight: "100vh", background: "#fff", color: INK, fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
       <style>{`.pub-root { overflow-x: hidden; overflow-x: clip; }`}</style>
       <div aria-hidden="true" style={{ height: 4, background: `linear-gradient(90deg, ${SAFFRON} 0 33.3%, #fff 33.3% 66.6%, ${GREEN} 66.6%)` }} />
-      <PublicNav onLogin={onLogin} onJoin={onJoin} />
+      <PublicNav onLogin={onLogin} onJoin={onJoin} loginLabel={loginLabel} />
       <main>
         <div style={{ background: "radial-gradient(700px 360px at 0% 0%, rgba(255,153,51,0.10), transparent 70%), radial-gradient(600px 360px at 100% 10%, rgba(19,136,8,0.07), transparent 70%)" }}>
           {hero}
@@ -88,16 +88,15 @@ export default function PublicShell({ onLogin, onJoin, hero, children }) {
         <div style={{ display: "flex", flexWrap: "wrap" }}>
           <a href="/" style={footerLink}>NRIClub home</a>
           <a href="/guides" style={footerLink}>NRI guides</a>
-          <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact</a>
+          <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>
         </div>
-        <div>
-          <button type="button" onClick={() => setLegal("terms")} style={footerLink}>Terms of Use</button>
-          <button type="button" onClick={() => setLegal("privacy")} style={footerLink}>Privacy Policy</button>
+        <div style={{ display: "flex", flexWrap: "wrap" }}>
+          <a href="/terms" style={footerLink}>Terms of Use</a>
+          <a href="/privacy" style={footerLink}>Privacy Policy</a>
           {hasImprint() && <a href="/impressum" style={footerLink}>Impressum</a>}
+          <a href={REPORT_HREF} style={footerLink}>{REPORT_LINK_TEXT}</a>
         </div>
       </footer>
-      {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
-      {legal === "privacy" && <PrivacyModal onClose={() => setLegal(null)} />}
     </div>
   );
 }

@@ -126,7 +126,7 @@ An ambassador is one member per city who welcomes newcomers and gets the group g
 
 **How to make someone an ambassador:** in the admin panel, open **Members**, click the member, and under **Ambassador** click **Make ambassador**, enter the city and click **Save**. Leave the city empty and save to remove it.
 
-People ask to become one through **Become a city ambassador** on the home page and on every city page (it emails support@nriclub.app).
+People ask to become one through **Become a city ambassador** on the home page and on every city page (it emails hello@nriclub.app).
 
 **Reply to someone who asks:**
 

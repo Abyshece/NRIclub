@@ -1,6 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import * as api from "../supabaseApi";
 import { useAccountActions } from "./AccountActions";
 import { firstName } from "./profile";
+import { ESSENTIALS } from "../content/essentials";
+import { guideBlocks } from "../content/guideBlocks";
 
 const font = "'DM Sans', sans-serif";
 
@@ -10,7 +13,9 @@ export const VERIFICATION_BANNER_ID = "verification-banner";
 
 // The strip under the dashboard nav while a member's verification is open.
 // pending: blue thank-you; needs_info: amber, with the admin's question and a
-// button to update the details. Nothing for approved members.
+// button to update the details. Nothing for approved members. Members
+// waiting for review can't take part yet (the dashboard shows them
+// WaitingForReview below instead of the feed).
 export function VerificationBanner({ user, onUpdateDetails }) {
   const status = user?.verificationStatus;
   if (status === "pending") {
@@ -20,11 +25,11 @@ export function VerificationBanner({ user, onUpdateDetails }) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
         </div>
         <p style={{ fontSize: 13, color: "#1E40AF", margin: 0, fontFamily: font, lineHeight: 1.5 }}>
-          {/* A member held for review can't take part until approved; they're
-              told no more than that. */}
+          {/* A member held for review is told it was an automatic match, not
+              what matched (that's for the admins). */}
           {user.reviewFlag
-            ? <>Thanks, {firstName(user.name)}! Our team will check your membership before you can take part. This usually takes a day.</>
-            : <>Thanks, {firstName(user.name)}! We're reviewing your profile, usually within 24 hours. Meanwhile, add a photo, join groups and say hello.</>}
+            ? <>Thanks, {firstName(user.name)}! Your details match an account our team declined or blocked before (we check this automatically), so a person on our team will look at your membership before you can take part. This usually takes a day.</>
+            : <>Thanks, {firstName(user.name)}! Our team checks every new member before they can take part, usually within a day.</>}
         </p>
       </div>
     );
@@ -47,6 +52,87 @@ export function VerificationBanner({ user, onUpdateDetails }) {
     );
   }
   return null;
+}
+
+// What a member waiting for review (pending or needs_info) sees instead of
+// the feed and the other pages: what happens next, and what they can do
+// meanwhile (finish their profile, read the guides, look at the groups).
+// The database shows them nothing about other members until an admin has
+// approved them. onEditProfile opens Edit profile; onUpdateDetails answers
+// the team's question (needs_info).
+export function WaitingForReview({ user, onEditProfile, onUpdateDetails }) {
+  const needsInfo = user?.verificationStatus === "needs_info";
+  const [groups, setGroups] = useState(null); // names of the approved groups, or null while loading / if they can't be read
+  const [openGuide, setOpenGuide] = useState(null); // slug
+  useEffect(() => {
+    let alive = true;
+    api.getGroups().then((rows) => { if (alive) setGroups((rows || []).map((g) => g.name)); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const card = { background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: "20px 20px 18px", marginBottom: 16, fontFamily: font };
+  const h3 = { fontSize: 15, fontWeight: 700, color: "#37352F", margin: "0 0 8px" };
+  const text = { fontSize: 14, color: "#5F5E5B", lineHeight: 1.6, margin: 0 };
+  const button = { padding: "9px 16px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font };
+  const shownGroups = (groups || []).slice(0, 12);
+  return (
+    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+      <section aria-labelledby="waiting-title" style={card}>
+        <h2 id="waiting-title" style={{ fontSize: 19, fontWeight: 700, color: "#37352F", margin: "0 0 8px" }}>Waiting for review</h2>
+        <p style={text}>
+          {needsInfo
+            ? "Our team needs a little more information before they can approve you: see their note at the top of the page."
+            : "Our team is checking your membership, usually within a day, and you'll see here when you're approved."}
+          {" "}Then you can see other members, post, message, say Namaste, join groups and events, and use the Market, places and mentoring.
+        </p>
+        {needsInfo && <button type="button" onClick={onUpdateDetails} style={{ ...button, marginTop: 14 }}>Update details</button>}
+      </section>
+
+      <section aria-labelledby="waiting-profile" style={card}>
+        <h3 id="waiting-profile" style={h3}>Meanwhile, finish your profile</h3>
+        <p style={{ ...text, marginBottom: 12 }}>A photo, your hometown and what you do help members recognise you once you're in.</p>
+        <button type="button" onClick={onEditProfile} style={button}>Edit profile</button>
+      </section>
+
+      <section aria-labelledby="waiting-guides" style={card}>
+        <h3 id="waiting-guides" style={h3}>Read the NRI essentials</h3>
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {ESSENTIALS.map((g) => (
+            <li key={g.slug} style={{ borderTop: "1px solid #F0EFED" }}>
+              <button
+                type="button" onClick={() => setOpenGuide(openGuide === g.slug ? null : g.slug)} aria-expanded={openGuide === g.slug}
+                style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: "10px 0", cursor: "pointer", fontFamily: font }}
+              >
+                <span style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#37352F" }}>{g.title}</span>
+                <span style={{ display: "block", fontSize: 12, color: "#6B6A67", marginTop: 2 }}>{g.excerpt} · {g.readTime}</span>
+              </button>
+              {openGuide === g.slug && (
+                <div style={{ padding: "0 0 12px", fontSize: 14, color: "#37352F", lineHeight: 1.6 }}>
+                  {guideBlocks(g.content).map((b, i) => {
+                    if (b.type === "h") return <h4 key={i} style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color: "#9A5B13", margin: "14px 0 6px" }}>{b.text}</h4>;
+                    if (b.type === "ul") return <ul key={i} style={{ margin: "0 0 10px", paddingLeft: 20 }}>{b.items.map((t, j) => <li key={j} style={{ marginBottom: 3 }}>{t}</li>)}</ul>;
+                    return <p key={i} style={{ margin: "0 0 10px" }}>{b.text}</p>;
+                  })}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {shownGroups.length > 0 && (
+        <section aria-labelledby="waiting-groups" style={card}>
+          <h3 id="waiting-groups" style={h3}>Groups you can join once you're approved</h3>
+          <p style={{ ...text, display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {shownGroups.map((name) => (
+              <span key={name} style={{ fontSize: 12, color: "#5F5E5B", background: "#F7F7F5", border: "1px solid #E8E7E4", borderRadius: 20, padding: "4px 10px" }}>{name}</span>
+            ))}
+            {groups.length > shownGroups.length && <span style={{ fontSize: 12, color: "#6B6A67", padding: "4px 2px" }}>and {groups.length - shownGroups.length} more</span>}
+          </p>
+        </section>
+      )}
+    </div>
+  );
 }
 
 // Full-screen card for members whose verification was rejected (the
@@ -88,7 +174,7 @@ export function RejectedScreen({ user, onSignOut }) {
           </p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <a href="mailto:support@nriclub.app?subject=My%20NRIClub%20membership" style={{ ...button, border: "none", background: "#37352F", color: "#fff" }}>Contact support</a>
+          <a href="mailto:hello@nriclub.app?subject=My%20NRIClub%20membership" style={{ ...button, border: "none", background: "#37352F", color: "#fff" }}>Contact support</a>
           <button type="button" onClick={download} aria-disabled={!!busy} style={{ ...button, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", opacity: busy === "download" ? 0.7 : 1 }}>
             {busy === "download" ? "Preparing your data..." : "Download my data"}
           </button>
