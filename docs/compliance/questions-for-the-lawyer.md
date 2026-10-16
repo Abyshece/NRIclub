@@ -107,19 +107,18 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
 
 ### For the owner and the next legal review
 
-1. **Who sees whose profile.** After the migration, approved members can
-   still read the profile of every account: waiting, unfinished, declined
-   and blocked ones too, and the Find tab lists them. The lawyer finds no
-   legal basis for showing declined and unfinished accounts and prefers a
-   database change (`private.is_listed_member`: only active, approved
-   accounts are shown to other members). That change belongs in a
-   migration, outside the legal-texts work. Until it ships, the Privacy
-   Policy says honestly that approved members can see a waiting member's
-   profile, and a declined or blocked one until it is deleted
-   (`VISIBILITY.onlyApprovedListed = false` in
-   `src/content/legal/privacy.js`; set it to `true` with the change).
-   Open product choice: whether blocked authors' profiles stay visible next
-   to their old posts.
+1. **Who sees whose profile.** *Done in
+   `20261023000000_admin_access.sql`, as the lawyer preferred:* other
+   members see only the profiles of approved, active members
+   (`private.is_listed_member`); waiting, unfinished, declined and blocked
+   accounts aren't shown (admins see everyone, everyone sees their own).
+   The product choice: what such an account posted stays until it is
+   deleted, shown as "NRIClub member" with no name, photo or profile, and
+   its name is taken off events it organised; the same while an approved
+   member is back in review (e.g. after a name change). The Privacy Policy
+   says so (`VISIBILITY.onlyApprovedListed = true`). For the next review:
+   confirm that keeping the content without the name is fine, or whether
+   blocked members' content should be hidden until it is reviewed.
 2. **Reports: "12 months after closing".** The database stores when a report
    was sent, not when it was closed. The Policy therefore says reports are
    deleted "once they're closed and 12 months old", which can be sooner

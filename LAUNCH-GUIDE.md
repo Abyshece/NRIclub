@@ -123,8 +123,28 @@ SELECT id FROM auth.users WHERE email = 'you@example.com';
 
 To remove an admin: `DELETE FROM public.admins WHERE user_id = (SELECT id FROM auth.users WHERE email = '...');`
 
-The admin panel is at `https://admin.nriclub.app` (any `admin.` host) or
-`<your site>/#admin`.
+The admin panel is only at `https://admin.nriclub.app` (add that domain to
+the Vercel project). `https://nriclub.app/#admin` sends you there. While
+developing, `http://localhost:3000/#admin` opens it.
+
+**Two-step login for admins.** In the admin panel open **Security** and set
+up two-step login with an authenticator app (Google Authenticator,
+Microsoft Authenticator, 1Password, Aegis...). Keep the key it shows in your
+password manager. Then switch on **Require two-step login for admin
+rights**: from then on the database gives admin rights only to a session
+signed in with the 6-digit code. (Supabase: **Authentication → Multi-Factor**
+must allow TOTP; it does by default.) Then set `SECURITY.adminTwoStep` to
+`true` in `src/content/legal/privacy.js` and deploy, so the Privacy Policy
+says so. If you ever lose both your phone and the key, turn the
+requirement off in the SQL editor and remove the factor under
+**Authentication → Users → (your user)**:
+
+```sql
+UPDATE private.app_settings SET value = 'false' WHERE key = 'admin_mfa_required';
+```
+
+An admin account that is blocked has no admin rights, and an admin can't
+block their own account from the panel.
 
 There are no admin passwords in the code or in environment variables any more.
 If `VITE_ADMIN_EMAIL` / `VITE_ADMIN_PASS` are still set in Vercel, delete them.

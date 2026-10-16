@@ -11,8 +11,12 @@ reuse are in `src/content/legal/reporting.js`.
 - A signed confidentiality and instruction note: they process members' data
   only for moderation, only as these guidelines say, and keep it
   confidential, also after they stop (Art. 29 and 32(4) GDPR).
-- Two-step verification on their email and NRIClub accounts.
+- Two-step verification on their email account, and two-step login for
+  NRIClub (admin panel → Security: set it up with an authenticator app
+  before the first moderation; once "Require two-step login for admin
+  rights" is on, the admin login asks them to set it up).
 - Added with `INSERT INTO public.admins ...`; removed the day they stop.
+- The admin panel is only at admin.nriclub.app.
 
 ## Principles
 
