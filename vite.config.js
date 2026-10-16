@@ -9,10 +9,10 @@ import { slug } from './src/content/slug.js';
 import { guideBlocks } from './src/content/guideBlocks.js';
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES } from './src/content/home.js';
 import { IMPRINT, hasImprint, imprintSections } from './src/content/imprint.js';
-import { docToHtml } from './src/content/legal/doc.js';
+import { docToHtml, CONTACT_EMAIL } from './src/content/legal/doc.js';
 import { privacyDoc } from './src/content/legal/privacy.js';
 import { termsDoc, TERMS_VERSION, TERMS_ARCHIVE } from './src/content/legal/terms.js';
-import { REPORT_HREF, REPORT_LINK_LABEL } from './src/content/legal/reporting.js';
+import { REPORT_HREF, REPORT_LINK_TEXT } from './src/content/legal/reporting.js';
 
 const SITE = 'https://nriclub.app';
 
@@ -144,7 +144,8 @@ function publicPages() {
       };
       // At the foot of every page written here, as in the site's footer.
       const legalLinks = `<p style="font-size:14px;margin-top:32px"><a href="/terms">Terms of Use</a> · <a href="/privacy">Privacy Policy</a>`
-        + `${hasImprint() ? ' · <a href="/impressum">Impressum</a>' : ''} · <a href="${esc(REPORT_HREF)}">${esc(REPORT_LINK_LABEL)}</a></p>`;
+        + `${hasImprint() ? ' · <a href="/impressum">Impressum</a>' : ''} · <a href="${esc(REPORT_HREF)}">${esc(REPORT_LINK_TEXT)}</a>`
+        + ` · <a href="mailto:${CONTACT_EMAIL}">Contact: ${CONTACT_EMAIL}</a></p>`;
       const join = `<p><a href="/">Join NRIClub</a>: a free community for Indians abroad. Our team checks every new member.</p>`;
       const guideLinks = ESSENTIALS.map((g) => `<li><a href="/guides/${g.slug}">${esc(g.title)}</a></li>`).join('');
 

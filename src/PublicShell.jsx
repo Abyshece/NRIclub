@@ -1,7 +1,7 @@
 import { Fragment, useEffect } from "react";
 import FlagIcon from "./FlagIcon";
 import { hasImprint } from "./content/imprint";
-import { REPORT_HREF, REPORT_LINK_LABEL } from "./content/legal/reporting";
+import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
 
 // ============================================================================
 // The frame of the public pages (city pages, guides and the legal pages): the
@@ -88,13 +88,13 @@ export default function PublicShell({ onLogin, onJoin, loginLabel, hero, childre
         <div style={{ display: "flex", flexWrap: "wrap" }}>
           <a href="/" style={footerLink}>NRIClub home</a>
           <a href="/guides" style={footerLink}>NRI guides</a>
-          <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact</a>
+          <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap" }}>
           <a href="/terms" style={footerLink}>Terms of Use</a>
           <a href="/privacy" style={footerLink}>Privacy Policy</a>
           {hasImprint() && <a href="/impressum" style={footerLink}>Impressum</a>}
-          <a href={REPORT_HREF} style={footerLink}>{REPORT_LINK_LABEL}</a>
+          <a href={REPORT_HREF} style={footerLink}>{REPORT_LINK_TEXT}</a>
         </div>
       </footer>
     </div>

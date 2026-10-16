@@ -6,7 +6,7 @@ import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT } from "./content/home";
 import { hasImprint } from "./content/imprint";
-import { REPORT_HREF, REPORT_LINK_LABEL } from "./content/legal/reporting";
+import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
 import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, AMBASSADOR_MAIL, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
 
 // ============================================================================
@@ -380,11 +380,11 @@ export default function LandingPage({ onJoin, onLogin }) {
         <Logo />
         <div style={{ display: "flex", flexWrap: "wrap" }}>
           <a href="/guides" style={footerLink}>NRI guides</a>
-          <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact</a>
+          <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>
           <a href="/terms" style={footerLink}>Terms of Use</a>
           <a href="/privacy" style={footerLink}>Privacy Policy</a>
           {hasImprint() && <a href="/impressum" style={footerLink}>Impressum</a>}
-          <a href={REPORT_HREF} style={footerLink}>{REPORT_LINK_LABEL}</a>
+          <a href={REPORT_HREF} style={footerLink}>{REPORT_LINK_TEXT}</a>
         </div>
         <span>Made for Indians everywhere</span>
       </footer>
