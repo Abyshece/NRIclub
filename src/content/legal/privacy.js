@@ -16,6 +16,40 @@ import { ART9_CONSENT_TEXT } from "./consent.js";
 export const PRIVACY_VERSION = "2026-10-19";
 export const PRIVACY_DATE = "19 October 2026";
 
+// What is deleted automatically, and when. null (or false): no clean-up job
+// does it yet, and the Policy says the data stays until our team deletes it.
+// When a job is live on the database (or, for photo files, the deletion
+// code and the scheduled clean-up), put its period here in the same pull
+// request, so the Policy states exactly what runs.
+export const RETENTION = {
+  unconfirmedSignupDays: null, // sign-ups that never confirmed their email address
+  unfinishedSignupDays: null, // accounts that never sent their check details
+  declinedAccountMonths: null, // accounts our team declined, counted from the decision
+  readNoticesMonths: null, // in-app notices the member has read
+  closedReportsMonths: null, // reports, counted from when they were closed
+  moderationRecordMonths: null, // record of declined and blocked accounts, from the decision
+  moderationNoteMonths: null, // the note in that record is cleared after this
+  photoFilesDeleted: false, // photo files go with their post, listing, event, profile or account
+  photoCleanupHours: null, // files left behind are removed within this many hours
+};
+const R = RETENTION;
+const months = (n) => `${n} month${n === 1 ? "" : "s"}`;
+
+function accountRetention() {
+  return [
+    "until you delete your account.",
+    R.unconfirmedSignupDays && ` A sign-up whose email address is never confirmed is deleted after ${R.unconfirmedSignupDays} days.`,
+    R.unfinishedSignupDays && ` An account that never sends its check details is deleted after ${R.unfinishedSignupDays} days.`,
+  ].filter(Boolean).join("");
+}
+
+function photoFilesText() {
+  if (R.photoFilesDeleted) {
+    return `Photo files are deleted together with the post, listing, event, profile photo or account they belong to${R.photoCleanupHours ? `; any left behind are removed within ${R.photoCleanupHours} hours` : ""}.`;
+  }
+  return "Photo files: deleting a post, a listing, an event, your profile photo or your account removes the photo from NRIClub, but the file itself isn't deleted automatically yet and stays at its web address (section 4). Write to us and we delete your photo files.";
+}
+
 // Who is responsible: from src/content/imprint.js once it is filled in.
 function controllerBlocks() {
   const lines = operatorLines();
@@ -78,7 +112,7 @@ export function privacyDoc() {
             ["What", "your email address; your password, which our sign-in provider stores only as a hash (a scrambled form nobody can read back); your name; when you signed up, confirmed your email address and last signed in; your confirmation that you're 18 or older; which version of the Terms of Use you accepted and when; and when you gave the consent in section 3 and in which wording."],
             ["Why", "to create your membership, sign you in and send you sign-in codes and password links."],
             ["Legal basis", "contract. Keeping the record of your confirmations and consent: legal obligation (Art. 7(1) GDPR requires us to be able to show consent)."],
-            ["How long", "until you delete your account."],
+            ["How long", accountRetention()],
           ] },
           { title: "Sign-in sessions", fields: [
             ["What", "for each device you sign in on: a session with your IP address, your browser and device type (user agent) and when it was created and last used."],
@@ -90,7 +124,7 @@ export function privacyDoc() {
             ["What", "your city and country; your LinkedIn profile link or a short note on how you're connected to the Indian community; if you give one, a member who can vouch for you (if you came through an invite link, we fill in who invited you); our decision, any message we send you, notes our team makes about the check, and the dates. Our team opens the LinkedIn profile you gave us and looks at it: that is information we get from LinkedIn rather than from you."],
             ["Why", "to check that every member is a real person with a genuine connection to the community, so members can trust each other, and to keep out fake accounts, scammers and people we removed before."],
             ["Legal basis", "contract (the check is part of membership under our Terms of Use), and legitimate interests (a safe community of genuine people, for our members and for us)."],
-            ["How long", "until you delete your account. If we decline or block an account, a minimal record stays (\"Record of declined and blocked accounts\" below)."],
+            ["How long", `until you delete your account.${R.declinedAccountMonths ? ` An account our team declined is deleted ${months(R.declinedAccountMonths)} after the decision.` : ""} If we decline or block an account, a minimal record stays ("Record of declined and blocked accounts" below).`],
           ] },
           { title: "Your profile", fields: [
             ["What", "required: your name, city and country. Optional: a photo, your hometown, profession and what you do, how long you've lived abroad, a short bio, what people can ask you about, your LinkedIn link, and whether you offer mentoring or look for a mentor, with your topics. We also show your Verified badge, whether you're a city ambassador, and when you were last active."],
@@ -102,19 +136,23 @@ export function privacyDoc() {
             ["What", "posts, comments and likes; photos; guides you write and comments on them; questions and answers, including urgent questions, thanks and best answers; events you create and whether you're going; Market listings; places you add or recommend; groups you create, join or ask for; Namaste requests and connections; messages; mentoring times and sessions, with the topic, note and meeting link; ratings and reviews; members you block; your settings (for example who can message you); and the in-app notices we show you."],
             ["Why", "to provide the features you use."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
-            ["How long", "until you delete it or your account, with the exceptions in section 9."],
+            ["How long", `until you delete it or your account, with the exceptions in section 9.${R.readNoticesMonths ? ` In-app notices you've read are deleted after ${months(R.readNoticesMonths)}.` : ""}`],
           ] },
           { title: "Reports, notices of illegal content and moderation", fields: [
             ["What", "reports members send (what was reported, the reason, who reported it); reports of illegal content we receive by email; our decisions and the reasons for them, and the messages we send about them; when you use \"Report a problem\", your description plus your browser type and screen size (the form tells you this)."],
             ["Why", "to deal with reports and illegal content, to tell the people concerned what we decided and why, to be able to show what we did, and to fix problems."],
             ["Legal basis", "legal obligation under the Digital Services Act (Art. 16 to 18 DSA: handling notices, giving reasons for our decisions, informing the police about threats to someone's life or safety); otherwise legitimate interests (a safe community, and being able to defend our decisions)."],
-            ["How long", "as long as the reported content or account exists, and as long as we need it to deal with a challenge to our decision."],
+            ["How long", R.closedReportsMonths
+              ? `until ${months(R.closedReportsMonths)} after the report is closed. A report you sent is deleted with your account; a report about you stays without the link to your account.`
+              : "as long as we need it to deal with the matter and any challenge to our decision. Reports aren't deleted automatically yet: our team deletes them when they're no longer needed. A report you sent is deleted with your account; a report about you stays without the link to your account."],
           ] },
           { title: "Record of declined and blocked accounts", fields: [
-            ["What", "if our team declines or blocks an account, we keep a minimal record: a coded form of the account's email address (and of any address it changes to later), the LinkedIn profile link it had when our team last reviewed it (or, if we never did, when we blocked it), and our decision with its date and any note we made on it. The email address itself isn't kept: the coded form is made with a secret key, so we can only check whether an address we already know matches it."],
+            ["What", "if our team declines or blocks an account, we keep a minimal record: a coded form of the account's email address if it confirmed one (and of any address it changes to later), the LinkedIn profile link it had when our team last reviewed it (or, if we never did, when we blocked it), and our decision with its date and any note we made on it. The email address itself isn't kept: the coded form is made with a secret key, so we can only check whether an address we already know matches it."],
             ["Why", "so that someone we declined or blocked can't simply sign up again. When someone signs up, sends their check details or is moved back into review, we compare their email address and LinkedIn link with this record. If they match, our team checks the membership before the person can take part (section 6)."],
             ["Legal basis", "legitimate interests (protecting our members from people we removed)."],
-            ["How long", "the record stays when the account is deleted, but its link to the account is removed then. We review these records regularly and delete those we no longer need."],
+            ["How long", `the record stays when the account is deleted, but its link to the account is removed then. ${R.moderationRecordMonths
+              ? `It is deleted ${months(R.moderationRecordMonths)} after the decision${R.moderationNoteMonths ? `, and the note is removed after ${months(R.moderationNoteMonths)}` : ""}.`
+              : "There's no fixed deletion date yet: our team deletes a record when it is no longer needed."}`],
           ] },
           { title: "Server and security logs", fields: [
             ["What", "when you use NRIClub, the servers of our providers automatically log each request: IP address, time, the page or data requested, browser and device type, and any error."],
@@ -248,6 +286,7 @@ export function privacyDoc() {
         { ul: [
           [strong("Your account, profile and content"), " stay until you delete them or your account."],
           [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, events and replies to them, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
+          photoFilesText(),
           [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports other members made about you, no longer linked to your account; the record in section 2 if we declined or blocked you; copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
         ] },
       ] },

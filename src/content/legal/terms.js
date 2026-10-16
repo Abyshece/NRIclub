@@ -16,6 +16,7 @@ import { CONTACT_EMAIL, SITE, mail, a, strong } from "./doc.js";
 import { IMPRINT, operatorLines } from "../imprint.js";
 import { REPORT_HREF } from "./reporting.js";
 import { termsDoc20261010 } from "./terms-2026-10.js";
+import { RETENTION } from "./privacy.js";
 
 export const TERMS_VERSION = "2026-10-19";
 export const TERMS_DATE = "19 October 2026";
@@ -158,7 +159,7 @@ export function termsDoc(version = TERMS_VERSION) {
           "You keep all rights to what you post.",
           "Post only what you're allowed to: your own texts and photos, or ones you have permission to use. Don't copy articles, guides or photos from elsewhere; link to them instead. Before you post a photo or video in which other people can be recognised, get their consent.",
           "So that we can run NRIClub, you give us a free, non-exclusive right, limited to running NRIClub, to store your content (including in backups), copy it, make smaller versions of photos, and show it to members where the feature you used shows it (for example in a group, in questions or in the Market). We use it for nothing else.",
-          "This right ends when you delete the content or your account. The exceptions: places you added to a city's list and groups you created stay, without your name, because other members use and add to them (you can ask us to remove a place you added); content we must keep because of a report or a legal dispute stays for that purpose only; and backup copies are overwritten within 7 days.",
+          `This right ends when you delete the content or your account. The exceptions: places you added to a city's list and groups you created stay, without your name, because other members use and add to them (you can ask us to remove a place you added); content we must keep because of a report or a legal dispute stays for that purpose only; and backup copies are overwritten within 7 days.${RETENTION.photoFilesDeleted ? "" : ` Photo files aren't deleted automatically yet: write to ${CONTACT_EMAIL} and we delete them.`}`,
           "A photo you upload is stored at a long web address that isn't listed anywhere. Anyone who has that exact address can open the photo without signing in, so only post photos you're comfortable with on that basis.",
         ] },
       ] },
@@ -193,8 +194,9 @@ export function termsDoc(version = TERMS_VERSION) {
         { ul: [
           "one urgent question a day;",
           "the mentoring limits in section 7; only approved members can offer mentoring;",
-          "how often some actions can be done in a short time, such as sending messages or Namaste requests. If you reach a limit, wait a little and try again.",
+          "repeated sign-in attempts.",
         ] },
+        { p: "We may also limit how often other actions, such as messages or Namaste requests, can be done in a short time, to stop spam. If you reach a limit, wait a little and try again." },
         { p: "You decide who can send you messages and Namaste requests, and you can block other members." },
       ] },
 
