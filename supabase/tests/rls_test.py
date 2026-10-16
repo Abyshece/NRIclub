@@ -20,6 +20,8 @@ ACCESS_CONSENT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", 
                               "20261019000000_access_consent.sql")
 NOTIFICATIONS_LIMITS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                                     "20261020000000_notifications_limits_privacy.sql")
+ADMIN_ACCESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                            "20261023000000_admin_access.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -70,28 +72,30 @@ BOB_POST = "10000000-0000-0000-0000-000000000005"
 failures = []
 
 
-def psql_args(sql, role=None, uid=None):
+def psql_args(sql, role=None, uid=None, claims=None):
+    """claims: more JWT claims for the request, e.g. {"aal": "aal2"}."""
     prelude = ""
     if role:
-        claims = json.dumps({"sub": uid, "role": role} if uid else {"role": role})
+        claims = json.dumps({**({"sub": uid, "role": role} if uid else {"role": role}), **(claims or {})})
         prelude = f"SET ROLE {role}; SELECT set_config('request.jwt.claims', '{claims}', false);\n"
     return ["psql", DSN, "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-c", prelude + sql]
 
 
-def psql(sql, role=None, uid=None):
-    proc = subprocess.run(psql_args(sql, role, uid), capture_output=True, text=True)
+def psql(sql, role=None, uid=None, claims=None):
+    proc = subprocess.run(psql_args(sql, role, uid, claims), capture_output=True, text=True)
     lines = [l for l in proc.stdout.strip().splitlines() if l != ""]
     if role:
         lines = lines[1:]  # drop set_config's output
     return proc.returncode == 0, "\n".join(lines), proc.stderr.strip()
 
 
-def check(name, sql, as_user=None, expect="ok", role="authenticated", error_has=None):
+def check(name, sql, as_user=None, expect="ok", role="authenticated", error_has=None, claims=None):
     """expect: 'ok', 'error', or the exact text the last statement prints.
-    error_has: the call must fail with this text in the error."""
+    error_has: the call must fail with this text in the error. claims: more
+    JWT claims, e.g. {"aal": "aal2"} for a session signed in with the code."""
     if as_user is None and role == "authenticated":
         role = None  # run as the table owner (setup / inspection)
-    ok, out, err = psql(sql, role, as_user)
+    ok, out, err = psql(sql, role, as_user, claims)
     if error_has is not None:
         expect = f"error: {error_has}"
         passed = not ok and error_has in err
@@ -1260,6 +1264,7 @@ def main():
     review_fixes_3()
     access_consent()
     notifications_limits_privacy()
+    admin_access()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -2233,6 +2238,208 @@ def notifications_limits_privacy():
             (SELECT string_agg(k, ',' ORDER BY k) FROM auth.users u, jsonb_object_keys(u.raw_user_meta_data) k WHERE u.id = '{oldie}'),
             (SELECT content FROM posts WHERE id = '{oldie_post}'));
           ROLLBACK;""", expect="Old One|full_name,sub|Questions? Write to hello@nriclub.app (or hello@nriclub.app).")
+
+
+def admin_access():
+    """Admin rights need an active account and, once switched on, two-step
+    login (C4); other members see only approved, active members; admin search
+    and the review queue in pages (C25): migration 20261023000000_admin_access."""
+    zara, lena, pema, bodhi, rudra, inka = (f"00000000-0000-0000-0000-0000000006{n}"
+                                            for n in ("01", "02", "03", "04", "05", "06"))
+    approved_member(zara, "zara@example.com", "Zara Z")
+    psql(f"INSERT INTO public.admins (user_id) VALUES ('{zara}')")
+    approved_member(lena, "lena@example.com", "Lena L", city="Hamburg")
+    approved_member(bodhi, "bodhi@example.com", "Bodhi B")
+    approved_member(rudra, "rudra@example.com", "Rudra R")
+    sign_up(pema, "pema@example.com", {"full_name": "Pema P"}, accept_terms=True)
+    sign_up(inka, "inka@example.com", {"full_name": "Inka I"}, accept_terms=True)
+    bodhi_post, bodhi_event = "10000000-0000-0000-0000-000000000604", "20000000-0000-0000-0000-000000000604"
+    aal1, aal2 = {"aal": "aal1"}, {"aal": "aal2"}
+    five = f"('{lena}', '{pema}', '{bodhi}', '{rudra}', '{inka}')"
+    seen = f"SELECT string_agg(name, ',' ORDER BY name) FROM profiles WHERE id IN {five}"
+
+    # --- who sees whom ----------------------------------------------------------
+    # (His LinkedIn link as it was when he was approved: a change would send
+    # him back to review.)
+    psql(f"UPDATE profiles SET linkedin_url = 'https://www.linkedin.com/in/bodhi-b' WHERE id = '{bodhi}'")
+    check("bodhi posts, organises an event and shows his LinkedIn link while he's approved", f"""
+          INSERT INTO posts (id, user_id, content) VALUES ('{bodhi_post}', '{bodhi}', 'Cricket on Sunday?');
+          INSERT INTO events (id, title, date, location, organizer_id) VALUES ('{bodhi_event}', 'Cricket', '2099-01-01', 'Park', '{bodhi}');
+          UPDATE profiles SET linkedin_public = TRUE WHERE id = auth.uid();
+          SELECT organizer_name FROM events WHERE id = '{bodhi_event}'""", as_user=bodhi, expect="Bodhi B")
+    check("pema waits for review", "SELECT public.submit_verification('Berlin', 'DE', '', 'linkedin.com/in/pema-p', '', '', NULL)",
+          as_user=pema, expect="pending")
+    check("rudra is declined, bodhi blocked; inka never sent her details", f"""
+          UPDATE profile_private SET verification_status = 'rejected', reviewed_at = now() WHERE id = '{rudra}';
+          UPDATE profile_private SET status = 'blocked' WHERE id = '{bodhi}'""")
+    check("an approved member sees only approved, active members", seen, as_user=lena, expect="Lena L")
+    check("... members waiting for review see only themselves", seen, as_user=pema, expect="Pema P")
+    check("... a blocked member sees only themselves", seen, as_user=bodhi, expect="Bodhi B")
+    check("... unfinished accounts see only themselves", seen, as_user=inka, expect="Inka I")
+    check("... admins see everyone", seen, as_user=zara, expect="Bodhi B,Inka I,Lena L,Pema P,Rudra R")
+    check("what bodhi posted stays, without his profile", f"""
+          SELECT (p.id IS NOT NULL) || '|' || (pr.id IS NULL)
+          FROM posts p LEFT JOIN profiles pr ON pr.id = p.user_id WHERE p.id = '{bodhi_post}'""",
+          as_user=lena, expect="true|true")
+    check("... his events lose his name",
+          f"SELECT organizer_id || '|' || organizer_name FROM events WHERE id = '{bodhi_event}'",
+          as_user=lena, expect=f"{bodhi}|")
+    check("... members get no LinkedIn link of his (though he shows it)",
+          f"SELECT count(*) FROM public.profile_links(ARRAY['{bodhi}', '{lena}']::uuid[]) WHERE id = '{bodhi}'",
+          as_user=lena, expect="0")
+    check("... but admins do", f"SELECT linkedin_url FROM public.profile_links(ARRAY['{bodhi}']::uuid[])",
+          as_user=zara, expect="https://www.linkedin.com/in/bodhi-b")
+    check("... and so does he", f"SELECT linkedin_url FROM public.profile_links(ARRAY['{bodhi}']::uuid[])",
+          as_user=bodhi, expect="https://www.linkedin.com/in/bodhi-b")
+    check("... members get no contact settings of accounts that aren't shown",
+          f"SELECT count(*) FROM public.get_member_preferences('{bodhi}')", as_user=lena, expect="0")
+    check("... but of members who are",
+          f"INSERT INTO user_settings (user_id) VALUES ('{lena}') ON CONFLICT DO NOTHING; "
+          f"SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{{\"sub\": \"{zara}\", \"role\": \"authenticated\"}}', false) IS NULL; "
+          f"SELECT receive_messages FROM public.get_member_preferences('{lena}')", expect="f\nEveryone")
+    check("unblocked, bodhi's name is back on his event", f"""
+          UPDATE profile_private SET status = 'active' WHERE id = '{bodhi}';
+          SELECT organizer_name FROM events WHERE id = '{bodhi_event}'""", expect="Bodhi B")
+    check("... and members see him again", seen, as_user=lena, expect="Bodhi B,Lena L")
+    check("an approved member who changes their name is back in review", """
+          UPDATE profiles SET name = 'Bodhi Bose' WHERE id = auth.uid();
+          SELECT verification_status FROM profile_private WHERE id = auth.uid()""", as_user=bodhi, expect="pending")
+    check("... and isn't shown until approved again", seen, as_user=lena, expect="Lena L")
+    check("... then with the new name on his event", f"""
+          UPDATE profile_private SET verification_status = 'approved' WHERE id = '{bodhi}';
+          SELECT organizer_name FROM events WHERE id = '{bodhi_event}'""", expect="Bodhi Bose")
+
+    # --- admin rights: an active account (C4) -------------------------------------
+    rights = "SELECT ((SELECT count(*) FROM profile_private) > 1)::text"
+    check("an admin has admin rights", rights, as_user=zara, expect="true")
+    check("an admin can't block her own account", "UPDATE profile_private SET status = 'blocked' WHERE id = auth.uid()",
+          as_user=zara, error_has="You can't block your own account.")
+    check("... but can block a member, and unblock them", f"""
+          UPDATE profile_private SET status = 'blocked' WHERE id = '{inka}' RETURNING status;
+          UPDATE profile_private SET status = 'active' WHERE id = '{inka}' RETURNING status""",
+          as_user=zara, expect="blocked\nactive")
+    check("an admin's account is blocked (in the SQL editor)", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{zara}'")
+    check("... and has no admin rights", rights, as_user=zara, expect="false")
+    check("... not even signed in with the code", rights, as_user=zara, claims=aal2, expect="false")
+    check("... can't change the two-step setting", "SELECT public.admin_set_mfa_required(true)", as_user=zara,
+          claims=aal2, error_has="Admins only")
+    check("... and is told she isn't an admin now",
+          "SELECT concat_ws('|', s->>'listed', s->>'active', s->>'is_admin') FROM public.admin_mfa_status() s",
+          as_user=zara, expect="true|false|false")
+    check("unblocked again (in the SQL editor)", f"UPDATE profile_private SET status = 'active' WHERE id = '{zara}'")
+
+    # --- admin rights: two-step login (C4) ----------------------------------------
+    status = ("SELECT concat_ws('|', s->>'listed', s->>'mfa_required', s->>'aal', s->>'is_admin') "
+              "FROM public.admin_mfa_status() s")
+    check("two-step login isn't required to start with", status, as_user=zara, claims=aal1, expect="true|false|aal1|true")
+    check("a member learns only that she isn't an admin", "SELECT public.admin_mfa_status()::text", as_user=lena,
+          expect='{"listed": false, "is_admin": false}')
+    check("anon can't ask", "SELECT public.admin_mfa_status()", role="anon", expect="error")
+    check("anon can't switch it on", "SELECT public.admin_set_mfa_required(true)", role="anon", expect="error")
+    check("a member can't switch it on, even signed in with a code", "SELECT public.admin_set_mfa_required(true)",
+          as_user=lena, claims=aal2, error_has="Admins only")
+    check("an admin signed in with the password only can't switch it on", "SELECT public.admin_set_mfa_required(true)",
+          as_user=zara, claims=aal1, error_has="Confirm with the 6-digit code")
+    check("an admin signed in with the code can", "SELECT public.admin_set_mfa_required(true)::text", as_user=zara,
+          claims=aal2, expect="true")
+    check("... which is kept with who changed it and when",
+          f"SELECT concat_ws('|', value, (updated_by = '{zara}')::text, (updated_at > now() - interval '1 minute')::text) "
+          "FROM private.app_settings WHERE key = 'admin_mfa_required'", expect="true|true|true")
+    check("members can't read the settings", "SELECT count(*) FROM private.app_settings", as_user=lena, expect="error")
+    check("now a session signed in with the password only has no admin rights", rights, as_user=zara, claims=aal1,
+          expect="false")
+    check("... nor one that doesn't say", rights, as_user=ADMIN, expect="false")
+    check("... and is told so", status, as_user=zara, claims=aal1, expect="true|true|aal1|false")
+    check("... can't search members", "SELECT public.admin_search_members('')", as_user=zara, claims=aal1,
+          error_has="Admins only")
+    check("... nor read the review queue", "SELECT count(*) FROM public.admin_verification_queue()", as_user=zara,
+          claims=aal1, error_has="Admins only")
+    check("... sees members as any member does", seen, as_user=zara, claims=aal1, expect="Bodhi Bose,Lena L")
+    check("... and can't switch two-step login off", "SELECT public.admin_set_mfa_required(false)", as_user=zara,
+          claims=aal1, error_has="Confirm with the 6-digit code")
+    check("a session signed in with the code has admin rights", rights, as_user=zara, claims=aal2, expect="true")
+    check("... and is told so", status, as_user=zara, claims=aal2, expect="true|true|aal2|true")
+    check("... and can switch two-step login off again", "SELECT public.admin_set_mfa_required(false)::text",
+          as_user=zara, claims=aal2, expect="false")
+    check("then the other admin has admin rights again", rights, as_user=ADMIN, expect="true")
+    check("the setting is on or off, nothing else", "SELECT public.admin_set_mfa_required(NULL)", as_user=zara,
+          claims=aal2, error_has="Say whether")
+
+    # --- admin search (C25) ---------------------------------------------------------
+    search = ("SELECT (r->>'total') || '|' || COALESCE((SELECT string_agg(m->>'name', ',' ORDER BY m->>'name') "
+              "FROM jsonb_array_elements(r->'members') m), '') FROM public.admin_search_members({}) r")
+    check("admins find members by part of the name, in any case", search.format("'aRA z'"), as_user=zara, expect="1|Zara Z")
+    check("... by part of the email address", search.format("'pema@exam'"), as_user=zara, expect="1|Pema P")
+    check("... by city", search.format("'hambu'"), as_user=zara, expect="1|Lena L")
+    check("... declined members too", search.format("'rudra'"), as_user=zara, expect="1|Rudra R")
+    check("... % and _ match only themselves", search.format("'%'") + "; " + search.format("'_'"), as_user=zara,
+          expect="0|\n0|")
+    check("... by status", "SELECT ((r->>'total')::int = (SELECT count(*) FROM profile_private WHERE verification_status = 'rejected'))::text "
+          "FROM public.admin_search_members('', 'rejected') r", as_user=zara, expect="true")
+    check("rudra is blocked too", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{rudra}'")
+    check("... blocked or not", "SELECT ((r->>'total')::int = (SELECT count(*) FROM profile_private WHERE status = 'blocked') "
+          "AND (r->>'total')::int > 0)::text FROM public.admin_search_members('', NULL, TRUE) r", as_user=zara, expect="true")
+    check("... with their private details and LinkedIn link", """
+          SELECT concat_ws('|', m->'profile_private'->>'email', m->'profile_private'->>'status',
+            m->'profile_private'->>'verification_status', m->>'linkedin_url')
+          FROM public.admin_search_members('bodhi') r, jsonb_array_elements(r->'members') m""",
+          as_user=zara, expect="bodhi@example.com|active|approved|https://www.linkedin.com/in/bodhi-b")
+    check("... newest first, in pages, with the total", """
+          SELECT ((a->>'total') = (b->>'total') AND (a->>'total')::int = (SELECT count(*) FROM profiles)
+            AND jsonb_array_length(a->'members') = 2 AND jsonb_array_length(b->'members') = 2
+            AND (a->'members'->0->>'id') NOT IN (b->'members'->0->>'id', b->'members'->1->>'id')
+            AND (a->'members'->0->>'created_at')::timestamptz >= (a->'members'->1->>'created_at')::timestamptz)::text
+          FROM public.admin_search_members('', NULL, NULL, 2, 0) a, public.admin_search_members('', NULL, NULL, 2, 2) b""",
+          as_user=zara, expect="true")
+    check("... at most 200 at a time, at least 1",
+          "SELECT (jsonb_array_length(r->'members') = LEAST((r->>'total')::int, 200))::text || '|' || "
+          "jsonb_array_length(s->'members') FROM public.admin_search_members('', NULL, NULL, 100000) r, "
+          "public.admin_search_members('', NULL, NULL, 0) s", as_user=zara, expect="true|1")
+    check("members can't search", "SELECT public.admin_search_members('a')", as_user=lena, error_has="Admins only")
+    check("anon can't search", "SELECT public.admin_search_members('a')", role="anon", expect="error")
+    check("the search has trigram indexes on names, places and email addresses",
+          "SELECT string_agg(indexname, ',' ORDER BY indexname) FROM pg_indexes WHERE indexname LIKE '%trgm'",
+          expect="idx_profile_private_email_trgm,idx_profiles_city_trgm,idx_profiles_location_trgm,idx_profiles_name_trgm")
+    ok, out, err = psql("SET enable_seqscan = off; EXPLAIN SELECT id FROM public.profiles WHERE name ILIKE '%len%'")
+    verdict("... which a search for part of a name uses", ok and "idx_profiles_name_trgm" in out, out or err)
+
+    # --- the review queue in pages (C25) ---------------------------------------------
+    check("approved members were decided on at different times", f"""
+          UPDATE profile_private SET reviewed_at = now() - interval '1 day' * (CASE id WHEN '{lena}' THEN 1
+            WHEN '{zara}' THEN 2 ELSE 3 END) WHERE verification_status = 'approved'""")
+    queue = ("SELECT string_agg(q.id::text, ',' ORDER BY q.ordinality) "
+             "FROM public.admin_verification_queue(ARRAY['approved']{}) WITH ORDINALITY q")
+    ok, everyone, err = psql(queue.format(""), "authenticated", zara)
+    ids = everyone.split(",") if ok and everyone else []
+    verdict("approved members come newest decision first", ok and ids[:2] == [lena, zara], f"{ids[:3]} {err}")
+    check("... in pages", queue.format(", 2, 0") + "; " + queue.format(", 2, 2"), as_user=zara,
+          expect=",".join(ids[:2]) + "\n" + ",".join(ids[2:4]))
+    check("... each saying how many there are in all",
+          "SELECT DISTINCT (total_count = (SELECT count(*) FROM profile_private WHERE verification_status = 'approved'))::text "
+          "FROM public.admin_verification_queue(ARRAY['approved'], 2, 0)", as_user=zara, expect="true")
+    check("... and asked as before (statuses only), the whole list as before",
+          "SELECT (count(*) = (SELECT count(*) FROM profile_private WHERE verification_status = 'pending'))::text "
+          "FROM public.admin_verification_queue(ARRAY['pending'])", as_user=zara, expect="true")
+    check("... one member by id, whatever their status", f"""
+          SELECT string_agg(name || ':' || verification_status || ':' || total_count, ',')
+          FROM public.admin_verification_queue(NULL, 1000, 0, ARRAY['{pema}']::uuid[])""", as_user=zara,
+          expect="Pema P:pending:1")
+    check("... and nobody without statuses or ids",
+          "SELECT count(*) FROM public.admin_verification_queue(NULL)", as_user=zara, expect="0")
+    check("... members can't read it", "SELECT count(*) FROM public.admin_verification_queue(ARRAY['approved'], 2, 0)",
+          as_user=lena, error_has="Admins only")
+
+    # --- the migration's changes to existing rows ---------------------------------------
+    check("existing rows: events of organisers who aren't shown lose the name", f"""
+          BEGIN;
+          ALTER TABLE public.profile_private DISABLE TRIGGER sync_organizer_name;
+          UPDATE profile_private SET status = 'blocked' WHERE id = '{bodhi}';
+          ALTER TABLE public.profile_private ENABLE TRIGGER sync_organizer_name;
+          INSERT INTO events (title, date, location, organizer_id, organizer_name) VALUES ('Picnic', '2099-02-02', 'Park', '{lena}', 'Lena L');
+          SELECT organizer_name FROM events WHERE id = '{bodhi_event}';
+          {migration_section("EXISTING DATA", ADMIN_ACCESS)}
+          SELECT string_agg(organizer_name, ',' ORDER BY title) FROM events WHERE organizer_id IN ('{bodhi}', '{lena}');
+          ROLLBACK;""", expect="Bodhi Bose\n,Lena L")
 
 
 if __name__ == "__main__":
