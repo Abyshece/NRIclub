@@ -1,12 +1,17 @@
-import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import * as api from "./supabaseApi";
 import LandingPage from "./LandingPage";
 import FlagIcon from "./FlagIcon";
 import "./member/base.css";
-import { TermsModal, PrivacyModal, TERMS_VERSION } from "./member/LegalModals";
+import { TERMS_VERSION } from "./member/LegalModals";
 import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./member/profile";
 import { rateLimiter } from "./rateLimiter";
 import { hasImprint } from "./content/imprint";
+
+// NRIClub sets no cookies and loads no analytics, so there is no consent
+// banner (the Privacy Policy lists what the site keeps in the browser).
+// Browsers that saw the old banner still hold its choice: remove it.
+try { localStorage.removeItem("nriclub_cookie_consent"); } catch (e) {}
 
 // The landing page and this file load first; everything else (the member
 // site, signup, the admin panel) loads when it's needed, so a visitor's
@@ -50,119 +55,6 @@ const LoadingScreen = () => (
 // ============================================================================
 // APP (Root)
 // ============================================================================
-// Cookie Consent Banner Component
-const CookieConsent = () => {
-  const [visible, setVisible] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
-  const [legal, setLegal] = useState(null); // "terms" | "privacy"
-  const bannerRef = useRef(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const result = localStorage.getItem("nriclub_cookie_consent");
-        if (!result) setVisible(true);
-      } catch {
-        setVisible(true);
-      }
-    })();
-  }, []);
-
-  // While the banner shows, pad the page by its height so it never covers
-  // the last buttons on a page (Continue, Log in...).
-  useEffect(() => {
-    if (!visible || !bannerRef.current) return;
-    const el = bannerRef.current;
-    const pad = () => { document.body.style.paddingBottom = `${el.offsetHeight}px`; };
-    pad();
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(pad) : null;
-    ro?.observe(el);
-    return () => { ro?.disconnect(); document.body.style.paddingBottom = ""; };
-  }, [visible]);
-
-  const acceptAll = async () => {
-    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: true, date: new Date().toISOString() })); } catch (e) {}
-    setVisible(false);
-  };
-  const acceptEssential = async () => {
-    try { localStorage.setItem("nriclub_cookie_consent", JSON.stringify({ essential: true, analytics: false, date: new Date().toISOString() })); } catch (e) {}
-    setVisible(false);
-  };
-
-  if (!visible) return null;
-
-  const font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-
-  return (
-    <div ref={bannerRef} role="region" aria-label="Cookie consent" style={{
-      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
-      background: "#fff", borderTop: "1px solid #E0E0DE",
-      boxShadow: "0 -4px 24px rgba(0,0,0,0.08)", padding: "0",
-      fontFamily: font,
-    }}>
-      <div className="nc-cookie-inner" style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 24px" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-          <div className="nc-cookie-text" style={{ flex: 1, minWidth: 280 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#37352F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-              <h4 style={{ fontSize: 14, fontWeight: 700, color: "#37352F", margin: 0 }}>We value your privacy</h4>
-            </div>
-            <p style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, margin: 0 }}>
-              We use essential cookies to make NRIClub work. With your consent, we may also use analytics cookies to improve your experience.
-              {" "}
-              <button onClick={() => setShowDetails(!showDetails)} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: 13, padding: 0 }}>
-                {showDetails ? "Hide details" : "Learn more"}
-              </button>
-              {" · "}
-              <button type="button" onClick={() => setLegal("privacy")} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: "inherit", padding: 0 }}>Privacy Policy</button>
-              {" · "}
-              <button type="button" onClick={() => setLegal("terms")} style={{ background: "none", border: "none", color: "#5B7FD6", cursor: "pointer", textDecoration: "underline", fontFamily: font, fontSize: "inherit", padding: 0 }}>Terms of Use</button>
-            </p>
-
-            {showDetails && (
-              <div style={{ marginTop: 14, padding: "14px 16px", background: "#F7F7F5", borderRadius: 8, border: "1px solid #EDEDEB" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <div>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>Essential Cookies</span>
-                    <p style={{ fontSize: 11, color: "#9B9A97", margin: "2px 0 0" }}>Required for the platform to function. Cannot be disabled.</p>
-                  </div>
-                  <span style={{ fontSize: 11, color: "#22A06B", fontWeight: 600, background: "#E3FCEF", padding: "3px 8px", borderRadius: 4 }}>Always on</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10, borderTop: "1px solid #E8E7E4" }}>
-                  <div>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "#37352F" }}>Analytics Cookies</span>
-                    <p style={{ fontSize: 11, color: "#9B9A97", margin: "2px 0 0" }}>Help us understand how you use NRIClub to improve the experience.</p>
-                  </div>
-                  <span style={{ fontSize: 11, color: "#6B6A67", fontWeight: 600, background: "#F0EFED", padding: "3px 8px", borderRadius: 4 }}>Optional</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="nc-cookie-actions" style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
-            <button onClick={acceptEssential} style={{
-              padding: "10px 18px", borderRadius: 8, border: "1px solid #E0E0DE",
-              background: "#fff", fontSize: 13, fontWeight: 500, color: "#37352F", cursor: "pointer", fontFamily: font,
-            }}>
-              Essential Only
-            </button>
-            <button onClick={acceptAll} style={{
-              padding: "10px 18px", borderRadius: 8, border: "none",
-              background: "#37352F", fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font,
-            }}>
-              Accept All
-            </button>
-          </div>
-        </div>
-      </div>
-      {legal === "terms" && <TermsModal onClose={() => setLegal(null)} />}
-      {legal === "privacy" && <PrivacyModal onClose={() => setLegal(null)} />}
-    </div>
-  );
-};
-
 // "a***@example.com": enough to recognise an email address without showing it.
 const maskEmail = (email) => {
   const [local, domain] = String(email || "").split("@");
@@ -560,7 +452,6 @@ export default function App() {
   return (
     <>
       <Suspense fallback={<LoadingScreen />}>{content}</Suspense>
-      <CookieConsent />
     </>
   );
 }
