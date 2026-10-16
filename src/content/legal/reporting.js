@@ -6,18 +6,31 @@
 // to the police). The Terms of Use (sections 9 and 10) promise what these
 // texts say; keep both in step.
 //
-// For the public "Report illegal content" page, the in-app report dialog,
-// the admin panel's decision messages and the auto-reply of the
-// hello@nriclub.app mailbox. Plain data and small functions, no React.
+// For the public "Report illegal content" page (src/ReportPage.jsx), the
+// in-app report dialog (src/member/ReportDialog.jsx), the admin panel's
+// decision messages and emails, and the auto-reply of the hello@nriclub.app
+// mailbox. Plain data and small functions, no React.
+//
+// The database writes the in-app messages itself (private.statement_of_reasons
+// and private.report_outcome in supabase/migrations/20261021000000_moderation_dsa.sql)
+// in the same words as statementOfReasons() and reporterOutcome() below, which
+// the admin panel uses to show what the member will read. Change both
+// together.
 import { CONTACT_EMAIL } from "./doc.js";
 
 // ---------------------------------------------------------------------------
 // WHERE TO REPORT
 // ---------------------------------------------------------------------------
 
-// Until the public report page exists, "Report illegal content" links open
-// an email to us with the four things Art. 16(2) DSA asks for. When the page
-// is built, point REPORT_HREF at it ("/report") and every link follows.
+// The public report page. Every "Report illegal content" link (footers, the
+// Terms, the Impressum) points here.
+export const REPORT_HREF = "/report";
+export const REPORT_LINK_LABEL = "Report illegal content";
+export const REPORT_LINK_TEXT = REPORT_LINK_LABEL;
+
+// By email instead, with the four things Art. 16(2) DSA asks for: on the
+// report page while the database can't take reports yet, and for anyone who
+// prefers email.
 export const REPORT_SUBJECT = "Report illegal content";
 export const REPORT_EMAIL_BODY = [
   "Where is the content? (a link, or the group, member, title and date):",
@@ -29,13 +42,6 @@ export const REPORT_EMAIL_BODY = [
   "I believe in good faith that the information in this report is accurate and complete.",
 ].join("\n");
 export const REPORT_MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(REPORT_SUBJECT)}&body=${encodeURIComponent(REPORT_EMAIL_BODY)}`;
-export const REPORT_HREF = REPORT_MAILTO;
-export const REPORT_LINK_LABEL = "Report illegal content";
-// The footer link's text. While REPORT_HREF opens an email, the address is
-// shown too: on a device without a mail app the link does nothing, and
-// people must still be able to see where to write (Art. 12 and 16 DSA).
-// When the report page exists, use REPORT_LINK_LABEL alone.
-export const REPORT_LINK_TEXT = `${REPORT_LINK_LABEL}: ${CONTACT_EMAIL}`;
 
 // ---------------------------------------------------------------------------
 // THE PUBLIC REPORT PAGE (anyone, no account needed)
@@ -60,6 +66,11 @@ export const REPORT_PAGE = {
   confidentiality: "We don't tell the person you report who you are, unless the law requires it.",
   afterwards: "We confirm that we've received your report, a person on our team looks at it, and we email you our decision and how you can challenge it.",
   membersNote: "Members can also use Report on the item itself in the app.",
+  emailInstead: "You can also write to us instead:",
+  // What the page says once the report is in. ref: its reference code.
+  sent: (ref) => `Thank you. We've received your report${ref ? ` (reference ${ref})` : ""}. A person on our team will look at it.`,
+  sentNext: `We'll email you from ${CONTACT_EMAIL} to confirm we've received it, and again with our decision and how you can challenge it. Please quote the reference if you write to us about it.`,
+  sentAnonymous: "You didn't give an email address, so we can't tell you what we decided. If you'd like to hear back, send another report with your name and email address.",
 };
 
 // ---------------------------------------------------------------------------
@@ -67,9 +78,11 @@ export const REPORT_PAGE = {
 // ---------------------------------------------------------------------------
 
 export const REPORT_FIELDS = {
-  location: { label: "Where is the content?", hint: "A link, or the group, member, title and date." },
+  location: { label: "Where is the content?", hint: "A link, or the group, member, title and date.", max: 1000 },
   category: { label: "What is the problem?" },
   explanation: { label: "Why?", hint: "Tell us what the content says or shows and why it is illegal or against our rules.", min: 10, max: 1000 },
+  // The public page allows a longer explanation (the database takes 2,000).
+  noticeExplanationMax: 2000,
   name: { label: "Your name" },
   email: { label: "Your email address", hint: "We send our decision here." },
   goodFaith: { label: "I believe in good faith that the information in this report is accurate and complete." },
@@ -77,7 +90,9 @@ export const REPORT_FIELDS = {
 };
 
 // Two groups, so our team can tell illegal content from a breach of the
-// house rules. Keys are stored with the report; labels are what people see.
+// house rules. Keys are stored with the report (reports.category,
+// private.notices.category; private.report_categories() in the database
+// lists the same keys); labels are what people see.
 export const REPORT_REASONS = {
   illegal: {
     label: "Illegal",
@@ -89,6 +104,7 @@ export const REPORT_REASONS = {
       { key: "private_images", label: "Private or intimate images, or private information, shared without consent" },
       { key: "copyright", label: "Copyright or another right infringed" },
       { key: "fraud", label: "Fraud or a scam" },
+      { key: "child_abuse", label: "Sexual abuse of a child" },
       { key: "illegal_other", label: "Something else that is illegal" },
     ],
   },
@@ -98,6 +114,7 @@ export const REPORT_REASONS = {
       { key: "spam", label: "Spam or advertising" },
       { key: "harassment", label: "Harassment or bullying" },
       { key: "fake_profile", label: "Fake profile or someone pretending to be someone else" },
+      { key: "fake_reviews", label: "Fake or paid reviews or recommendations" },
       { key: "market_rules", label: "Breaks the Market rules (forbidden item, business ad, discrimination)" },
       { key: "other", label: "Something else" },
     ],
@@ -113,12 +130,30 @@ export const reportReasonLabel = (key) => {
   return key;
 };
 
+// What can be reported in the app (reports.content_type), as the dialog
+// and the admin panel call it.
+export const REPORT_KINDS = {
+  post: "post",
+  comment: "comment",
+  answer: "answer",
+  doc: "guide",
+  doc_comment: "comment on a guide",
+  event: "event",
+  help: "question",
+  market: "Market listing",
+  review: "mentoring review",
+  place: "place",
+  message: "message",
+  profile: "profile",
+};
+
 // ---------------------------------------------------------------------------
 // AFTER A REPORT
 // ---------------------------------------------------------------------------
 
-// Shown after sending, and as the mailbox's auto-reply (Art. 16(4) DSA).
-export const REPORT_RECEIVED = "Thank you. We've received your report. A person on our team will look at it, and we'll tell you what we decided.";
+// Shown after sending in the app, and as the mailbox's auto-reply (Art.
+// 16(4) DSA).
+export const REPORT_RECEIVED = "Thank you. We've received your report. A person on our team will look at it, and we'll tell you here in NRIClub what we decided.";
 export const REPORT_AUTO_REPLY = [
   "Thank you for writing to NRIClub. We've received your message.",
   "If you reported content you believe is illegal or against our rules, a person on our team will look at it and tell you what we decided and how you can challenge it.",
@@ -127,14 +162,53 @@ export const REPORT_AUTO_REPLY = [
 
 export const REDRESS_LINE = `Think we got it wrong? Write to ${CONTACT_EMAIL} within 6 months, and a person on our team will look at it again. You can also go to court.`;
 
-// To whoever reported something (Art. 16(5) DSA).
-// item: what was reported, e.g. 'the post "Room in Kreuzberg"'.
-// removed: whether we removed or restricted it. reason: our reasons, in a
-// sentence ("it insults another member", "we found no breach of the law or
-// our rules").
-export function reporterOutcome({ item, removed, reason }) {
-  return `We looked at your report about ${item}: ${removed ? "we removed it" : "we didn't remove it"} because ${reason}. ${REDRESS_LINE}`;
+// To whoever reported something (Art. 16(5) DSA), as the database writes it
+// (private.report_outcome). item: what was reported, e.g. 'the post "Room
+// in Kreuzberg"'. outcome: "removed" | "blocked" | "warned" | "kept" |
+// "gone" (no longer there). reason finishes "because ...", e.g. "it insults
+// another member".
+export function reporterOutcome({ item, outcome, reason }) {
+  const what = {
+    removed: `we removed it because ${reason}.`,
+    blocked: `we blocked the account because ${reason}.`,
+    warned: `we warned the member because ${reason}, and didn't remove anything.`,
+    gone: `it's no longer on NRIClub (${reason}).`,
+  }[outcome] || `we kept it because ${reason}.`;
+  return `We looked at your report about ${item}: ${what} ${REDRESS_LINE}`;
 }
+
+// The emails to someone who reported content on the public page (the app
+// sends no emails: our team sends these from hello@nriclub.app, the admin
+// panel prefills them). ref: the report's reference code.
+export function noticeReceiptEmail({ ref, name }) {
+  return {
+    subject: `Your report ${ref}`,
+    body: [
+      `Hello${name ? ` ${name}` : ""},`,
+      `Thank you for your report to NRIClub. We've received it (reference ${ref}). A person on our team will look at it, and we'll write to you again with our decision and how you can challenge it.`,
+      "If someone is in immediate danger, call 112 or your local emergency number.",
+      "The NRIClub team",
+    ].join("\n\n"),
+  };
+}
+
+// item: e.g. 'the post you reported'. outcome and reason as for
+// reporterOutcome.
+export function noticeDecisionEmail({ ref, name, item = "the content you reported", outcome, reason }) {
+  return {
+    subject: `Our decision on your report ${ref}`,
+    body: [
+      `Hello${name ? ` ${name}` : ""},`,
+      reporterOutcome({ item, outcome, reason }),
+      "A person on our team made this decision; no automated tools were used.",
+      "The NRIClub team",
+    ].join("\n\n"),
+  };
+}
+
+// A mailto: link with a subject and a body.
+export const mailtoLink = (to, { subject, body }) =>
+  `mailto:${to || ""}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
 // ---------------------------------------------------------------------------
 // STATEMENTS OF REASONS (Art. 17 DSA) to the member concerned
@@ -158,37 +232,71 @@ export const TERMS_RULES = [
   { key: "real_name", label: "Real name and true details (§ 5)" },
 ];
 
+// The serious cases in which we block straight away, without a warning
+// first (Terms of Use, section 10). Keys as the database stores them.
+export const URGENT_REASONS = [
+  { key: "threat", label: "threats" },
+  { key: "violence", label: "violence" },
+  { key: "fraud", label: "fraud" },
+  { key: "illegal", label: "clearly illegal content" },
+  { key: "danger", label: "danger to someone" },
+];
+
 const SOURCE = {
   report: "This followed a report from someone else.",
+  notice: "This followed a report from someone else.",
   own: "This followed our own check.",
+  own_initiative: "This followed our own check.",
 };
 
-// To the member whose content we removed or whose account we restricted.
-// action: "removed" | "warning" | "blocked" | "ended". what: e.g. 'your post
-// "Room in Kreuzberg" in Indians in Berlin'. date: as text. ground: "illegal"
-// (then law: e.g. "§ 185 StGB (insult)") or "terms" (then rule: a
-// TERMS_RULES label). facts: what the content said or did, in a sentence.
-// source: "report" | "own". until: for a time-limited block, e.g. "until 1
-// December 2026".
-export function statementOfReasons({ action, what, date, ground, law, rule, facts, source, until }) {
+// "21 October 2026" (as the database writes dates, German time).
+export const longDate = (d = new Date()) => {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Berlin" }).format(d);
+  } catch {
+    return d.toDateString();
+  }
+};
+
+// To the member whose content we removed or whose account we restricted, as
+// the database writes it (private.statement_of_reasons). action:
+// "removed" | "warning" | "blocked" | "unblocked". what: e.g. 'your post
+// "Room in Kreuzberg"' ("how you use NRIClub" for a warning about the
+// account). date: as text. ground: "illegal" (then law: e.g. "§ 185 StGB
+// (insult)") or "terms" (then rule: a TERMS_RULES label). facts: what it
+// said or did, finishing "because ...". source: "report" | "notice" |
+// "own". urgent: for a block without a warning first, an URGENT_REASONS key.
+// sessions: mentoring sessions a block cancelled.
+export function statementOfReasons({ action, what, date = longDate(), ground, law, rule, facts, source, urgent, sessions = 0 }) {
+  if (action === "unblocked") return `We unblocked your account on ${date}. You can use NRIClub again.`;
+  const clean = String(facts || "").replace(/\s+/g, " ").trim().replace(/[.!\s]+$/, "");
   const did = {
     removed: `We removed ${what} on ${date}.`,
     warning: `We're writing about ${what}. Please read this warning.`,
-    blocked: `We blocked your account on ${date}${until ? `, ${until}` : ", until further notice"}.`,
-    ended: `We ended your membership on ${date}.`,
+    blocked: `We blocked your account on ${date}, until further notice.`,
   }[action];
   const why = ground === "illegal"
-    ? `Reason: we believe it is illegal under ${law}, because ${facts}.`
-    : `Reason: it breaks our Terms of Use, ${rule}, because ${facts}.`;
-  const reply = action === "warning"
-    ? "If this happens again we may block your account. Please reply within 14 days if you want to tell us your side."
-    : "";
-  return [did, why, SOURCE[source] || "", "No automated tools were used: a person on our team decided.", reply, REDRESS_LINE,
-    action === "blocked" || action === "ended" ? "You can still sign in to download your data and delete your account." : ""]
-    .filter(Boolean).join(" ");
+    ? `Reason: we believe it is illegal under ${law || rule}, because ${clean}.`
+    : `Reason: it breaks our Terms of Use, ${rule}, because ${clean}.`;
+  const urgentLabel = URGENT_REASONS.find((u) => u.key === urgent)?.label;
+  return [
+    did,
+    why,
+    action === "blocked" && urgentLabel ? `Because this is a serious case (${urgentLabel}), we blocked your account straight away, without a warning first.` : "",
+    SOURCE[source] || SOURCE.own,
+    "No automated tools were used: a person on our team decided.",
+    action === "warning" ? `If this happens again we may block your account. Please reply to ${CONTACT_EMAIL} within 14 days if you want to tell us your side.` : "",
+    action === "blocked" && sessions > 0
+      ? (sessions === 1 ? "Your booked mentoring session was cancelled, and the member who booked it was told."
+        : `Your ${sessions} booked mentoring sessions were cancelled, and the members who booked them were told.`) : "",
+    REDRESS_LINE,
+    action === "blocked" ? "You can still sign in to download your data and delete your account." : "",
+  ].filter(Boolean).join(" ");
 }
 
-// Before a block in a case that isn't urgent (Terms of Use, section 10).
+// Before a block in a case that isn't urgent (Terms of Use, section 10):
+// the warning above (statementOfReasons with action "warning") says the
+// same, in the app.
 export function blockWarning({ what, rule, facts }) {
   return `We're planning to block your account because of ${what}: it breaks our Terms of Use, ${rule}, because ${facts}. `
     + `Please reply to ${CONTACT_EMAIL} within 14 days if you want to tell us your side; a person on our team will read it before we decide.`;

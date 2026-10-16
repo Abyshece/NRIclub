@@ -25,6 +25,7 @@ const CityPage = lazy(() => import("./CityPage"));
 const GuidePage = lazy(() => import("./GuidePage"));
 const ImpressumPage = lazy(() => import("./ImpressumPage"));
 const LegalPage = lazy(() => import("./LegalPage"));
+const ReportPage = lazy(() => import("./ReportPage"));
 
 // A public page's address: /city/<city>, /guides or /guides/<slug>.
 const publicPage = () => {
@@ -43,9 +44,11 @@ const publicPage = () => {
   return null;
 };
 
-// The Terms of Use (/terms, earlier versions at /terms/<version>) and the
-// Privacy Policy (/privacy): pages anyone can open, signed in or not.
+// The Terms of Use (/terms, earlier versions at /terms/<version>), the
+// Privacy Policy (/privacy) and the page for reporting illegal content
+// (/report): pages anyone can open, signed in or not.
 const legalPage = () => {
+  if (/^\/report\/?$/.test(window.location.pathname)) return { kind: "report", version: "" };
   const m = /^\/(terms|privacy)(?:\/([0-9]{4}-[0-9]{2}(?:-[0-9]{2})?))?\/?$/.exec(window.location.pathname);
   if (!m || (m[1] === "privacy" && m[2])) return null;
   return { kind: m[1], version: m[2] || "" };
@@ -422,10 +425,10 @@ export default function App() {
     setAuthState("landing");
   };
 
-  // The Terms and the Privacy Policy show for anyone who opens their address,
-  // whatever else is going on (except on the admin site). Log in and Join
-  // free move to the app's own address first; a member who is signed in
-  // gets "Open NRIClub", which loads the app.
+  // The Terms, the Privacy Policy and the report page show for anyone who
+  // opens their address, whatever else is going on (except on the admin
+  // site). Log in and Join free move to the app's own address first; a
+  // member who is signed in gets "Open NRIClub", which loads the app.
   const legal = !isAdminRoute() && legalPage();
   if (legal) {
     const leave = (state) => {
@@ -433,10 +436,12 @@ export default function App() {
       setAuthState(state);
     };
     const signedIn = api.hasStoredSession();
+    const onLogin = signedIn ? () => window.location.assign("/") : () => leave("login");
     return (
       <Suspense fallback={<LoadingScreen />}>
-        <LegalPage kind={legal.kind} version={legal.version} signedIn={signedIn}
-          onLogin={signedIn ? () => window.location.assign("/") : () => leave("login")} onJoin={() => leave("signup")} />
+        {legal.kind === "report"
+          ? <ReportPage signedIn={signedIn} onLogin={onLogin} onJoin={() => leave("signup")} />
+          : <LegalPage kind={legal.kind} version={legal.version} signedIn={signedIn} onLogin={onLogin} onJoin={() => leave("signup")} />}
       </Suspense>
     );
   }

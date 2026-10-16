@@ -12,7 +12,7 @@ import { IMPRINT, hasImprint, imprintSections } from './src/content/imprint.js';
 import { docToHtml, CONTACT_EMAIL } from './src/content/legal/doc.js';
 import { privacyDoc } from './src/content/legal/privacy.js';
 import { termsDoc, TERMS_VERSION, TERMS_ARCHIVE } from './src/content/legal/terms.js';
-import { REPORT_HREF, REPORT_LINK_TEXT } from './src/content/legal/reporting.js';
+import { REPORT_HREF, REPORT_LINK_TEXT, REPORT_MAILTO, REPORT_PAGE } from './src/content/legal/reporting.js';
 
 const SITE = 'https://nriclub.app';
 
@@ -191,6 +191,15 @@ function publicPages() {
           `An earlier version (${version}) of the Terms of Use of NRIClub.`, docToHtml(termsDoc(version)), noindex);
       }
 
+      // The page for reporting illegal content: the form needs the app, so
+      // the static page says what to send and where (by email until then).
+      page(REPORT_HREF, `${REPORT_PAGE.title} · NRIClub`,
+        'Report content on NRIClub you believe is illegal. Anyone can send a report, member or not; a person on our team looks at every one.',
+        `<h1>${esc(REPORT_PAGE.title)}</h1><p>${esc(REPORT_PAGE.intro)}</p><p><strong>${esc(REPORT_PAGE.emergency)}</strong></p>`
+        + `<h2>${esc(REPORT_PAGE.needs.title)}</h2><ul>${REPORT_PAGE.needs.items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`
+        + `<p>${esc(REPORT_PAGE.anonymousNote)}</p><p>${esc(REPORT_PAGE.confidentiality)} ${esc(REPORT_PAGE.afterwards)}</p>`
+        + `<p>${esc(REPORT_PAGE.emailInstead)} <a href="${esc(REPORT_MAILTO)}">${esc(CONTACT_EMAIL)}</a></p><p>${esc(REPORT_PAGE.membersNote)}</p>`);
+
       // The plain page, for every other address of the app (vercel.json
       // rewrites to it): no canonical, no og:url, no homepage text.
       fs.writeFileSync(path.join(outDir, 'app.html'), shell.replace(/\s*<meta property="og:url"[^>]*>/, ''));
@@ -203,7 +212,7 @@ function publicPages() {
         .replace('</head>', () => `  <link rel="canonical" href="${SITE}/" />\n  <script>${HOME_GUARD}</script>\n</head>`)
         .replace('<div id="root"></div>', () => `<div id="root">${homeStatic()}</div>`));
 
-      const urls = ['/', '/guides', ...ESSENTIALS.map((g) => `/guides/${g.slug}`), ...CITIES.map((c) => `/city/${slug(c)}`)];
+      const urls = ['/', '/guides', ...ESSENTIALS.map((g) => `/guides/${g.slug}`), ...CITIES.map((c) => `/city/${slug(c)}`), REPORT_HREF];
       fs.writeFileSync(path.join(outDir, 'sitemap.xml'),
         `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${SITE}${u}</loc></url>`).join('\n')}\n</urlset>\n`);
     },
