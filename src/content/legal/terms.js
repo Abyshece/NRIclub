@@ -9,9 +9,9 @@
 // private.current_terms_version() in a new migration. Members accept the new
 // version on the Terms screen once the database says it is current.
 //
-// PENDING LEGAL REVIEW: written for German and EU consumer, platform and
-// anti-discrimination law, but not yet reviewed by a lawyer
-// (docs/compliance/lawyer-questions.md).
+// Written for German and EU consumer, platform and anti-discrimination law,
+// and reviewed by a German IT lawyer in October 2026; the changes from that
+// review are in. Open points: docs/compliance/questions-for-the-lawyer.md.
 import { CONTACT_EMAIL, SITE, mail, a, strong } from "./doc.js";
 import { IMPRINT, operatorLines } from "../imprint.js";
 import { REPORT_HREF } from "./reporting.js";
@@ -59,7 +59,7 @@ export function termsDoc(version = TERMS_VERSION) {
   if (version && version !== TERMS_VERSION && TERMS_ARCHIVE[version]) return TERMS_ARCHIVE[version]();
   return {
     title: "Terms of Use",
-    subtitle: `Nutzungsbedingungen · Version ${TERMS_VERSION} · applies from ${TERMS_DATE}`,
+    subtitle: `Nutzungsbedingungen · Version ${TERMS_VERSION} · published ${TERMS_DATE} · applies to you from when you accept it`,
     intro: [],
     sections: [
       { id: "provider", title: "1. Who we are", blocks: providerBlocks() },
@@ -73,7 +73,7 @@ export function termsDoc(version = TERMS_VERSION) {
       { id: "joining", title: "3. How you join", blocks: [
         { ol: [
           "You enter your full name, your email address and a password.",
-          "You confirm that you're 18 or older and accept these Terms. With a separate checkbox you agree that we may process what you share that can show your ethnic origin, religion or health, as the Privacy Policy explains. Neither box is ticked in advance.",
+          "You confirm that you're 18 or older and accept these Terms. With a separate checkbox you agree that we may process what you share that can show your ethnic origin, religion or health, for our membership check and to show it to members, as the Privacy Policy explains. Neither box is ticked in advance.",
           "You continue, and we email you a 6-digit code. When you enter it, your account is created: that is when the contract between you and us is made.",
           "You tell us your city and country and give us your LinkedIn profile link or a short note on how you're connected to the community, so our team can check your membership (section 5).",
         ] },
@@ -92,8 +92,9 @@ export function termsDoc(version = TERMS_VERSION) {
           "Use your real name, the one people know you by (for example as on LinkedIn). Members meet in person, rent rooms, travel together and help each other find work, so they need to know who they're dealing with. That's why NRIClub doesn't offer pseudonyms.",
           ["Keep your details true and up to date, and your password secret. If you think someone else has used your account, tell us at ", mail("My account"), "."],
           "Our team checks every new member: we look at the LinkedIn profile or the note you gave us, and at the member who vouches for you, if you name one. Until we've approved you, you can complete your profile, read the guides and see which groups exist, but you can't see other members or what they post, post anything yourself or contact anyone.",
+          "Your name and LinkedIn link are what our team checked. If you change either after we've approved you, we check your membership again, and until then you can't take part, as before your first approval.",
           "We approve real people with a genuine connection to the community (section 4). We decline sign-ups that are fake, can't be checked, are a second account or spam, or come from someone we removed before for a serious breach of these Terms. We never decide because of someone's origin, nationality, religion, sex or any other personal characteristic.",
-          "If we can't approve you yet, we first ask you for more information. If we still can't, we tell you why and your membership ends. You can then still download your data and delete your account.",
+          `If we can't approve you yet, we usually ask you for more information first. If we decline your sign-up, we tell you why, and your membership ends. You can then still download your data and delete your account; otherwise we delete the account ${RETENTION.endedAccountMonths} months after our decision.`,
           "If your email address or LinkedIn link matches an account we declined or blocked before, your account is held automatically until a person on our team has checked it.",
           "The Verified badge means that our team has reviewed the LinkedIn link or note the member gave us. It doesn't confirm who they are or that they can be trusted. Take the usual care before you pay, rent, travel with or meet someone.",
         ] },
@@ -159,7 +160,7 @@ export function termsDoc(version = TERMS_VERSION) {
           "You keep all rights to what you post.",
           "Post only what you're allowed to: your own texts and photos, or ones you have permission to use. Don't copy articles, guides or photos from elsewhere; link to them instead. Before you post a photo or video in which other people can be recognised, get their consent.",
           "So that we can run NRIClub, you give us a free, non-exclusive right, limited to running NRIClub, to store your content (including in backups), copy it, make smaller versions of photos, and show it to members where the feature you used shows it (for example in a group, in questions or in the Market). We use it for nothing else.",
-          `This right ends when you delete the content or your account. The exceptions: places you added to a city's list and groups you created stay, without your name, because other members use and add to them (you can ask us to remove a place you added); content we must keep because of a report or a legal dispute stays for that purpose only; and backup copies are overwritten within 7 days.${RETENTION.photoFilesDeleted ? "" : ` Photo files aren't deleted automatically yet: write to ${CONTACT_EMAIL} and we delete them.`}`,
+          `This right ends when you delete the content or your account. The exceptions: places you added to a city's list and groups you created stay, without your name, because other members use and add to them (you can ask us to remove a place you added); content we must keep because of a report or a legal dispute stays for that purpose only; ${RETENTION.photoFilesDeleted ? "" : `photo files are deleted within ${RETENTION.photoFilesByHandDays} days; `}and backup copies are overwritten within 7 days.`,
           "A photo you upload is stored at a long web address that isn't listed anywhere. Anyone who has that exact address can open the photo without signing in, so only post photos you're comfortable with on that basis.",
         ] },
       ] },
@@ -167,10 +168,10 @@ export function termsDoc(version = TERMS_VERSION) {
       { id: "reporting", title: "9. Reporting content", blocks: [
         { p: "Anyone, member or not, can tell us about content on NRIClub they believe is illegal or against these Terms:" },
         { ul: [
-          "Members: use Report on the post, profile, listing or other item.",
+          "Members: use Report on a post, profile, event, question, guide or Market listing. For a comment, an answer, a place or a message, report the member who wrote it, or write to us.",
           ["Everyone: write to ", a(CONTACT_EMAIL, REPORT_HREF), "."],
         ] },
-        { p: "Please tell us: where the content is (a link, or the group, member, title and date); why you believe it is illegal or against our rules; your name and email address; and that your report is accurate and complete to the best of your knowledge." },
+        { p: "Please tell us: where the content is (a link, or the group, member, title and date); why you believe it is illegal or against our rules; your name and email address (not needed if your report is about the sexual abuse of a child); and that your report is accurate and complete to the best of your knowledge." },
         { p: "We confirm that we've received your report, a person on our team looks at it, and we tell you our decision and how you can challenge it. We don't tell the person you reported who you are, unless the law requires it." },
         { p: "If someone's life or safety is in danger, call 112 or your local emergency number first." },
       ] },
@@ -203,21 +204,21 @@ export function termsDoc(version = TERMS_VERSION) {
       { id: "ending", title: "12. Ending your membership", blocks: [
         { ul: [
           "You can end your membership at any time, without notice: Settings → Delete account. The Privacy Policy explains what is deleted and what stays. Download your data first if you want a copy.",
-          "We can end your membership with 4 weeks' notice, for example if we close NRIClub. We tell you in NRIClub or by email.",
+          "We can end your membership with 4 weeks' notice, for example if we close NRIClub. We tell you by email.",
           "We can end it without notice for an important reason (§ 314 of the German Civil Code, BGB), in particular a serious or repeated breach of these Terms, usually after a warning (section 10).",
           "If we can't approve your membership, it ends as described in section 5.",
-          "If we end your membership, you can still sign in to download your data and delete your account.",
+          `If we end your membership, you can still sign in to download your data and delete your account, until we delete the account ${RETENTION.endedAccountMonths} months after our decision (Privacy Policy, section 2).`,
         ] },
       ] },
 
       { id: "service-changes", title: "13. Changes to NRIClub", blocks: [
         { p: "We may change, add or remove features if there is a good reason: new or better features, security, legal or technical requirements, little use, or costs out of proportion. Changes cost you nothing. We tell you in NRIClub in good time about changes that affect you." },
-        { p: "If a change makes NRIClub more than slightly worse for you, you can end your membership free of charge within 30 days of the change, or of when we told you about it if that was later (§ 327r of the German Civil Code, BGB). You can delete your account at any time anyway." },
+        { p: "If a change makes NRIClub more than slightly worse for you, we tell you about it by email at least 2 weeks before it takes effect. You can then end your membership free of charge within 30 days of the change, or of when we told you about it if that was later (§ 327r of the German Civil Code, BGB). You can delete your account at any time anyway." },
       ] },
 
       { id: "changes", title: "14. Changes to these Terms", blocks: [
-        { p: "We may change these Terms for good reasons, such as new features, changes in the law or court decisions. We tell you at least 2 weeks before new Terms apply, in NRIClub, with a summary of what changes and the new text." },
-        { p: "New Terms apply to you only once you accept them in NRIClub; your silence never counts as acceptance. Until you accept them, you can still sign in, download your data and delete your account, but you can't use the rest of NRIClub. Every version stays available at nriclub.app/terms." },
+        { p: "We may change these Terms for good reasons, such as new features, changes in the law or court decisions. We tell you at least 2 weeks before new Terms apply, in NRIClub and by email, with a summary of what changes and the new text." },
+        { p: "New Terms apply to you only once you accept them in NRIClub; your silence never counts as acceptance. If you don't accept them, the previous Terms keep applying until we end your membership with 4 weeks' notice (section 12); until then NRIClub asks you each time you open it. Only where the law requires a consent before we may go on (such as the consent in section 3 of the Privacy Policy) can you not use NRIClub until you give it; you can still sign in, download your data and delete your account. Every version stays available at nriclub.app/terms." },
       ] },
 
       { id: "withdrawal", title: "15. Your right of withdrawal", blocks: [
@@ -247,7 +248,7 @@ export function termsDoc(version = TERMS_VERSION) {
 
       { id: "liability", title: "16. Liability", blocks: [
         { ul: [
-          "We are liable without limitation for damage we cause intentionally or through gross negligence, for injury to life, body or health, under the German Product Liability Act (Produkthaftungsgesetz), and where we have given a guarantee.",
+          "We are liable without limitation for damage we cause intentionally or through gross negligence, for injury to life, body or health, where we have given a guarantee, and wherever the law doesn't allow liability to be limited, in particular under the German Product Liability Act (Produkthaftungsgesetz), Art. 82 of the GDPR and Art. 54 of the EU Digital Services Act.",
           "For slight negligence we are liable only if we breach an essential obligation, that is, one that makes it possible to carry out this contract at all and on which you may normally rely; and then only for the foreseeable damage typical for this kind of contract. Otherwise we are not liable for slight negligence.",
           "These rules also apply to the people who work for us.",
           "NRIClub isn't a party to what members agree among themselves, such as Market deals, rooms, jobs, events, travel or mentoring sessions. Our liability under the first two points stays as it is.",
@@ -276,4 +277,14 @@ export function termsDoc(version = TERMS_VERSION) {
 }
 
 export const termsPath = (version) => (version && version !== TERMS_VERSION && TERMS_ARCHIVE[version] ? `/terms/${version}` : "/terms");
+
+// The Terms a member is about to accept (signup, Get verified, the Terms
+// screen): the version the database will record. Until the database knows
+// the current version (the 2026-10-19 update), that is still the earlier
+// one, shown without the "earlier version" note, so a member never accepts
+// one version while reading another.
+export function termsDocToAccept(version) {
+  if (!version || version === TERMS_VERSION || !TERMS_ARCHIVE[version]) return termsDoc();
+  return { ...TERMS_ARCHIVE[version](), subtitle: `Version ${version}`, intro: [] };
+}
 export const TERMS_URL = `${SITE}/terms`;

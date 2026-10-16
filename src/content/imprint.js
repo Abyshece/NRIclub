@@ -52,6 +52,20 @@ export const PRIVACY_DETAILS = {
   // e.g. "Example Mail GmbH, Germany". While empty, the Policy says "the
   // provider that hosts our mailbox".
   mailProvider: "",
+  // Which providers have a data processing agreement (Auftragsverarbeitungs-
+  // vertrag, Art. 28 GDPR) with NRIClub. The Policy says a provider works
+  // under one, and names the transfer safeguard in it, only where this is
+  // true. Supabase's and Resend's agreements are part of their terms of
+  // service, so they apply since you accepted those terms (checked October
+  // 2026). Vercel's applies only on its Pro and Enterprise plans: set vercel
+  // to true once the project is on one of them. Set mailbox to true once you
+  // have accepted the mailbox provider's agreement. File a copy of each
+  // (docs/compliance/processor-agreements.md).
+  agreements: { supabase: true, resend: true, vercel: false, mailbox: false },
+  // How long Vercel keeps the request logs of your plan, as its
+  // documentation says (October 2026: "1 hour" on Hobby, "1 day" on Pro).
+  // While empty, the Policy says "up to 1 day".
+  vercelLogRetention: "",
 };
 
 export const hasImprint = () => !!(IMPRINT.name.trim() && IMPRINT.address.some((l) => l.trim()));

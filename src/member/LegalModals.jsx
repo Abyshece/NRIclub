@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import * as api from "../supabaseApi";
 import { FONT } from "./ui";
 import { imprintSections } from "../content/imprint";
-import { termsDoc } from "../content/legal/terms";
+import { termsDoc, termsDocToAccept } from "../content/legal/terms";
 import { privacyDoc } from "../content/legal/privacy";
 
 const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
@@ -73,8 +74,8 @@ const h4 = { fontSize: 15, fontWeight: 700, color: "#37352F", margin: "0 0 6px" 
 export const TERMS_VERSION = "2026-10-19";
 
 export { TERMS_CHANGES, PREVIOUS_TERMS_VERSION, TERMS_DATE } from "../content/legal/terms";
-export { ART9_CONSENT_TEXT, ART9_CONSENT_VERSION } from "../content/legal/consent";
-export { REPORT_HREF, REPORT_LINK_LABEL } from "../content/legal/reporting";
+export { ART9_CONSENT_TEXT, ART9_CONSENT_VERSION, ART9_WITHDRAW_TEXT } from "../content/legal/consent";
+export { REPORT_HREF, REPORT_LINK_LABEL, REPORT_LINK_TEXT } from "../content/legal/reporting";
 
 const INK = "#37352F";
 
@@ -198,9 +199,26 @@ export const ImpressumModal = ({ onClose }) => (
   <LegalModal title="Impressum" onClose={onClose}><ImpressumContent /></LegalModal>
 );
 
-export const TermsModal = ({ onClose }) => (
-  <LegalModal title="Terms of Use" onClose={onClose}><TermsContent /></LegalModal>
-);
+// The Terms in a dialog, where members accept them (signup, Get verified,
+// the Terms screen): the version the database will record
+// (api.getCurrentTermsVersion). Until the 2026-10-19 database update that is
+// still 2026-10, so someone who signs up in between reads the version they
+// accept. If the version can't be fetched, the current text.
+export function TermsModal({ onClose }) {
+  const [version, setVersion] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api.getCurrentTermsVersion()
+      .then((v) => { if (live) setVersion(v || TERMS_VERSION); })
+      .catch(() => { if (live) setVersion(TERMS_VERSION); });
+    return () => { live = false; };
+  }, []);
+  return (
+    <LegalModal title="Terms of Use" onClose={onClose}>
+      {version ? <LegalDoc doc={termsDocToAccept(version)} inDialog /> : <p style={{ margin: 0 }}>Loading…</p>}
+    </LegalModal>
+  );
+}
 
 export const PrivacyModal = ({ onClose }) => (
   <LegalModal title="Privacy Policy" onClose={onClose}><PrivacyContent /></LegalModal>

@@ -31,6 +31,11 @@ export const REPORT_EMAIL_BODY = [
 export const REPORT_MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(REPORT_SUBJECT)}&body=${encodeURIComponent(REPORT_EMAIL_BODY)}`;
 export const REPORT_HREF = REPORT_MAILTO;
 export const REPORT_LINK_LABEL = "Report illegal content";
+// The footer link's text. While REPORT_HREF opens an email, the address is
+// shown too: on a device without a mail app the link does nothing, and
+// people must still be able to see where to write (Art. 12 and 16 DSA).
+// When the report page exists, use REPORT_LINK_LABEL alone.
+export const REPORT_LINK_TEXT = `${REPORT_LINK_LABEL}: ${CONTACT_EMAIL}`;
 
 // ---------------------------------------------------------------------------
 // THE PUBLIC REPORT PAGE (anyone, no account needed)
@@ -197,5 +202,5 @@ export const SAFETY_CHECKLIST = [
   "Immediate danger: call 110 (police) or 112 in Germany, or the local emergency number of the member's country.",
   "Otherwise, if the report suggests a crime that threatens someone's life or safety, tell the police without delay: in Germany the Federal Criminal Police Office (Bundeskriminalamt, BKA); for another EU country that country's police; if it's unclear which country, the BKA or Europol.",
   "Keep a copy of the content, the account ID and the times, and note here when you told which authority.",
-  "Don't delete the content before you've kept that copy.",
+  "Don't delete the content before you've kept that copy. Keep the copy with the report and delete it with the report (once the report is closed and 12 months old), or when a police matter or legal dispute about it is over (Privacy Policy, section 2).",
 ];

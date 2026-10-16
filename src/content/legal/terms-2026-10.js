@@ -2,13 +2,14 @@
 // 2026, word for word (only section 10 changed form: it used to open the
 // Privacy Policy in place and now links to its page). Kept so every member
 // can read the version they accepted (nriclub.app/terms/2026-10). Don't
-// change this text.
+// change this text. (The line under the title isn't part of it: it says
+// which version this is and for whom it still applies.)
 import { mail, a } from "./doc.js";
 
 export function termsDoc20261010() {
   return {
     title: "Terms of Use",
-    subtitle: "Version 2026-10 (October 2026). This is an earlier version and no longer applies.",
+    subtitle: "Version 2026-10 (October 2026). This is an earlier version. It still applies to members who haven't accepted the current version yet.",
     intro: [
       { p: ["The current Terms of Use are at ", a("nriclub.app/terms", "/terms"), "."] },
     ],

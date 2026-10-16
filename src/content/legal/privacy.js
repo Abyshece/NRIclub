@@ -6,9 +6,8 @@
 // a provider, a retention job or what members can see changes, change this
 // text in the same pull request, and give it a new version and date.
 //
-// PENDING LEGAL REVIEW: written to be accurate and complete under Art. 13/14
-// GDPR, but it has not been reviewed by a lawyer yet (LAUNCH-GUIDE.md,
-// docs/compliance/lawyer-questions.md).
+// Reviewed by a German IT lawyer in October 2026; the changes from that
+// review are in. Open points: docs/compliance/questions-for-the-lawyer.md.
 import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
@@ -16,24 +15,42 @@ import { ART9_CONSENT_TEXT } from "./consent.js";
 export const PRIVACY_VERSION = "2026-10-19";
 export const PRIVACY_DATE = "19 October 2026";
 
-// What is deleted automatically, and when. null (or false): no clean-up job
-// does it yet, and the Policy says the data stays until our team deletes it.
-// When a job is live on the database (or, for photo files, the deletion
-// code and the scheduled clean-up), put its period here in the same pull
-// request, so the Policy states exactly what runs.
+// How long data is kept: the periods this Policy promises. Until clean-up
+// jobs run on the database (plan C20), our team deletes by hand once a month
+// with the queries in docs/compliance/deletion-routine.md, and byHand says
+// so in section 9. When the jobs are live, set byHand to false in the same
+// pull request, and keep the periods here equal to the jobs'.
 export const RETENTION = {
-  unconfirmedSignupDays: null, // sign-ups that never confirmed their email address
-  unfinishedSignupDays: null, // accounts that never sent their check details
-  declinedAccountMonths: null, // accounts our team declined, counted from the decision
-  readNoticesMonths: null, // in-app notices the member has read
-  closedReportsMonths: null, // reports, counted from when they were closed
-  moderationRecordMonths: null, // record of declined and blocked accounts, from the decision
-  moderationNoteMonths: null, // the note in that record is cleared after this
-  photoFilesDeleted: false, // photo files go with their post, listing, event, profile or account
-  photoCleanupHours: null, // files left behind are removed within this many hours
+  byHand: true,
+  unconfirmedSignupDays: 30, // sign-ups that never confirmed their email address
+  unfinishedSignupDays: 90, // accounts that never sent their check details
+  endedAccountMonths: 6, // accounts our team declined, or whose membership we ended, from the decision
+  readNoticesMonths: 6, // in-app notices the member has read
+  closedReportsMonths: 12, // closed reports (and evidence kept with them), from when they were sent
+  moderationRecordMonths: 24, // record of declined and blocked accounts, from the decision
+  moderationNoteMonths: 12, // the note in that record is cleared after this
+  requestEmailYears: 3, // emails about rights and reports of illegal content, after the matter is closed
+  otherEmailMonths: 12, // all other emails, after the matter is closed
+  // Photo files: false while the code doesn't delete them with their post,
+  // listing, event, profile photo or account (plan C1); our team then
+  // deletes them by hand within photoFilesByHandDays (the weekly query in
+  // docs/compliance/deletion-routine.md). true once the code does, with
+  // photoCleanupHours for the clean-up of files left behind.
+  photoFilesDeleted: false,
+  photoFilesByHandDays: 7,
+  photoCleanupHours: null,
 };
 const R = RETENTION;
 const months = (n) => `${n} month${n === 1 ? "" : "s"}`;
+
+// Who members can see. onlyApprovedListed: false while approved members can
+// still read the profile of every account (members waiting for our check,
+// unfinished, declined and blocked accounts included); true once the
+// database shows other members only approved, active accounts (the profiles
+// policy with private.is_listed_member, in the same pull request).
+export const VISIBILITY = {
+  onlyApprovedListed: false,
+};
 
 function accountRetention() {
   return [
@@ -43,11 +60,11 @@ function accountRetention() {
   ].filter(Boolean).join("");
 }
 
-function photoFilesText() {
+export function photoFilesText() {
   if (R.photoFilesDeleted) {
     return `Photo files are deleted together with the post, listing, event, profile photo or account they belong to${R.photoCleanupHours ? `; any left behind are removed within ${R.photoCleanupHours} hours` : ""}.`;
   }
-  return "Photo files: deleting a post, a listing, an event, your profile photo or your account removes the photo from NRIClub, but the file itself isn't deleted automatically yet and stays at its web address (section 4). Write to us and we delete your photo files.";
+  return `Photo files: when you delete a post, a listing, an event, your profile photo or your account, we delete its photo files too, by hand within ${R.photoFilesByHandDays} days for now. Until then the file still opens for anyone who has its exact web address (section 4).`;
 }
 
 // Who is responsible: from src/content/imprint.js once it is filled in.
@@ -81,8 +98,25 @@ function complaintBlocks() {
 }
 
 const mailProvider = () => PRIVACY_DETAILS.mailProvider.trim();
+const hasAgreement = (provider) => !!(PRIVACY_DETAILS.agreements || {})[provider];
+
+// A provider's entry in section 7: its fields, plus the data processing
+// agreement and the transfer safeguard in it once that agreement is in
+// place (PRIVACY_DETAILS.agreements). The safeguard: each of these
+// providers' agreements includes the EU standard contractual clauses
+// (checked October 2026).
+function provider(key, title, fields, abroad = true) {
+  const agreement = hasAgreement(key)
+    ? [["Agreement", "a data processing agreement (Auftragsverarbeitungsvertrag, Art. 28 GDPR): it processes data only on our instructions."]]
+    : [];
+  const safeguard = abroad && hasAgreement(key)
+    ? [["Safeguard", "the EU standard contractual clauses (Standardvertragsklauseln, Art. 46(2)(c) GDPR) in that agreement."]]
+    : [];
+  return { title, fields: [...fields, ...agreement, ...safeguard] };
+}
 
 export function privacyDoc() {
+  const vercelLogs = PRIVACY_DETAILS.vercelLogRetention.trim() || "up to 1 day";
   return {
     title: "Privacy Policy",
     subtitle: `Datenschutzerklärung · Version ${PRIVACY_VERSION} · last updated ${PRIVACY_DATE}`,
@@ -111,7 +145,7 @@ export function privacyDoc() {
           { title: "Your account", fields: [
             ["What", "your email address; your password, which our sign-in provider stores only as a hash (a scrambled form nobody can read back); your name; when you signed up, confirmed your email address and last signed in; your confirmation that you're 18 or older; which version of the Terms of Use you accepted and when; and when you gave the consent in section 3 and in which wording."],
             ["Why", "to create your membership, sign you in and send you sign-in codes and password links."],
-            ["Legal basis", "contract. Keeping the record of your confirmations and consent: legal obligation (Art. 7(1) GDPR requires us to be able to show consent)."],
+            ["Legal basis", "contract. Keeping the record of your consent in section 3: legal obligation (Art. 6(1)(c) with Art. 7(1) GDPR, which requires us to be able to show consent). Keeping the record of your age confirmation and of which Terms you accepted: legitimate interests (being able to prove our contract and its terms)."],
             ["How long", accountRetention()],
           ] },
           { title: "Sign-in sessions", fields: [
@@ -121,10 +155,10 @@ export function privacyDoc() {
             ["How long", "until you sign out on that device, or until you delete your account."],
           ] },
           { title: "The membership check", fields: [
-            ["What", "your city and country; your LinkedIn profile link or a short note on how you're connected to the Indian community; if you give one, a member who can vouch for you (if you came through an invite link, we fill in who invited you); our decision, any message we send you, notes our team makes about the check, and the dates. Our team opens the LinkedIn profile you gave us and looks at it: that is information we get from LinkedIn rather than from you."],
+            ["What", "your city and country; your LinkedIn profile link or a short note on how you're connected to the Indian community; if you give one, a member who can vouch for you (if you came through an invite link, we fill in who invited you); our decision, any message we send you, notes our team makes about the check, and the dates. Our team opens the LinkedIn profile you gave us and looks at it (the name, photo, jobs and education shown there): that is information we get from LinkedIn rather than from you. If you change your name or LinkedIn link after we've approved you, we check again."],
             ["Why", "to check that every member is a real person with a genuine connection to the community, so members can trust each other, and to keep out fake accounts, scammers and people we removed before."],
-            ["Legal basis", "contract (the check is part of membership under our Terms of Use), and legitimate interests (a safe community of genuine people, for our members and for us)."],
-            ["How long", `until you delete your account.${R.declinedAccountMonths ? ` An account our team declined is deleted ${months(R.declinedAccountMonths)} after the decision.` : ""} If we decline or block an account, a minimal record stays ("Record of declined and blocked accounts" below).`],
+            ["Legal basis", "contract (the check is part of membership under our Terms of Use), and legitimate interests (a safe community of genuine people, for our members and for us); where it can show your origin, religion or health, your explicit consent (section 3)."],
+            ["How long", `until you delete your account. An account our team declined, or whose membership we ended, is deleted ${months(R.endedAccountMonths)} after our decision if you haven't deleted it yourself. If we decline or block an account, a minimal record stays ("Record of declined and blocked accounts" below).`],
           ] },
           { title: "Your profile", fields: [
             ["What", "required: your name, city and country. Optional: a photo, your hometown, profession and what you do, how long you've lived abroad, a short bio, what people can ask you about, your LinkedIn link, and whether you offer mentoring or look for a mentor, with your topics. We also show your Verified badge, whether you're a city ambassador, and when you were last active."],
@@ -136,41 +170,39 @@ export function privacyDoc() {
             ["What", "posts, comments and likes; photos; guides you write and comments on them; questions and answers, including urgent questions, thanks and best answers; events you create and whether you're going; Market listings; places you add or recommend; groups you create, join or ask for; Namaste requests and connections; messages; mentoring times and sessions, with the topic, note and meeting link; ratings and reviews; members you block; your settings (for example who can message you); and the in-app notices we show you."],
             ["Why", "to provide the features you use."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
-            ["How long", `until you delete it or your account, with the exceptions in section 9.${R.readNoticesMonths ? ` In-app notices you've read are deleted after ${months(R.readNoticesMonths)}.` : ""}`],
+            ["How long", `until you delete it or your account, with the exceptions in section 9. In-app notices you've read are deleted after ${months(R.readNoticesMonths)}.`],
           ] },
           { title: "Reports, notices of illegal content and moderation", fields: [
-            ["What", "reports members send (what was reported, the reason, who reported it); reports of illegal content we receive by email; our decisions and the reasons for them, and the messages we send about them; when you use \"Report a problem\", your description plus your browser type and screen size (the form tells you this)."],
+            ["What", "reports members send (what was reported, the reason, who reported it); reports of illegal content we receive by email; where we need it as evidence, a copy of the reported content (for example a screenshot) with the account and the time; our decisions and the reasons for them, and the messages we send about them; when you use \"Report a problem\", your description plus your browser type and screen size (the form tells you this)."],
             ["Why", "to deal with reports and illegal content, to tell the people concerned what we decided and why, to be able to show what we did, and to fix problems."],
             ["Legal basis", "legal obligation under the Digital Services Act (Art. 16 to 18 DSA: handling notices, giving reasons for our decisions, informing the police about threats to someone's life or safety); otherwise legitimate interests (a safe community, and being able to defend our decisions)."],
-            ["How long", R.closedReportsMonths
-              ? `until ${months(R.closedReportsMonths)} after the report is closed. A report you sent is deleted with your account; a report about you stays without the link to your account.`
-              : "as long as we need it to deal with the matter and any challenge to our decision. Reports aren't deleted automatically yet: our team deletes them when they're no longer needed. A report you sent is deleted with your account; a report about you stays without the link to your account."],
+            ["How long", `reports, and anything we kept with them, are deleted once they're closed and ${months(R.closedReportsMonths)} old, unless a legal dispute or a police matter about them is still open. A copy kept as evidence is deleted with the report, or when that legal dispute or police matter is over. A report you sent is deleted with your account. A report about you or your content stays after you delete your account, without the link to your account, but its text can still contain your name or the title of what was reported.`],
           ] },
           { title: "Record of declined and blocked accounts", fields: [
             ["What", "if our team declines or blocks an account, we keep a minimal record: a coded form of the account's email address if it confirmed one (and of any address it changes to later), the LinkedIn profile link it had when our team last reviewed it (or, if we never did, when we blocked it), and our decision with its date and any note we made on it. The email address itself isn't kept: the coded form is made with a secret key, so we can only check whether an address we already know matches it."],
             ["Why", "so that someone we declined or blocked can't simply sign up again. When someone signs up, sends their check details or is moved back into review, we compare their email address and LinkedIn link with this record. If they match, our team checks the membership before the person can take part (section 6)."],
             ["Legal basis", "legitimate interests (protecting our members from people we removed)."],
-            ["How long", `the record stays when the account is deleted, but its link to the account is removed then. ${R.moderationRecordMonths
-              ? `It is deleted ${months(R.moderationRecordMonths)} after the decision${R.moderationNoteMonths ? `, and the note is removed after ${months(R.moderationNoteMonths)}` : ""}.`
-              : "There's no fixed deletion date yet: our team deletes a record when it is no longer needed."}`],
+            ["How long", `the record stays when the account is deleted, but its link to the account is removed then. The record is deleted ${months(R.moderationRecordMonths)} after our decision; the note in it after ${months(R.moderationNoteMonths)}.`],
           ] },
           { title: "Server and security logs", fields: [
             ["What", "when you use NRIClub, the servers of our providers automatically log each request: IP address, time, the page or data requested, browser and device type, and any error."],
             ["Why", "to deliver the site, find faults, and detect and stop attacks and misuse."],
             ["Legal basis", "legitimate interests (a secure, working service)."],
-            ["How long", "Supabase keeps these logs for about 7 days. Vercel keeps them for the short period its service provides, under its own rules."],
+            ["How long", `Supabase keeps these logs for about 7 days, Vercel for ${vercelLogs}.`],
           ] },
           { title: "Emails we send you", fields: [
-            ["What", "sign-up codes, sign-in codes, password links and email-change confirmations, sent to your email address. Our email service records whether each email was delivered."],
-            ["Why", "to run your account. We send no newsletters, no advertising and no notification emails: everything else shows inside NRIClub."],
-            ["Legal basis", "contract."],
-            ["How long", "the email service keeps its delivery records for a short time, under its own rules."],
+            // Resend keeps each email for 30 days on all its plans
+            // (resend.com/pricing, October 2026).
+            ["What", "from our sign-in system: sign-up codes, sign-in codes, password links and email-change confirmations. Our email service keeps each of these emails (your address, the subject and the content, including the code or link) and whether it was delivered. From our team: messages about your membership: decisions on your membership check, moderation decisions with their reasons, a warning before a block, the outcome of a report you sent, notice of changes to the Terms of Use or to NRIClub, the end of your membership and, if it ever happened, a data breach that affects you."],
+            ["Why", "to run your account and to give you information our Terms of Use or the law require. We send no newsletters, no advertising and no automatic notification emails: everything else shows inside NRIClub."],
+            ["Legal basis", "contract; legal obligation for statements of reasons and report outcomes (Art. 16(5) and 17 DSA) and breach notices (Art. 34 GDPR)."],
+            ["How long", "our email service keeps sign-in emails for 30 days. Copies of what our team sends are kept like the emails you send us (below)."],
           ] },
           { title: "Emails you send us", fields: [
             ["What", "your message, your email address and anything you include, and our reply."],
             ["Why", "to answer you and to deal with requests about your data and reports."],
             ["Legal basis", "contract for questions about your membership; legal obligation for requests under the GDPR and reports under the DSA; otherwise legitimate interests (answering people who write to us)."],
-            ["How long", "as long as we need them for the matter. Requests about your rights and reports of illegal content, and our answers, we keep for 3 years after the matter is closed, so we can show we handled them correctly."],
+            ["How long", `requests about your rights and reports of illegal content, and our answers, we keep for ${R.requestEmailYears} years after the matter is closed, so we can show we handled them correctly. Other emails, and our replies, we delete ${months(R.otherEmailMonths)} after the matter is closed.`],
           ] },
         ] },
         { p: "Our public pages (the homepage, the city pages and the guides) contain no personal data. A city page shows how many members its group has only once there are at least 5." },
@@ -182,7 +214,7 @@ export function privacyDoc() {
         { box: { blocks: [{ p: `"${ART9_CONSENT_TEXT}"` }] } },
         { p: "We store when you gave it and which wording you agreed to. Without this consent you can't be a member, because membership itself shows a connection to the Indian community." },
         { p: ["You can withdraw your consent at any time, for the future: delete the content in question (for example leave a group or delete a question), or delete your account, which withdraws it completely. You can also write to us at ", mail("Withdraw consent"), "; as membership depends on this consent, we then close your account, and you can download your data first. Withdrawing doesn't make what we did before it unlawful (Art. 7(3) GDPR)."] },
-        { p: "We use this information only to show it to members as described in section 4. We never use it for advertising and never sell it." },
+        { p: "We use this information only to run your membership: for our team's membership check (section 2), to show it to members as described in section 4, and to deal with reports about it. We never use it for advertising and never sell it." },
       ] },
 
       { id: "visibility", title: "4. Who can see your data", blocks: [
@@ -193,9 +225,14 @@ export function privacyDoc() {
           ] },
           { title: "Approved members", fields: [
             ["What", "your profile (section 2, \"Your profile\", including your LinkedIn link if you add it, and when you were last active); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; the places you add and recommend; the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
+            ["If your membership ends", VISIBILITY.onlyApprovedListed
+              ? "if we decline your sign-up or end your membership, other members no longer see your profile."
+              : "if we decline your sign-up or block your account, approved members can still see your profile until the account is deleted (section 2, \"The membership check\")."],
           ] },
           { title: "Members waiting for our check", fields: [
-            ["What", "until our team has approved them, new members can't see other members, their profiles or what they post. They only see the list of groups and the guides, and they can't contact anyone."],
+            ["What", `until our team has approved them, new members can't see other members, their profiles or what they post. They only see the list of groups and the guides, and they can't contact anyone. ${VISIBILITY.onlyApprovedListed
+              ? "Until our team has approved you, other members can't see your profile either."
+              : "While you wait for our check, approved members can already see your profile (name, photo, city and what else you filled in), but not your check details."}`],
           ] },
           { title: "Your city group and its ambassadors", fields: [
             ["What", "when you join a city's group, the city's ambassador is told. If you post an urgent question, the city's ambassadors and up to 500 members of your city group get an in-app notice with your name and the question's title."],
@@ -209,16 +246,17 @@ export function privacyDoc() {
             ["What", "everything approved members see, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, your account status and the record of your confirmations and consent. Not your messages."],
           ] },
           { title: "Our service providers", fields: [
-            ["What", "they store and process data for us on our instructions (section 7)."],
+            ["What", "they store and process data for us (section 7)."],
           ] },
           { title: "Authorities and courts", fields: [
-            ["What", "only where a law obliges us (legal obligation), for example a court order, or when information suggests a crime that threatens someone's life or safety, which we must report to the police (Art. 18 DSA)."],
+            ["What", "only where a law obliges us (legal obligation), for example a court order, or when information suggests a crime that threatens someone's life or safety, which we must report to the police (Art. 18 DSA); and, if we need to establish, exercise or defend legal claims, our lawyers and the courts (legitimate interests)."],
           ] },
         ] },
       ] },
 
       { id: "sources", title: "5. Where your data comes from", blocks: [
         { p: "Mostly from you. Some comes from other members: when they invite you or vouch for you, report something, or rate a mentoring session with you. Our team looks at the LinkedIn profile you link to (section 2, \"The membership check\"). Our systems add technical data such as dates and logs." },
+        { p: ["If you're not a member: when you report content to us, we process what you send us (section 2). If you run a business or practice that a member added to Places, we show its name and the details the member entered, because members recommend places to each other (legitimate interests). You can ask us to correct or remove it, or object, at ", mail("Places entry"), "."] },
       ] },
 
       { id: "automated", title: "6. No automated decisions", blocks: [
@@ -227,27 +265,27 @@ export function privacyDoc() {
       ] },
 
       { id: "processors", title: "7. Service providers and transfers outside the EU", blocks: [
-        { p: "These providers process data for us, only on our instructions, under a data processing agreement (Auftragsverarbeitungsvertrag, Art. 28 GDPR):" },
+        { p: "These providers process data for us:" },
         { entries: [
-          { title: "Supabase", fields: [
-            ["Company", "Supabase Inc., USA."],
+          provider("supabase", "Supabase", [
+            ["Company", "Supabase Pte. Ltd., Singapore."],
             ["What for", "our database, sign-in, photo storage and live updates in the app."],
             ["Where", "Amazon Web Services data centres in Ireland (EU)."],
-          ] },
-          { title: "Vercel", fields: [
+          ]),
+          provider("vercel", "Vercel", [
             ["Company", "Vercel Inc., USA."],
             ["What for", "hosting the website and delivering its files through a worldwide network of servers, so a request can be answered by a server outside the EU, including in the USA. It logs requests (section 2, \"Server and security logs\")."],
-          ] },
-          { title: "Resend", fields: [
-            ["Company", "Resend, a company in the USA."],
+          ]),
+          provider("resend", "Resend", [
+            ["Company", "Plus Five Five, Inc. (Resend), USA."],
             ["What for", "sending our sign-in and password emails, through Amazon Web Services' email service in Ireland (EU)."],
-          ] },
-          { title: "Our mailbox", fields: [
+          ]),
+          provider("mailbox", "Our mailbox", [
             ["Company", mailProvider() || "the provider that hosts our mailbox."],
-            ["What for", `receiving and storing the emails you send to ${CONTACT_EMAIL}.`],
-          ] },
+            ["What for", `receiving and storing the emails you send to ${CONTACT_EMAIL}, and the emails our team sends from it.`],
+          ], false),
         ] },
-        { p: "Supabase, Vercel and Resend are US companies, and Vercel also answers requests from outside the EU, so personal data can be accessed from or sent to the USA. Where a provider is certified under the EU-US Data Privacy Framework, this relies on the European Commission's adequacy decision of 10 July 2023 (Art. 45 GDPR); otherwise on the EU standard contractual clauses (Standardvertragsklauseln) in the provider's data processing agreement (Art. 46(2)(c) GDPR). You can ask us for a copy of these safeguards." },
+        { p: "Supabase is a company in Singapore, Vercel and Resend are companies in the USA, and Vercel also answers requests from outside the EU, so personal data can be accessed from or sent to countries outside the EU. For each provider, the safeguard for this is named above. You can ask us for a copy of these safeguards." },
         { p: "We don't sell or rent personal data and don't share it with advertisers or data brokers." },
         { p: "Some links take you to other services when you tap them, for example Google Maps, Google Calendar and Google Meet, WhatsApp, LinkedIn, Eventbrite or websites members share. Nothing is loaded from them before you tap. Once you're there, their own privacy policies apply." },
       ] },
@@ -282,12 +320,13 @@ export function privacyDoc() {
       ] },
 
       { id: "retention", title: "9. How long we keep data, and deleting your account", blocks: [
-        { p: "We keep data only as long as we need it for the purposes in section 2." },
+        { p: "We keep data only as long as we need it for the purposes in section 2, and for the periods given there." },
         { ul: [
-          [strong("Your account, profile and content"), " stay until you delete them or your account."],
+          [strong("Your account, profile and content"), " stay until you delete them or your account, or until we delete an account as section 2 says (a sign-up never confirmed, an account that never sent its check details, or one we declined or whose membership we ended)."],
           [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
           photoFilesText(),
-          [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports other members made about you, no longer linked to your account; the record in section 2 if we declined or blocked you; copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
+          [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports other members made about you, no longer linked to your account (their text can still contain your name); copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; emails you sent us (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
+          ...(R.byHand ? ["Until these deletions run automatically, our team carries them out by hand: photo files every week, everything else once a month, so data can stay up to a month longer than the period given."] : []),
         ] },
       ] },
 
@@ -307,7 +346,7 @@ export function privacyDoc() {
 
       { id: "object", title: "11. Your right to object", blocks: [
         { box: { title: "Right to object (Widerspruchsrecht, Art. 21 GDPR)", blocks: [
-          { p: [strong("Where we process your data on the basis of legitimate interests (Art. 6(1)(f) GDPR), you can object at any time, on grounds relating to your particular situation."), " This covers the membership check, sign-in sessions as far as they serve security, reports and moderation, the record of declined and blocked accounts, and server and security logs (section 2)."] },
+          { p: [strong("Where we process your data on the basis of legitimate interests (Art. 6(1)(f) GDPR), you can object at any time, on grounds relating to your particular situation."), " This covers in particular the membership check, sign-in sessions as far as they serve security, the record of your age confirmation and of which Terms you accepted, reports and moderation, the record of declined and blocked accounts, places members add about businesses and practices (section 5), server and security logs, and emails we answer on that basis (section 2)."] },
           { p: "If you object, we stop unless we can show compelling legitimate grounds that override your interests, rights and freedoms, or we need the data to establish, exercise or defend legal claims." },
           { p: ["To object, write to ", mail("Objection"), "."] },
         ] } },
