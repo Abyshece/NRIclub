@@ -1106,14 +1106,25 @@ export async function pinGroupPost(groupId, postId) {
   return restCall("POST", "/rest/v1/rpc/pin_group_post", { p_group: groupId, p_post: postId });
 }
 
-// The ambassadors of a city (name and photo): verified members only. (The
-// database also ends the role when an ambassador is blocked, rejected or
-// back in review.)
+// The ambassadors of a city (name and photo): active, verified members only.
+// Since the 2026-10-21 database update the database says so itself
+// (city_ambassadors, which also leaves out blocked members); before it, the
+// Verified badge is all the site can see. (The database also ends the role
+// when an ambassador is blocked, rejected or back in review.)
 export async function getCityAmbassadors(city) {
+  const name = String(city || "").trim();
+  if (!name) return [];
+  if (!knownMissing("city_ambassadors")) {
+    try {
+      return (await restCall("POST", "/rest/v1/rpc/city_ambassadors", { p_city: name })) || [];
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.city_ambassadors = Date.now();
+    }
+  }
   // ilike without wildcards: "%" and "*" become "_" (one character), so
   // only this city matches, brackets and commas included.
-  const q = String(city || "").trim().replace(/[%_*\\]/g, "_");
-  if (!q) return [];
+  const q = name.replace(/[%_*\\]/g, "_");
   return (await restCall("GET", `/rest/v1/profiles?ambassador_city=ilike.${encodeURIComponent(q)}&linkedin_verified=is.true&select=id,name,avatar_url&limit=5`)) || [];
 }
 
@@ -1507,6 +1518,8 @@ export async function reportUser(userId, reason) {
   });
 }
 
+// Feedback (a bug report or an idea: reason "[BUG] ..." / "[IDEA] ...") is
+// sent this way too, about the member themself.
 export async function reportPost(postId, reason) {
   if (!currentUser) throw new Error("Not logged in");
   return restCall("POST", "/rest/v1/reports", {
@@ -1517,9 +1530,90 @@ export async function reportPost(postId, reason) {
   });
 }
 
+// A report from the in-app dialog. type: what is reported, as the database
+// calls it (reports.content_type: "post", "comment", "answer", "doc",
+// "doc_comment", "event", "help", "market", "review", "place", "message" or
+// "profile"); id: its id (the member's for "profile"); userId: who wrote it,
+// if known (the database looks it up itself); name: a few words to recognise
+// it by; category: a REPORT_REASONS key; explanation: the member's words.
+// Since the 2026-10-21 database update these go in their own columns, with
+// the good-faith confirmation. Before it, the database has no such columns:
+// the reason line then carries the category's label and the explanation,
+// with the kind in its "[TYPE]" prefix, as the admin panel read reports
+// before.
+export async function reportContent({ type, id, userId = null, name = "", category, categoryLabel, explanation }) {
+  if (!currentUser) throw new Error("Not logged in");
+  const profile = type === "profile";
+  const prefix = `[${type === "market" ? "MARKETPLACE" : profile ? "USER" : type.toUpperCase()}] ${name ? `${String(name).slice(0, 80)} — ` : ""}`;
+  const base = {
+    reporter_id: currentUser.id,
+    reported_post_id: profile ? null : id,
+    reported_user_id: profile ? id : (userId || null),
+    status: "pending",
+  };
+  const legacy = () => restCall("POST", "/rest/v1/reports", {
+    ...base, reason: `${prefix}${categoryLabel}: ${explanation}`.slice(0, 5000),
+  });
+  if (knownMissing("report_columns")) return legacy();
+  try {
+    return await restCall("POST", "/rest/v1/reports", {
+      ...base, reason: `${prefix}${categoryLabel}`.slice(0, 5000),
+      content_type: type, category, explanation, good_faith: true,
+    });
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.report_columns = Date.now();
+    return legacy();
+  }
+}
+
+// What the member reported that is still waiting for our team, as
+// "type:id" keys (and the plain id, for posts and members), so the app can
+// hide Report on them. Before the 2026-10-21 database update reports have no
+// kind or open status to go by: every item the member ever reported counts.
 export async function getMyReports() {
-  if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/reports?reporter_id=eq.${currentUser.id}&select=reported_post_id`);
+  if (!currentUser) return new Set();
+  const keys = new Set();
+  const add = (r) => {
+    const id = r.reported_post_id || r.reported_user_id;
+    if (!id) return;
+    keys.add(id);
+    if (r.content_type) keys.add(`${r.content_type}:${id}`);
+    else if (!r.reported_post_id) keys.add(`profile:${id}`);
+  };
+  if (!knownMissing("report_columns")) {
+    try {
+      const rows = await restCall("GET", `/rest/v1/reports?reporter_id=eq.${currentUser.id}&status=eq.pending&content_type=neq.feedback&select=reported_post_id,reported_user_id,content_type`);
+      (rows || []).forEach(add);
+      return keys;
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.report_columns = Date.now();
+    }
+  }
+  const rows = await restCall("GET", `/rest/v1/reports?reporter_id=eq.${currentUser.id}&select=reported_post_id,reported_user_id,reason`);
+  (rows || []).filter((r) => !/^\[(BUG|IDEA)\]/.test(r.reason || "")).forEach(add);
+  return keys;
+}
+
+// A report from the public page (nriclub.app/report), signed in or not:
+// returns its reference code. Before the 2026-10-21 database update there's
+// nowhere to send it: the error then has notAvailable set, and the page
+// offers email instead.
+export async function submitNotice({ location, category, explanation, name, email, goodFaith }) {
+  try {
+    return await restCall("POST", "/rest/v1/rpc/submit_notice", {
+      p_location: location, p_category: category, p_explanation: explanation,
+      p_name: name, p_email: email, p_good_faith: !!goodFaith,
+    });
+  } catch (err) {
+    if (isMissingInDatabase(err)) {
+      const e = new Error("Reports can't be sent here yet.");
+      e.notAvailable = true;
+      throw e;
+    }
+    throw err;
+  }
 }
 
 export async function blockUser(userId) {
@@ -1877,14 +1971,20 @@ export async function adminCountMembers() {
 }
 
 // Reported content by kind, with the same fields as the previews in
-// adminGetDashboardData ("marketplace" is accepted for "market").
+// adminGetDashboardData ("marketplace" is accepted for "market"). Comments,
+// answers, guide comments and places can be reported since the 2026-10-21
+// database update; messages are read through adminGetReportedMessage.
 const REPORTED_ITEMS = {
   post: ["posts", "id,content,image_url,user_id,created_at"],
+  comment: ["comments", "id,content,post_id,user_id,created_at"],
+  answer: ["help_responses", "id,content,request_id,user_id,created_at"],
   doc: ["docs", "id,title,excerpt,user_id"],
+  doc_comment: ["doc_comments", "id,content,doc_id,user_id,created_at"],
   event: ["events", "id,title,description,date,organizer_id"],
   help: ["help_requests", "id,title,description,user_id"],
   market: ["marketplace", "id,title,description,price,user_id,image_url"],
   review: ["mentor_reviews", "id,rating,comment,mentee_id,mentor_id,created_at"],
+  place: ["places", "id,name,kind,city,address,note,created_by,created_at"],
 };
 REPORTED_ITEMS.marketplace = REPORTED_ITEMS.market;
 
@@ -1902,6 +2002,26 @@ export async function adminGetReportedItem(kind, id) {
   return rows?.[0] || null;
 }
 
+// The members who recommend a place (admins can see them), newest first.
+export async function adminGetPlaceRecommenders(placeId) {
+  if (!UUID.test(placeId || "")) return [];
+  const rows = await restCall("GET", `/rest/v1/place_recommendations?place_id=eq.${placeId}&select=user_id,created_at,profiles:user_id(name)&order=created_at.desc&limit=100`);
+  return (rows || []).map((r) => ({ id: r.user_id, name: r.profiles?.name || "", created_at: r.created_at }));
+}
+
+// A reported message (admins can't read messages otherwise): only the
+// message the report is about. Since the 2026-10-21 database update; before
+// it, null with missing set.
+export async function adminGetReportedMessage(reportId) {
+  try {
+    const rows = await restCall("POST", "/rest/v1/rpc/admin_get_reported_message", { p_report: reportId });
+    return rows?.[0] || null;
+  } catch (err) {
+    if (isMissingInDatabase(err)) return { missing: true };
+    throw err;
+  }
+}
+
 // RLS turns a forbidden write into a silent no-op, so ask for the changed
 // rows back and treat "none" as a failure.
 async function adminWrite(method, path, body = null) {
@@ -1912,8 +2032,8 @@ async function adminWrite(method, path, body = null) {
   return rows;
 }
 
-// Moderation only (block / unblock). Verification decisions go through
-// adminReviewMember.
+// Before the 2026-10-21 database update only: block / unblock by writing the
+// status. Since then admins can't write members' rows (adminModerate).
 export async function adminSetMemberStatus(userId, status) {
   return adminWrite("PATCH", `/rest/v1/profile_private?id=eq.${userId}`, { status });
 }
@@ -1923,9 +2043,109 @@ export async function adminCityStats() {
   return (await restCall("POST", "/rest/v1/rpc/admin_city_stats", {})) || [];
 }
 
-// Makes a member the NRIClub ambassador for a city ('' to stop).
+// A function of the 2026-10-21 database update, or `old()` (the way the
+// panel did it before) while the database doesn't have it yet. old()
+// returns what the function would, or throws.
+async function adminRpc(name, body, old) {
+  if (!knownMissing(name)) {
+    try {
+      return await restCall("POST", `/rest/v1/rpc/${name}`, body);
+    } catch (err) {
+      if (!isMissingInDatabase(err) || !old) throw err;
+      missingSince[name] = Date.now();
+    }
+  }
+  if (!old) throw new Error("This needs the database update of 21 October 2026.");
+  return old();
+}
+
+// Whether the database has the 2026-10-21 moderation functions: our team's
+// decisions then reach the members concerned in the app (statements of
+// reasons, report outcomes) and are recorded. Before it, the panel acts as
+// before and says that the members aren't told.
+export async function adminHasModeration() {
+  if (knownMissing("admin_member_overview")) return false;
+  try {
+    await restCall("POST", "/rest/v1/rpc/admin_member_overview", { p_member: "00000000-0000-0000-0000-000000000000" });
+    return true;
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.admin_member_overview = Date.now();
+    return false;
+  }
+}
+
+// What the panel shows with a member: { is_admin, is_me, upcoming_sessions
+// (mentoring sessions they give), free_slots, open_reports (about them or
+// their content), open_profile_reports, last_warning_at, history: [{
+// created_at, action, kind, ground, rule, explanation, urgent, source, by }]
+// }. null before the 2026-10-21 database update.
+export async function adminMemberOverview(memberId) {
+  if (!UUID.test(memberId || "")) return null;
+  try {
+    return await adminRpc("admin_member_overview", { p_member: memberId }, () => null);
+  } catch (err) {
+    return null;
+  }
+}
+
+const MODERATED_TABLES = {
+  post: "posts", comment: "comments", answer: "help_responses", doc: "docs", doc_comment: "doc_comments",
+  event: "events", help: "help_requests", market: "marketplace", review: "mentor_reviews", place: "places",
+};
+
+// One decision of our team on a member's content or account
+// (public.admin_moderate): kind ("post", "comment", "answer", "doc",
+// "doc_comment", "event", "help", "market", "review", "place", "message",
+// "place_recommendation" with member, "profile_photo", "profile_bio" or
+// "member"), id, action ("remove", "warn", "block", "unblock"), ground
+// ("terms" or "illegal"), rule (the rule in the Terms, or the law), facts
+// (finishing "because ..."), reportIds (the reports it answers; every other
+// open report about the same item is closed with them), urgent (for a block
+// without an earlier warning), notice (a report from the public page).
+// The database records it, tells the member why and the reporters what was
+// decided: { action_id, statement, closed_reports, cancelled_sessions }.
+// Before the 2026-10-21 database update it's done the old way (reports
+// closed first, then the content deleted or the status written), nobody is
+// told, and the answer has fallback set.
+export async function adminModerate({ kind, id, action, ground = null, rule = "", facts = "", reportIds = [], urgent = null, notice = null, member = null }) {
+  const body = {
+    p_kind: kind, p_id: id, p_action: action, p_ground: ground, p_rule: rule, p_explanation: facts,
+    p_report_ids: (reportIds || []).filter((r) => UUID.test(r || "")),
+  };
+  if (urgent) body.p_urgent = urgent;
+  if (notice) body.p_notice = notice;
+  if (member) body.p_member = member;
+  return adminRpc("admin_moderate", body, async () => {
+    if (notice || action === "warn" || kind === "message" || kind === "place_recommendation") {
+      throw new Error("This needs the database update of 21 October 2026.");
+    }
+    // Close the reports first, so a decision another admin took meanwhile
+    // stops this one.
+    let claimed = [];
+    if (body.p_report_ids.length) {
+      claimed = await adminSetReportStatus(body.p_report_ids, "resolved");
+      if (!claimed.length) throw new Error("These reports were already handled by someone else. Reload to see the latest.");
+    }
+    try {
+      if (kind === "member") await adminSetMemberStatus(id, action === "block" ? "blocked" : "active");
+      else if (kind === "profile_photo") await adminWrite("PATCH", `/rest/v1/profiles?id=eq.${id}&select=id`, { avatar_url: "" });
+      else if (kind === "profile_bio") await adminWrite("PATCH", `/rest/v1/profiles?id=eq.${id}&select=id`, { bio: "" });
+      else if (MODERATED_TABLES[kind]) await adminWrite("DELETE", `/rest/v1/${MODERATED_TABLES[kind]}?id=eq.${id}`);
+      else throw new Error(`Cannot moderate ${kind}`);
+    } catch (err) {
+      if (claimed.length) await adminReopenReports(claimed.map((r) => r.id), "resolved").catch(() => {});
+      throw err;
+    }
+    return { fallback: true, closed_reports: claimed.map((r) => r.id), statement: "", cancelled_sessions: 0 };
+  });
+}
+
+// Makes a member the NRIClub ambassador for a city ('' to stop). Recorded
+// since the 2026-10-21 database update.
 export async function adminSetAmbassador(userId, city) {
-  return adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}&select=id,ambassador_city`, { ambassador_city: city });
+  return adminRpc("admin_set_ambassador", { p_member: userId, p_city: city },
+    () => adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}&select=id,ambassador_city`, { ambassador_city: city }));
 }
 
 // Members waiting for a decision (or any other verification statuses), with
@@ -1949,30 +2169,36 @@ export async function adminReviewMember(memberId, decision, message = "", adminN
   return restCall("POST", "/rest/v1/rpc/review_member", body);
 }
 
-// Approve and reject act only on a request that is still waiting, so a panel
-// that's out of date can't touch a community that is already live.
-export async function adminApproveGroup(groupId) {
-  return adminWrite("PATCH", `/rest/v1/groups?id=eq.${groupId}&is_approved=eq.false`, { is_approved: true });
+// A community: action "approve" or "reject" (a request that is still
+// waiting), "unapprove" (Undo of an approval, while nobody has joined or
+// posted), "delete" (a live community; reason needed). The member who asked
+// for it is told. Recorded since the 2026-10-21 database update; before it,
+// written directly as the panel did.
+export async function adminSetGroup(group, action, reason = "") {
+  return adminRpc("admin_set_group", { p_group: group.id, p_action: action, p_reason: reason }, async () => {
+    if (action === "approve") {
+      await adminWrite("PATCH", `/rest/v1/groups?id=eq.${group.id}&is_approved=eq.false`, { is_approved: true });
+      if (group.created_by) { try { await adminNotify(group.created_by, "group", `Your community "${group.name}" has been approved!`); } catch { /* the approval itself worked */ } }
+    } else if (action === "unapprove") {
+      await adminWrite("PATCH", `/rest/v1/groups?id=eq.${group.id}&is_approved=eq.true&members_count=eq.0`, { is_approved: false });
+    } else if (action === "reject") {
+      await adminWrite("DELETE", `/rest/v1/groups?id=eq.${group.id}&is_approved=eq.false`);
+      if (group.created_by) { try { await adminNotify(group.created_by, "group", `Your community request "${group.name}" was not approved.${reason ? ` Reason: ${reason}.` : ""}`); } catch { /* the rejection itself worked */ } }
+    } else if (action === "delete") {
+      await adminWrite("DELETE", `/rest/v1/groups?id=eq.${group.id}`);
+      if (group.created_by) { try { await adminNotify(group.created_by, "group", `We deleted the community "${group.name}" because ${reason}. Think we got it wrong? Write to hello@nriclub.app.`); } catch { /* the deletion itself worked */ } }
+    }
+    return null;
+  });
 }
 
-export async function adminRejectGroupRequest(groupId) {
-  return adminWrite("DELETE", `/rest/v1/groups?id=eq.${groupId}&is_approved=eq.false`);
-}
-
-// Deletes any community, live or not. Community requests are rejected with
-// adminRejectGroupRequest.
-export async function adminDeleteGroup(groupId) {
-  return adminWrite("DELETE", `/rest/v1/groups?id=eq.${groupId}`);
-}
-
-// Marks reports as handled ("reviewed": dismissed, "resolved": acted on).
-// They stay on record and show under Handled. Takes one id or several (every
-// report about the same item). Only reports that are still open change, so
-// a panel that's out of date can't overwrite another admin's decision.
-// Returns the reports that changed: none means they were already handled
-// (or this account is no longer an admin); reload to see the latest.
-// Removing content or blocking claims the reports this way first, so it only
-// goes ahead if some are still open.
+// Before the 2026-10-21 database update: marks reports as handled
+// ("reviewed": dismissed, "resolved": acted on) by writing their status.
+// They stay on record and show under Handled. Only reports that are still
+// open change, so a panel that's out of date can't overwrite another
+// admin's decision. Returns the reports that changed. Since that update this
+// is only for feedback (bug reports and ideas); reports about members and
+// content are closed with adminCloseReports or adminModerate.
 export async function adminSetReportStatus(reportIds, status) {
   if (status !== "reviewed" && status !== "resolved") throw new Error(`Unknown report status: ${status}`);
   const ids = (Array.isArray(reportIds) ? reportIds : [reportIds]).filter((id) => UUID.test(id || ""));
@@ -1981,28 +2207,66 @@ export async function adminSetReportStatus(reportIds, status) {
   return Array.isArray(rows) ? rows : [];
 }
 
-// Opens reports again that adminSetReportStatus just claimed with status,
-// when the action they were claimed for failed. Only reports still in that
-// status change (other admins only change open ones). Returns them.
+// Closes reports about members and content without acting on what they're
+// about. status "reviewed": we kept it (reason finishes "because ..."),
+// "resolved": it's already gone. The members who sent them are told why.
+// Returns the reports that were still open (none: someone else handled them
+// first). Before the 2026-10-21 database update, the status is written and
+// nobody is told.
+export async function adminCloseReports(reportIds, status, reason) {
+  const ids = (Array.isArray(reportIds) ? reportIds : [reportIds]).filter((id) => UUID.test(id || ""));
+  if (!ids.length) throw new Error("No reports to update.");
+  const rows = await adminRpc("admin_close_reports", { p_ids: ids, p_status: status, p_reason: reason },
+    () => adminSetReportStatus(ids, status));
+  return Array.isArray(rows) ? rows : [];
+}
+
+// Opens reports again that were just closed with status (an Undo, or when
+// the action they were closed for failed), and takes back the outcome their
+// senders were sent. Only reports still in that status change. Returns them.
 export async function adminReopenReports(reportIds, status) {
   if (status !== "reviewed" && status !== "resolved") throw new Error(`Unknown report status: ${status}`);
   const ids = reportIds.filter((id) => UUID.test(id || ""));
   if (!ids.length) return [];
-  const rows = await restCall("PATCH", `/rest/v1/reports?id=in.(${ids.join(",")})&status=eq.${status}`, { status: "pending" }, { Prefer: "return=representation" });
+  const rows = await adminRpc("admin_reopen_reports", { p_ids: ids, p_status: status },
+    () => restCall("PATCH", `/rest/v1/reports?id=in.(${ids.join(",")})&status=eq.${status}`, { status: "pending" }, { Prefer: "return=representation" }));
   return Array.isArray(rows) ? rows : [];
 }
 
-// Deletes a report for good (no record is kept); handling a report uses
-// adminSetReportStatus.
-export async function adminDeleteReport(reportId) {
-  return adminWrite("DELETE", `/rest/v1/reports?id=eq.${reportId}`);
+// Our team's notes on reports, { [report id]: note } (e.g. which police
+// authority they told about a safety report, and when). null before the
+// 2026-10-21 database update, which has nowhere to keep them.
+export async function adminReportNotes(reportIds) {
+  const ids = (reportIds || []).filter((id) => UUID.test(id || ""));
+  if (!ids.length) return {};
+  try {
+    const rows = await adminRpc("admin_report_notes", { p_ids: ids }, () => null);
+    return rows ? Object.fromEntries(rows.map((r) => [r.report_id, r.note])) : null;
+  } catch {
+    return null;
+  }
 }
 
-const MODERATED_TABLES = ["posts", "docs", "events", "help_requests", "marketplace", "mentor_reviews"];
+export async function adminSetReportNote(reportId, note) {
+  return adminRpc("admin_set_report_note", { p_report: reportId, p_note: note });
+}
 
-export async function adminDeleteContent(table, id) {
-  if (!MODERATED_TABLES.includes(table)) throw new Error(`Cannot moderate ${table}`);
-  return adminWrite("DELETE", `/rest/v1/${table}?id=eq.${id}`);
+// Reports from the public page (nriclub.app/report): open ones oldest
+// first, then the newest closed ones. null before the 2026-10-21 database
+// update (reports then arrive by email only).
+export async function adminNotices() {
+  try {
+    return await adminRpc("admin_notices", {}, () => null);
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+
+// A step on a notice: "receipt_sent" / "decision_sent" (our team emailed
+// the sender), "decide" (decision "kept", with reason), "reopen", "note".
+export async function adminUpdateNotice(noticeId, step, decision = null, reason = null) {
+  return adminRpc("admin_update_notice", { p_notice: noticeId, p_step: step, p_decision: decision, p_reason: reason });
 }
 
 export async function adminNotify(userId, type, text) {
