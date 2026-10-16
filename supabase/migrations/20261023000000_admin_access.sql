@@ -28,7 +28,8 @@
 --     and declined members newest decision first) (C25).
 -- Needs all earlier migrations (up to 20261020000000_notifications_limits_privacy.sql).
 -- Existing rows: events of organisers who aren't shown lose the organiser's
--- name; nothing else changes. The two-step switch starts off.
+-- name, and events of organisers who are shown get it if it is missing;
+-- nothing else changes. The two-step switch starts off.
 -- ============================================================================
 
 -- ============================================================================
@@ -395,16 +396,30 @@ FROM public.profile_private pp
 WHERE pp.id = e.organizer_id AND e.organizer_name <> ''
   AND NOT (pp.status = 'active' AND pp.verification_status = 'approved');
 
+-- Events of organisers who are shown but saved without the organiser's name
+-- get it, so the site doesn't show them as by a member who isn't shown
+-- ("NRIClub member").
+UPDATE public.events e SET organizer_name = p.name
+FROM public.profiles p JOIN public.profile_private pp ON pp.id = p.id
+WHERE p.id = e.organizer_id AND e.organizer_name = '' AND p.name <> ''
+  AND pp.status = 'active' AND pp.verification_status = 'approved';
+
 -- Admins who have no admin rights from now on (a blocked account, or one
 -- without its private profile row): shown in the SQL editor's messages, so
 -- a surprise is seen at once. Unblock with
 --   UPDATE public.profile_private SET status = 'active' WHERE id = '<admin id>';
+-- Also how many admin accounts members no longer see (not approved as
+-- members: their posts show as "NRIClub member"); approve one in the admin
+-- panel, or leave it if the account is only for the admin panel.
 DO $$
 DECLARE
   listed INTEGER;
   without INTEGER;
+  hidden INTEGER;
 BEGIN
-  SELECT count(*), count(*) FILTER (WHERE pp.id IS NULL OR pp.status <> 'active') INTO listed, without
+  SELECT count(*), count(*) FILTER (WHERE pp.id IS NULL OR pp.status <> 'active'),
+    count(*) FILTER (WHERE pp.id IS NULL OR pp.status <> 'active' OR pp.verification_status <> 'approved')
+  INTO listed, without, hidden
   FROM public.admins a LEFT JOIN public.profile_private pp ON pp.id = a.user_id;
-  RAISE NOTICE 'NRIClub admin access: % admin account(s); % of them without admin rights now (blocked, or no profile). Two-step login is not required until switched on in the admin panel (Security).', listed, without;
+  RAISE NOTICE 'NRIClub admin access: % admin account(s); % of them without admin rights now (blocked, or no profile); % not shown to members (not approved). Two-step login is not required until switched on in the admin panel (Security).', listed, without, hidden;
 END $$;

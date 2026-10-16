@@ -9,6 +9,7 @@ as the API role a real request would use (anon or authenticated + JWT claims).
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -2430,16 +2431,30 @@ def admin_access():
           as_user=lena, error_has="Admins only")
 
     # --- the migration's changes to existing rows ---------------------------------------
-    check("existing rows: events of organisers who aren't shown lose the name", f"""
+    check("existing rows: events of organisers who aren't shown lose the name; shown ones without it get it", f"""
           BEGIN;
           ALTER TABLE public.profile_private DISABLE TRIGGER sync_organizer_name;
           UPDATE profile_private SET status = 'blocked' WHERE id = '{bodhi}';
           ALTER TABLE public.profile_private ENABLE TRIGGER sync_organizer_name;
           INSERT INTO events (title, date, location, organizer_id, organizer_name) VALUES ('Picnic', '2099-02-02', 'Park', '{lena}', 'Lena L');
+          INSERT INTO events (title, date, location, organizer_id, organizer_name) VALUES ('Quiz', '2099-03-03', 'Pub', '{lena}', '');
+          INSERT INTO events (title, date, location, organizer_id, organizer_name) VALUES ('Yoga', '2099-03-04', 'Park', '{pema}', '');
           SELECT organizer_name FROM events WHERE id = '{bodhi_event}';
           {migration_section("EXISTING DATA", ADMIN_ACCESS)}
-          SELECT string_agg(organizer_name, ',' ORDER BY title) FROM events WHERE organizer_id IN ('{bodhi}', '{lena}');
-          ROLLBACK;""", expect="Bodhi Bose\n,Lena L")
+          SELECT string_agg(organizer_name, ',' ORDER BY title) FROM events WHERE organizer_id IN ('{bodhi}', '{lena}', '{pema}');
+          ROLLBACK;""", expect="Bodhi Bose\n,Lena L,Lena L,")
+    # (acc-rev) An admin account members don't see (not approved) hides its
+    # posts' author: the update says how many there are.
+    ok, out, err = psql(f"""BEGIN;
+          INSERT INTO public.admins (user_id) VALUES ('{pema}');
+          {migration_section("EXISTING DATA", ADMIN_ACCESS)}
+          SELECT count(*) FROM public.admins a LEFT JOIN public.profile_private pp ON pp.id = a.user_id
+          WHERE pp.id IS NULL OR pp.status <> 'active' OR pp.verification_status <> 'approved';
+          ROLLBACK;""")
+    found = re.search(r"; (\d+) not shown to members", err) if ok else None
+    shown = found.group(1) if found else None
+    verdict("existing rows: the update says how many admin accounts members don't see",
+            shown is not None and out.splitlines()[-1:] == [shown] and int(shown) >= 1, f"{out} | {err}")
 
 
 if __name__ == "__main__":

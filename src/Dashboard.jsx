@@ -617,6 +617,11 @@ const PLACE_KINDS = ["Grocery", "Restaurant", "Temple", "Shop", "Doctor", "Tax &
 const PRO_KINDS = ["Doctor", "Tax & accounts", "Lawyer", "Driving school"];
 const PLACE_ICON = { Grocery: "🛒", Restaurant: "🍛", Temple: "🛕", Shop: "🛍️", Doctor: "🩺", "Tax & accounts": "🧾", Lawyer: "⚖️", "Driving school": "🚗" };
 
+// The first message to a Market seller (no name for a seller who isn't
+// shown to members any more: they're "NRIClub member").
+const contactGreeting = (item) =>
+  `${item.sellerHidden ? "Hi" : `Hi ${item.seller.split(" ")[0]}`}, is this still available?`;
+
 // A question as the Ask page uses it (responses: the answer count, if known).
 const toHelp = (h, responses) => ({
   id: h.id, userId: h.user_id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status,
@@ -1451,7 +1456,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           refreshMyProfile().then(fresh => checkedDecision(decision.id, fresh));
         }
         setNotifications(dbNotifs.map(n => ({
-          id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
+          id: n.id, type: n.type, actor: n.actor?.name || null, actorHidden: !!n.actor?.unlisted, actor_id: n.actor?.id || n.actor_id || null,
           text: n.text, created_at: n.created_at,
           read: n.read, reference_id: n.reference_id,
         })));
@@ -1460,7 +1465,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       if (dbMarket && dbMarket.length) {
         setMarketItems(dbMarket.map(m => {
           const photos = listingPhotos(m.image_url);
-          return { id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
+          return { id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", sellerHidden: !!m.profiles?.unlisted, date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
         }));
       }
       setListsLoaded(true);
@@ -1695,7 +1700,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         const dbNotifs = await api.getNotifications();
         if (dbNotifs && dbNotifs.length) {
           setNotifications(dbNotifs.map(n => ({
-            id: n.id, type: n.type, actor: n.actor?.name || null, actor_id: n.actor?.id || n.actor_id || null,
+            id: n.id, type: n.type, actor: n.actor?.name || null, actorHidden: !!n.actor?.unlisted, actor_id: n.actor?.id || n.actor_id || null,
             text: n.text, created_at: n.created_at,
             read: n.read, reference_id: n.reference_id,
           })));
@@ -3790,7 +3795,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); } }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>{Icons.trash({ size: 11 })} Delete</button>
                         ) : (
                           <>
-                            <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(`Hi ${item.seller.split(" ")[0]}, is this still available?`); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
+                            <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(contactGreeting(item)); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
                             <button onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "marketplace", id: item.id, name: item.title }); }} aria-label="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#D4D4D2", padding: 8, display: "flex" }}>{Icons.flag({ size: 12 })}</button>
                           </>
                         )}
@@ -4526,7 +4531,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 3, fontFamily: font }}>{timeAgo(new Date(n.created_at).getTime())}</p>
                             {n.type === "request" && acceptedNotifs.some(a => a.id === n.id) ? (
                               <p role="status" style={{ fontSize: 13, fontWeight: 600, color: "#22A06B", marginTop: 8, fontFamily: font }}>
-                                ✓ Accepted.{n.actor ? ` ${n.actor.split(" ")[0]} can now follow you.` : ""}
+                                ✓ Accepted.{n.actor && !n.actorHidden ? ` ${n.actor.split(" ")[0]} can now follow you.` : ""}
                               </p>
                             ) : n.type === "request" && (
                               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -5116,7 +5121,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* Action row, kept in view at the bottom (no Contact Seller on your own listing) */}
               <div style={{ display: "flex", gap: 12, justifyContent: "space-between", alignItems: "center", position: "sticky", bottom: 0, background: "#fff", padding: "12px 0", borderTop: "1px solid #F0EFED" }}>
                 {expandedMarketItem.user_id !== user.id ? (
-                  <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(`Hi ${expandedMarketItem.seller.split(" ")[0]}, is this still available?`); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
+                  <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(contactGreeting(expandedMarketItem)); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
                     {Icons.send({ size: 15 })} Contact Seller
                   </button>
                 ) : (
