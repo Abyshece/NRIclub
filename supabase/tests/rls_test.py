@@ -1263,7 +1263,7 @@ def main():
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=ALICE,
           expect="account,answer_thanks,blocks,comments,connections,conversations,conversations_hidden,doc_comments,docs,"
                  "event_rsvps,events_organised,exported_at,files,group_memberships,groups_requested,help_requests,"
-                 "help_responses,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
+                 "help_responses,invite_code,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
                  "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,place_recommendations,"
                  "places_added,posts,profile,"
                  "profile_private,rate_limit_log,readme,reports_about_me,reports_filed,sessions,terms_acceptances,"
@@ -3004,6 +3004,10 @@ def storage_images():
     ok, tara_code, err = psql(f"SELECT code FROM invites WHERE member_id = '{tara}'")
     if not ok or not tara_code:
         sys.exit("reading tara's invite code failed: " + err)
+    check("\"Download my data\" has the member's invite code (export_my_data of 20261021)",
+          "SELECT public.export_my_data() ->> 'invite_code'", as_user=tara, expect=tara_code)
+    check("... and null for a member who never asked for one",
+          "SELECT (public.export_my_data() -> 'invite_code') = 'null'::jsonb", as_user=wen, expect="t")
     check("a new member's invite code tells who invited them",
           f"SELECT member_id || ',' || first_name FROM public.resolve_invite('{tara_code}')", as_user=vik,
           expect=f"{tara},Tara")
@@ -3098,10 +3102,8 @@ def admin_access():
     check("an admin has admin rights", rights, as_user=zara, expect="true")
     check("an admin can't block her own account", "UPDATE profile_private SET status = 'blocked' WHERE id = auth.uid()",
           as_user=zara, error_has="You can't block your own account.")
-    check("... but can block a member, and unblock them", f"""
-          UPDATE profile_private SET status = 'blocked' WHERE id = '{inka}' RETURNING status;
-          UPDATE profile_private SET status = 'active' WHERE id = '{inka}' RETURNING status""",
-          as_user=zara, expect="blocked\nactive")
+    check("... but can block a member (through admin_moderate, 20261021), and unblock them",
+          block(inka) + "; " + unblock(inka), as_user=zara, expect="blocked\nactive")
     check("an admin's account is blocked (in the SQL editor)", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{zara}'")
     check("... and has no admin rights", rights, as_user=zara, expect="false")
     check("... not even signed in with the code", rights, as_user=zara, claims=aal2, expect="false")

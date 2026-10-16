@@ -1531,11 +1531,14 @@ $$;
 -- member sent, and our team keeping such a message (only the member it was
 -- sent to can report it, so either would say who did, Art. 15(4) GDPR); a
 -- message we removed is in it, as the member was told when it happened.
+-- Also the member's invite code, once the database has invite codes
+-- (public.invites, update 20261022000000_storage_images.sql).
 CREATE OR REPLACE FUNCTION public.export_my_data()
 RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   uid UUID := auth.uid();
   sessions JSONB := '[]'::jsonb;
+  invite TEXT;
 BEGIN
   IF uid IS NULL THEN
     RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
@@ -1547,6 +1550,9 @@ BEGIN
           'ip', s->'ip', 'user_agent', s->'user_agent') ORDER BY s->>'created_at'), '[]'::jsonb)
       FROM (SELECT to_jsonb(x) AS s FROM auth.sessions x WHERE x.user_id = $1) y
     $q$ INTO sessions USING uid;
+  END IF;
+  IF to_regclass('public.invites') IS NOT NULL THEN
+    EXECUTE 'SELECT i.code FROM public.invites i WHERE i.member_id = $1' INTO invite USING uid;
   END IF;
   RETURN jsonb_build_object(
     'exported_at', NOW(),
@@ -1564,6 +1570,7 @@ BEGIN
     'profile', (SELECT to_jsonb(p) FROM public.profiles p WHERE p.id = uid),
     'profile_private', (SELECT to_jsonb(pp) FROM public.profile_private pp WHERE pp.id = uid),
     'user_settings', (SELECT to_jsonb(s) FROM public.user_settings s WHERE s.user_id = uid),
+    'invite_code', invite,
     'terms_acceptances', COALESCE((SELECT jsonb_agg(jsonb_build_object(
         'kind', x.kind, 'version', x.version, 'accepted_at', x.accepted_at) ORDER BY x.accepted_at, x.kind)
       FROM public.terms_acceptances x WHERE x.member_id = uid), '[]'::jsonb),
