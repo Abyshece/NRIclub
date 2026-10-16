@@ -390,11 +390,11 @@ DROP POLICY "Admins can delete reports" ON public.reports;
 -- 16(2)(c)). status: 'open' until our team has decided. decision: what we
 -- did ('removed', 'blocked', 'warned', 'kept', or 'gone': it was no longer
 -- there, e.g. removed after a member's report of it), decision_reason
--- finishing "because ..." ('gone': what happened). receipt_sent_at / decision_sent_at: when our team emailed
--- the sender the receipt and the decision from hello@nriclub.app (the app
--- sends no email). hold_reason: set by hand in the SQL editor while a legal
--- dispute or police matter about it is open (private.daily_cleanup then
--- keeps it).
+-- finishing "because ..." ('gone': what happened). receipt_sent_at /
+-- decision_sent_at: when our team emailed the sender the receipt and the
+-- decision from hello@nriclub.app (the app sends no email). hold_reason:
+-- set by hand in the SQL editor while a legal dispute or police matter
+-- about it is open (private.daily_cleanup then keeps it).
 CREATE TABLE private.notices (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   reference TEXT NOT NULL UNIQUE,
@@ -828,8 +828,15 @@ BEGIN
     RAISE EXCEPTION 'Notice not found.' USING ERRCODE = 'P0002';
   END IF;
   src := CASE WHEN p_notice IS NOT NULL THEN 'notice' WHEN cardinality(ids) > 0 THEN 'report' ELSE 'own_initiative' END;
-  -- What the reporters are told it was about (before it's gone).
+  -- What the reporters are told it was about (before it's gone): for a
+  -- photo, a bio or one recommendation, that part ("we removed it" mustn't
+  -- read as the member or the place).
   items := private.report_items(ids);
+  IF p_kind IN ('profile_photo', 'profile_bio', 'place_recommendation') THEN
+    SELECT COALESCE(jsonb_object_agg(x.key, CASE p_kind WHEN 'profile_photo' THEN 'the profile photo of '
+      WHEN 'profile_bio' THEN 'the bio of ' ELSE 'a recommendation of ' END || x.value), '{}'::jsonb)
+    INTO items FROM jsonb_each_text(items) x;
+  END IF;
 
   -- Do it.
   IF p_action = 'remove' THEN

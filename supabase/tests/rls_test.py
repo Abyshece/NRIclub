@@ -2566,9 +2566,16 @@ def moderation_dsa():
           f"SELECT '[' || avatar_url || ']' FROM profiles WHERE id = '{ravi}'", as_user=ADMIN, expect="[]")
     check("... (the record)", "SELECT snapshot -> 'files' ->> 0 FROM private.moderation_action "
           f"WHERE target_kind = 'profile_photo' AND target_user = '{ravi}'", expect=f"avatars/{ravi}/a.jpg")
-    check("... and a bio", f"SELECT {moderate('profile_bio', ravi, 'remove', facts='it advertises a paid visa service')} "
-          f"->> 'statement' LIKE 'We removed the bio on your profile on %'; SELECT bio FROM profiles WHERE id = '{ravi}'",
-          as_user=ADMIN, expect="t")
+    check("neel reports ravi's profile", report("profile", ravi, category="spam", explanation="His bio advertises a paid visa service.")
+          + " RETURNING 1", as_user=neel, expect="1")
+    neel_report = f"(SELECT id FROM reports WHERE reporter_id = '{neel}' AND content_type = 'profile')"
+    check("... and a bio", f"SELECT {moderate('profile_bio', ravi, 'remove', facts='it advertises a paid visa service', reports=['__R__'])} "
+          f"->> 'statement' LIKE 'We removed the bio on your profile on %'; SELECT bio FROM profiles WHERE id = '{ravi}'"
+          .replace("'__R__'::uuid", neel_report), as_user=ADMIN, expect="t")
+    check("... neel hears that the bio was removed (not \"the member\")",
+          f"SELECT text FROM notifications WHERE user_id = '{neel}' AND type = 'report'",
+          expect="We looked at your report about the bio of the member Ravi R: we removed it because it advertises a paid "
+                 "visa service. " + redress)
 
     # --- closing reports without action, and Undo (C7, C36) ----------------------------
     check("usha reports ravi's post", report("post", post, category="spam", explanation="It advertises his own business.")
