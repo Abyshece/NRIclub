@@ -4,6 +4,7 @@ import { TermsModal, PrivacyModal } from "./LegalModals";
 import { AccountFooter } from "./AccountActions";
 import { VERIFICATION_BANNER_ID } from "./VerificationBanner";
 import { TermsCheckbox, Art9Checkbox, PrivacyNote, TERMS_ERROR, ART9_ERROR } from "./Consent";
+import { readInvite, forgetInvite, invitedByText } from "./invite";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy } from "./ui";
 import {
   mapProfile, countryName, getCountryOptions, MAJOR_INDIAN_CITIES,
@@ -45,14 +46,25 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
   const [useLinkedin, setUseLinkedin] = useState(!hasNoteOnly);
   const [linkedin, setLinkedin] = useState(user.linkedinUrl || "");
   const [note, setNote] = useState(user.verificationNote || "");
-  // Who invited them, if they came through a member's invite link.
-  const invitedBy = (() => {
-    try {
-      const inv = JSON.parse(localStorage.getItem("nriclub_invite") || "null");
-      return inv && inv.id ? `Invited by ${inv.from || "a member"} (member ${inv.id})` : "";
-    } catch (e) { return ""; }
-  })();
+  // Who invited them, if they came through a member's invite link: a link
+  // from before invite codes says so itself; a code is looked up.
+  const [invitedBy, setInvitedBy] = useState(() => {
+    const inv = readInvite();
+    return inv?.id ? invitedByText(inv.id, inv.from) : "";
+  });
   const [voucher, setVoucher] = useState(user.voucher || invitedBy);
+  useEffect(() => {
+    const inv = readInvite();
+    if (!inv?.code) return;
+    let alive = true;
+    api.resolveInvite(inv.code).then((found) => {
+      if (!alive || !found) return;
+      const text = invitedByText(found.id, found.first);
+      setInvitedBy(text);
+      setVoucher((v) => v || text);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const [profession, setProfession] = useState(user.profession || "");
   const [agree, setAgree] = useState(false);
   const [art9, setArt9] = useState(false);
@@ -180,6 +192,8 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
       setSubmitting(false);
       return;
     }
+    // Our team has who invited them now: the browser needn't keep it.
+    forgetInvite();
     let updated = null;
     try { updated = mapProfile(await api.getMyProfile()); } catch {}
     const now = new Date().toISOString();

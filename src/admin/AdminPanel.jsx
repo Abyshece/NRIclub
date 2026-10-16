@@ -6,6 +6,7 @@ import VerificationView from "./VerificationView";
 import MembersView from "./MembersView";
 import CommunitiesView from "./CommunitiesView";
 import OverviewView from "./OverviewView";
+import { usePhotoCleanup } from "./PhotoCleanup";
 import { FeedbackView, ReportsView, contentPreview, isFeedback, isOpenBug, isOpenIdea, isOpenReport, personOf, targetKey } from "./ReportsView";
 import { ADMIN_CSS, ErrorNote, Icon, SkeletonRows, Toast } from "./ui";
 import { friendlyError } from "./format";
@@ -149,6 +150,9 @@ export default function AdminPanel({ onLogout }) {
   }, [page]);
 
   const showToast = useCallback((t) => setToast({ id: Date.now() + Math.random(), ...t }), []);
+  // Photo files nothing uses any more: deleted once a day when the panel
+  // opens, and from Overview.
+  const photoCleanup = usePhotoCleanup(showToast);
 
   const undoToast = async () => {
     const t = toast;
@@ -295,7 +299,7 @@ export default function AdminPanel({ onLogout }) {
   } else if (page === "bugs") {
     content = <FeedbackView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} moreOpen={moreOpen.feedback.after ? moreOpen.feedback.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(true)} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
   } else {
-    content = <OverviewView users={users} membersTotal={membersTotal} blockedTotal={blockedTotal} counts={counts} openReports={openReports} pendingGroups={pendingGroups} onNavigate={go} />;
+    content = <OverviewView users={users} membersTotal={membersTotal} blockedTotal={blockedTotal} counts={counts} openReports={openReports} pendingGroups={pendingGroups} onNavigate={go} photoCleanup={photoCleanup} />;
   }
 
   return (

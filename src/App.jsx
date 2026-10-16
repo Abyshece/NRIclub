@@ -6,11 +6,14 @@ import "./member/base.css";
 import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToAccept } from "./member/profile";
 import { rateLimiter } from "./rateLimiter";
 import { hasImprint } from "./content/imprint";
+import { moveOldInvite, rememberInvite } from "./member/invite";
 
 // NRIClub sets no cookies and loads no analytics, so there is no consent
 // banner (the Privacy Policy lists what the site keeps in the browser).
-// Browsers that saw the old banner still hold its choice: remove it.
-try { localStorage.removeItem("nriclub_cookie_consent"); } catch (e) {}
+// Browsers that saw the old banner still hold its choice, and older versions
+// kept a copy of the member's profile that nothing read: remove both.
+try { ["nriclub_cookie_consent", "nriclub_profile_cache"].forEach((key) => localStorage.removeItem(key)); } catch (e) {}
+moveOldInvite();
 
 // The landing page and this file load first; everything else (the member
 // site, signup, the admin panel) loads when it's needed, so a visitor's
@@ -265,15 +268,13 @@ export default function App() {
   // Leave the signed-in screens if the session ends by itself (revoked,
   // expired, or another tab signed out or signed in as someone else).
   useEffect(() => { api.onSessionEnded(() => window.location.reload()); }, []);
-  // An invite link (?invite=<member id>&from=<first name>): remembered for
-  // Get verified, then taken out of the address bar.
+  // An invite link (?invite=<code>; links from before invite codes:
+  // ?invite=<member id>&from=<first name>): remembered for Get verified,
+  // then taken out of the address bar.
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    const inviter = q.get("invite");
-    if (!inviter) return;
-    if (/^[0-9a-f-]{36}$/i.test(inviter)) {
-      try { localStorage.setItem("nriclub_invite", JSON.stringify({ id: inviter, from: (q.get("from") || "").slice(0, 40) })); } catch (e) {}
-    }
+    if (!q.get("invite")) return;
+    rememberInvite(q.get("invite"), q.get("from"));
     try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch (e) {}
   }, []);
 
@@ -396,6 +397,8 @@ export default function App() {
   const handlePasswordReset = (email) => {
     const notice = "Your password has been changed. Log in with your new password.";
     const knownEmail = email && api.resetWasRequestedFor(email) ? email : "";
+    // The new password is set: this browser needn't remember the request.
+    api.forgetResetRequest();
     if (isAdminRoute()) {
       setAdminEmail(knownEmail);
       setAdminErr("");

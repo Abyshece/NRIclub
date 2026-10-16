@@ -275,8 +275,25 @@ async function endServerSession(token, refreshing) {
 // Which address this browser last asked a reset link for, and when:
 // { email, at }. Only then may the login form be filled in with the address
 // a reset link was for; a link someone else made must not fill in theirs.
+// Kept for 24 hours at most (removed as the site loads after that), and
+// removed once the new password is set (forgetResetRequest).
 const RESET_REQUEST_KEY = "nriclub_reset_requested";
 const RESET_REQUEST_MS = 24 * 60 * 60 * 1000;
+
+(function dropOldResetRequest() {
+  try {
+    const raw = localStorage.getItem(RESET_REQUEST_KEY);
+    if (raw === null) return;
+    const age = Date.now() - Number(JSON.parse(raw)?.at);
+    if (!(age >= 0 && age < RESET_REQUEST_MS)) localStorage.removeItem(RESET_REQUEST_KEY);
+  } catch {
+    try { localStorage.removeItem(RESET_REQUEST_KEY); } catch {}
+  }
+})();
+
+export function forgetResetRequest() {
+  try { localStorage.removeItem(RESET_REQUEST_KEY); } catch {}
+}
 
 export async function resetPassword(email) {
   const redirectTo = encodeURIComponent(window.location.origin + window.location.pathname);
@@ -834,6 +851,37 @@ export async function submitVerification({ city, countryCode, location, linkedin
   });
 }
 
+// ----------------------------------------------------------------------------
+// Invite links
+// ----------------------------------------------------------------------------
+
+// The signed-in member's invite code, for nriclub.app/?invite=<code> (made
+// the first time they ask). null before the 2026-10-22 database update,
+// which adds codes: then the link carries the member's ID, as before.
+export async function getInviteCode() {
+  try {
+    const code = await restCall("POST", "/rest/v1/rpc/my_invite_code", {});
+    return typeof code === "string" && code ? code : null;
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+
+// Who invited the signed-in member, from the code in their invite link:
+// { id, first } (the inviter's member ID and first name), or null for an
+// unknown code (or before the database update).
+export async function resolveInvite(code) {
+  try {
+    const rows = await restCall("POST", "/rest/v1/rpc/resolve_invite", { p_code: code });
+    const r = rows?.[0];
+    return r?.member_id ? { id: r.member_id, first: r.first_name || "" } : null;
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+
 // Whether a request failed because the database doesn't have the function or
 // column it asked for yet (the site goes live a little before the database
 // update that adds them): PostgREST's "not found" codes, or Postgres's.
@@ -896,11 +944,41 @@ export async function exportMyData() {
   return restCall("POST", "/rest/v1/rpc/export_my_data", {});
 }
 
-// Deletes the auth user server-side; every row the user owns cascades with it.
-export async function deleteAccount() {
-  if (!currentUser) throw new Error("Not logged in");
-  await restCall("POST", "/rest/v1/rpc/delete_my_account", {});
-  await signOut();
+// Deletes the account: first the member's photo files (Storage keeps them
+// apart from the database, and the session that may delete them ends with
+// the account), then the auth user server-side; every row the user owns
+// cascades with it. Files that couldn't be deleted (the request goes on to
+// the account anyway) the clean-up in the admin panel deletes. Afterwards
+// this browser forgets what it kept for the member (forgetMember). A second
+// call while one runs (a double tap) waits for the first.
+let accountDeletion = null;
+export function deleteAccount() {
+  if (!currentUser) return Promise.reject(new Error("Not logged in"));
+  if (!accountDeletion) {
+    const uid = currentUser.id;
+    accountDeletion = (async () => {
+      await deleteMyFiles();
+      await restCall("POST", "/rest/v1/rpc/delete_my_account", {});
+      forgetMember(uid);
+      await signOut();
+    })().finally(() => { accountDeletion = null; });
+  }
+  return accountDeletion;
+}
+
+// Removes what this browser keeps for one member: the items named
+// nriclub_<what>_<member id> (welcome messages and tips already seen, the
+// last catch-up; Privacy Policy, section 8).
+export function forgetMember(uid) {
+  if (!uid) return;
+  try {
+    const mine = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("nriclub_") && key.endsWith(`_${uid}`)) mine.push(key);
+    }
+    mine.forEach((key) => localStorage.removeItem(key));
+  } catch (e) {}
 }
 
 export async function searchProfiles(query = "", filters = {}) {
@@ -952,13 +1030,24 @@ export async function createPost(content, tags = [], imageUrl = null, groupId = 
   }, { Prefer: "return=representation" });
 }
 
+// Deletes one of the member's own rows and then the photo files it used
+// (image_url: one link, or a listing's JSON array of links). The files go
+// only once the row is gone; if deleting them fails, the clean-up in the
+// admin panel deletes them later.
+async function deleteWithPhotos(table, filter) {
+  const rows = await restCall("DELETE", `/rest/v1/${table}?${filter}&select=image_url`, null, { Prefer: "return=representation" });
+  const links = (rows || []).map((r) => r.image_url).filter(Boolean);
+  if (links.length) await deleteOwnImages(links);
+  return rows;
+}
+
 export async function deletePost(postId) {
-  return restCall("DELETE", `/rest/v1/posts?id=eq.${postId}&user_id=eq.${currentUser.id}`);
+  return deleteWithPhotos("posts", `id=eq.${postId}&user_id=eq.${currentUser.id}`);
 }
 
 export async function deleteMarketItem(id) {
   if (!currentUser) throw new Error("Not logged in");
-  return restCall("DELETE", `/rest/v1/marketplace?id=eq.${id}&user_id=eq.${currentUser.id}`);
+  return deleteWithPhotos("marketplace", `id=eq.${id}&user_id=eq.${currentUser.id}`);
 }
 
 export async function deleteHelpRequest(id) {
@@ -973,7 +1062,7 @@ export async function deleteDoc(id) {
 
 export async function deleteEvent(id) {
   if (!currentUser) throw new Error("Not logged in");
-  return restCall("DELETE", `/rest/v1/events?id=eq.${id}&organizer_id=eq.${currentUser.id}`);
+  return deleteWithPhotos("events", `id=eq.${id}&organizer_id=eq.${currentUser.id}`);
 }
 
 // ============================================================================
@@ -1546,77 +1635,259 @@ export async function getBlockedUsers() {
 
 
 // ============================================================================
-// FILE UPLOAD
+// PHOTO FILES
 // ============================================================================
 
-export async function uploadFile(bucket, filePath, file) {
-  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${filePath}`, {
-    method: "POST",
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": file.type || "application/octet-stream",
-      "x-upsert": "true",
-    },
-    body: file,
-  });
-  if (!res.ok) {
-    let err = "";
-    try { const j = await res.json(); err = j.message || j.error || ""; } catch(e) {}
-    throw new Error(err || `Upload failed (${res.status})`);
-  }
-  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${filePath}`;
+// The public buckets members upload photos to (event photos go to
+// post-images). Each member writes only inside their own folder
+// (<member id>/...); since the 2026-10-22 database update the buckets take
+// JPEG, PNG and WebP up to 2 MB (profile photos) or 4 MB.
+const PHOTO_BUCKETS = ["avatars", "post-images", "marketplace-images"];
+const PHOTO_LIMIT = { avatars: 2 * 1024 * 1024, "post-images": 4 * 1024 * 1024, "marketplace-images": 4 * 1024 * 1024 };
+const PUBLIC_PATH = "/storage/v1/object/public/";
+
+// An error whose message the site may show as it is (apiErrorMessage).
+function userError(message) {
+  const err = new Error(message);
+  err.userMessage = message;
+  return err;
 }
 
-// Phone photos are often 3-8 MB. Before uploading, photos are scaled down to
-// at most `max` pixels on the long side and saved as JPEG (about 150-300 KB),
-// so uploads and feeds are fast. GIFs, SVGs and files that can't be read are
-// uploaded as they are; a smaller original is kept.
-async function shrinkImage(file, max = 1600, quality = 0.82) {
-  if (!file || !/^image\/(jpeg|png|webp|heic|heif)$/i.test(file.type || "") || typeof createImageBitmap !== "function") return file;
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#fff"; // transparent PNG areas become white, not black
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close?.();
-    const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", quality));
-    if (!blob || blob.size >= file.size) return file;
-    return new File([blob], (file.name || "photo").replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
-  } catch (e) {
-    return file;
+const PHOTO_UNREADABLE = "This photo couldn't be read. Try a JPEG or PNG.";
+const PHOTO_TOO_LARGE = "This photo is too large. Please choose a smaller one.";
+
+// A request to Storage as the signed-in member: renews an expired session
+// once, like restRequest. Storage answers an expired token with 400 or 403
+// and "jwt expired" as well as with 401.
+async function storageRequest(method, path, body, contentType = "application/json") {
+  const send = () => fetch(`${SUPABASE_URL}${path}`, {
+    method,
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}`, "Content-Type": contentType },
+    body: body == null ? undefined : contentType === "application/json" ? JSON.stringify(body) : body,
+  });
+  let res = await send();
+  if (!res.ok && accessToken) {
+    const text = await res.clone().text().catch(() => "");
+    if ((res.status === 401 || /jwt|token/i.test(text)) && await refreshSession()) res = await send();
   }
+  return res;
+}
+
+// Uploads a file to bucket/filePath and returns its public link. Paths are
+// random (photoPath), so an upload never replaces another file.
+export async function uploadFile(bucket, filePath, file) {
+  const res = await storageRequest("POST", `/storage/v1/object/${bucket}/${filePath}`, file, file.type || "application/octet-stream");
+  if (!res.ok) {
+    let j = {};
+    try { j = await res.json(); } catch (e) {}
+    const said = `${j.statusCode || ""} ${j.error || ""} ${j.message || ""}`;
+    if (/413|too large|maximum allowed size/i.test(said)) throw userError(PHOTO_TOO_LARGE);
+    if (/415|mime/i.test(said)) throw userError("Please choose a photo (JPEG or PNG).");
+    throw new Error(j.message || j.error || `Upload failed (${res.status})`);
+  }
+  return `${SUPABASE_URL}${PUBLIC_PATH}${bucket}/${filePath}`;
+}
+
+// A photo the browser can show, ready to draw: an ImageBitmap (the photo's
+// own rotation applied), or an <img> on browsers without createImageBitmap.
+// Throws if the browser can't read it (e.g. a HEIC photo outside Safari).
+async function readPhoto(file) {
+  if (typeof createImageBitmap === "function") {
+    try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch (e) {}
+    try { return await createImageBitmap(file); } catch (e) {}
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = url;
+    });
+    if (img.decode) await img.decode().catch(() => {});
+    return img;
+  } catch (e) {
+    throw userError(PHOTO_UNREADABLE);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+}
+
+// Every photo is drawn again and saved as a new JPEG before it is uploaded:
+// at most `max` pixels on the long side (about 150-300 KB), and without the
+// hidden details the original file carries (EXIF: where and when it was
+// taken, the camera). Only the first frame of a GIF is kept. Throws a
+// message for the member if the photo can't be read or stays too large.
+async function toJpeg(file, max, limit, quality = 0.82) {
+  if (!file || (file.type && !/^image\//i.test(file.type))) throw userError("Please choose a photo.");
+  if (file.size > 25 * 1024 * 1024) throw userError(PHOTO_TOO_LARGE);
+  const photo = await readPhoto(file);
+  const width = photo.naturalWidth || photo.width;
+  const height = photo.naturalHeight || photo.height;
+  if (!width || !height) throw userError(PHOTO_UNREADABLE);
+  const scale = Math.min(1, max / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff"; // transparent PNG areas become white, not black
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(photo, 0, 0, canvas.width, canvas.height);
+  photo.close?.();
+  for (const q of [quality, 0.6]) {
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", q));
+    if (!blob) throw userError(PHOTO_UNREADABLE);
+    if (blob.size <= limit) return new File([blob], "photo.jpg", { type: "image/jpeg" });
+  }
+  throw userError(PHOTO_TOO_LARGE);
+}
+
+// <member id>/<random>.jpg: the name says nothing about the member's
+// photos or when they were taken, and can't be guessed.
+function photoPath() {
+  let id;
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    id = crypto.randomUUID();
+  } else {
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    id = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  }
+  return `${currentUser.id}/${id}.jpg`;
+}
+
+async function uploadPhoto(bucket, file, max) {
+  if (!currentUser) throw new Error("Not logged in");
+  const jpeg = await toJpeg(file, max, PHOTO_LIMIT[bucket]);
+  return uploadFile(bucket, photoPath(), jpeg);
 }
 
 export async function uploadAvatar(file) {
-  if (!currentUser) throw new Error("Not logged in");
-  file = await shrinkImage(file, 512);
-  const ext = file.name.split(".").pop();
-  const path = `${currentUser.id}/avatar_${Date.now()}.${ext}`;
-  const url = await uploadFile("avatars", path, file);
-  // Add cache-busting param
-  return url + "?t=" + Date.now();
+  return uploadPhoto("avatars", file, 512);
 }
 
+// Photos for posts and events.
 export async function uploadPostImage(file) {
-  if (!currentUser) throw new Error("Not logged in");
-  file = await shrinkImage(file, 1600);
-  const ext = file.name.split(".").pop();
-  const path = `${currentUser.id}/${Date.now()}.${ext}`;
-  return uploadFile("post-images", path, file);
+  return uploadPhoto("post-images", file, 1600);
 }
 
 export async function uploadMarketImage(file) {
-  if (!currentUser) throw new Error("Not logged in");
-  file = await shrinkImage(file, 1600);
-  const ext = file.name.split(".").pop();
-  const path = `${currentUser.id}/${Date.now()}.${ext}`;
-  return uploadFile("marketplace-images", path, file);
+  return uploadPhoto("marketplace-images", file, 1600);
+}
+
+// The bucket and path of a photo link from this project's Storage, or null.
+function storageObject(url) {
+  if (typeof url !== "string") return null;
+  const at = url.indexOf(PUBLIC_PATH);
+  if (at < 0) return null;
+  const rest = url.slice(at + PUBLIC_PATH.length).split(/[?#]/)[0];
+  const slash = rest.indexOf("/");
+  if (slash < 1) return null;
+  let path = rest.slice(slash + 1);
+  try { path = decodeURIComponent(path); } catch (e) {}
+  return { bucket: rest.slice(0, slash), path };
+}
+
+// The photo links in a stored value: one link, or a Market listing's JSON
+// array of links.
+function photoLinks(value) {
+  if (!value || typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.filter((u) => typeof u === "string");
+    if (typeof parsed === "string") return [parsed];
+  } catch (e) {}
+  return [value];
+}
+
+// Deletes files (paths) from a bucket through the Storage API, 100 at a
+// time; returns the paths Storage says it deleted. Storage deletes only
+// what the policies let this account delete, and says nothing about the rest.
+async function deleteStorageObjects(bucket, paths) {
+  const gone = [];
+  for (let i = 0; i < paths.length; i += 100) {
+    const res = await storageRequest("DELETE", `/storage/v1/object/${bucket}`, { prefixes: paths.slice(i, i + 100) });
+    if (!res.ok) throw new Error(`Deleting photo files failed (${res.status})`);
+    const rows = await res.json().catch(() => []);
+    (Array.isArray(rows) ? rows : []).forEach((r) => { if (r?.name) gone.push(r.name); });
+  }
+  return gone;
+}
+
+// Deletes the signed-in member's own photo files behind these links (other
+// links are skipped): after their post, listing or event is deleted, or a
+// profile photo is replaced. Never throws: what is left behind, the
+// clean-up in the admin panel deletes. Returns how many were deleted.
+export async function deleteOwnImages(urls) {
+  if (!currentUser) return 0;
+  const byBucket = {};
+  (urls || []).flatMap(photoLinks).map(storageObject).forEach((o) => {
+    if (!o || !PHOTO_BUCKETS.includes(o.bucket) || !o.path.startsWith(`${currentUser.id}/`)) return;
+    (byBucket[o.bucket] = byBucket[o.bucket] || new Set()).add(o.path);
+  });
+  let count = 0;
+  for (const [bucket, paths] of Object.entries(byBucket)) {
+    try { count += (await deleteStorageObjects(bucket, [...paths])).length; } catch (e) {}
+  }
+  return count;
+}
+
+// A photo the member uploaded but then didn't use (taken off a post being
+// written, or the post was cancelled).
+export function discardUpload(url) {
+  if (url) deleteOwnImages([url]);
+}
+
+// Every file in the signed-in member's own folder of a bucket (paths).
+async function listMyFiles(bucket, folder = currentUser.id, depth = 0) {
+  const paths = [];
+  for (let offset = 0; ; offset += 1000) {
+    const res = await storageRequest("POST", `/storage/v1/object/list/${bucket}`, { prefix: `${folder}/`, limit: 1000, offset });
+    if (!res.ok) throw new Error(`Listing photo files failed (${res.status})`);
+    const rows = (await res.json().catch(() => [])) || [];
+    for (const r of rows) {
+      if (!r?.name) continue;
+      if (r.id) paths.push(`${folder}/${r.name}`);
+      else if (depth < 3) paths.push(...await listMyFiles(bucket, `${folder}/${r.name}`, depth + 1));
+    }
+    if (rows.length < 1000) return paths;
+  }
+}
+
+// Deletes every photo file of the signed-in member, bucket by bucket (for
+// account deletion). A bucket that fails is skipped. Returns how many files
+// were deleted.
+async function deleteMyFiles() {
+  let count = 0;
+  for (const bucket of PHOTO_BUCKETS) {
+    try {
+      const paths = await listMyFiles(bucket);
+      if (paths.length) count += (await deleteStorageObjects(bucket, paths)).length;
+    } catch (e) {}
+  }
+  return count;
+}
+
+// A new profile photo: uploads it, saves it on the profile, then deletes
+// the previous one. If the profile can't be saved, the new file is deleted
+// again. Returns the new link.
+export async function changeAvatar(file, previousUrl = "") {
+  const url = await uploadAvatar(file);
+  try {
+    const rows = await updateProfile({ avatar_url: url });
+    if (!rows?.[0] || rows[0].avatar_url !== url) throw new Error("Your photo couldn't be saved. Please try again.");
+  } catch (err) {
+    await deleteOwnImages([url]);
+    throw err;
+  }
+  if (previousUrl && previousUrl !== url) await deleteOwnImages([previousUrl]);
+  return url;
+}
+
+// Takes the profile photo off the profile and deletes its file.
+export async function removeAvatar(previousUrl) {
+  const rows = await updateProfile({ avatar_url: "" });
+  if (!rows?.[0] || rows[0].avatar_url !== "") throw new Error("Your photo couldn't be removed. Please try again.");
+  await deleteOwnImages([previousUrl]);
 }
 
 // ============================================================================
@@ -2003,6 +2274,64 @@ const MODERATED_TABLES = ["posts", "docs", "events", "help_requests", "marketpla
 export async function adminDeleteContent(table, id) {
   if (!MODERATED_TABLES.includes(table)) throw new Error(`Cannot moderate ${table}`);
   return adminWrite("DELETE", `/rest/v1/${table}?id=eq.${id}`);
+}
+
+// The photo clean-up: deletes photo files nothing uses any more (of deleted
+// posts, listings, events and accounts, replaced profile photos, content our
+// team removed), which public.admin_storage_orphans lists, through the
+// Storage API with the admin's own session. The database lets an admin
+// delete a file only while nothing uses it. auto: only if no admin has run
+// today's automatic clean-up yet (public.admin_photo_cleanup_due); then
+// null when there was nothing to run. Returns { deleted: [{ bucket, name,
+// reason }], failed: n } (reason: "account_deleted" or "unused"). Before the
+// 2026-10-22 database update: auto does nothing (null), otherwise it throws
+// an error with missing: true.
+export const PHOTO_CLEANUP_PAGE = 200;
+
+export async function adminCleanUpPhotoFiles({ auto = false } = {}) {
+  const missing = (err) => {
+    if (!isMissingInDatabase(err)) return err;
+    const e = new Error("The photo clean-up needs the database update of 22 October 2026 (20261022000000_storage_images.sql).");
+    e.missing = true;
+    return e;
+  };
+  if (auto) {
+    try {
+      if (!await restCall("POST", "/rest/v1/rpc/admin_photo_cleanup_due", {})) return null;
+    } catch (err) {
+      if (isMissingInDatabase(err)) return null;
+      throw err;
+    }
+  }
+  const deleted = [];
+  let failed = 0;
+  const tried = new Set();
+  for (let round = 0; round < 50; round += 1) {
+    let rows;
+    try {
+      rows = (await restCall("POST", "/rest/v1/rpc/admin_storage_orphans", { p_limit: PHOTO_CLEANUP_PAGE })) || [];
+    } catch (err) {
+      throw missing(err);
+    }
+    // Files that couldn't be deleted come back: they aren't tried again.
+    const fresh = rows.filter((r) => !tried.has(`${r.bucket_id}/${r.name}`));
+    if (!fresh.length) break;
+    const byBucket = {};
+    fresh.forEach((r) => {
+      tried.add(`${r.bucket_id}/${r.name}`);
+      (byBucket[r.bucket_id] = byBucket[r.bucket_id] || []).push(r);
+    });
+    for (const [bucket, files] of Object.entries(byBucket)) {
+      let gone = new Set();
+      try { gone = new Set(await deleteStorageObjects(bucket, files.map((f) => f.name))); } catch (e) {}
+      files.forEach((f) => {
+        if (gone.has(f.name)) deleted.push({ bucket, name: f.name, reason: f.reason });
+        else failed += 1;
+      });
+    }
+    if (rows.length < PHOTO_CLEANUP_PAGE) break;
+  }
+  return { deleted, failed };
 }
 
 export async function adminNotify(userId, type, text) {

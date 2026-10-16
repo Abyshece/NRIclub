@@ -1844,9 +1844,42 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   // Invite link: opens the site with who invited them, which Get verified
-  // passes on to the admins ("Can vouch").
-  const inviteLink = `${window.location.origin}/?invite=${user.id}&from=${encodeURIComponent((user.name || "").split(" ")[0])}`;
+  // passes on to the admins ("Can vouch"). It carries the member's random
+  // invite code, asked for when "Invite a friend" opens. Before the
+  // 2026-10-22 database update there are no codes (null), and the link
+  // carries the member's ID and first name, as before.
+  const [inviteCode, setInviteCode] = useState(undefined); // undefined: loading, "": failed
+  useEffect(() => {
+    if (settingsModal !== "invite" || inviteCode !== undefined) return;
+    let alive = true;
+    api.getInviteCode()
+      .then((code) => { if (alive) setInviteCode(code); })
+      .catch(() => { if (alive) setInviteCode(""); });
+    return () => { alive = false; };
+  }, [settingsModal, inviteCode]);
+  const inviteLink = inviteCode ? `${window.location.origin}/?invite=${inviteCode}`
+    : inviteCode === null ? `${window.location.origin}/?invite=${user.id}&from=${encodeURIComponent((user.name || "").split(" ")[0])}` : "";
   const inviteText = `I'm on NRIClub, a members-only community for Indians living abroad. Join me: ${inviteLink}`;
+
+  // A new profile photo (from either camera button): once it's saved, the
+  // previous photo's file is deleted. The page reloads to show it everywhere.
+  const onAvatarChosen = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      await api.changeAvatar(file, user.avatar_url || user.avatarUrl || "");
+      window.location.reload();
+    } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try again, or choose another photo.")); }
+  };
+  // Removing the profile photo deletes its file too.
+  const removeAvatar = async () => {
+    if (!confirm("Remove your profile photo?")) return;
+    try {
+      await api.removeAvatar(user.avatar_url || user.avatarUrl || "");
+      window.location.reload();
+    } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be removed. Please try again.")); }
+  };
 
   // A new member's first day: their city's group, joined for them once, and
   // a welcome card with people nearby (until they dismiss it or follow someone).
@@ -4078,20 +4111,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E7E4", padding: 32, textAlign: "center" }}>
               <div style={{ position: "relative", display: "inline-block", marginBottom: 0 }}>
                 <Avatar name={user.name} size={80} url={user.avatar_url || user.avatarUrl} />
-                <input type="file" accept="image/*" id="profile-avatar-upload" style={{ display: "none" }}
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    if (file.size > 5 * 1024 * 1024) { alert("Photo must be under 5MB"); return; }
-                    try {
-                      const url = await api.uploadAvatar(file);
-                      await api.updateProfile({ avatar_url: url });
-                      const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
-                      localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
-                      window.location.reload();
-                    } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB.")); }
-                  }}
-                />
+                <input type="file" accept="image/*" id="profile-avatar-upload" style={{ display: "none" }} onChange={onAvatarChosen} />
                 <label htmlFor="profile-avatar-upload" style={{
                   position: "absolute", bottom: -2, right: -2,
                   width: 28, height: 28, borderRadius: "50%", background: "#fff",
@@ -4104,7 +4124,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </svg>
                 </label>
               </div>
-              <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginTop: 16, fontFamily: font }}>{user.name}</h2>
+              {(user.avatar_url || user.avatarUrl) && (
+                <div style={{ marginTop: 6 }}>
+                  <button onClick={removeAvatar} style={{ background: "none", border: "none", padding: "6px 8px", color: "#6B6A67", fontSize: 12, cursor: "pointer", fontFamily: font, textDecoration: "underline" }}>Remove photo</button>
+                </div>
+              )}
+              <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", marginTop: (user.avatar_url || user.avatarUrl) ? 6 : 16, fontFamily: font }}>{user.name}</h2>
               {true && (
                 <span style={{ display: "inline-block", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 4, letterSpacing: "0.05em", marginTop: 6,
                   background: isUserNRI(user) ? "#E3FCEF" : "#FFF3E0",
@@ -4698,12 +4723,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       if (!file) return;
                       const upload = ++postPhotoUploadRef.current;
                       setPostPhotoUploading(true);
+                      e.target.value = "";
                       try {
                         const preview = URL.createObjectURL(file);
                         const url = await api.uploadPostImage(file);
+                        // A photo that finished after the post was cancelled (or
+                        // another photo was chosen) isn't used: its file goes.
                         if (upload === postPhotoUploadRef.current) setPostImage({ url, preview });
+                        else api.discardUpload(url);
                       } catch (err) {
-                        if (upload === postPhotoUploadRef.current) alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB."));
+                        if (upload === postPhotoUploadRef.current) alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try again, or choose another photo."));
                       }
                       if (upload === postPhotoUploadRef.current) setPostPhotoUploading(false);
                     }}
@@ -4711,7 +4740,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   {postImage ? (
                     <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
                       <img src={postImage.preview} alt="" style={{ width: "100%", maxHeight: 300, objectFit: "cover", borderRadius: 10 }} />
-                      <button onClick={() => setPostImage(null)} style={{ position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 14 })}</button>
+                      <button aria-label="Remove photo" onClick={() => { api.discardUpload(postImage.url); setPostImage(null); }} style={{ position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 14 })}</button>
                     </div>
                   ) : postPhotoUploading ? (
                     <div role="status" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "32px 20px", borderRadius: 10, border: "2px dashed #E0E0DE", background: "#FAFAF8" }}>
@@ -4722,7 +4751,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <label htmlFor="modal-photo-upload" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "32px 20px", borderRadius: 10, border: "2px dashed #E0E0DE", background: "#FAFAF8", cursor: "pointer" }}>
                       {Icons.image({ size: 28, stroke: "#9B9A97" })}
                       <span style={{ fontSize: 13, color: "#9B9A97", fontWeight: 500, fontFamily: font }}>Click to upload a photo</span>
-                      <span style={{ fontSize: 11, color: "#D4D4D2", fontFamily: font }}>JPG, PNG up to 5MB</span>
+                      <span style={{ fontSize: 11, color: "#9B9A97", fontFamily: font }}>JPG or PNG · location data is removed</span>
                     </label>
                   )}
                 </div>
@@ -4732,7 +4761,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {!postPhotoOpen && !postImage && (
                 <button onClick={() => setPostPhotoOpen(true)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 6, marginRight: "auto" }}>{Icons.image({ size: 16 })} Photo</button>
               )}
-              <button onClick={() => { setCreatePostModal(null); setNewPost(""); setPostImage(null); setPostPhotoOpen(false); setPostPhotoUploading(false); postPhotoUploadRef.current += 1; }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+              <button onClick={() => { setCreatePostModal(null); setNewPost(""); if (postImage) api.discardUpload(postImage.url); setPostImage(null); setPostPhotoOpen(false); setPostPhotoUploading(false); postPhotoUploadRef.current += 1; }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
               <button onClick={() => { createPost(); setCreatePostModal(null); setPostPhotoOpen(false); }} disabled={(!newPost.trim() && !postImage) || postPhotoUploading} style={{
                 padding: "10px 24px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600,
                 background: (newPost.trim() || postImage) && !postPhotoUploading ? "#37352F" : "#E8E7E4",
@@ -4770,20 +4799,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* Profile photo with camera icon */}
               <div style={{ position: "relative", display: "inline-block", marginBottom: 12 }}>
                 <Avatar name={user.name} size={80} url={user.avatar_url || user.avatarUrl} />
-                <input type="file" accept="image/*" id="avatar-upload" style={{ display: "none" }}
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    if (file.size > 5 * 1024 * 1024) { alert("Photo must be under 5MB"); return; }
-                    try {
-                      const url = await api.uploadAvatar(file);
-                      await api.updateProfile({ avatar_url: url });
-                      const updatedUser = { ...user, avatar_url: url, avatarUrl: url };
-                      localStorage.setItem("nriclub_profile_cache", JSON.stringify(updatedUser));
-                      window.location.reload();
-                    } catch (err) { alert(apiErrorMessage(err, "Your photo couldn't be uploaded. Please try a JPG or PNG under 5 MB.")); }
-                  }}
-                />
+                <input type="file" accept="image/*" id="avatar-upload" style={{ display: "none" }} onChange={onAvatarChosen} />
                 <label htmlFor="avatar-upload" style={{
                   position: "absolute", bottom: -2, right: -2,
                   width: 24, height: 24, borderRadius: "50%", background: "#fff",
@@ -5486,8 +5502,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ fontSize: 34, marginBottom: 8 }} aria-hidden="true">🙏</div>
             <h3 style={{ fontSize: 18, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font }}>Invite a friend</h3>
             <p style={{ fontSize: 13, color: "#6B6A67", marginBottom: 20, lineHeight: 1.5, fontFamily: font }}>Know Indians living abroad? Send them your link. When they sign up, our team sees that you invited them.</p>
-            <a href={`https://wa.me/?text=${encodeURIComponent(inviteText)}`} target="_blank" rel="noopener noreferrer" onClick={() => setSettingsModal(null)} style={{ ...btnPrimary, width: "100%", justifyContent: "center", textDecoration: "none", background: "#25D366", boxSizing: "border-box", marginBottom: 10 }}>Share on WhatsApp</a>
-            <button onClick={async () => { try { await navigator.clipboard.writeText(inviteLink); alert("Link copied!"); } catch (e) { prompt("Copy your invite link:", inviteLink); } }} style={{ width: "100%", padding: "11px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Copy link</button>
+            {inviteLink ? (<>
+              <a href={`https://wa.me/?text=${encodeURIComponent(inviteText)}`} target="_blank" rel="noopener noreferrer" onClick={() => setSettingsModal(null)} style={{ ...btnPrimary, width: "100%", justifyContent: "center", textDecoration: "none", background: "#25D366", boxSizing: "border-box", marginBottom: 10 }}>Share on WhatsApp</a>
+              <button onClick={async () => { try { await navigator.clipboard.writeText(inviteLink); alert("Link copied!"); } catch (e) { prompt("Copy your invite link:", inviteLink); } }} style={{ width: "100%", padding: "11px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Copy link</button>
+            </>) : inviteCode === "" ? (
+              <div role="alert" style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.5, fontFamily: font }}>
+                Your invite link couldn't be loaded.{" "}
+                <button onClick={() => setInviteCode(undefined)} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: font, textDecoration: "underline" }}>Try again</button>
+              </div>
+            ) : (
+              <p role="status" style={{ fontSize: 13, color: "#9B9A97", fontFamily: font, margin: 0 }}>Getting your link...</p>
+            )}
           </div>
         </div>
       )}
@@ -5917,7 +5942,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       const url = await api.uploadMarketImage(file);
                       if (url) imageUrls.push(url);
                     } catch(ue) {
-                      alert("A photo couldn't be uploaded. Photos must be JPEG, PNG, WebP or GIF and under 5 MB.");
+                      // The listing isn't posted: the photos already uploaded go.
+                      api.deleteOwnImages(imageUrls);
+                      alert(apiErrorMessage(ue, "A photo couldn't be uploaded. Please try again, or choose another photo."));
                       return;
                     }
                   }
@@ -5926,6 +5953,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     // Add to local state immediately
                     setMarketItems(prev => [{ id: created?.[0]?.id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
                   } catch(e) {
+                    api.deleteOwnImages(imageUrls);
                     alert(apiErrorMessage(e, "Your listing couldn't be posted. Please try again."));
                     return;
                   }
@@ -6081,7 +6109,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {eventPhoto ? (
                   <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: "1px solid #E0E0DE" }}>
                     <img src={eventPhoto.preview} alt="" style={{ width: "100%", height: 140, objectFit: "cover" }} />
-                    <button onClick={() => setEventPhoto(null)} style={{ position: "absolute", top: 8, right: 8, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 12 })}</button>
+                    <button aria-label="Remove photo" onClick={() => { api.discardUpload(eventPhoto.url); setEventPhoto(null); }} style={{ position: "absolute", top: 8, right: 8, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 12 })}</button>
                   </div>
                 ) : (
                   <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "20px 16px", borderRadius: 10, border: "2px dashed #E0E0DE", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontFamily: font, background: "#FAFAF8" }}>
@@ -6090,7 +6118,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       if (!file) return;
                       const preview = URL.createObjectURL(file);
                       try { const url = await api.uploadPostImage(file); setEventPhoto({ url, preview }); }
-                      catch(err) { alert("The photo couldn't be uploaded. Photos must be JPEG, PNG, WebP or GIF and under 5 MB."); }
+                      catch(err) { alert(apiErrorMessage(err, "The photo couldn't be uploaded. Please try again, or choose another photo.")); }
                     }} />
                     {Icons.image({ size: 18 })} Click to add a cover photo
                   </label>
