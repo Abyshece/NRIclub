@@ -4,7 +4,7 @@ import { TermsModal, PrivacyModal } from "./LegalModals";
 import { AccountFooter } from "./AccountActions";
 import { VERIFICATION_BANNER_ID } from "./VerificationBanner";
 import { TermsCheckbox, Art9Checkbox, PrivacyNote, TERMS_ERROR, ART9_ERROR } from "./Consent";
-import { readInvite, forgetInvite, invitedByText } from "./invite";
+import { readInvite, forgetInvite, invitedByText, isInvitedByText } from "./invite";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy } from "./ui";
 import {
   mapProfile, countryName, getCountryOptions, MAJOR_INDIAN_CITIES,
@@ -47,10 +47,13 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
   const [linkedin, setLinkedin] = useState(user.linkedinUrl || "");
   const [note, setNote] = useState(user.verificationNote || "");
   // Who invited them, if they came through a member's invite link: a link
-  // from before invite codes says so itself; a code is looked up.
+  // from before invite codes says so itself; a code is looked up. Once the
+  // details are sent the invite is forgotten, so when they correct them
+  // (our team asked for more information) it comes from what they sent.
   const [invitedBy, setInvitedBy] = useState(() => {
     const inv = readInvite();
-    return inv?.id ? invitedByText(inv.id, inv.from) : "";
+    if (inv?.id) return invitedByText(inv.id, inv.from);
+    return isInvitedByText(user.voucher) ? user.voucher : "";
   });
   const [voucher, setVoucher] = useState(user.voucher || invitedBy);
   useEffect(() => {

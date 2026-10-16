@@ -20,7 +20,7 @@ export function cleanupSummary(result) {
   const parts = [];
   if (ofAccounts) parts.push(`${ofAccounts} of deleted accounts`);
   if (gone - ofAccounts) parts.push(`${gone - ofAccounts} not used any more`);
-  let text = gone ? `${plural(gone, "photo file")} deleted (${parts.join(", ")}).` : "No photo files to delete.";
+  let text = gone ? `${plural(gone, "photo file")} deleted (${parts.join(", ")}).` : result.failed ? "No photo files deleted." : "No photo files to delete.";
   if (result.failed) text += ` ${plural(result.failed, "file")} couldn't be deleted; the next clean-up tries again.`;
   return text;
 }
@@ -46,8 +46,14 @@ export function usePhotoCleanup(showToast) {
         setState((s) => ({ ...s, running: false }));
       }
     } catch (e) {
-      // The automatic run says nothing on failure (the button shows why).
-      setState((s) => ({ ...s, running: false, error: auto ? "" : e.missing ? e.message : `The clean-up didn't finish: ${friendlyError(e)}` }));
+      // The automatic run says nothing if it couldn't start (the button
+      // shows why). If it took today's turn and then failed, no admin runs
+      // it again today: the panel says so, so someone presses the button.
+      const failed = `The clean-up didn't finish: ${friendlyError(e)}`;
+      setState((s) => ({ ...s, running: false, error: auto ? (e.claimed ? `Today's automatic run failed. ${failed}` : "") : e.missing ? e.message : failed }));
+      if (auto && e.claimed) {
+        showToast({ text: "Today's photo clean-up didn't finish. Run it again from Overview → Photo files.", tone: "error", duration: 8000 });
+      }
     }
     busy.current = false;
   }, [showToast]);

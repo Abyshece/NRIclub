@@ -49,3 +49,11 @@ export function moveOldInvite() {
 export function invitedByText(id, first) {
   return id ? `Invited by ${first || "a member"} (member ${id})` : "";
 }
+
+// Whether a voucher already sent is one Get verified filled in from an
+// invite link (invitedByText). The invite itself is forgotten once sent, so
+// this is what keeps "Invited by ..." when the member corrects their details.
+const INVITED_BY = /^Invited by .{1,40} \(member [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)$/i;
+export function isInvitedByText(text) {
+  return typeof text === "string" && INVITED_BY.test(text);
+}

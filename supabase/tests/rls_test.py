@@ -2388,6 +2388,21 @@ def storage_images():
           {photos_bucket}
           SELECT count(*) FROM storage.buckets WHERE id = 'photos';
           ROLLBACK;""", expect="1")
+    buckets_block = migration_part("What the buckets accept", 'The bucket "photos"', STORAGE_IMAGES)
+    ok, _, err = psql(f"""
+          BEGIN;
+          {buckets_block}
+          ROLLBACK;""")
+    verdict("the migration changes all three photo buckets without a notice", ok and "NRIClub" not in err, err[:300])
+    ok, _, err = psql(f"""
+          BEGIN;
+          CREATE FUNCTION storage.skip_avatars() RETURNS trigger LANGUAGE plpgsql AS $f$
+            BEGIN IF NEW.id = 'avatars' THEN RETURN NULL; END IF; RETURN NEW; END $f$;
+          CREATE TRIGGER skip_avatars BEFORE UPDATE ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.skip_avatars();
+          {buckets_block}
+          ROLLBACK;""")
+    verdict("... and says so where it can change only some of them (set the rest in the dashboard)",
+            ok and "only 2 of the photo buckets" in err, err[:300])
 
     # --- invite codes (C19) ---------------------------------------------------------
     check("a member's invite code: 12 random letters and digits, the same every time",

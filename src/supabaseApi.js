@@ -2285,12 +2285,17 @@ export async function adminDeleteContent(table, id) {
 // null when there was nothing to run. Returns { deleted: [{ bucket, name,
 // reason }], failed: n } (reason: "account_deleted" or "unused"). Before the
 // 2026-10-22 database update: auto does nothing (null), otherwise it throws
-// an error with missing: true.
+// an error with missing: true. An automatic run that took today's turn and
+// then failed throws an error with claimed: true (no other admin runs it
+// today, so the panel says so).
 export const PHOTO_CLEANUP_PAGE = 200;
 
 export async function adminCleanUpPhotoFiles({ auto = false } = {}) {
   const missing = (err) => {
-    if (!isMissingInDatabase(err)) return err;
+    if (!isMissingInDatabase(err)) {
+      if (auto && err) err.claimed = true;
+      return err;
+    }
     const e = new Error("The photo clean-up needs the database update of 22 October 2026 (20261022000000_storage_images.sql).");
     e.missing = true;
     return e;

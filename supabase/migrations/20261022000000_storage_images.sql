@@ -154,9 +154,12 @@ $$;
 -- What the buckets accept. The site uploads JPEGs only (it re-encodes every
 -- photo); PNG and WebP stay allowed for pages opened before this update.
 -- Profile photos are 512 pixels at most, other photos 1,600. If the
--- database doesn't let this change the buckets, the editor says so: then
--- set the same in the dashboard (Storage → the bucket → Edit bucket).
+-- database doesn't let this change the buckets (or changes fewer than the
+-- three), the editor says so: then set the same in the dashboard (Storage →
+-- the bucket → Edit bucket).
 DO $$
+DECLARE
+  changed INTEGER := 0;
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns
              WHERE table_schema = 'storage' AND table_name = 'buckets' AND column_name = 'allowed_mime_types')
@@ -167,9 +170,14 @@ BEGIN
       SET allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp'],
           file_size_limit = CASE id WHEN 'avatars' THEN 2097152 ELSE 4194304 END
       WHERE id IN ('avatars', 'post-images', 'marketplace-images');
+      GET DIAGNOSTICS changed = ROW_COUNT;
     EXCEPTION WHEN insufficient_privilege THEN
       RAISE NOTICE 'NRIClub: the photo buckets could not be changed here (%). In the dashboard, set avatars, post-images and marketplace-images to image/jpeg, image/png, image/webp, with 2 MB (avatars) or 4 MB.', SQLERRM;
+      RETURN;
     END;
+  END IF;
+  IF changed < 3 THEN
+    RAISE NOTICE 'NRIClub: only % of the photo buckets avatars, post-images and marketplace-images were changed here. In the dashboard, set each to image/jpeg, image/png, image/webp, with 2 MB (avatars) or 4 MB.', changed;
   END IF;
 END $$;
 
