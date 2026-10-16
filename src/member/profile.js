@@ -20,6 +20,9 @@ export function mapProfile(p) {
     occupationStatus: p.occupation_status || "",
     yearsAbroad,
     linkedinUrl: p.linkedin_url || "",
+    // Since the 2026-10-20 database update other members see the LinkedIn
+    // link only if the member chooses so (Edit profile); before it, always.
+    hasLinkedinChoice: Object.prototype.hasOwnProperty.call(p, "linkedin_public"),
     bio: p.bio || "",
     avatar_url: p.avatar_url || "",
     emailVerified: !!p.email_verified,
@@ -128,6 +131,24 @@ export const MAJOR_INDIAN_CITIES = [
 export function cityFromGroupName(name) {
   const m = /^Indians in (.+)$/i.exec((name || "").trim());
   return m ? m[1].trim() : "";
+}
+
+// ---------------------------------------------------------------------------
+// Names
+// ---------------------------------------------------------------------------
+
+// Same rule as private.is_reserved_name() in the database (since the
+// 2026-10-20 update): names that sound like the NRIClub team, "NRIClub" (also
+// "N.R.I. Club") or the words admin, support, moderator, team, official,
+// staff... on their own, also in look-alike letters. The database turns such
+// a name at signup into an empty one, so the signup form says so first.
+export const RESERVED_NAME_MESSAGE = "Please use your own name. Names like NRIClub, Admin, Support or Team are kept for the NRIClub team.";
+export function isReservedName(name) {
+  const n = String(name || "")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2069\u061C\uFEFF\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u3164\uFFA0]/g, "")
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  return /(^|[^\p{L}])n[^\p{L}]*r[^\p{L}]*i[^\p{L}]*c[^\p{L}]*l[^\p{L}]*u[^\p{L}]*b/iu.test(n)
+    || /(^|[^\p{L}\p{N}_])(admins?|administrators?|support|moderators?|moderation|team|official|staff|helpdesk)(?![\p{L}\p{N}_])/iu.test(n);
 }
 
 // ---------------------------------------------------------------------------

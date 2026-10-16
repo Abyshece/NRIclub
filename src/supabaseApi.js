@@ -691,29 +691,46 @@ const knownMissing = (name) => Date.now() - (missingSince[name] || 0) < ASK_AGAI
 // links members chose to show (linkedin_public, in Edit profile). Before that
 // update every link was readable and comes straight from profiles (and
 // there's no linkedin_public, so the answer has none). If the links can't be
-// loaded, they're left out.
-export async function getProfileLinks(ids) {
+// loaded, they're left out, or with strict the error is thrown (for the
+// member's own profile, which must not look as if it had no link).
+export async function getProfileLinks(ids, { strict = false } = {}) {
   const list = [...new Set((ids || []).filter((id) => UUID.test(id || "")))];
   const byId = {};
   if (!list.length) return byId;
-  try {
-    if (!knownMissing("profile_links")) {
-      for (let i = 0; i < list.length; i += 1000) {
-        const rows = await restCall("POST", "/rest/v1/rpc/profile_links", { p_ids: list.slice(i, i + 1000) });
-        (rows || []).forEach((r) => { byId[r.id] = { linkedin_url: r.linkedin_url || "", linkedin_public: !!r.linkedin_public }; });
-      }
-      return byId;
+  const viaFunction = async () => {
+    for (let i = 0; i < list.length; i += 1000) {
+      const rows = await restCall("POST", "/rest/v1/rpc/profile_links", { p_ids: list.slice(i, i + 1000) });
+      (rows || []).forEach((r) => { byId[r.id] = { linkedin_url: r.linkedin_url || "", linkedin_public: !!r.linkedin_public }; });
     }
-  } catch (err) {
-    if (!isMissingInDatabase(err)) return byId;
-    missingSince.profile_links = Date.now();
-  }
-  try {
+  };
+  const viaProfiles = async () => {
     for (let i = 0; i < list.length; i += 100) {
       const rows = await restCall("GET", `/rest/v1/profiles?id=in.(${list.slice(i, i + 100).join(",")})&select=id,linkedin_url`);
       (rows || []).forEach((r) => { byId[r.id] = { linkedin_url: r.linkedin_url || "" }; });
     }
-  } catch {}
+  };
+  try {
+    if (!knownMissing("profile_links")) {
+      try {
+        await viaFunction();
+      } catch (err) {
+        if (!isMissingInDatabase(err)) throw err;
+        missingSince.profile_links = Date.now();
+        await viaProfiles();
+      }
+    } else {
+      // The database had no profile_links a few minutes ago. If the update
+      // has run since, profiles refuses linkedin_url: then the function.
+      try {
+        await viaProfiles();
+      } catch {
+        delete missingSince.profile_links;
+        await viaFunction();
+      }
+    }
+  } catch (err) {
+    if (strict) throw err;
+  }
   return byId;
 }
 
@@ -724,10 +741,10 @@ function withLinks(rows, links) {
     ...(links[r.id] && "linkedin_public" in links[r.id] ? { linkedin_public: links[r.id].linkedin_public } : {}) }));
 }
 
-export async function getProfile(userId) {
+export async function getProfile(userId, { strict = false } = {}) {
   const [data, links] = await Promise.all([
     restCall("GET", `/rest/v1/profiles?id=eq.${userId}&select=${PROFILE_FIELDS}`),
-    getProfileLinks([userId]),
+    getProfileLinks([userId], { strict }),
   ]);
   return withLinks(data, links)[0] || null;
 }
@@ -738,7 +755,9 @@ export async function getProfile(userId) {
 // was a column of profiles, which every member could read.
 function touchLastActive(userId) {
   const body = { last_active: new Date().toISOString() };
-  const onProfiles = () => restCall("PATCH", `/rest/v1/profiles?id=eq.${userId}`, body).catch(() => {});
+  // (If profiles has no last_active any more, the update has run meanwhile:
+  // next time, profile_private.)
+  const onProfiles = () => restCall("PATCH", `/rest/v1/profiles?id=eq.${userId}`, body).catch(() => { delete missingSince.private_last_active; });
   if (knownMissing("private_last_active")) { onProfiles(); return; }
   restCall("PATCH", `/rest/v1/profile_private?id=eq.${userId}`, body).catch((err) => {
     if (!isMissingInDatabase(err)) return;
@@ -755,11 +774,13 @@ const PRIVATE_PROFILE_FIELDS = ["email"];
 
 // Throws if the private row can't be read: without it the member would look
 // like a new, unverified, unblocked account. Callers keep what they have.
+// The same if their LinkedIn link can't be read (it would look removed, and
+// Get verified would send it as removed).
 export async function getMyProfile() {
   if (!currentUser) return null;
   touchLastActive(currentUser.id);
   const [profile, privateRows] = await Promise.all([
-    getProfile(currentUser.id),
+    getProfile(currentUser.id, { strict: true }),
     restCall("GET", `/rest/v1/profile_private?id=eq.${currentUser.id}&select=*`),
   ]);
   if (!profile) return null;
@@ -1723,7 +1744,7 @@ function adminMember(row) {
 
 // Members for the admin panel: query is the rest of the address (filter,
 // order, limit). { rows, total }; total only when counted.
-async function adminMemberRows(query, { counted = false } = {}) {
+async function adminMemberRows(query, { counted = false } = {}, retried = false) {
   const get = async (select) => {
     const path = `/rest/v1/profiles?${select}&${query}`;
     return counted ? getCounted(path) : { rows: (await restCall("GET", path)) || [], total: null };
@@ -1738,8 +1759,16 @@ async function adminMemberRows(query, { counted = false } = {}) {
       missingSince.admin_member_select = Date.now();
     }
   }
-  const res = await get(ADMIN_MEMBER_SELECT_BEFORE);
-  return { ...res, rows: res.rows.map(adminMember) };
+  try {
+    const res = await get(ADMIN_MEMBER_SELECT_BEFORE);
+    return { ...res, rows: res.rows.map(adminMember) };
+  } catch (err) {
+    // The database had no last_active in profile_private a few minutes ago;
+    // if the update has run since, select=* is refused: the new way, once.
+    if (retried || !missingSince.admin_member_select) throw err;
+    delete missingSince.admin_member_select;
+    return adminMemberRows(query, { counted }, true);
+  }
 }
 
 // A GET sent with "Prefer: count=exact": { rows, total }.

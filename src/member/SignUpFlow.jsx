@@ -4,7 +4,7 @@ import CodeEntry from "./CodeEntry";
 import { TermsModal, PrivacyModal } from "./LegalModals";
 import { TermsCheckbox, Art9Checkbox, PrivacyNote, TERMS_ERROR, ART9_ERROR } from "./Consent";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, GlobeTile, ArrowRight, helperStyle } from "./ui";
-import { mapProfile, authErrorMessage, isExistingAccountResponse, isExistingAccountError } from "./profile";
+import { mapProfile, authErrorMessage, isExistingAccountResponse, isExistingAccountError, isReservedName, RESERVED_NAME_MESSAGE } from "./profile";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const RESEND_MS = 60 * 1000;
@@ -85,6 +85,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
   const validate = (v) => {
     const e = {};
     if (v.name.length < 2) e.name = "Please enter your full name.";
+    else if (isReservedName(v.name)) e.name = RESERVED_NAME_MESSAGE;
     if (!v.email) e.email = "Please enter your email address.";
     else if (!EMAIL_RE.test(v.email)) e.email = "That email address doesn't look right. Check it for typos.";
     if (!v.password) e.password = "Please choose a password.";
