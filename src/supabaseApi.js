@@ -240,7 +240,9 @@ export async function signOut() {
 
 // Signs out every device and browser this member is signed in on, this one
 // included (Settings → Account): Supabase Auth ends all their sessions, so
-// no device can renew its sign-in. Throws if that can't be confirmed (e.g.
+// no device can renew its sign-in (an access token another device already
+// has still reads the database until it expires, within the hour; a reload
+// there signs out at once). Throws if that can't be confirmed (e.g.
 // no connection); then nothing is signed out here either, so the member can
 // try again.
 export async function signOutEverywhere() {

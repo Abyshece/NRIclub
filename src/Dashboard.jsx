@@ -5339,7 +5339,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <input type="password" autoComplete="new-password" value={accountPassword} onChange={(e) => setAccountPassword(e.target.value)} style={{ ...inputStyle, paddingLeft: 36 }} placeholder="Leave blank to keep your current password" />
                   </div>
                 </div>
-                <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 10, lineHeight: 1.5, fontFamily: font }}>Still signed in on a phone or computer you don't use any more? Sign out everywhere, this device included.</p>
+                <p style={{ fontSize: 12, color: "#9B9A97", marginBottom: 10, lineHeight: 1.5, fontFamily: font }}>Still signed in on a phone or computer you don't use any more? Sign out everywhere, this device included. Other devices are signed out when they next open NRIClub, and within an hour at the latest.</p>
                 <button type="button" onClick={signOutAllDevices} aria-disabled={signOutAll.busy} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: signOutAll.busy ? "default" : "pointer", opacity: signOutAll.busy ? 0.7 : 1, fontFamily: font, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 20 }}>
                   {Icons.logout({ size: 14 })} {signOutAll.busy ? "Signing out..." : "Sign out of all devices"}
                 </button>

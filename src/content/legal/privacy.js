@@ -251,7 +251,7 @@ export function privacyDoc() {
             ["Just you", "your in-app notices, your settings and the members you've blocked."],
           ] },
           { title: "Our team", fields: [
-            ["What", "everything approved members see, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, your account status and the record of your confirmations and consent. Not your messages."],
+            ["What", `everything approved members see${VISIBILITY.onlyApprovedListed ? " (your profile also while other members don't see it)" : ""}, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, your account status and the record of your confirmations and consent. Not your messages.`],
           ] },
           { title: "Our service providers", fields: [
             ["What", "they store and process data for us (section 7)."],

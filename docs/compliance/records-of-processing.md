@@ -28,15 +28,19 @@ as it holds no secrets.
 ## Recipients that apply to most activities
 
 - **Approved members** (verification_status `approved`, active, 18+, current
-  Terms and Art. 9 consent): see other members' profiles and content. Members
-  waiting for review see only the list of groups and the guides (migration
-  `20261019000000_access_consent.sql`). Approved members can still see the
-  profiles of waiting, unfinished, declined and blocked accounts until the
-  profiles policy shows only approved, active ones (`VISIBILITY` in
-  `src/content/legal/privacy.js`; the lawyer finds no legal basis for showing
-  declined and unfinished accounts).
-- **Admins** (rows in `public.admins`): see everything members see plus email
-  addresses, verification details, notes, reports. Not private messages.
+  Terms and Art. 9 consent): see other members' content and the profiles of
+  approved, active members only (`private.is_listed_member`, migration
+  `20261023000000_admin_access.sql`). Waiting, unfinished, declined and
+  blocked accounts aren't shown to other members; what they posted before
+  stays, shown as "NRIClub member" without name or photo, and their name is
+  taken off events they organised. Members waiting for review see only the
+  list of groups and the guides (migration
+  `20261019000000_access_consent.sql`).
+- **Admins** (rows in `public.admins` whose account isn't blocked; once
+  "Require two-step login for admin rights" is on, only in sessions signed in
+  with the 6-digit code): see everything members see plus the profiles of
+  accounts members don't see, email addresses, verification details, notes,
+  reports. Not private messages.
 - **Processors** (Art. 28): Supabase Pte. Ltd., Singapore (database, Auth,
   Storage, Realtime; AWS eu-west-1, Ireland), Vercel Inc., USA (hosting and
   CDN, worldwide edge network), Plus Five Five, Inc. (Resend), USA
