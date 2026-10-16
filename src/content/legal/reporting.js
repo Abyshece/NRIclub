@@ -206,9 +206,11 @@ export function noticeDecisionEmail({ ref, name, item = "the content you reporte
   };
 }
 
-// A mailto: link with a subject and a body.
+// A mailto: link with a subject and a body. The address is encoded too
+// (only "@" stays as it is): an address typed on the report form can't add
+// a "?cc=" or "&body=" of its own to the email our team sends.
 export const mailtoLink = (to, { subject, body }) =>
-  `mailto:${to || ""}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  `mailto:${encodeURIComponent(to || "").replace(/%40/g, "@")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
 // ---------------------------------------------------------------------------
 // STATEMENTS OF REASONS (Art. 17 DSA) to the member concerned

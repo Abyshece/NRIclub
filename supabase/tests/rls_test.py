@@ -2357,6 +2357,27 @@ def moderation_dsa():
           "'removed', 'it is defamatory')", as_user=ADMIN, error_has="Remove, warn or block from the content itself")
     check("members can't touch notices", f"SELECT public.admin_update_notice({first_notice}, 'reopen')", as_user=usha,
           error_has="Admins only")
+    check("a notice about something already gone (e.g. removed after a member's report of it) is closed as such",
+          "SELECT public.admin_update_notice((SELECT id FROM public.admin_notices() WHERE status = 'open' "
+          "ORDER BY created_at, reference LIMIT 1), 'decide', 'gone', 'we removed it after a member reported it')",
+          as_user=ADMIN, expect="closed")
+    check("... (on the notice)", "SELECT count(*) FROM private.notices WHERE decision = 'gone' "
+          "AND decision_reason = 'we removed it after a member reported it'", expect="1")
+    check("an IPv6 address counts by its /64 (one connection has a whole /64 to choose from): 10 a day",
+          "DO $$BEGIN FOR g IN 1..10 LOOP PERFORM set_config('request.headers', json_build_object('x-forwarded-for', "
+          f"'2001:db8:7:9::' || to_hex(g))::text, false); PERFORM {notice(email='v6-' + chr(39) + ' || g || ' + chr(39) + '@example.org')}; "
+          "END LOOP; END$$; SELECT 1", role="anon", expect="1")
+    check("... the 11th from another address in that network isn't",
+          """DO $$BEGIN PERFORM set_config('request.headers', '{"x-forwarded-for": "2001:db8:7:9:ffff::1"}', false); END$$; """
+          + f"SELECT {notice(email='v6-last@example.org')}", role="anon", error_has="You've sent several reports today.")
+    check("an email address can't carry mailto: fields of its own (cc, body) into our team's reply",
+          f"SELECT {notice(email='eve@example.org?cc=third.party%40example.net&body=hi')}", role="anon",
+          error_has="Please check your name and email address.")
+    check("at most 100 notices a day in all; then the page points to email",
+          "INSERT INTO private.notices (reference, location, category, explanation, good_faith) "
+          "SELECT 'R-CAP' || lpad(g::text, 5, '0'), 'x', 'spam', 'a filler notice', true FROM generate_series(1, 100) g; "
+          f"SET ROLE anon; SELECT {notice(email='late.sender@example.org')}",
+          error_has="We've received a lot of reports today. Please write to hello@nriclub.app instead")
 
     # --- reports of every kind (C6b) -------------------------------------------
     check("ravi posts; sita comments on it, rudely", f"""
@@ -2404,6 +2425,21 @@ def moderation_dsa():
     check("feedback is kept apart", f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES "
           f"(auth.uid(), auth.uid(), '[BUG] Feed: the heart is grey') RETURNING content_type", as_user=usha,
           expect="feedback")
+    pia = "00000000-0000-0000-0000-000000000611"
+    sign_up(pia, "pia@example.com", {"full_name": "Pia P"}, accept_terms=True)
+    check("pia, new, sends her details and waits for review",
+          "SELECT public.submit_verification('Berlin', 'DE', '', 'linkedin.com/in/pia-p-waiting', '', '', NULL)",
+          as_user=pia, expect="pending")
+    check("a member waiting for review can't pass a (safety) report about someone off as feedback: the prefix decides",
+          f"INSERT INTO reports (reporter_id, reported_user_id, reason, content_type, category, explanation, good_faith) "
+          f"VALUES (auth.uid(), '{ravi}', '[BUG] he threatens people', 'profile', 'safety', 'He threatens people here.', "
+          "true) RETURNING content_type || '|' || (category IS NULL)", as_user=pia, expect="feedback|true")
+    check("... and no admin is alerted", "SELECT count(*) FROM notifications WHERE type = 'alert' AND reference_id IN "
+          f"(SELECT id FROM reports WHERE reporter_id = '{pia}')", expect="0")
+    check("... nor can a report pass as feedback",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith) "
+          f"VALUES (auth.uid(), '{post}', '[POST] Diwali party — Spam', 'feedback', 'spam', "
+          "'It advertises his own business here.', true) RETURNING content_type", as_user=neel, expect="post")
     check("members can't read our team's notes on reports", "SELECT count(*) FROM private.report_note", as_user=usha,
           expect="error")
     safety = f"(SELECT id FROM reports WHERE category = 'safety' AND reported_user_id = '{ravi}')"
@@ -2502,6 +2538,22 @@ def moderation_dsa():
           f"WHERE id = '{sita}'", as_user=ADMIN, expect="active\ntrue")
     check("... and she's told", f"SELECT text FROM notifications WHERE user_id = '{sita}' AND text LIKE 'We unblocked%'",
           expect=f"We unblocked your account on {berlin_date()}. You can use NRIClub again.")
+    omar = "00000000-0000-0000-0000-000000000612"
+    approved_member(omar, "omar@example.com", "Omar O")
+    check("admin warns omar", f"SELECT {moderate('member', omar, 'warn')} ->> 'statement' LIKE 'We''re writing about%'",
+          as_user=ADMIN, expect="t")
+    psql(f"UPDATE private.moderation_action SET created_at = now() - interval '30 days' WHERE target_user = '{omar}'")
+    check("... and again a month later, about something new",
+          f"SELECT {moderate('member', omar, 'warn', facts='you posted the same advert in every group again')} ->> "
+          "'statement' LIKE 'We''re writing about%'", as_user=ADMIN, expect="t")
+    check("... a block must wait for the 14 days of the latest warning, not just of any earlier one",
+          f"SELECT {moderate('member', omar, 'block')}", as_user=ADMIN, error_has="Warn the member first")
+    long_law, long_facts = "' || repeat('§ 185 StGB ', 27) || '", "' || repeat('it insults ', 53) || 'members"
+    check("a long statement of reasons reaches the member whole, with how to reply and how to challenge it",
+          f"SELECT char_length({moderate('member', omar, 'warn', ground='illegal', rule=long_law, facts=long_facts)} "
+          "->> 'statement') > 1000", as_user=ADMIN, expect="t")
+    check("... (whole)", "SELECT text LIKE '%within 14 days%You can also go to court.' FROM notifications "
+          f"WHERE user_id = '{omar}' AND type = 'moderation' ORDER BY created_at DESC LIMIT 1", expect="t")
     check("a serious case is blocked straight away, and the statement says why",
           f"SELECT {moderate('member', vik, 'block', urgent='threat', rule='Threats, harassment or calls for violence (§ 6)', facts='you threatened to hurt a member')} ->> 'statement' "
           "LIKE '%Because this is a serious case (threats), we blocked your account straight away, without a warning "
@@ -2559,6 +2611,14 @@ def moderation_dsa():
           "AND NOT (e ? 'by')) || '|' || count(e -> 'statement_sent_to_you') FROM "
           "jsonb_array_elements(public.export_my_data() -> 'moderation_actions_about_me') e", as_user=sita,
           expect="warn,remove,block,unblock|true|4")
+    check("meera reports ravi the way the site sent reports before the update (her own words in the reason line)",
+          f"INSERT INTO reports (reporter_id, reported_user_id, reason) VALUES (auth.uid(), '{ravi}', "
+          "'[USER] Ravi R — Against our rules: Harassment or bullying: I am Meera from flat 3, he shouts at me') "
+          "RETURNING content_type", as_user=meera, expect="profile")
+    check("ravi's download has the reasons, but not the words of the members who reported him",
+          "SELECT bool_and(e ->> 'reason' NOT LIKE '%flat 3%' AND NOT (e ? 'explanation')) || '|' || "
+          "bool_or(e ->> 'reason' = '[USER] Ravi R — Against our rules: Harassment or bullying') FROM "
+          "jsonb_array_elements(public.export_my_data() -> 'reports_about_me') e", as_user=ravi, expect="true|true")
     check("ravi's download lists the reports about him, without who sent them",
           "SELECT bool_and(NOT (e ? 'reporter_id')) || '|' || string_agg(DISTINCT e ->> 'about', ',' ORDER BY e ->> 'about') FROM "
           "jsonb_array_elements(public.export_my_data() -> 'reports_about_me') e", as_user=ravi,

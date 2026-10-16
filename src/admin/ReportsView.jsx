@@ -66,6 +66,9 @@ function MoreOpen({ count, what, busy, onLoadMore }) {
 
 const ALREADY_HANDLED = "Already handled by someone else. Reloading the list.";
 
+// What our team decided on a report from the public page.
+const NOTICE_DECISIONS = { removed: "Removed", blocked: "Blocked", warned: "Warned", kept: "Kept", gone: "Already gone" };
+
 // The kind of content from the "[TYPE]" prefix reports had before
 // reports.content_type (and still have, for a quick look).
 const PREFIX_KINDS = {
@@ -500,7 +503,7 @@ export function ReportsView({ reports, setReports, handledTotal = 0, moreOpen = 
             {n.category === "safety" && <Pill tone="red">Safety</Pill>}
             <span>{reportReasonLabel(n.category)}</span>
             <Pill tone="gray" dot={false}>{n.reference}</Pill>
-            {!openOne && <Pill tone={n.decision === "kept" ? "gray" : "red"}>{{ removed: "Removed", blocked: "Blocked", warned: "Warned", kept: "Kept" }[n.decision] || "Closed"}</Pill>}
+            {!openOne && <Pill tone={n.decision === "kept" || n.decision === "gone" ? "gray" : "red"}>{NOTICE_DECISIONS[n.decision] || "Closed"}</Pill>}
           </div>
           <div className="adm-preview">
             <div className="adm-preview-text"><strong style={{ color: "var(--text)" }}>Where:</strong> <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{n.location}</span></div>
@@ -550,7 +553,7 @@ export function ReportsView({ reports, setReports, handledTotal = 0, moreOpen = 
                 ))}
               </span>
             ) : <span>No email address: the reporter can't be told the decision.</span>}
-            {!openOne && n.decision_reason && <span>Decision: {n.decision} because {n.decision_reason}.</span>}
+            {!openOne && n.decision_reason && <span>{n.decision === "gone" ? `Decision: already gone (${n.decision_reason}).` : `Decision: ${n.decision} because ${n.decision_reason}.`}</span>}
           </div>
           <NoteEditor value={n.admin_note || ""} save={(note) => markNotice(n, "note", null, note)} placeholder="e.g. Asked the reporter for the link on 22 Oct" />
         </div>
@@ -616,8 +619,10 @@ export function ReportsView({ reports, setReports, handledTotal = 0, moreOpen = 
     dialogEl = <DismissDialog report={dialog.report} related={relatedIds(dialog.report).length} recorded={recorded}
       onCancel={() => setDialog(null)} onConfirm={({ status, reason }) => dismiss({ reports: relatedIds(dialog.report), status, reason })} />;
   } else if (dialog?.kind === "keep") {
+    // "It's already gone": e.g. removed after a member's report of the same
+    // thing, so the sender isn't told "we kept it".
     dialogEl = <DismissDialog notice={dialog.notice} recorded onCancel={() => setDialog(null)}
-      onConfirm={async ({ reason }) => { await markNotice(dialog.notice, "decide", "kept", reason); setDialog(null); showToast({ text: "Decision saved. Now write to the reporter." }); }} />;
+      onConfirm={async ({ status, reason }) => { await markNotice(dialog.notice, "decide", status === "resolved" ? "gone" : "kept", reason); setDialog(null); showToast({ text: "Decision saved. Now write to the reporter." }); }} />;
   }
 
   const openCount = open.length + openNotices.length;
@@ -671,8 +676,8 @@ export function ReportsView({ reports, setReports, handledTotal = 0, moreOpen = 
 
 // Closing a report (or a notice from the public page) without acting on it:
 // why, in a few words, which the members who reported it read ("we kept it
-// because …"). For a report, also "it's already gone" (e.g. the member
-// deleted it).
+// because …"), or "it's already gone" (e.g. the member deleted it, or we
+// removed it after another report).
 function DismissDialog({ report, notice, related = 1, recorded, onCancel, onConfirm }) {
   const [gone, setGone] = useState(false);
   const [reason, setReason] = useState("");
@@ -691,19 +696,17 @@ function DismissDialog({ report, notice, related = 1, recorded, onCancel, onConf
     }
   };
   return (
-    <ConfirmDialog wide tone="primary" title={notice ? "Keep it?" : related > 1 ? `Dismiss ${related} reports?` : "Dismiss this report?"}
-      confirmLabel={notice ? "Keep it" : "Dismiss"} busy={busy} error={error} onConfirm={confirm} onCancel={onCancel} confirmDisabled={clean.length < 5}>
+    <ConfirmDialog wide tone="primary" title={notice ? (gone ? "It's already gone?" : "Keep it?") : related > 1 ? `Dismiss ${related} reports?` : "Dismiss this report?"}
+      confirmLabel={notice ? (gone ? "Close the report" : "Keep it") : "Dismiss"} busy={busy} error={error} onConfirm={confirm} onCancel={onCancel} confirmDisabled={clean.length < 5}>
       <p style={{ margin: 0 }}>
         {notice ? "Nothing is removed. Then write to the reporter with the decision (the panel prefills the email)."
           : `Nothing is removed. ${recorded ? (related > 1 ? "The members who reported it are" : "The member who reported it is") + " told why in NRIClub." : "The member who reported it isn't told automatically yet."}`}
       </p>
       <div className="adm-form">
-        {report && (
-          <div className="adm-radio-row" role="radiogroup" aria-label="Outcome">
-            <label className="adm-radio"><input type="radio" name="adm-dismiss" checked={!gone} onChange={() => setGone(false)} /> We keep it</label>
-            <label className="adm-radio"><input type="radio" name="adm-dismiss" checked={gone} onChange={() => setGone(true)} /> It's already gone</label>
-          </div>
-        )}
+        <div className="adm-radio-row" role="radiogroup" aria-label="Outcome">
+          <label className="adm-radio"><input type="radio" name="adm-dismiss" checked={!gone} onChange={() => setGone(false)} /> We keep it</label>
+          <label className="adm-radio"><input type="radio" name="adm-dismiss" checked={gone} onChange={() => setGone(true)} /> It's already gone</label>
+        </div>
         <div>
           <label className="adm-field-label" htmlFor="adm-dismiss-reason">{gone ? "What happened" : "Why it stays"} <span className="adm-faint">({gone ? "e.g. the member deleted it" : "finishes “we kept it because …”"}; the reporter reads this)</span></label>
           <textarea id="adm-dismiss-reason" className="adm-textarea" value={reason} maxLength={600} onChange={(e) => setReason(e.target.value)}

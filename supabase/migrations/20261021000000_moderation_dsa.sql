@@ -6,10 +6,10 @@
 --     on the public page nriclub.app/report (public.submit_notice). The
 --     report is kept in private.notices with a short reference code; at most
 --     5 a day from one email address and 10 a day from one internet address
---     (kept only as a coded form, for a day). Every admin gets an in-app
---     notice. NRIClub sends no emails from the app: our team writes to the
---     sender from hello@nriclub.app (receipt, then the decision), and the
---     admin panel records when (C6a).
+--     (kept only as a coded form, for a day), and 100 a day in all. Every
+--     admin gets an in-app notice. NRIClub sends no emails from the app: our
+--     team writes to the sender from hello@nriclub.app (receipt, then the
+--     decision), and the admin panel records when (C6a).
 --   * Reports from members: what was reported (reports.content_type, so
 --     comments, answers, guide comments, places and messages can be reported
 --     too), the reason (reports.category, one of the two groups on the
@@ -67,7 +67,12 @@ ALTER TABLE public.notifications
     'like', 'comment', 'request', 'event', 'group', 'trending', 'message', 'verification',
     'answer', 'thanks', 'best', 'rsvp', 'urgent', 'member',
     'booking', 'booking_cancelled', 'review',
-    'moderation', 'report', 'alert'));
+    'moderation', 'report', 'alert')),
+  -- A statement of reasons can be long (the law or rule, the facts, then
+  -- how to challenge it): up to 2,000 characters, as kept in the record, so
+  -- the end of it (how to reply and challenge it) is never cut off.
+  DROP CONSTRAINT notifications_text_check,
+  ADD CONSTRAINT notifications_text_check CHECK (char_length(text) <= 2000);
 
 -- ============================================================================
 -- WORDS (in step with src/content/legal/reporting.js)
@@ -179,7 +184,7 @@ $$;
 CREATE FUNCTION private.tell_member(p_user UUID, p_type TEXT, p_text TEXT, p_ref UUID)
 RETURNS VOID LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$
   INSERT INTO public.notifications (user_id, type, text, reference_id)
-  SELECT p_user, p_type, LEFT(p_text, 1000), p_ref
+  SELECT p_user, p_type, LEFT(p_text, 2000), p_ref
   WHERE p_user IS NOT NULL AND EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = p_user);
 $$;
 
@@ -265,12 +270,21 @@ $$;
 -- A new report: its kind (from the prefix, for pages from before), and for
 -- content the member who wrote it, looked up rather than taken from the
 -- request. A message can only be reported by the member it was sent to.
--- (Named to run before the other triggers on reports.)
+-- Feedback is what the "[BUG]" / "[IDEA]" prefix says, whatever the request
+-- says, as for who may send it (members waiting for review may send
+-- feedback only), the limits and the admin panel: no other report can pass
+-- as feedback, nor feedback as a report (or as a safety report). (Named to
+-- run before the other triggers on reports.)
 CREATE FUNCTION private.fill_report_details()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-  NEW.content_type := COALESCE(NEW.content_type,
-    private.report_kind_from_reason(NEW.reason, NEW.reported_post_id, NEW.reported_user_id));
+  IF NEW.reason LIKE '[BUG]%' OR NEW.reason LIKE '[IDEA]%' THEN
+    NEW.content_type := 'feedback';
+    NEW.category := NULL;
+  ELSE
+    NEW.content_type := COALESCE(NULLIF(NEW.content_type, 'feedback'),
+      private.report_kind_from_reason(NEW.reason, NEW.reported_post_id, NEW.reported_user_id));
+  END IF;
   NEW.explanation := btrim(COALESCE(NEW.explanation, ''));
   IF NEW.content_type = 'profile' THEN
     NEW.reported_post_id := NULL;
@@ -374,8 +388,9 @@ DROP POLICY "Admins can delete reports" ON public.reports;
 -- DSA). reference: the code the sender sees and quotes. name and email may
 -- be empty only for a report about the sexual abuse of a child (Art.
 -- 16(2)(c)). status: 'open' until our team has decided. decision: what we
--- did ('removed', 'blocked', 'warned', 'kept'), decision_reason finishing
--- "because ...". receipt_sent_at / decision_sent_at: when our team emailed
+-- did ('removed', 'blocked', 'warned', 'kept', or 'gone': it was no longer
+-- there, e.g. removed after a member's report of it), decision_reason
+-- finishing "because ..." ('gone': what happened). receipt_sent_at / decision_sent_at: when our team emailed
 -- the sender the receipt and the decision from hello@nriclub.app (the app
 -- sends no email). hold_reason: set by hand in the SQL editor while a legal
 -- dispute or police matter about it is open (private.daily_cleanup then
@@ -391,7 +406,7 @@ CREATE TABLE private.notices (
   email TEXT NOT NULL DEFAULT '' CHECK (char_length(email) <= 254),
   good_faith BOOLEAN NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
-  decision TEXT NOT NULL DEFAULT '' CHECK (decision IN ('', 'removed', 'blocked', 'warned', 'kept')),
+  decision TEXT NOT NULL DEFAULT '' CHECK (decision IN ('', 'removed', 'blocked', 'warned', 'kept', 'gone')),
   decision_reason TEXT NOT NULL DEFAULT '' CHECK (char_length(decision_reason) <= 1000),
   decided_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   decided_at TIMESTAMPTZ,
@@ -401,6 +416,7 @@ CREATE TABLE private.notices (
   hold_reason TEXT NOT NULL DEFAULT '' CHECK (char_length(hold_reason) <= 500)
 );
 CREATE INDEX idx_notices_open ON private.notices (status, created_at);
+CREATE INDEX idx_notices_created ON private.notices (created_at);
 ALTER TABLE private.notices ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON private.notices FROM PUBLIC, anon, authenticated;
 
@@ -424,7 +440,10 @@ $$;
 -- A report from the public page. Returns its reference code (e.g.
 -- "R-7F3A92C1"). The sender's internet address: the one Cloudflare passes
 -- on (CF-Connecting-IP), else the first one in X-Forwarded-For, which
--- Supabase's gateway sets.
+-- Supabase's gateway sets; an IPv6 address counts by its /64 network (one
+-- connection usually has a whole /64 to choose from). Since those headers
+-- can't be fully trusted, at most 100 reports a day are taken in all; after
+-- that the page points to email.
 CREATE FUNCTION public.submit_notice(p_location TEXT, p_category TEXT, p_explanation TEXT,
   p_name TEXT DEFAULT '', p_email TEXT DEFAULT '', p_good_faith BOOLEAN DEFAULT FALSE)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
@@ -436,6 +455,7 @@ DECLARE
   headers JSON := NULLIF(current_setting('request.headers', TRUE), '')::json;
   v_ip TEXT := LEFT(btrim(COALESCE(NULLIF(headers ->> 'cf-connecting-ip', ''),
     split_part(COALESCE(headers ->> 'x-forwarded-for', ''), ',', 1))), 100);
+  v_net INET;
   email_key TEXT;
   ip_key TEXT;
   v_ref TEXT;
@@ -459,8 +479,10 @@ BEGIN
   IF p_category <> 'child_abuse' AND (v_name = '' OR v_email = '') THEN
     RAISE EXCEPTION 'Please give your name and email address, so we can tell you what we decided.' USING ERRCODE = 'P0001';
   END IF;
+  -- (No characters that mean something in a mailto: link, such as ? & # %,
+  -- in the address our team replies to.)
   IF char_length(v_name) > 200 OR char_length(v_email) > 254
-     OR (v_email <> '' AND v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$') THEN
+     OR (v_email <> '' AND v_email !~ '^[^@[:space:]?&#%,;:<>()"\\/]+@[^@[:space:]?&#%,;:<>()"\\/]+\.[^@[:space:]?&#%,;:<>()"\\/]+$') THEN
     RAISE EXCEPTION 'Please check your name and email address.' USING ERRCODE = 'P0001';
   END IF;
   IF NOT COALESCE(p_good_faith, FALSE) THEN
@@ -468,11 +490,18 @@ BEGIN
   END IF;
 
   -- The limits: 5 a day from one email address, 10 a day from one internet
-  -- address. Two reports sent at the same moment are counted one by one.
+  -- address (an IPv6 one by its /64), 100 a day in all. Two reports sent at
+  -- the same moment are counted one by one.
   IF v_email <> '' THEN
     email_key := private.limit_key('notice-email', private.canonical_email(v_email));
   END IF;
   IF v_ip <> '' THEN
+    BEGIN
+      v_net := v_ip::inet;
+      v_ip := CASE WHEN family(v_net) = 6 THEN network(set_masklen(v_net, 64))::TEXT ELSE host(v_net) END;
+    EXCEPTION WHEN invalid_text_representation THEN
+      NULL; -- not an address: counted as it is
+    END;
     ip_key := private.limit_key('notice-ip', v_ip);
   END IF;
   IF email_key IS NOT NULL THEN
@@ -486,6 +515,10 @@ BEGIN
      OR (ip_key IS NOT NULL AND (SELECT count(*) FROM private.notice_log l
                                  WHERE l.key = ip_key AND l.at > NOW() - INTERVAL '1 day') >= 10) THEN
     RAISE EXCEPTION 'You''ve sent several reports today. Please try again tomorrow, or write to hello@nriclub.app.'
+      USING ERRCODE = 'P0001';
+  END IF;
+  IF (SELECT count(*) FROM private.notices n WHERE n.created_at > NOW() - INTERVAL '1 day') >= 100 THEN
+    RAISE EXCEPTION 'We''ve received a lot of reports today. Please write to hello@nriclub.app instead, and a person on our team will look at it.'
       USING ERRCODE = 'P0001';
   END IF;
 
@@ -830,10 +863,11 @@ BEGIN
     IF pp.status = 'blocked' THEN
       RAISE EXCEPTION 'This member is already blocked.' USING ERRCODE = 'P0001';
     END IF;
-    -- A warning with 14 days to reply comes first (Terms of Use, section 10).
-    IF p_urgent IS NULL AND NOT EXISTS (
-      SELECT 1 FROM private.moderation_action a
-      WHERE a.target_user = p_id AND a.action = 'warn' AND a.created_at <= NOW() - INTERVAL '14 days') THEN
+    -- A warning with 14 days to reply comes first (Terms of Use, section 10):
+    -- the 14 days of the latest warning must be over.
+    IF p_urgent IS NULL AND COALESCE((
+      SELECT max(a.created_at) FROM private.moderation_action a
+      WHERE a.target_user = p_id AND a.action = 'warn') > NOW() - INTERVAL '14 days', TRUE) THEN
       RAISE EXCEPTION 'Warn the member first and give them 14 days to reply, or choose the serious reason that makes an immediate block necessary.'
         USING ERRCODE = 'P0001';
     END IF;
@@ -1085,9 +1119,10 @@ $$;
 
 -- A step on a notice. p_step: 'receipt_sent' / 'decision_sent' (our team
 -- emailed the sender), 'decide' (p_decision 'kept' with p_reason finishing
--- "because ...": we didn't act on it; removals, warnings and blocks are
--- recorded by admin_moderate with p_notice), 'reopen', or 'note'
--- (p_reason: our team's note). Returns the notice's status.
+-- "because ...": we didn't act on it; or 'gone' with what happened: it was
+-- no longer there; removals, warnings and blocks are recorded by
+-- admin_moderate with p_notice), 'reopen', or 'note' (p_reason: our team's
+-- note). Returns the notice's status.
 CREATE FUNCTION public.admin_update_notice(p_notice UUID, p_step TEXT, p_decision TEXT DEFAULT NULL, p_reason TEXT DEFAULT NULL)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1112,13 +1147,14 @@ BEGIN
     IF n.status <> 'open' THEN
       RAISE EXCEPTION 'This notice was already decided. Reload to see the latest.' USING ERRCODE = 'P0001';
     END IF;
-    IF p_decision IS DISTINCT FROM 'kept' THEN
-      RAISE EXCEPTION 'Remove, warn or block from the content itself; here you can only keep it.' USING ERRCODE = 'P0001';
+    IF p_decision IS NULL OR p_decision NOT IN ('kept', 'gone') THEN
+      RAISE EXCEPTION 'Remove, warn or block from the content itself; here you can only keep it, or say it''s already gone.'
+        USING ERRCODE = 'P0001';
     END IF;
     IF char_length(v_reason) < 5 OR char_length(v_reason) > 600 THEN
       RAISE EXCEPTION 'Say in a few words why (the sender is told).' USING ERRCODE = 'P0001';
     END IF;
-    UPDATE private.notices SET status = 'closed', decision = 'kept', decision_reason = v_reason,
+    UPDATE private.notices SET status = 'closed', decision = p_decision, decision_reason = v_reason,
       decided_by = (SELECT auth.uid()), decided_at = NOW()
     WHERE id = p_notice;
   ELSIF p_step = 'reopen' THEN
@@ -1482,8 +1518,9 @@ $$;
 -- "Download my data": as in 2026-10-20, plus what our team did about the
 -- member (with the statements they were sent and a copy of what was
 -- removed, while it's kept; not who on our team did it), and, for reports
--- about the member, the kind and reason. Reports others sent about the
--- member stay in it after those members deleted their accounts.
+-- about the member, the kind and reason (not who sent them, nor their own
+-- words). Reports others sent about the member stay in it after those
+-- members deleted their accounts.
 CREATE OR REPLACE FUNCTION public.export_my_data()
 RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1569,8 +1606,13 @@ BEGIN
       FROM public.notifications x WHERE x.user_id = uid), '[]'::jsonb),
     'reports_filed', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at)
       FROM public.reports x WHERE x.reporter_id = uid), '[]'::jsonb),
+    -- Without the reporter's own words, which could say who they are: the
+    -- explanation, and in a report the site sent the old way, what follows
+    -- the reason in its reason line ("... — Illegal: Fraud or a scam: <their
+    -- words>").
     'reports_about_me', COALESCE((SELECT jsonb_agg(jsonb_build_object(
-        'created_at', x.created_at, 'about', x.content_type, 'reason', x.reason, 'category', x.category,
+        'created_at', x.created_at, 'about', x.content_type,
+        'reason', regexp_replace(x.reason, '((Illegal|Against our rules): [^:]*):.*$', '\1'), 'category', x.category,
         'status', x.status) ORDER BY x.created_at)
       FROM public.reports x
       WHERE x.reporter_id IS DISTINCT FROM uid AND x.content_type IS DISTINCT FROM 'feedback'

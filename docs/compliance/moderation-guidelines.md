@@ -54,7 +54,9 @@ nriclub.app/report; it gives the sender a reference code (`R-` and 8
 letters or digits). Both land in the admin panel under **Reports**, and
 every admin gets an in-app notice for a report from the form and for every
 safety report. An email to hello@nriclub.app about content is a notice
-too: handle it the same way, by hand.
+too: handle it the same way, by hand. The form takes at most 5 reports a
+day from one email address, 10 from one internet address and 100 in all;
+after that it asks senders to write to hello@ instead.
 
 The admin panel does the recording and the in-app messages; the database
 (`supabase/migrations/20261021000000_moderation_dsa.sql`) refuses anything
@@ -89,7 +91,10 @@ else. Admins can no longer edit members' rows or delete content directly.
      on a place is removed from the list under the place.
    - **Dismiss…** (a member's report) or **Keep it…** (a report from the
      form): "we keep it" with the reason, or "it's already gone" (e.g. the
-     member deleted it). Undo is possible for a few seconds.
+     member deleted it). Undo of Dismiss is possible for a few seconds. If
+     you removed something after a member's report and it was also reported
+     on the form, close that report with "it's already gone" (e.g. "we
+     removed it after another report"), so the sender isn't told we kept it.
 
    Every decision asks for the ground (illegal or against our Terms), the
    law or rule, and the facts in one sentence that finishes "…because …"
