@@ -14,7 +14,7 @@ date them when you check them, and keep them current.
 | `dpia-threshold-check.md` | Whether a data protection impact assessment and a DPO are needed (Art. 35, § 38 BDSG) | The decision with the lawyer |
 | `processor-agreements.md` | Data processing agreements with Supabase, Vercel, Resend and the mailbox provider (Art. 28) | Accept or sign each, file the PDFs, fix provider settings |
 | `moderation-guidelines.md` | How admins handle sign-ups, reports, blocks, appeals and data requests (DSA Art. 14-18, GDPR Art. 12-22) | Read before moderating; give to every new admin |
-| `deletion-routine.md` | How the retention periods in the Privacy Policy are kept by hand until clean-up jobs exist | Run it: photo files every week, the rest once a month |
+| `deletion-routine.md` | How the retention periods in the Privacy Policy are kept by hand until clean-up jobs exist, and how photo files are deleted | Run it once a month; open the admin panel at least once a week (it deletes unused photo files by itself) |
 | `lawyer-questions.md` | The questions sent to the lawyer for the first review (October 2026) | Nothing: kept as the record of what was asked |
 | `questions-for-the-lawyer.md` | The lawyer's advice from that review, and what is still open | Act on the advice; take the open points to the next review |
 

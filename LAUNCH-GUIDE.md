@@ -196,9 +196,11 @@ key in the frontend or in a `VITE_` variable.
   the day this version went live. When you change a text, set its date to
   the day the change goes live.
 - **Deleting old data:** the Privacy Policy promises retention periods
-  that, for now, you keep by hand: photo files every week, the rest once a
-  month (`docs/compliance/deletion-routine.md`). The periods are in
-  `RETENTION` in `privacy.js`; change both together.
+  that, for now, you keep by hand once a month
+  (`docs/compliance/deletion-routine.md`). Photo files nothing uses any
+  more are deleted by the admin panel itself, once a day when an admin
+  opens it: open it at least once a week. The periods are in `RETENTION`
+  in `privacy.js`; change both together.
 - **Who members see:** `VISIBILITY.onlyApprovedListed` in `privacy.js`
   says whether other members see only approved accounts' profiles. It is
   `false` while approved members can still see the profile of an account
@@ -295,9 +297,12 @@ Launch tasks from the Phase 1 review (2026-10-12):
       **before** `20261019000000_access_consent.sql` runs: the lawyer
       advises that an Art. 9 consent given to an unnamed controller is
       hard to defend as informed.
-- [ ] The deletion routine runs: photo files every week, the rest once a
-      month (`docs/compliance/deletion-routine.md`). The first photo run
-      also removes the files of accounts deleted before October 2026.
+- [ ] The deletion routine runs once a month
+      (`docs/compliance/deletion-routine.md`), and an admin opens the admin
+      panel at least once a week (its photo clean-up deletes unused photo
+      files). After `20261022000000_storage_images.sql`, run Overview →
+      Photo files → Clean up photo files once: it also removes the files of
+      accounts deleted before October 2026.
 - [ ] Data processing agreements in place with Supabase, Vercel, Resend and
       the mailbox provider, and `PRIVACY_DETAILS.agreements` in
       `src/content/imprint.js` says so (Vercel's agreement applies only on

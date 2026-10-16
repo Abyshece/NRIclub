@@ -1,18 +1,18 @@
 # Deletion routine (by hand, until the clean-up jobs exist)
 
 The Privacy Policy promises how long data is kept (section 2) and says that,
-for now, our team deletes it by hand: photo files every week, everything
-else once a month (section 9). This file is how. The periods are in
-`RETENTION` in `src/content/legal/privacy.js`; if you change one there,
-change it here too, and the other way round.
+for now, our team deletes it by hand once a month (section 9). This file is
+how. The periods are in `RETENTION` in `src/content/legal/privacy.js`; if
+you change one there, change it here too, and the other way round.
 
-When the database does this itself (plan C20, clean-up jobs; plan C1, photo
-files deleted with their post or account), set `byHand` (and
-`photoFilesDeleted`) in `RETENTION` accordingly and stop this routine.
+Photo files are no longer deleted by hand (plan C1, since the 2026-10-22
+update): see "Photo files" below. When the database does the rest itself
+(plan C20, clean-up jobs), set `byHand` in `RETENTION` to false and stop
+the monthly part of this routine.
 
 | What | Kept for | How often you run it |
 |---|---|---|
-| Photo files nothing uses any more (deleted posts, listings, events, replaced profile photos, deleted accounts) | deleted within 7 days | **every week** |
+| Photo files nothing uses any more (deleted posts, listings, events, replaced or removed profile photos, deleted accounts, content our team removed) | deleted within 7 days at most | **automatic** when an admin opens the admin panel (once a day); open it at least once a week |
 | Sign-ups that never confirmed their email address | 30 days | once a month |
 | Accounts that never sent their check details | 90 days | once a month |
 | Accounts our team declined | 6 months after the decision | once a month |
@@ -27,51 +27,52 @@ Write the date and what you deleted in the log at the end.
 
 All SQL runs in the Supabase dashboard → SQL Editor, on the live project.
 
-## Every week: photo files
+## Photo files (automatic, from the admin panel)
 
-Files in Storage aren't deleted with their post or account yet. This query
-lists every photo file that is more than a day old and that either belongs
-to an account that no longer exists or that no profile, post, event, group
-or Market listing uses. It changes nothing.
+What the site deletes by itself, at once:
+
+- a member's post, Market listing or event they delete: its photos;
+- a profile photo they replace or remove;
+- all of a member's photo files when they delete their account (before the
+  account itself);
+- a photo taken off a post or event before it was published.
+
+What is left behind (content our team removed, accounts deleted by the
+nightly clean-up or by hand, a deletion that failed, photos uploaded for a
+post that was never published) the **photo clean-up** in the admin panel
+deletes. It asks the database (`public.admin_storage_orphans`) for photo
+files no profile, post, event, group or Market listing uses and that either
+belong to an account that no longer exists or are more than a day old, and
+deletes them through Storage with the admin's own session. The database
+lets an admin delete a photo file only while nothing uses it, so the
+clean-up can never break a photo that is shown.
+
+- It runs **by itself once a day**, for the first admin who opens the admin
+  panel that day (a toast says what it deleted, if anything).
+- **Overview → Photo files → Clean up photo files** runs it at once and
+  shows what it deleted.
+- The Privacy Policy promises these files go within 7 days at most
+  (`RETENTION.photoCleanupDays`). So **open the admin panel at least once a
+  week**; if you can't, ask another admin to.
+
+To check by hand which files the clean-up would delete (SQL Editor; it
+changes nothing; replace the email with an admin's):
 
 ```sql
--- NRIClub weekly: photo files nothing uses any more.
-WITH used AS (
-  SELECT avatar_url AS url FROM public.profiles WHERE avatar_url <> ''
-  UNION ALL SELECT image_url FROM public.posts WHERE image_url <> ''
-  UNION ALL SELECT image_url FROM public.events WHERE image_url <> ''
-  UNION ALL SELECT image_url FROM public.groups WHERE image_url <> ''
-  UNION ALL SELECT image_url FROM public.marketplace WHERE image_url <> ''
-)
-SELECT o.bucket_id, json_agg(o.name ORDER BY o.name) AS files, count(*) AS how_many
-FROM storage.objects o
-WHERE o.bucket_id IN ('avatars', 'post-images', 'marketplace-images')
-  AND o.created_at < now() - interval '1 day'
-  AND (
-    NOT EXISTS (SELECT 1 FROM auth.users u WHERE u.id::text = split_part(o.name, '/', 1))
-    OR NOT EXISTS (SELECT 1 FROM used WHERE position('/' || o.bucket_id || '/' || o.name IN used.url) > 0)
-  )
-GROUP BY o.bucket_id
-ORDER BY o.bucket_id;
+-- NRIClub: photo files the clean-up would delete now.
+BEGIN;
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', id, 'role', 'authenticated', 'aal', 'aal2')::text, true)
+FROM auth.users WHERE email = 'admin@example.com';
+SET LOCAL ROLE authenticated;
+SELECT * FROM public.admin_storage_orphans(1000);
+ROLLBACK;
 ```
 
-Then delete the listed files:
-
-- **In the dashboard:** Storage → the bucket → open the folder (the first
-  part of the name) → tick the files → Delete. A whole folder of an account
-  that no longer exists can be deleted at once.
-- **Or with one request per bucket** (many files), using the service role
-  key from Project Settings → API (never put it anywhere else):
-
-  ```
-  curl -X DELETE "https://uzzkdmybsbwknpsucuvv.supabase.co/storage/v1/object/<bucket>" \
-    -H "apikey: <service role key>" -H "Authorization: Bearer <service role key>" \
-    -H "Content-Type: application/json" \
-    -d '{"prefixes": <the files list from the query>}'
-  ```
-
-Never delete rows from `storage.objects` with SQL: the file itself would
-stay, and the live project refuses it anyway.
+If the panel can't be used, delete the listed files in the dashboard:
+Storage → the bucket → open the folder (the first part of the name) → tick
+the files → Delete. Never delete rows from `storage.objects` with SQL: the
+file itself would stay, and the live project refuses it anyway.
 
 ## Once a month: the database
 
@@ -177,6 +178,8 @@ Keep a request log (date, who, what, deadline, date answered; see
 
 ## Log
 
-| Date | Photo files deleted | Accounts deleted | Notices, reports, records | Mailbox | By |
+Photo files aren't logged here: the admin panel deletes them by itself.
+
+| Date | Accounts deleted | Notices, reports, records | Mailbox | By |
 |---|---|---|---|---|---|
 | | | | | | |

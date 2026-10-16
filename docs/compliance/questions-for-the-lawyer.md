@@ -126,9 +126,11 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
    after closing than the lawyer's wording. Confirm, or add a closing date
    to reports (then the routine can count from it).
 3. **By hand, once a month.** Until clean-up jobs exist (plan C20), the
-   periods are kept by hand: photo files weekly, the rest monthly, so data
-   can stay up to a month longer than the period given (the Policy says
-   so). Confirm that is acceptable for the interim.
+   periods are kept by hand monthly, so data can stay up to a month longer
+   than the period given (the Policy says so). Confirm that is acceptable
+   for the interim. (Photo files are no longer by hand: since 2026-10-22
+   the site deletes them with their content and account, and the admin
+   panel's photo clean-up deletes what is left behind within 7 days.)
 4. **Vercel has no DPA on the Hobby plan.** vercel.com/legal/dpa applies
    only "for Customers who are on Enterprise and Pro plans". The Policy
    names no agreement and no safeguard for Vercel until
@@ -170,8 +172,12 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
 
 ### In the code, outside the legal texts (the texts allow for them)
 
-- **Photo files deleted with their post or account** (plan C1), then
-  `RETENTION.photoFilesDeleted = true`.
+- *Done (2026-10-22):* **photo files deleted with their post or account**
+  (plan C1, `RETENTION.photoFilesDeleted = true`), photos re-encoded
+  without EXIF/GPS and given random names (C2), invite links with a random
+  code instead of the member ID (C19, first part). Private buckets (C19,
+  second part) are still open; until then the Policy says photos open for
+  anyone with their exact address.
 - **Clean-up jobs** (plan C20), then `RETENTION.byHand = false`.
 - **City pages** (plan C17): the page shows member counts only from 5, but
   the public API returns any count (live: Forchheim 1), which with Art. 9
@@ -202,9 +208,11 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
     your own case see a lawyer or tax adviser.";
   - rename the mentoring topic "Visas & residence" to "Moving & visa
     experiences".
-- **nriclub_invite** (plan C30): delete it after sign-up or after 30 days;
-  then the Policy (section 8) says "Kept: until you sign up, at most 30
-  days".
+- *Done (2026-10-22):* **nriclub_invite** (plan C30) is kept in session
+  storage (that tab only) and deleted once the check details are sent; the
+  Policy (section 8) says so. Also: `nriclub_reset_requested` goes after
+  24 hours or the reset, `nriclub_profile_cache` is no longer written, and
+  a member's own per-member flags go when they delete their account.
 - **Report page** (plan C6): then `REPORT_HREF = "/report"` and
   `REPORT_LINK_TEXT = REPORT_LINK_LABEL` in `src/content/legal/reporting.js`,
   and Terms section 9 names the page.

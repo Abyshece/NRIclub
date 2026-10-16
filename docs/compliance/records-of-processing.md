@@ -89,7 +89,7 @@ references the member cascades, except where noted).
 | Purpose | Check that each member is a real person with a genuine connection to the Indian community; ask for more information; approve or decline; hold sign-ups that match a declined or blocked account |
 | Legal basis | Art. 6(1)(b) (the check is part of the membership under the Terms); Art. 6(1)(f) (a safe community of genuine people) |
 | Data subjects | Applicants and members |
-| Data | City, country, location, LinkedIn profile link or a note, voucher (member who vouches, or the inviter from an invite link), decision, message to the member, admin notes, dates (`profile_private`, `verification_log`, `private.review_hold`, `private.reviewed_link`). Admins also look at the LinkedIn profile itself (data from another source, Art. 14) |
+| Data | City, country, location, LinkedIn profile link or a note, voucher (member who vouches, or the inviter from an invite link), decision, message to the member, admin notes, dates (`profile_private`, `verification_log`, `private.review_hold`, `private.reviewed_link`). Each member's random invite code (`public.invites`, deleted with the account): an invite link carries the code, and at signup the code is looked up to fill in the inviter (`public.resolve_invite`). Admins also look at the LinkedIn profile itself (data from another source, Art. 14) |
 | Recipients | Admins; the member sees decisions and messages, not admin notes |
 | Retention | Until account deletion. Accounts that never sent their details: 90 days *(by hand)*. Declined accounts, and accounts whose membership we ended: 6 months after the decision *(by hand)* |
 
@@ -111,8 +111,8 @@ references the member cascades, except where noted).
 | Purpose | Let members find, recognise and contact each other |
 | Legal basis | Art. 6(1)(b); Art. 9(2)(a) explicit consent for information that can reveal ethnic origin, religion or health |
 | Data | Name, photo, city, country, location, hometown, profession, occupation, years abroad, bio, "ask me about", LinkedIn link, mentoring fields, Verified badge, ambassador city, last active time |
-| Recipients | Approved members; admins; Supabase (photos in Storage are reachable by anyone who has the exact URL while the buckets are public) |
-| Retention | Until changed or account deletion. Photo files nothing uses any more: within 7 days *(by hand, weekly)* |
+| Recipients | Approved members; admins; Supabase (photos in Storage are reachable by anyone who has the exact URL while the buckets are public; new photos have random file names) |
+| Retention | Until changed or account deletion. A replaced or removed profile photo's file is deleted at once by the site; files nothing uses any more: within 7 days at most (photo clean-up in the admin panel, daily when an admin opens it; `deletion-routine.md`) |
 
 ### 5. Community content and features
 
@@ -120,9 +120,9 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Provide groups, posts, comments, likes, guides (docs) and comments, questions and answers (incl. urgent questions to up to 500 city members), events and RSVPs, Market listings, places and recommendations, Namaste connections, mentoring slots, bookings and reviews, blocks, settings |
 | Legal basis | Art. 6(1)(b); Art. 9(2)(a) where content reveals special categories |
-| Data | The content itself, photos, timestamps, author |
+| Data | The content itself, photos (re-encoded as JPEG in the browser before upload, which removes EXIF data such as GPS position; random file names), timestamps, author |
 | Recipients | Approved members (bookings: only mentor and mentee; blocks and settings: only the member); admins |
-| Retention | Until deleted by the member or account deletion. Places and groups the member created stay without the creator (`created_by` set to NULL) |
+| Retention | Until deleted by the member or account deletion. Photo files go with their post, listing or event (deleted by the site), or within 7 days at most when left behind (photo clean-up). Places and groups the member created stay without the creator (`created_by` set to NULL) |
 
 ### 6. Private messages
 
@@ -211,7 +211,7 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Keep the member signed in; remember dismissed tips and an invite |
 | Legal basis | § 25(2) No. 2 TDDDG (strictly necessary, no consent); Art. 6(1)(b) |
-| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested`, `nriclub_invite`, `nriclub_profile_cache`, per-member flags (list in the Privacy Policy, section 8). No cookies, no analytics |
+| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested` (at most 24 hours), `nriclub_invite` (session storage, until the check details are sent), per-member flags (removed when the account is deleted in that browser); list in the Privacy Policy, section 8. `nriclub_profile_cache` and `nriclub_cookie_consent` are no longer written, and the site deletes them. No cookies, no analytics |
 | Retention | See the Privacy Policy, section 8 |
 
 ### 15. Compliance records
