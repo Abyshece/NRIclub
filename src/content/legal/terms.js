@@ -19,7 +19,7 @@ import { termsDoc20261010 } from "./terms-2026-10.js";
 import { RETENTION } from "./privacy.js";
 
 export const TERMS_VERSION = "2026-10-19";
-export const TERMS_DATE = "16 October 2026";
+export const TERMS_DATE = "17 October 2026";
 
 // Earlier versions, by version, for nriclub.app/terms/<version>.
 export const TERMS_ARCHIVE = { "2026-10": termsDoc20261010 };

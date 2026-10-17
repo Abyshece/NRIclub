@@ -160,8 +160,8 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
    12 October. The lawyer's conclusion (awareness of the published password
    in April) still holds; the register now says 24 April for item (4) and
    asks the founder to confirm.
-9. **Dates.** `TERMS_DATE` and `PRIVACY_DATE` say "16 October 2026", the
-   day this version went live (the lawyer's advice). The Terms version
+9. **Dates.** `TERMS_DATE` and `PRIVACY_DATE` say "17 October 2026", the
+   day the current wording went live (the lawyer's advice). The Terms version
    stays `2026-10-19`; the Privacy Policy is `2026-10-21` since round 2
    (item 12).
 10. **"Ended" memberships.** The database knows "blocked", not "ended". The

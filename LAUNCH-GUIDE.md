@@ -232,11 +232,11 @@ key in the frontend or in a `VITE_` variable.
   `mailbox: true` once you have accepted the mailbox provider's), and how
   long Vercel keeps request logs on your plan.
 - **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` and
-  `PRIVACY_DATE` in `src/content/legal/privacy.js` say "16 October 2026",
-  the day these versions went live (the Terms 2026-10-19; the Privacy Policy
-  2026-10-21, compliance round 2). When you change a text, set its date to
-  the day the change goes live: if round 2 goes live later than 16 October,
-  change `PRIVACY_DATE` to that day in the same deploy.
+  `PRIVACY_DATE` in `src/content/legal/privacy.js` say "17 October 2026",
+  the day their current wording went live (the Terms 2026-10-19 with the
+  round-2 edits to sections 8 to 10; the Privacy Policy 2026-10-21,
+  compliance round 2). When you change a text, set its date to the day the
+  change goes live.
 - **Deleting old data:** the Privacy Policy promises retention periods
   that, for now, you keep by hand once a month
   (`docs/compliance/deletion-routine.md`). Photo files nothing uses any
