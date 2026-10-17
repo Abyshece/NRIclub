@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import * as api from "./supabaseApi";
 import LogoMark from "./LogoMark";
-import PublicShell, { Phrases, useCanonical, INK, MUTED, NAVY, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, AMBASSADOR_MAIL, whatsappShare } from "./PublicShell";
+import PublicShell, { Phrases, useCanonical, INK, MUTED, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, AMBASSADOR_MAIL, whatsappShare } from "./PublicShell";
 import { ESSENTIALS } from "./content/essentials";
 import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
@@ -92,9 +92,11 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
     <PublicShell onLogin={onLogin} onJoin={onJoin} hero={hero}>
       {showCounts && (
         <section style={{ ...section, paddingTop: 8, paddingBottom: 40 }}>
+          {/* Ink between saffron and green: never saffron, navy and green side
+              by side, which echoes the flag (see src/content/logo.js). */}
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
             <Stat value={members} label="members" color={SAFFRON_TEXT} />
-            {summary.events != null && summary.events >= SHOW_COUNTS_FROM && <Stat value={summary.events} label="events" color={NAVY} />}
+            {summary.events != null && summary.events >= SHOW_COUNTS_FROM && <Stat value={summary.events} label="events" color={INK} />}
             <Stat value={summary.places || 0} label={summary.places === 1 ? "desi place" : "desi places"} color={GREEN_TEXT} />
           </div>
         </section>

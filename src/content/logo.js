@@ -2,7 +2,9 @@
 // 100 x 100 grid. One drawing for the site (src/LogoMark.jsx), the homepage
 // HTML the build writes (vite.config.js), and the icons in public/
 // (favicon.svg, icon-192.png, icon-512.png, apple-touch-icon.png and
-// og-image.png are drawn from it: change it here, then redraw those too).
+// og-image.png are drawn from it: change it here, then redraw those too,
+// and raise the ?v= on their links in index.html and manifest.webmanifest so
+// browsers and link previews fetch the new files).
 //
 // NRIClub's logo is its own monogram and the wordmark, never a national flag
 // or anything that looks like one: no saffron, white and green bands, no
