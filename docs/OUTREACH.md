@@ -8,7 +8,7 @@ Links to use:
 - The guides: `https://nriclub.app/guides`, ten short guides anyone can read (passport renewal, OCI, NRE/NRO accounts, taxes, sending money home and more). Good to share when someone asks one of these questions in a WhatsApp group, for example `https://nriclub.app/guides/oci-card-the-basics`.
 - Your invite link: in NRIClub, open the ⚙ menu, then **Invite friends**. People who join through it name you as their voucher, so they're verified faster.
 
-Shared links show a preview card with the NRIClub logo (a saffron N on a dark square) and "One home for Indians abroad".
+Shared links show a preview card with the NRIClub logo (a black lion's head) and "One home for Indians abroad".
 
 ---
 
