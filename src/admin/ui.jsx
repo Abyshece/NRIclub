@@ -218,7 +218,6 @@ body { margin:0; background:#fff; }
 /* Sidebar */
 .adm-side { width:240px; flex-shrink:0; background:var(--side); border-right:1px solid var(--line); position:sticky; top:0; height:100vh; display:flex; flex-direction:column; padding:10px 8px 12px; }
 .adm-ws { display:flex; align-items:center; gap:8px; padding:6px 10px 6px; margin-bottom:10px; font-weight:600; font-size:14px; min-height:34px; }
-.adm-logo { width:22px; height:22px; border-radius:5px; background:#37352F; color:#fff; font-size:12px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; letter-spacing:-0.02em; }
 .adm-ws-name { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .adm-side .adm-ws-signout { display:none; }
 .adm-nav { display:flex; flex-direction:column; gap:1px; }

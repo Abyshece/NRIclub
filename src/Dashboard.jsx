@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import * as api from "./supabaseApi";
-import FlagIcon from "./FlagIcon";
+import LogoMark from "./LogoMark";
 import "./member/base.css";
 import GetVerified from "./member/GetVerified";
 import CodeEntry from "./member/CodeEntry";
@@ -537,7 +537,7 @@ const LoginPage = ({ onComplete, onSignUp, onBack, initialEmail = "", notice = "
           <span aria-hidden="true">←</span> Back
         </button>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <div style={{ display: "inline-block", marginBottom: 20 }}><FlagIcon size={48} /></div>
+          <div style={{ display: "inline-block", marginBottom: 20 }}><LogoMark size={44} title="NRIClub" /></div>
           <h2 style={{ fontSize: 26, fontWeight: 700, color: "#37352F", fontFamily: font }}>Welcome back</h2>
           <p style={{ color: "#6B6A67", fontSize: 14, marginTop: 8, fontFamily: font }}>Log in to NRIClub</p>
         </div>
@@ -4572,7 +4572,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       <nav style={{ background: "#fff", borderBottom: "1px solid #E8E7E4", position: "sticky", top: 0, zIndex: 30 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 16px", height: 56, display: "grid", gridTemplateColumns: "240px 1fr 210px", gap: 28, alignItems: "center" }} className="nav-grid">
           <div onClick={() => setView("home")} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-            <FlagIcon size={28} />
+            <LogoMark size={26} />
             <span style={{ fontSize: 18, fontWeight: 800, color: "#37352F", letterSpacing: -0.5 }}>NRI<span style={{fontStyle:'italic',fontFamily:'"Times New Roman",serif'}}>Club</span></span>
           </div>
 

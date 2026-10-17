@@ -8,6 +8,7 @@ import { CITIES } from './src/content/cities.js';
 import { slug } from './src/content/slug.js';
 import { guideBlocks } from './src/content/guideBlocks.js';
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES } from './src/content/home.js';
+import { logoMarkSvg } from './src/content/logo.js';
 import { IMPRINT, hasImprint, imprintSections } from './src/content/imprint.js';
 import { docToHtml, CONTACT_EMAIL } from './src/content/legal/doc.js';
 import { privacyDoc } from './src/content/legal/privacy.js';
@@ -34,13 +35,12 @@ const HOME_GUARD = 'try{if(location.pathname!=="/"||location.hash||/[?&](code|to
 function homeStatic() {
   const guides = FEATURED_GUIDES.map((s) => ESSENTIALS.find((g) => g.slug === s)).filter(Boolean);
   const arrow = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>';
-  const flag = (w) => `<svg width="${w}" height="${(w * 2) / 3}" viewBox="0 0 60 40" aria-hidden="true" style="display:block;flex-shrink:0"><rect width="60" height="40" rx="8" fill="#FF9933"/><rect y="13.3" width="60" height="13.4" fill="#fff"/><path d="M0 26.6h60V32a8 8 0 0 1-8 8H8a8 8 0 0 1-8-8z" fill="#138808"/><circle cx="30" cy="20" r="5.6" fill="none" stroke="#000080" stroke-width="0.9"/><circle cx="30" cy="20" r="1.1" fill="#000080"/></svg>`;
   const css = `
 #home-static{min-height:100vh;background:#fff;color:#37352F;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 .app-start #home-static{display:none}
 #home-static a{color:#37352F}
 .hs-w{width:100%;max-width:1100px;margin:0 auto;padding:0 24px;box-sizing:border-box}
-.hs-tri{height:4px;background:linear-gradient(90deg,#FF9933 0 33.3%,#fff 33.3% 66.6%,#138808 66.6%)}
+.hs-line{height:4px;background:#FF9933}
 .hs-nav{border-bottom:1px solid #F0EFED}
 .hs-nav .hs-w{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-top:10px;padding-bottom:10px}
 .hs-logo{display:flex;align-items:center;gap:10px;min-height:44px;font-size:20px;font-weight:700;letter-spacing:-.02em;text-decoration:none}
@@ -48,7 +48,7 @@ function homeStatic() {
 .hs-navb{display:flex;gap:8px}
 .hs-navb a{display:inline-flex;align-items:center;min-height:44px;padding:0 16px;box-sizing:border-box;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;border:1px solid #C9C8C5;white-space:nowrap}
 #home-static .hs-navb a+a,#home-static .hs-btn{background:#37352F;color:#fff;border-color:#37352F}
-.hs-top{background:radial-gradient(800px 400px at 0% 0%,rgba(255,153,51,.10),transparent 70%),radial-gradient(700px 400px at 100% 10%,rgba(19,136,8,.07),transparent 70%)}
+.hs-top{background:radial-gradient(800px 400px at 0% 0%,rgba(255,153,51,.10),transparent 70%)}
 .hs-hero{display:grid;grid-template-columns:1.05fr 1fr;gap:40px;align-items:center;padding-top:clamp(24px,6vh,64px);padding-bottom:24px}
 .hs-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px 6px 8px;border-radius:999px;background:#fff;border:1px solid #ECEBE8;font-size:13px;font-weight:500;color:#6B6A67;margin-bottom:24px}
 #home-static h1{font-size:clamp(38px,6vw,62px);font-weight:800;line-height:1.05;letter-spacing:-.04em;margin:0 0 20px}
@@ -71,11 +71,11 @@ function homeStatic() {
 @media (max-width:600px){.hs-map{display:none}}
 @media (max-width:359px){.hs-logo span{display:none}}`.replace(/\n/g, '');
   return `<div id="home-static"><style>${css}</style>`
-    + `<div class="hs-tri"></div>`
-    + `<header class="hs-nav"><nav class="hs-w"><a class="hs-logo" href="/" aria-label="NRIClub home">${flag(30)}<span>NRI<i>Club</i></span></a>`
+    + `<div class="hs-line"></div>`
+    + `<header class="hs-nav"><nav class="hs-w"><a class="hs-logo" href="/" aria-label="NRIClub home">${logoMarkSvg(28)}<span>NRI<i>Club</i></span></a>`
     + `<span class="hs-navb"><a href="/" data-start="login">Log in</a><a href="/" data-start="signup">Join free</a></span></nav></header>`
     + `<main><section class="hs-top"><div class="hs-w hs-hero"><div>`
-    + `<div class="hs-pill">${flag(20)} ${esc(HOME_PILL)}</div>`
+    + `<div class="hs-pill">${logoMarkSvg(18)} ${esc(HOME_PILL)}</div>`
     + `<h1>One home for<br>Indians abroad.</h1><p class="hs-lead">${esc(HOME_LEAD)}</p>`
     + `<a class="hs-btn" href="/" data-start="signup">Join free ${arrow}</a><p class="hs-trust">${TRUST_LINE.split(' · ').map((t, i, all) => `<span style="white-space:nowrap">${esc(t)}${i < all.length - 1 ? ' ·' : ''}</span>`).join(' ')}</p>`
     + `</div><div class="hs-map"></div></div><div class="hs-skyw"><div class="hs-sky"></div></div></section>`

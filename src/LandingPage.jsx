@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import * as api from "./supabaseApi";
-import FlagIcon from "./FlagIcon";
+import LogoMark from "./LogoMark";
 import { slug } from "./content/slug";
 import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
@@ -45,8 +45,8 @@ const WorldConnections = () => (
       </g>
     ))}
     <circle className="lp-pulse" cx={HOME.x} cy={HOME.y} r="16" fill={SAFFRON} fillOpacity="0.18" />
-    <circle cx={HOME.x} cy={HOME.y} r="9" fill="#fff" stroke={GREEN} strokeWidth="2" />
-    <circle cx={HOME.x} cy={HOME.y} r="3.5" fill={NAVY} />
+    <circle cx={HOME.x} cy={HOME.y} r="9" fill="#fff" stroke={SAFFRON} strokeWidth="2" />
+    <circle cx={HOME.x} cy={HOME.y} r="3.5" fill={INK} />
     <text x={HOME.x} y={HOME.y + 30} textAnchor="middle" fontSize="13" fontWeight="700" fill={INK} fontFamily="inherit">India</text>
   </svg>
 );
@@ -132,7 +132,7 @@ const Check = () => (
 
 const Logo = () => (
   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-    <FlagIcon size={30} />
+    <LogoMark size={28} />
     <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: INK }}>
       NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span>
     </span>
@@ -213,17 +213,17 @@ export default function LandingPage({ onJoin, onLogin }) {
         @media (prefers-reduced-motion: reduce) { .lp-arc, .lp-pulse { animation: none; } }
       `}</style>
 
-      {/* The tricolour, as a thin line across the top */}
-      <div aria-hidden="true" style={{ height: 4, background: `linear-gradient(90deg, ${SAFFRON} 0 33.3%, #fff 33.3% 66.6%, ${GREEN} 66.6%)` }} />
+      {/* A thin saffron line across the top (one colour: never flag stripes) */}
+      <div aria-hidden="true" style={{ height: 4, background: SAFFRON }} />
       <PublicNav onLogin={onLogin} onJoin={onJoin} />
 
       <main>
         {/* HERO */}
-        <section aria-labelledby="lp-title" style={{ background: `radial-gradient(800px 400px at 0% 0%, rgba(255,153,51,0.10), transparent 70%), radial-gradient(700px 400px at 100% 10%, rgba(19,136,8,0.07), transparent 70%)` }}>
+        <section aria-labelledby="lp-title" style={{ background: "radial-gradient(800px 400px at 0% 0%, rgba(255,153,51,0.10), transparent 70%)" }}>
           <div className="lp-hero" style={{ ...section, paddingTop: "clamp(24px, 6vh, 64px)", paddingBottom: 24 }}>
             <div>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px 6px 8px", borderRadius: 999, background: "#fff", border: "1px solid #ECEBE8", fontSize: 13, fontWeight: 500, color: MUTED, marginBottom: 24 }}>
-                <FlagIcon size={20} /> {HOME_PILL}
+                <LogoMark size={18} /> {HOME_PILL}
               </div>
               <h1 id="lp-title" style={{ fontSize: "clamp(38px, 6vw, 62px)", fontWeight: 800, lineHeight: 1.05, letterSpacing: "-0.04em", margin: "0 0 20px" }}>
                 One home for<br />Indians abroad.
@@ -333,7 +333,7 @@ export default function LandingPage({ onJoin, onLogin }) {
             <ol role="list" style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 28 }}>
               {STEPS.map((s, i) => (
                 <li key={s.title} style={{ textAlign: "center" }}>
-                  <div aria-hidden="true" style={{ width: 40, height: 40, borderRadius: "50%", margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: i === 0 ? INK : "#fff", background: [SAFFRON, NAVY, GREEN][i] }}>{i + 1}</div>
+                  <div aria-hidden="true" style={{ width: 40, height: 40, borderRadius: "50%", margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: SAFFRON, background: INK }}>{i + 1}</div>
                   <h3 style={{ fontSize: 17, fontWeight: 650, margin: "0 0 6px" }}>{s.title}</h3>
                   <p style={{ fontSize: 14.5, lineHeight: 1.6, color: MUTED, margin: "0 auto", maxWidth: 300 }}>{s.text}</p>
                 </li>
@@ -362,7 +362,7 @@ export default function LandingPage({ onJoin, onLogin }) {
         <section aria-labelledby="lp-about" style={{ ...section, maxWidth: 720, paddingTop: 48, paddingBottom: 24 }}>
           <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
             <div aria-hidden="true" style={{ width: 48, height: 48, borderRadius: "50%", border: `1.5px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 700, fontSize: 16 }}>
-              {FOUNDER ? FOUNDER.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() : <FlagIcon size={26} />}
+              {FOUNDER ? FOUNDER.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() : <LogoMark size={24} />}
             </div>
             <div>
               <h2 id="lp-about" style={{ fontSize: 18, fontWeight: 700, margin: "2px 0 6px" }}>Who's behind NRIClub</h2>

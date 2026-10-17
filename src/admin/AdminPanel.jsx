@@ -3,6 +3,7 @@
 // Security (two-step login).
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
+import LogoMark from "../LogoMark";
 import VerificationView from "./VerificationView";
 import MembersView from "./MembersView";
 import CommunitiesView from "./CommunitiesView";
@@ -324,7 +325,7 @@ export default function AdminPanel({ onLogout }) {
       <style>{ADMIN_CSS}</style>
       <aside className="adm-side" aria-label="Admin navigation">
         <div className="adm-ws">
-          <span className="adm-logo" aria-hidden="true">N</span>
+          <LogoMark size={22} />
           <span className="adm-ws-name">NRIClub Admin</span>
           <button type="button" className="adm-btn adm-btn-ghost adm-btn-icon adm-ws-signout" onClick={signOut} aria-label="Sign out" title="Sign out">
             <Icon name="logout" size={16} />

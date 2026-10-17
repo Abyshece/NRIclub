@@ -8,7 +8,7 @@ Links to use:
 - The guides: `https://nriclub.app/guides`, ten short guides anyone can read (passport renewal, OCI, NRE/NRO accounts, taxes, sending money home and more). Good to share when someone asks one of these questions in a WhatsApp group, for example `https://nriclub.app/guides/oci-card-the-basics`.
 - Your invite link: in NRIClub, open the ⚙ menu, then **Invite friends**. People who join through it name you as their voucher, so they're verified faster.
 
-Shared links show a preview card with the Indian flag and "One home for Indians abroad".
+Shared links show a preview card with the NRIClub logo (a saffron N on a dark square) and "One home for Indians abroad".
 
 ---
 
@@ -26,7 +26,7 @@ Most cities already have Indian WhatsApp or Telegram groups. Ask the admin first
 
 **Post for the group (after the admin agrees):**
 
-> 🇮🇳 For everyone in [City]: NRIClub is a free community for Indians abroad, and our team checks every new member.
+> For everyone in [City]: NRIClub is a free community for Indians abroad, and our team checks every new member.
 >
 > • Ask questions and find answers later (no scrolling through 1,000 messages)
 > • Rooms, flatmates and job referrals
@@ -81,7 +81,7 @@ Their notice boards and newsletters reach families who are not on social media.
 
 **Notice board poster text:**
 
-> 🇮🇳 New to [City]? Indians in [City] help each other on NRIClub.
+> New to [City]? Indians in [City] help each other on NRIClub.
 > Ask questions · Rooms and referrals · Desi places · Festivals
 > Free · Our team checks every new member · nriclub.app/city/[city]
 
@@ -99,7 +99,7 @@ Their notice boards and newsletters reach families who are not on social media.
 
 **Instagram / Facebook:**
 
-> Far from home, never alone. 🇮🇳
+> Far from home, never alone.
 > One home for Indians abroad: your city's group, desi places, festivals and help from people who've been there.
 > Free · Our team checks every new member → nriclub.app
 
