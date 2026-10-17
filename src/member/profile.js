@@ -62,6 +62,12 @@ export function mapProfile(p) {
     // screens say no more than that either.
     reviewFlag: p.review_flag || "",
     status: p.status || "active",
+    // Why our team blocked the member (the facts and the rule or law), as
+    // the statement of reasons said, and when. Empty before the 2026-10-21
+    // database update and for blocks from before it.
+    blockReason: p.block_reason || "",
+    blockRule: p.block_rule || "",
+    blockedAt: p.blocked_at || null,
     createdAt: p.created_at || null,
     isNRI: countryCode ? countryCode !== "IN" : yearsAbroad !== "Not lived abroad",
   };
@@ -200,6 +206,8 @@ export const NETWORK_MESSAGE = "We couldn't reach NRIClub. Check your connection
 // supabaseApi throws the raw PostgREST JSON as the error message.
 export function apiErrorMessage(err, fallback = "Something went wrong. Please try again.") {
   if (isNetworkError(err)) return NETWORK_MESSAGE;
+  // Written for members by the site itself (e.g. "This photo couldn't be read.").
+  if (err?.userMessage) return err.userMessage;
   try {
     const body = JSON.parse(err?.message || "");
     if (body && body.code === "P0001" && body.message) return body.message;
@@ -222,6 +230,12 @@ export function authErrorMessage(err) {
   // before the general password rule below, which it would also match.
   if (msg.includes("same_password") || msg.includes("different from the old password")) {
     return "That's already your password. Choose a different one.";
+  }
+  // An account with two-step login (admins) can change its password only
+  // from a session confirmed with the 6-digit code (insufficient_aal): the
+  // reset link asks for the code.
+  if (err?.code === "insufficient_aal" || msg.includes("aal2")) {
+    return "Your account uses two-step login, so its password can only be changed with your 6-digit code: sign out, choose \"Forgot password?\" and follow the link in the email.";
   }
   if (msg.includes("weak") || msg.includes("pwned") || msg.includes("easy to guess")) {
     return "That password is too easy to guess. Please choose a different one.";

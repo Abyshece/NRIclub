@@ -99,7 +99,7 @@ export function imprintSections() {
     { title: "Points of contact under the Digital Services Act (Zentrale Kontaktstelle nach Art. 11 und 12 DSA)", lines: lines([
       I.email && { text: `For authorities, members and anyone else: ${I.email}`, href: `mailto:${I.email}` },
       { text: "Languages: English, German (Deutsch)" },
-      { text: "To report illegal content: use Report in the app, or write to the address above." },
+      { text: "Report illegal content: nriclub.app/report (anyone), Report in the app (members), or the address above.", href: "/report" },
     ]) },
     { title: "Consumer dispute resolution (Verbraucherstreitbeilegung)", lines: lines([
       { text: "We are not obliged and not willing to take part in dispute resolution proceedings before a consumer arbitration board (Verbraucherschlichtungsstelle)." },

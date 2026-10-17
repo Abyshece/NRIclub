@@ -1,11 +1,17 @@
 // Side peek with everything needed to decide on one member, the automatic
-// checks, and the decision actions (with keyboard shortcuts).
+// checks, and the decision actions (with keyboard shortcuts). Below them:
+// warn or block the member, remove their photo or bio (each with the reasons
+// they're told, through the database), and what our team did about them
+// before.
 import { useEffect, useRef, useState } from "react";
+import * as api from "../supabaseApi";
+import ModerationDialog from "./ModerationDialog";
 import { Avatar, Button, ConfirmDialog, ErrorNote, Icon, Kbd, Pill } from "./ui";
 import {
   VERIFICATION_LABELS, VERIFICATION_TONES, ago, firstName, formatDate, friendlyError, holdNote, holdSummary,
   holdText, linkedinHref, placeLabel, reviewFlagLabel, verificationChecks,
 } from "./format";
+import { REPORT_KINDS } from "../content/legal/reporting";
 
 const TEMPLATES = {
   needs_info: [
@@ -44,24 +50,102 @@ function Prop({ icon, label, children }) {
   );
 }
 
+// What our team did about the member (private.moderation_action), in a
+// few words: "Removed their comment", "Blocked".
+const HISTORY_KINDS = { ...REPORT_KINDS, profile_photo: "profile photo", profile_bio: "bio", place_recommendation: "place recommendation" };
+function historyLine(h) {
+  const what = HISTORY_KINDS[h.kind] ? `their ${HISTORY_KINDS[h.kind]}` : "";
+  switch (h.action) {
+    case "remove": return `Removed ${what || "their content"}`;
+    case "warn": return what && h.kind !== "profile" ? `Warned them about ${what}` : "Warned them";
+    case "block": return h.urgent ? "Blocked straight away" : "Blocked";
+    case "unblock": return "Unblocked";
+    case "dismiss": return `Kept ${what || "it"} after a report`;
+    case "reopen": return `Opened a report about ${what || "them"} again`;
+    case "group_approve": return "Approved their community";
+    case "group_unapprove": return "Took back their community's approval";
+    case "group_reject": return "Turned down their community request";
+    case "group_delete": return "Deleted their community";
+    case "ambassador": return "Ambassador role";
+    default: return h.action;
+  }
+}
+
+// The reasons dialog for a decision on a member (kind "member": warn,
+// block; "profile_photo" / "profile_bio": remove). overview: from
+// api.adminMemberOverview (null before the 2026-10-21 database update;
+// undefined: load it here). onModerate(member, { kind, action, reasons,
+// overview }) does it and may throw (the dialog shows why).
+export function MemberModeration({ member, kind = "member", action, recorded = true, overview: given, onModerate, onDone, onCancel }) {
+  const [loaded, setLoaded] = useState(given !== undefined);
+  const [overview, setOverview] = useState(given ?? null);
+  useEffect(() => {
+    if (given !== undefined) { setOverview(given); setLoaded(true); return undefined; }
+    let live = true;
+    api.adminMemberOverview(member.id).then((o) => { if (live) { setOverview(o); setLoaded(true); } });
+    return () => { live = false; };
+  }, [member.id, given]);
+  if (!loaded) return null;
+
+  const first = firstName(member.name) || "the member";
+  const isSelf = member.id === api.getCurrentUser()?.id || !!overview?.is_me;
+  const refusal = isSelf ? "That's your own account."
+    : overview?.is_admin ? "This is an admin's account, so it can't be warned, blocked or changed here." : "";
+  const what = kind === "profile_photo" ? "your profile photo" : kind === "profile_bio" ? "the bio on your profile" : "how you use NRIClub";
+  const profileReports = kind === "member" ? overview?.open_profile_reports || 0 : 0;
+  const reportsNote = profileReports
+    ? ` ${profileReports === 1 ? "The open report about their profile is" : `The ${profileReports} open reports about their profile are`} closed, and whoever sent ${profileReports === 1 ? "it" : "them"} is told.`
+    : "";
+  const title = action === "block" ? `Block ${member.name || "this member"}?`
+    : action === "warn" ? `Warn ${member.name || "this member"}?`
+    : kind === "profile_photo" ? `Remove ${first}'s profile photo?` : `Remove ${first}'s bio?`;
+  return (
+    <ModerationDialog
+      title={title}
+      confirmLabel={action === "block" ? "Block account" : action === "warn" ? "Send warning" : kind === "profile_photo" ? "Remove photo" : "Remove bio"}
+      action={action} what={what} who={first}
+      source={profileReports ? "report" : "own"} recorded={recorded} refusal={refusal}
+      lastWarningAt={overview?.last_warning_at || null} upcomingSessions={overview?.upcoming_sessions || 0}
+      intro={action === "block"
+        ? `${first} can still sign in, download their data and delete their account, but can't take part until you unblock them.${reportsNote}`
+        : action === "warn" ? `${first} gets the warning in NRIClub, with 14 days to reply. Nothing is removed.${reportsNote}`
+        : kind === "profile_photo" ? `Their profile shows their initials instead. ${first} can add a new photo.`
+        : `Their bio is cleared. ${first} can write a new one.`}
+      onCancel={onCancel}
+      onConfirm={async (reasons) => {
+        await onModerate(member, { kind, action, reasons, overview });
+        onDone?.();
+      }}
+    />
+  );
+}
+
 function CheckMark({ ok }) {
   if (ok === true) return <span className="adm-check-mark adm-check-ok" aria-label="Passed"><Icon name="check" size={12} strokeWidth={2.8} /></span>;
   if (ok === false) return <span className="adm-check-mark adm-check-warn" aria-label="Needs attention"><Icon name="alert" size={11} strokeWidth={2.4} /></span>;
   return <span className="adm-check-mark adm-check-info" aria-label="Note"><Icon name="undo" size={11} strokeWidth={2.2} /></span>;
 }
 
+// recorded: whether the database records our team's decisions and tells the
+// member (the 2026-10-21 update). onModerate: as for MemberModeration.
 export default function MemberPeek({
-  member, loadingDetails = false, index = 0, total = 1,
-  onClose, onPrev, onNext, onDecision, onSetStatus, onSetAmbassador,
+  member, loadingDetails = false, index = 0, total = 1, recorded = true,
+  onClose, onPrev, onNext, onDecision, onModerate, onSetAmbassador,
 }) {
   const [composer, setComposer] = useState(null); // null | "needs_info" | "rejected"
   const [message, setMessage] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [confirmBlock, setConfirmBlock] = useState(false);
-  const [blockError, setBlockError] = useState("");
+  // The reasons dialog for a warning, a block or removing the photo or bio:
+  // { kind, action }.
+  const [moderation, setModeration] = useState(null);
+  const [confirmReopen, setConfirmReopen] = useState(false);
   const [ambassadorDraft, setAmbassadorDraft] = useState(null); // null = not editing
+  // From api.adminMemberOverview: mentoring sessions, earlier warnings, what
+  // our team did (null before the 2026-10-21 database update; undefined
+  // while it loads).
+  const [overview, setOverview] = useState(undefined);
   const peekRef = useRef(null);
   const textRef = useRef(null);
   const idRef = useRef(member.id);
@@ -70,10 +154,17 @@ export default function MemberPeek({
   useEffect(() => {
     idRef.current = member.id;
     setComposer(null); setMessage(""); setNote(""); setBusy(""); setError("");
-    setConfirmBlock(false); setBlockError(""); setAmbassadorDraft(null);
+    setModeration(null); setConfirmReopen(false); setAmbassadorDraft(null);
+    setOverview(undefined);
+    loadOverview();
     peekRef.current?.focus({ preventScroll: true });
     peekRef.current?.querySelector(".adm-peek-body")?.scrollTo?.(0, 0);
-  }, [member.id]);
+  }, [member.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function loadOverview() {
+    const id = member.id;
+    api.adminMemberOverview(id).then((o) => { if (idRef.current === id) setOverview(o); });
+  }
 
   useEffect(() => {
     if (composer) textRef.current?.focus();
@@ -116,13 +207,17 @@ export default function MemberPeek({
   };
 
   const approve = () => run("approved", () => onDecision(member, "approved", "", ""));
-  const reopen = () => run("pending", () => onDecision(member, "pending", "", ""));
+  const reopen = async () => {
+    const ok = await run("pending", () => onDecision(member, "pending", "", ""));
+    if (ok) { setConfirmReopen(false); loadOverview(); }
+  };
   const unfinish = () => run("incomplete", () => onDecision(member, "incomplete", "", ""));
   const submitComposer = () => {
     if (!composer) return;
     if (!message.trim()) { setError("Add a message for the member. They'll see it in their notifications."); textRef.current?.focus(); return; }
     const decision = composer;
-    run(decision, () => onDecision(member, decision, message.trim(), decision === "rejected" ? note.trim() : ""));
+    run(decision, () => onDecision(member, decision, message.trim(), decision === "rejected" ? note.trim() : ""))
+      .then((ok) => { if (ok) loadOverview(); });
   };
   const openComposer = (kind) => {
     setError("");
@@ -134,32 +229,22 @@ export default function MemberPeek({
     peekRef.current?.focus({ preventScroll: true });
   };
 
-  const doBlock = async () => {
-    setBlockError("");
-    setBusy("block");
-    const id = member.id;
-    try {
-      await onSetStatus(member, "blocked");
-      if (idRef.current === id) setConfirmBlock(false);
-    } catch (e) {
-      if (idRef.current === id) setBlockError(friendlyError(e));
-    } finally {
-      if (idRef.current === id) setBusy("");
-    }
-  };
-  const unblock = () => run("unblock", () => onSetStatus(member, "active"));
+  const unblock = () => run("unblock", () => onModerate(member, { kind: "member", action: "unblock", reasons: {}, overview }))
+    .then((ok) => { if (ok) loadOverview(); });
+  const openModeration = (kind, action) => { setError(""); setModeration({ kind, action }); };
+  const dialogOpen = !!moderation || confirmReopen;
 
   // Keyboard shortcuts while the peek is open.
   const keyHandler = useRef(null);
   keyHandler.current = (e) => {
     // Holding a key down mustn't act on member after member.
     if (e.repeat) return;
-    if (composer && e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.defaultPrevented && !confirmBlock) {
+    if (composer && e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.defaultPrevented && !dialogOpen) {
       e.preventDefault();
       submitComposer();
       return;
     }
-    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || confirmBlock) return;
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || dialogOpen) return;
     const t = e.target;
     const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
     if (e.key === "Escape") {
@@ -192,6 +277,10 @@ export default function MemberPeek({
   const first = firstName(member.name);
   const hold = holdText(member);
   const heldNote = holdNote(member);
+  // Admins can't moderate themselves or each other (the database refuses).
+  const protectedAccount = member.id === api.getCurrentUser()?.id || !!overview?.is_admin || !!overview?.is_me;
+  const sessions = overview?.upcoming_sessions || 0;
+  const history = overview?.history || [];
 
   return (
     <aside className="adm-peek" role="dialog" aria-label={`Member: ${member.name || "Unnamed"}`} ref={peekRef} tabIndex={-1}>
@@ -305,6 +394,37 @@ export default function MemberPeek({
             </div>
           ) : null}
         </section>
+
+        {overview && (history.length > 0 || overview.open_reports > 0 || sessions > 0 || overview.is_admin) && (
+          <section className="adm-peek-section">
+            <div className="adm-peek-section-title">Moderation</div>
+            {overview.is_admin && <p className="adm-muted" style={{ margin: "0 0 8px" }}>{overview.is_me ? "This is you." : `${first} is an admin.`}</p>}
+            {overview.open_reports > 0 && (
+              <p className="adm-muted" style={{ margin: "0 0 8px" }}>
+                {overview.open_reports === 1 ? "1 open report" : `${overview.open_reports} open reports`} about {first} or what they posted (see Reports).
+              </p>
+            )}
+            {sessions > 0 && (
+              <p className="adm-muted" style={{ margin: "0 0 8px" }}>
+                {first} gives {sessions === 1 ? "1 upcoming mentoring session" : `${sessions} upcoming mentoring sessions`}.
+              </p>
+            )}
+            {history.length > 0 && (
+              <ul className="adm-history">
+                {history.map((h, i) => (
+                  <li key={`${h.created_at}-${i}`}>
+                    <div><strong style={{ fontWeight: 600 }}>{historyLine(h)}</strong> <span className="adm-faint adm-small">{formatDate(h.created_at)} · {h.by}</span></div>
+                    {(h.rule || h.explanation) && (
+                      <div className="adm-muted" style={{ overflowWrap: "anywhere" }}>
+                        {h.rule ? `${h.ground === "illegal" ? "Illegal" : "Terms of Use"}: ${h.rule}` : ""}{h.rule && h.explanation ? ", because " : ""}{h.explanation}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
       </div>
 
       <div className="adm-peek-foot">
@@ -333,6 +453,11 @@ export default function MemberPeek({
                 onChange={(e) => { setMessage(e.target.value); if (error) setError(""); }}
                 onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitComposer(); } }} />
             </div>
+            {composer === "rejected" && sessions > 0 && (
+              <div className="adm-warn-note" role="note">
+                {sessions === 1 ? "1 upcoming mentoring session" : `${sessions} upcoming mentoring sessions`} {first} gives will be cancelled and the members who booked told. This can't be undone.
+              </div>
+            )}
             {composer === "rejected" && (
               <div>
                 <label className="adm-field-label" htmlFor="adm-note">Internal note (admins only) <span className="adm-faint">optional</span></label>
@@ -354,7 +479,7 @@ export default function MemberPeek({
               {can.approve && <Button variant="approve" icon="check" onClick={approve} disabled={!!busy} kbd="A">{busy === "approved" ? "Approving…" : "Approve"}</Button>}
               {can.info && <Button variant="secondary" onClick={() => openComposer("needs_info")} disabled={!!busy} kbd="I">Ask for more info</Button>}
               {can.reject && <Button variant="danger" onClick={() => openComposer("rejected")} disabled={!!busy} kbd="R">Reject</Button>}
-              {can.reopen && <Button variant="secondary" icon="undo" onClick={reopen} disabled={!!busy}>{busy === "pending" ? "Moving…" : "Move to pending"}</Button>}
+              {can.reopen && <Button variant="secondary" icon="undo" onClick={() => { setError(""); setConfirmReopen(true); }} disabled={!!busy}>{busy === "pending" ? "Moving…" : "Move to pending…"}</Button>}
               {can.unfinish && (
                 <Button variant="secondary" icon="undo" onClick={unfinish} disabled={!!busy}
                   title={`${first} never sent their details. They go back to finishing their signup and aren't notified.`}>
@@ -363,9 +488,16 @@ export default function MemberPeek({
               )}
             </div>
             <div className="adm-peek-util">
-              {blocked
-                ? <Button variant="ghost" size="sm" icon="undo" onClick={unblock} disabled={!!busy}>{busy === "unblock" ? "Unblocking…" : "Unblock account"}</Button>
-                : <Button variant="ghost" size="sm" icon="ban" className="adm-btn-ghost-danger" onClick={() => { setBlockError(""); setConfirmBlock(true); }} disabled={!!busy}>Block account</Button>}
+              {!protectedAccount && (blocked
+                ? <Button variant="ghost" size="sm" icon="undo" onClick={unblock} disabled={!!busy || overview === undefined}>{busy === "unblock" ? "Unblocking…" : "Unblock account"}</Button>
+                : (
+                  <>
+                    <Button variant="ghost" size="sm" icon="ban" className="adm-btn-ghost-danger" onClick={() => openModeration("member", "block")} disabled={!!busy || overview === undefined}>Block…</Button>
+                    {recorded && <Button variant="ghost" size="sm" onClick={() => openModeration("member", "warn")} disabled={!!busy || overview === undefined}>Warn…</Button>}
+                  </>
+                ))}
+              {!protectedAccount && member.avatar_url && <Button variant="ghost" size="sm" onClick={() => openModeration("profile_photo", "remove")} disabled={!!busy || overview === undefined}>Remove photo…</Button>}
+              {!protectedAccount && member.bio && <Button variant="ghost" size="sm" onClick={() => openModeration("profile_bio", "remove")} disabled={!!busy || overview === undefined}>Remove bio…</Button>}
               <div className="adm-peek-hints" aria-hidden="true">
                 <Kbd>J</Kbd><Kbd>K</Kbd><span style={{ marginRight: 10 }}>&nbsp;next / previous</span>
                 <Kbd>Esc</Kbd><span>&nbsp;close</span>
@@ -375,15 +507,25 @@ export default function MemberPeek({
         )}
       </div>
 
-      {confirmBlock && (
+      {moderation && (
+        <MemberModeration member={member} kind={moderation.kind} action={moderation.action} recorded={recorded}
+          overview={overview === undefined ? null : overview} onModerate={onModerate}
+          onDone={() => { setModeration(null); loadOverview(); peekRef.current?.focus({ preventScroll: true }); }}
+          onCancel={() => { setModeration(null); peekRef.current?.focus({ preventScroll: true }); }} />
+      )}
+
+      {confirmReopen && (
         <ConfirmDialog
-          title={`Block ${member.name || "this member"}?`}
-          confirmLabel="Block account"
-          busy={busy === "block"}
-          error={blockError}
-          onConfirm={doBlock}
-          onCancel={() => { setConfirmBlock(false); peekRef.current?.focus({ preventScroll: true }); }}>
-          They can still sign in, but can't post, message or connect with anyone until you unblock them. Their verification status doesn't change.
+          title={`Move ${member.name || "this member"} back to pending?`}
+          confirmLabel="Move to pending"
+          tone="primary"
+          busy={busy === "pending"}
+          error={error}
+          onConfirm={reopen}
+          onCancel={() => { setConfirmReopen(false); peekRef.current?.focus({ preventScroll: true }); }}>
+          {status === "approved"
+            ? "They lose the Verified badge, their open mentoring times are deleted, and they are told their profile is back in review."
+            : "They are told their profile is back in review, and you can decide again."}
         </ConfirmDialog>
       )}
     </aside>

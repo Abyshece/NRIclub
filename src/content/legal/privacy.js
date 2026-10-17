@@ -12,8 +12,8 @@ import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
 
-export const PRIVACY_VERSION = "2026-10-19";
-export const PRIVACY_DATE = "16 October 2026";
+export const PRIVACY_VERSION = "2026-10-21";
+export const PRIVACY_DATE = "17 October 2026";
 
 // How long data is kept: the periods this Policy promises. Until clean-up
 // jobs run on the database (plan C20), our team deletes by hand once a month
@@ -27,29 +27,42 @@ export const RETENTION = {
   endedAccountMonths: 6, // accounts our team declined, or whose membership we ended, from the decision
   readNoticesMonths: 6, // in-app notices the member has read
   closedReportsMonths: 12, // closed reports (and evidence kept with them), from when they were sent
+  closedNoticesMonths: 12, // reports from nriclub.app/report once closed, from when they were sent
+  noticeLimitHours: 24, // the coded email and internet addresses behind the daily report limits
+  moderationActionMonths: 24, // the record of our team's decisions on content and accounts
+  moderationCopyMonths: 6, // the copy of removed content in that record
   moderationRecordMonths: 24, // record of declined and blocked accounts, from the decision
   moderationNoteMonths: 12, // the note in that record is cleared after this
   requestEmailYears: 3, // emails about rights and reports of illegal content, after the matter is closed
   otherEmailMonths: 12, // all other emails, after the matter is closed
-  // Photo files: false while the code doesn't delete them with their post,
-  // listing, event, profile photo or account (plan C1); our team then
-  // deletes them by hand within photoFilesByHandDays (the weekly query in
-  // docs/compliance/deletion-routine.md). true once the code does, with
-  // photoCleanupHours for the clean-up of files left behind.
-  photoFilesDeleted: false,
+  // Photo files: true since the site deletes them with their post, listing,
+  // event or profile photo and with the account (plan C1), and the photo
+  // clean-up in the admin panel (src/admin/PhotoCleanup.jsx) deletes what is
+  // left behind: once a day when an admin opens the panel, and at least
+  // every photoCleanupDays days (docs/compliance/deletion-routine.md). If
+  // it were ever false again: deleted by hand within photoFilesByHandDays.
+  photoFilesDeleted: true,
+  photoCleanupDays: 7,
   photoFilesByHandDays: 7,
-  photoCleanupHours: null,
 };
 const R = RETENTION;
 const months = (n) => `${n} month${n === 1 ? "" : "s"}`;
 
-// Who members can see. onlyApprovedListed: false while approved members can
-// still read the profile of every account (members waiting for our check,
-// unfinished, declined and blocked accounts included); true once the
-// database shows other members only approved, active accounts (the profiles
-// policy with private.is_listed_member, in the same pull request).
+// Who members can see. onlyApprovedListed: true since the database shows
+// other members only approved, active accounts (the profiles policy with
+// private.is_listed_member, supabase/migrations/20261023000000_admin_access.sql);
+// false would say that approved members can read the profile of every
+// account (members waiting for our check, unfinished, declined and blocked
+// accounts included), as before that update.
 export const VISIBILITY = {
-  onlyApprovedListed: false,
+  onlyApprovedListed: true,
+};
+
+// How the admin tools are protected. adminTwoStep: true once "Require
+// two-step login for admin rights" is switched on in the admin panel
+// (Security); while it is off, section 15 doesn't claim it.
+export const SECURITY = {
+  adminTwoStep: false,
 };
 
 function accountRetention() {
@@ -62,7 +75,7 @@ function accountRetention() {
 
 export function photoFilesText() {
   if (R.photoFilesDeleted) {
-    return `Photo files are deleted together with the post, listing, event, profile photo or account they belong to${R.photoCleanupHours ? `; any left behind are removed within ${R.photoCleanupHours} hours` : ""}.`;
+    return [strong("Photo files"), ` are deleted when you delete the post, listing or event they belong to, or replace or remove your profile photo. Deleting your account deletes all your photo files first. Files left behind, for example of content our team removed, are deleted automatically within a few days (at most ${R.photoCleanupDays}).`];
   }
   return `Photo files: when you delete a post, a listing, an event, your profile photo or your account, we delete its photo files too, by hand within ${R.photoFilesByHandDays} days for now. Until then the file still opens for anyone who has its exact web address (section 4).`;
 }
@@ -143,7 +156,7 @@ export function privacyDoc() {
         ] },
         { entries: [
           { title: "Your account", fields: [
-            ["What", "your email address; your password, which our sign-in provider stores only as a hash (a scrambled form nobody can read back); your name; when you signed up, confirmed your email address and last signed in; your confirmation that you're 18 or older; which version of the Terms of Use you accepted and when; and when you gave the consent in section 3 and in which wording."],
+            ["What", "your email address; your password, which our sign-in provider stores only as a hash (a scrambled form nobody can read back); your name; when you signed up, confirmed your email address, last signed in and last opened NRIClub (only you and our team see this); your confirmation that you're 18 or older; which version of the Terms of Use you accepted and when; and when you gave the consent in section 3 and in which wording."],
             ["Why", "to create your membership, sign you in and send you sign-in codes and password links."],
             ["Legal basis", "contract. Keeping the record of your consent in section 3: legal obligation (Art. 6(1)(c) with Art. 7(1) GDPR, which requires us to be able to show consent). Keeping the record of your age confirmation and of which Terms you accepted: legitimate interests (being able to prove our contract and its terms)."],
             ["How long", accountRetention()],
@@ -152,7 +165,7 @@ export function privacyDoc() {
             ["What", "for each device you sign in on: a session with your IP address, your browser and device type (user agent) and when it was created and last used."],
             ["Why", "to keep you signed in, let you sign out, and protect your account from misuse."],
             ["Legal basis", "contract, and legitimate interests (keeping accounts secure)."],
-            ["How long", "until you sign out on that device, or until you delete your account."],
+            ["How long", "until you sign out on that device, or until you delete your account. Settings → Account → \"Sign out of all devices\" ends all your sessions at once."],
           ] },
           { title: "The membership check", fields: [
             ["What", "your city and country; your LinkedIn profile link or a short note on how you're connected to the Indian community; if you give one, a member who can vouch for you (if you came through an invite link, we fill in who invited you); our decision, any message we send you, notes our team makes about the check, and the dates. Our team opens the LinkedIn profile you gave us and looks at it (the name, photo, jobs and education shown there): that is information we get from LinkedIn rather than from you. If you change your name or LinkedIn link after we've approved you, we check again."],
@@ -161,22 +174,22 @@ export function privacyDoc() {
             ["How long", `until you delete your account. An account our team declined, or whose membership we ended, is deleted ${months(R.endedAccountMonths)} after our decision if you haven't deleted it yourself. If we decline or block an account, a minimal record stays ("Record of declined and blocked accounts" below).`],
           ] },
           { title: "Your profile", fields: [
-            ["What", "required: your name, city and country. Optional: a photo, your hometown, profession and what you do, how long you've lived abroad, a short bio, what people can ask you about, your LinkedIn link, and whether you offer mentoring or look for a mentor, with your topics. We also show your Verified badge, whether you're a city ambassador, and when you were last active."],
+            ["What", "required: your name, city and country. Optional: a photo, your hometown, profession and what you do, how long you've lived abroad, a short bio, what people can ask you about, your LinkedIn link, and whether you offer mentoring or look for a mentor, with your topics. We also show your Verified badge and whether you're a city ambassador."],
             ["Why", "so members can find, recognise and contact each other."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
             ["How long", "until you change it or delete your account."],
           ] },
           { title: "What you post and do on NRIClub", fields: [
-            ["What", "posts, comments and likes; photos; guides you write and comments on them; questions and answers, including urgent questions, thanks and best answers; events you create and whether you're going; Market listings; places you add or recommend; groups you create, join or ask for; Namaste requests and connections; messages; mentoring times and sessions, with the topic, note and meeting link; ratings and reviews; members you block; your settings (for example who can message you); and the in-app notices we show you."],
+            ["What", "posts, comments and likes; photos (before uploading one, the site makes it smaller and saves it again, which removes hidden details such as where and when it was taken); guides you write and comments on them; questions and answers, including urgent questions, thanks and best answers; events you create and whether you're going; Market listings; places you add or recommend; groups you create, join or ask for; Namaste requests and connections; your invite code, if you open \"Invite a friend\"; messages; mentoring times and sessions, with the topic, note and meeting link; ratings and reviews; members you block; your settings (for example who can message you); and the in-app notices we show you."],
             ["Why", "to provide the features you use."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
             ["How long", `until you delete it or your account, with the exceptions in section 9. In-app notices you've read are deleted after ${months(R.readNoticesMonths)}.`],
           ] },
           { title: "Reports, notices of illegal content and moderation", fields: [
-            ["What", "reports members send (what was reported, the reason, who reported it); reports of illegal content we receive by email; where we need it as evidence, a copy of the reported content (for example a screenshot) with the account and the time; our decisions and the reasons for them, and the messages we send about them; when you use \"Report a problem\", your description plus your browser type and screen size (the form tells you this)."],
+            ["What", "reports members send in the app (what was reported, the reason, their explanation, who reported it); reports sent with the form at nriclub.app/report (where the content is, the reason and explanation, the sender's name and email address, and the reference code we give the report) or by email; to limit how many reports can be sent, a coded form of the email address and the internet address (IP address) a report on the form came from, made with a secret key; where we need it as evidence, a copy of the reported content (for example a screenshot) with the account and the time; our decisions and the reasons for them (the rule or law, the facts, whether a report led to them, who on our team decided), a copy of what we removed (its text; of a photo, only the file's name), and the messages we send about them; when you use \"Report a problem\", your description plus your browser type and screen size (the form tells you this)."],
             ["Why", "to deal with reports and illegal content, to tell the people concerned what we decided and why, to be able to show what we did, and to fix problems."],
             ["Legal basis", "legal obligation under the Digital Services Act (Art. 16 to 18 DSA: handling notices, giving reasons for our decisions, informing the police about threats to someone's life or safety); otherwise legitimate interests (a safe community, and being able to defend our decisions)."],
-            ["How long", `reports, and anything we kept with them, are deleted once they're closed and ${months(R.closedReportsMonths)} old, unless a legal dispute or a police matter about them is still open. A copy kept as evidence is deleted with the report, or when that legal dispute or police matter is over. A report you sent is deleted with your account. A report about you or your content stays after you delete your account, without the link to your account, but its text can still contain your name or the title of what was reported.`],
+            ["How long", `reports, and anything we kept with them, are deleted once they're closed and ${months(R.closedReportsMonths)} old (reports from the form: ${months(R.closedNoticesMonths)}), unless a legal dispute or a police matter about them is still open. A copy kept as evidence is deleted with the report, or when that legal dispute or police matter is over. The coded addresses behind the report limits are deleted after ${R.noticeLimitHours} hours. The record of our decisions is deleted ${months(R.moderationActionMonths)} after the decision, and the copy of removed content in it after ${months(R.moderationCopyMonths)}, unless a legal dispute or a police matter about it is still open. \"Report a problem\" messages and ideas you sent are deleted with your account. A report you sent about content or a member stays after you delete your account, without the link to your account, so our team can finish dealing with it. A report about you or your content, and the record of our decisions about it, stay after you delete your account, without the link to your account, but their text can still contain your name or the title of what was reported.`],
           ] },
           { title: "Record of declined and blocked accounts", fields: [
             ["What", "if our team declines or blocks an account, we keep a minimal record: a coded form of the account's email address if it confirmed one (and of any address it changes to later), the LinkedIn profile link it had when our team last reviewed it (or, if we never did, when we blocked it), and our decision with its date and any note we made on it. The email address itself isn't kept: the coded form is made with a secret key, so we can only check whether an address we already know matches it."],
@@ -193,7 +206,7 @@ export function privacyDoc() {
           { title: "Emails we send you", fields: [
             // Resend keeps each email for 30 days on all its plans
             // (resend.com/pricing, October 2026).
-            ["What", "from our sign-in system: sign-up codes, sign-in codes, password links and email-change confirmations. Our email service keeps each of these emails (your address, the subject and the content, including the code or link) and whether it was delivered. From our team: messages about your membership: decisions on your membership check, moderation decisions with their reasons, a warning before a block, the outcome of a report you sent, notice of changes to the Terms of Use or to NRIClub, the end of your membership and, if it ever happened, a data breach that affects you."],
+            ["What", "from our sign-in system: sign-up codes, sign-in codes, password links and email-change confirmations. Our email service keeps each of these emails (your address, the subject and the content, including the code or link) and whether it was delivered. From our team: messages about your membership: decisions on your membership check, notice of changes to the Terms of Use or to NRIClub, the end of your membership and, if it ever happened, a data breach that affects you; and, to whoever reports content with the form at nriclub.app/report, confirmation that we received it and our decision. Moderation decisions with their reasons, warnings and the outcome of a report you sent in the app come as in-app notices; we may also email them."],
             ["Why", "to run your account and to give you information our Terms of Use or the law require. We send no newsletters, no advertising and no automatic notification emails: everything else shows inside NRIClub."],
             ["Legal basis", "contract; legal obligation for statements of reasons and report outcomes (Art. 16(5) and 17 DSA) and breach notices (Art. 34 GDPR)."],
             ["How long", "our email service keeps sign-in emails for 30 days. Copies of what our team sends are kept like the emails you send us (below)."],
@@ -221,12 +234,12 @@ export function privacyDoc() {
         { entries: [
           { title: "Anyone, without an account", fields: [
             ["What", "nothing about you personally: the public pages contain no member data."],
-            ["Photos", "a photo you upload is stored at a long web address that isn't listed anywhere. Anyone who has that exact address can open the photo without signing in, for example if a member copies it."],
+            ["Photos", "a photo you upload is stored at a long web address that isn't listed anywhere. New photos get an address with a random code, which can't be guessed. Anyone who has a photo's exact address can open it without signing in, for example if a member copies it."],
           ] },
           { title: "Approved members", fields: [
-            ["What", "your profile (section 2, \"Your profile\", including your LinkedIn link if you add it, and when you were last active); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; the places you add and recommend; the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
+            ["What", "your profile (section 2, \"Your profile\"; your LinkedIn link only if you choose to show it in Edit profile); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; the places you add (not which places you recommend: members see only how many members recommend a place); the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
             ["If your membership ends", VISIBILITY.onlyApprovedListed
-              ? "if we decline your sign-up or end your membership, other members no longer see your profile."
+              ? "if we decline your sign-up or block your account, or while our team checks your profile again (for example after you change your name), other members don't see your profile. What you posted before stays until you or we delete it, but without your name or photo: it shows as \"NRIClub member\", and your name is taken off events you organised."
               : "if we decline your sign-up or block your account, approved members can still see your profile until the account is deleted (section 2, \"The membership check\")."],
           ] },
           { title: "Members waiting for our check", fields: [
@@ -238,12 +251,13 @@ export function privacyDoc() {
             ["What", "when you join a city's group, the city's ambassador is told. If you post an urgent question, the city's ambassadors and up to 500 members of your city group get an in-app notice with your name and the question's title."],
           ] },
           { title: "Only the people involved", fields: [
-            ["Messages", "only you and the member you write with. Messages are encrypted on the way and stored encrypted by our database provider, but they are not end-to-end encrypted. Our admin tools don't show them, and we don't read them."],
+            ["Messages", "only you and the member you write with. Messages are encrypted on the way and stored encrypted by our database provider, but they are not end-to-end encrypted. Our admin tools don't show them, and we don't read them, with one exception: if the member you write with reports one of your messages to us, our team sees that one message to decide on the report."],
             ["Mentoring sessions", "the topic, note and meeting link of a session: only you and the other member."],
             ["Just you", "your in-app notices, your settings and the members you've blocked."],
+            ["Your invite link", "it carries a random code, not your member ID. Someone who signs up through it sees your first name and member ID in the details they send for our check, where we fill in who invited them."],
           ] },
           { title: "Our team", fields: [
-            ["What", "everything approved members see, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, your account status and the record of your confirmations and consent. Not your messages."],
+            ["What", `everything approved members see${VISIBILITY.onlyApprovedListed ? " (your profile also while other members don't see it)" : ""}, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, our decisions about your content and account, your account status and the record of your confirmations and consent. Not your messages, except one reported to us (above).`],
           ] },
           { title: "Our service providers", fields: [
             ["What", "they store and process data for us (section 7)."],
@@ -292,7 +306,7 @@ export function privacyDoc() {
 
       { id: "storage", title: "8. Cookies and storage on your device", blocks: [
         { p: "NRIClub sets no cookies and uses no analytics, advertising or tracking tools. The site's own files, including its fonts, come from our server; member photos come from our database provider. Nothing is loaded from other websites." },
-        { p: "To work, the site keeps a few items in your browser's local storage. They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device. Only the sign-in items are sent to our servers, to sign you in." },
+        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for the invite). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device, with two exceptions: the sign-in items are sent to our servers to sign you in, and the invite code to look up who invited you." },
         { entries: [
           { title: "nriclub_token, nriclub_refresh", fields: [
             ["Purpose", "your sign-in: a short-lived access key and a key to renew it."],
@@ -300,22 +314,18 @@ export function privacyDoc() {
           ] },
           { title: "nriclub_reset_requested", fields: [
             ["Purpose", "the email address and time when this browser asked for a password-reset link, so that after the reset only this browser fills in the address on the login form."],
-            ["Kept", "used for 24 hours; replaced when you ask for another link, otherwise it stays until you clear the site's data."],
+            ["Kept", "until you've set the new password, at most 24 hours (it's deleted the next time you open NRIClub after that)."],
           ] },
           { title: "nriclub_invite", fields: [
-            ["Purpose", "if you opened a member's invite link: that member's ID and first name, so we can fill in who invited you when you sign up."],
-            ["Kept", "until you clear the site's data."],
-          ] },
-          { title: "nriclub_profile_cache", fields: [
-            ["Purpose", "a copy of your profile, written after you change your photo."],
-            ["Kept", "until you sign out."],
+            ["Purpose", "if you opened a member's invite link: the invite code from the link (on older links: that member's ID and first name). When you fill in your details for our check, the site sends the code to our servers to look up who invited you, and tells our team when you send the details."],
+            ["Kept", "in session storage, only in that browser tab: until you send those details, or close the tab."],
           ] },
           { title: "nriclub_welcome_…, nriclub_welcome_done_…, nriclub_catchup_…, nriclub_intro_done_…, nriclub_city_group_…, nriclub_profile_card_dismissed_… (each ending in your member ID) and nriclub_festival_… (ending in a date)", fields: [
             ["Purpose", "which welcome messages, tips and cards you've already seen or closed, and when you last saw the catch-up, so they don't show again. They hold no other personal data."],
-            ["Kept", "until you clear the site's data (they stay after you sign out)."],
+            ["Kept", "until you clear the site's data, or delete your account in this browser (they stay after you sign out, so the same messages don't show again next time)."],
           ] },
         ] },
-        { p: "An earlier version of the site stored a cookie-banner choice (nriclub_cookie_consent); the site now deletes it." },
+        { p: "Earlier versions of the site stored a cookie-banner choice (nriclub_cookie_consent) and a copy of your profile (nriclub_profile_cache); the site now deletes them." },
         { p: "You can delete all of these in your browser's settings by clearing the site data for nriclub.app. You'll then be signed out." },
       ] },
 
@@ -325,14 +335,14 @@ export function privacyDoc() {
           [strong("Your account, profile and content"), " stay until you delete them or your account, or until we delete an account as section 2 says (a sign-up never confirmed, an account that never sent its check details, or one we declined or whose membership we ended)."],
           [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
           photoFilesText(),
-          [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports other members made about you, no longer linked to your account (their text can still contain your name); copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; emails you sent us (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
-          ...(R.byHand ? ["Until these deletions run automatically, our team carries them out by hand: photo files every week, everything else once a month, so data can stay up to a month longer than the period given."] : []),
+          [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports you sent about content or members, and reports other members made about you, no longer linked to your account (their text can still contain your name); the record of our decisions about your content and account, no longer linked to it; copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; emails you sent us (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
+          ...(R.byHand ? [`Until these deletions run automatically, our team carries them out by hand${R.photoFilesDeleted ? " once a month" : ": photo files every week, everything else once a month"}, so data can stay up to a month longer than the period given.`] : []),
         ] },
       ] },
 
       { id: "rights", title: "10. Your rights", blocks: [
         { ul: [
-          [strong("Access"), " (Art. 15 GDPR): Settings → Download my data gives you a copy of your account's data at once. Anything that isn't in the file, for example notes our team wrote about your membership check, we give you on request."],
+          [strong("Access"), " (Art. 15 GDPR): Settings → Download my data gives you a copy of your account's data at once. Anything that isn't in the file, for example notes our team wrote about your membership check, we give you on request. To protect members who report content, we don't say who reported you, and we leave out reports about messages you sent, since only the member you wrote to can report a message (Art. 15(4) GDPR). If we remove a message of yours, we tell you why."],
           [strong("Correction"), " (Art. 16): change your profile in the app. To change your email address, write to us."],
           [strong("Erasure"), " (Art. 17): delete content in the app, or your whole account in Settings, or ask us."],
           [strong("Restriction"), " (Art. 18): ask us to limit how we use your data while, for example, we check whether it is correct."],
@@ -364,7 +374,7 @@ export function privacyDoc() {
       ] },
 
       { id: "security", title: "15. Security", blocks: [
-        { p: "We protect your data with technical and organisational measures (Art. 32 GDPR), including: encrypted connections (HTTPS) everywhere; storage in the EU, encrypted on our provider's disks; database rules that let each person read and change only what they're allowed to; passwords stored only as hashes; admin tools only for our team; and daily backups. No system is completely secure. If a data breach is likely to put you at high risk, we tell you without undue delay (Art. 34 GDPR)." },
+        { p: `We protect your data with technical and organisational measures (Art. 32 GDPR), including: encrypted connections (HTTPS) everywhere; storage in the EU, encrypted on our provider's disks; database rules that let each person read and change only what they're allowed to; passwords stored only as hashes; admin tools only for our team, on their own web address${SECURITY.adminTwoStep ? " and with two-step login (a code from an authenticator app)" : ""}; and daily backups. No system is completely secure. If a data breach is likely to put you at high risk, we tell you without undue delay (Art. 34 GDPR).` },
       ] },
 
       { id: "changes", title: "16. Changes to this policy", blocks: [

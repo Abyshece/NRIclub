@@ -220,7 +220,9 @@ export function BookingModal({ mentor, onClose, onMessage, Avatar }) {
 // ---------------------------------------------------------------------------
 // MENTOR CARD (member page) with reviews
 // ---------------------------------------------------------------------------
-export function MentorProfileCard({ member, rating, onBook, isSelf, Avatar, me }) {
+// onReport(target): opens the report dialog for a review (the same dialog as
+// for everything else that can be reported).
+export function MentorProfileCard({ member, rating, onBook, isSelf, Avatar, me, onReport }) {
   const [reviews, setReviews] = useState(null);
   useEffect(() => {
     let gone = false;
@@ -248,7 +250,7 @@ export function MentorProfileCard({ member, rating, onBook, isSelf, Avatar, me }
                   {me && r.mentee_id === me ? (
                     <button onClick={async () => { if (!confirm("Delete your review?")) return; try { await api.deleteMyReview(r.id); setReviews(prev => prev.filter(x => x.id !== r.id)); } catch (e) { alert(errorText(e, "Your review couldn't be deleted.")); } }} style={{ marginLeft: "auto", background: "none", border: "none", color: FAINT, fontSize: 11, cursor: "pointer", textDecoration: "underline", fontFamily: font }}>Delete</button>
                   ) : me && (
-                    <button onClick={async () => { if (!confirm("Report this review to the NRIClub team?")) return; try { await api.reportPost(r.id, `[REVIEW] Mentor review: ${(r.comment || "").slice(0, 80)}`); alert("Thanks, the NRIClub team will look at it."); } catch (e) { alert(errorText(e, "The report couldn't be sent.")); } }} style={{ marginLeft: "auto", background: "none", border: "none", color: FAINT, fontSize: 11, cursor: "pointer", textDecoration: "underline", fontFamily: font }}>Report</button>
+                    onReport && <button onClick={() => onReport({ type: "review", id: r.id, userId: r.mentee_id, name: r.comment || `${r.rating}-star review` })} style={{ marginLeft: "auto", background: "none", border: "none", color: FAINT, fontSize: 11, cursor: "pointer", textDecoration: "underline", fontFamily: font }}>Report</button>
                   )}
                 </div>
                 {r.comment && <p style={{ fontSize: 13, color: INK, lineHeight: 1.5, marginTop: 2, overflowWrap: "anywhere" }}>{r.comment}</p>}
@@ -340,7 +342,7 @@ function SessionCard({ b, user, review, onChanged, onMessage, openMember, Avatar
   return (
     <div style={{ ...card, opacity: cancelled ? 0.7 : 1 }}>
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-        <button type="button" onClick={() => other && openMember(other.id)} aria-label={otherName} style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}><Avatar name={otherName} size={40} url={other?.avatar_url} /></button>
+        <button type="button" onClick={() => other && !other.unlisted && openMember(other.id)} disabled={!!other?.unlisted} aria-label={otherName} style={{ background: "none", border: "none", padding: 0, cursor: other?.unlisted ? "default" : "pointer" }}><Avatar name={otherName} size={40} url={other?.avatar_url} /></button>
         <div style={{ flex: 1, minWidth: 0, fontFamily: font }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: INK }}>{mentoring ? `Mentoring ${otherName}` : `With ${otherName}`}</div>
           <div style={{ fontSize: 13, color: cancelled ? FAINT : INK, textDecoration: cancelled ? "line-through" : "none" }}>{sessionTime(b.starts_at, b.duration_min)}</div>
@@ -360,7 +362,7 @@ function SessionCard({ b, user, review, onChanged, onMessage, openMember, Avatar
           ) : b.meeting_link ? (
             <p style={{ fontSize: 13, marginBottom: 10 }}>🎥 <a href={b.meeting_link} target="_blank" rel="noopener noreferrer" style={{ color: "#0B6E99", fontWeight: 600, overflowWrap: "anywhere" }}>Join the video call</a>{mentoring && <button onClick={() => setEditing(true)} style={{ marginLeft: 8, background: "none", border: "none", color: FAINT, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>change</button>}</p>
           ) : (
-            <p style={{ fontSize: 12, color: FAINT, marginBottom: 10 }}>{otherName.split(" ")[0]} will add a video call link before the session.</p>
+            <p style={{ fontSize: 12, color: FAINT, marginBottom: 10 }}>{other?.unlisted ? "Your mentor" : otherName.split(" ")[0]} will add a video call link before the session.</p>
           )}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => onMessage(other)} style={btnLight}>Message</button>
@@ -385,7 +387,7 @@ function SessionCard({ b, user, review, onChanged, onMessage, openMember, Avatar
                   <button key={n} role="radio" aria-checked={stars === n} aria-label={`${n} star${n > 1 ? "s" : ""}`} onClick={() => setStars(n)} style={{ background: "none", border: "none", fontSize: 26, cursor: "pointer", color: n <= stars ? "#E8A317" : "#DDDCD9", padding: 0, lineHeight: 1 }}>★</button>
                 ))}
               </div>
-              <textarea aria-label="Review" style={{ ...input, minHeight: 56, marginBottom: 8 }} value={comment} maxLength={1000} onChange={(e) => setComment(e.target.value)} placeholder={`What did ${otherName.split(" ")[0]} help you with? (optional)`} />
+              <textarea aria-label="Review" style={{ ...input, minHeight: 56, marginBottom: 8 }} value={comment} maxLength={1000} onChange={(e) => setComment(e.target.value)} placeholder={`What did ${other?.unlisted ? "your mentor" : otherName.split(" ")[0]} help you with? (optional)`} />
               <button disabled={!stars || busy} onClick={() => run(() => api.reviewMentorSession(b.id, stars, comment.trim()), "Your rating couldn't be saved. Please try again.")} style={{ ...btn, opacity: stars && !busy ? 1 : 0.5 }}>Send rating</button>
             </>
           )}

@@ -1,24 +1,27 @@
 # Deletion routine (by hand, until the clean-up jobs exist)
 
 The Privacy Policy promises how long data is kept (section 2) and says that,
-for now, our team deletes it by hand: photo files every week, everything
-else once a month (section 9). This file is how. The periods are in
-`RETENTION` in `src/content/legal/privacy.js`; if you change one there,
-change it here too, and the other way round.
+for now, our team deletes it by hand once a month (section 9). This file is
+how. The periods are in `RETENTION` in `src/content/legal/privacy.js`; if
+you change one there, change it here too, and the other way round.
 
-When the database does this itself (plan C20, clean-up jobs; plan C1, photo
-files deleted with their post or account), set `byHand` (and
-`photoFilesDeleted`) in `RETENTION` accordingly and stop this routine.
+Photo files are no longer deleted by hand (plan C1, since the 2026-10-22
+update): see "Photo files" below. When the database does the rest itself
+(plan C20, clean-up jobs), set `byHand` in `RETENTION` to false and stop
+the monthly part of this routine.
 
 | What | Kept for | How often you run it |
 |---|---|---|
-| Photo files nothing uses any more (deleted posts, listings, events, replaced profile photos, deleted accounts) | deleted within 7 days | **every week** |
+| Photo files nothing uses any more (deleted posts, listings, events, replaced or removed profile photos, deleted accounts, content our team removed) | deleted within 7 days at most | **automatic** when an admin opens the admin panel (once a day); open it at least once a week |
 | Sign-ups that never confirmed their email address | 30 days | once a month |
 | Accounts that never sent their check details | 90 days | once a month |
 | Accounts our team declined | 6 months after the decision | once a month |
 | Accounts whose membership we ended | 6 months after the decision | once a month (by hand, below) |
 | In-app notices the member has read | 6 months | once a month |
 | Closed reports, and evidence copies kept with them | once closed and 12 months old | once a month |
+| Closed reports from the form at nriclub.app/report | once closed and 12 months old | once a month |
+| Coded addresses behind the report limits (`private.notice_log`) | 24 hours | once a month |
+| Record of our decisions (`private.moderation_action`) | 24 months; the copy of removed content in it after 6 months | once a month |
 | Record of declined and blocked accounts | 24 months after the decision; its note after 12 months | once a month |
 | Emails about rights and reports of illegal content, with our answers | 3 years after the matter is closed | once a month (mailbox) |
 | All other emails, with our replies | 12 months after the matter is closed | once a month (mailbox) |
@@ -27,51 +30,85 @@ Write the date and what you deleted in the log at the end.
 
 All SQL runs in the Supabase dashboard → SQL Editor, on the live project.
 
-## Every week: photo files
+## Photo files (automatic, from the admin panel)
 
-Files in Storage aren't deleted with their post or account yet. This query
-lists every photo file that is more than a day old and that either belongs
-to an account that no longer exists or that no profile, post, event, group
-or Market listing uses. It changes nothing.
+What the site deletes by itself, at once:
+
+- a member's post, Market listing or event they delete: its photos;
+- a profile photo they replace or remove;
+- all of a member's photo files when they delete their account (before the
+  account itself);
+- a photo taken off a post or event before it was published.
+
+What is left behind (content our team removed, accounts deleted by the
+nightly clean-up or by hand, a deletion that failed, photos uploaded for a
+post that was never published) the **photo clean-up** in the admin panel
+deletes. It asks the database (`public.admin_storage_orphans`) for photo
+files no profile, post, event, group or Market listing uses and that either
+belong to an account that no longer exists or are more than a day old, and
+deletes them through Storage with the admin's own session. The database
+lets an admin delete a photo file only while nothing uses it, so the
+clean-up can never break a photo that is shown.
+
+- It runs **by itself once a day**, for the first admin who opens the admin
+  panel that day (a toast says what it deleted, if anything).
+- **Overview → Photo files → Clean up photo files** runs it at once and
+  shows what it deleted.
+- The Privacy Policy promises these files go within 7 days at most
+  (`RETENTION.photoCleanupDays`). So **open the admin panel at least once a
+  week**; if you can't, ask another admin to.
+
+To check by hand which files the clean-up would delete (SQL Editor; it
+changes nothing; replace the email with an admin's):
 
 ```sql
--- NRIClub weekly: photo files nothing uses any more.
-WITH used AS (
-  SELECT avatar_url AS url FROM public.profiles WHERE avatar_url <> ''
-  UNION ALL SELECT image_url FROM public.posts WHERE image_url <> ''
-  UNION ALL SELECT image_url FROM public.events WHERE image_url <> ''
-  UNION ALL SELECT image_url FROM public.groups WHERE image_url <> ''
-  UNION ALL SELECT image_url FROM public.marketplace WHERE image_url <> ''
-)
-SELECT o.bucket_id, json_agg(o.name ORDER BY o.name) AS files, count(*) AS how_many
-FROM storage.objects o
-WHERE o.bucket_id IN ('avatars', 'post-images', 'marketplace-images')
-  AND o.created_at < now() - interval '1 day'
-  AND (
-    NOT EXISTS (SELECT 1 FROM auth.users u WHERE u.id::text = split_part(o.name, '/', 1))
-    OR NOT EXISTS (SELECT 1 FROM used WHERE position('/' || o.bucket_id || '/' || o.name IN used.url) > 0)
-  )
-GROUP BY o.bucket_id
-ORDER BY o.bucket_id;
+-- NRIClub: photo files the clean-up would delete now.
+BEGIN;
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', id, 'role', 'authenticated', 'aal', 'aal2')::text, true)
+FROM auth.users WHERE email = 'admin@example.com';
+SET LOCAL ROLE authenticated;
+SELECT * FROM public.admin_storage_orphans(1000);
+ROLLBACK;
 ```
 
-Then delete the listed files:
+If the panel can't be used, delete the listed files in the dashboard:
+Storage → the bucket → open the folder (the first part of the name) → tick
+the files → Delete. Never delete rows from `storage.objects` with SQL: the
+file itself would stay, and the live project refuses it anyway.
 
-- **In the dashboard:** Storage → the bucket → open the folder (the first
-  part of the name) → tick the files → Delete. A whole folder of an account
-  that no longer exists can be deleted at once.
-- **Or with one request per bucket** (many files), using the service role
-  key from Project Settings → API (never put it anywhere else):
+### Once, after the 2026-10-22 update: photos uploaded before it
 
-  ```
-  curl -X DELETE "https://uzzkdmybsbwknpsucuvv.supabase.co/storage/v1/object/<bucket>" \
-    -H "apikey: <service role key>" -H "Authorization: Bearer <service role key>" \
-    -H "Content-Type: application/json" \
-    -d '{"prefixes": <the files list from the query>}'
-  ```
+Since that update the site saves every photo again before uploading it,
+which removes hidden details such as where it was taken (EXIF/GPS). Photos
+uploaded before were often kept as they were (two post photos on live had
+GPS data, and some profile photos were HEIC files from iPhones). The
+clean-up deletes those nothing uses; the ones still shown stay. List them
+(it changes nothing):
 
-Never delete rows from `storage.objects` with SQL: the file itself would
-stay, and the live project refuses it anyway.
+```sql
+-- NRIClub once: photo files from before 2026-10-22 (not named <random>.jpg).
+SELECT o.bucket_id, o.name, o.metadata->>'mimetype' AS type, o.created_at
+FROM storage.objects o
+WHERE o.bucket_id IN ('avatars', 'post-images', 'marketplace-images')
+  AND o.name !~ '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$'
+ORDER BY o.created_at;
+```
+
+Open each JPEG or HEIC file (Storage → the bucket → the file → Download)
+and look for a location in its details (for example with exiftool, or on a
+Mac in Preview → Tools → Show Inspector). For each one with a location:
+
+- take it off what shows it, in the SQL Editor:
+  - a post: `UPDATE public.posts SET image_url = NULL WHERE image_url LIKE '%/<file name>';`
+  - an event: `UPDATE public.events SET image_url = '' WHERE image_url LIKE '%/<file name>';`
+  - a profile photo: `UPDATE public.profiles SET avatar_url = '' WHERE avatar_url LIKE '%/<file name>%';`
+  - a Market listing: ask the member to delete the listing and post it again;
+- then press **Clean up photo files** (the file is older than a day, so it
+  goes at once), and ask the member to add the photo again: the site now
+  removes the location;
+- note the date and the files in `breach-register.md` (the line marked
+  **[fill in]**).
 
 ## Once a month: the database
 
@@ -101,8 +138,23 @@ SELECT 'records of declined and blocked accounts, 24 months', count(*) FROM priv
   WHERE created_at < now() - interval '24 months'
 UNION ALL
 SELECT 'notes in those records, 12 months', count(*) FROM private.moderation_record
-  WHERE admin_note <> '' AND created_at < now() - interval '12 months';
+  WHERE admin_note <> '' AND created_at < now() - interval '12 months'
+UNION ALL
+SELECT 'closed reports from the form, 12 months', count(*) FROM private.notices
+  WHERE status = 'closed' AND created_at < now() - interval '12 months' AND hold_reason = ''
+UNION ALL
+SELECT 'report-limit counters, 1 day', count(*) FROM private.notice_log
+  WHERE at < now() - interval '1 day'
+UNION ALL
+SELECT 'copies of removed content, 6 months', count(*) FROM private.moderation_action
+  WHERE snapshot IS NOT NULL AND created_at < now() - interval '6 months'
+UNION ALL
+SELECT 'records of our decisions, 24 months', count(*) FROM private.moderation_action
+  WHERE created_at < now() - interval '24 months';
 ```
+
+(The last four exist once the database update of 21 October 2026 is in;
+before it, leave them out.)
 
 The first time, older accounts that never finished signing up go at once.
 If you'd like to warn them first, email them two weeks before.
@@ -111,7 +163,10 @@ If you'd like to warn them first, email them two weeks before.
 
 A report that is part of a legal dispute or a police matter that is still
 open stays: put its id between the braces in `'{}'` below (several ids
-separated by commas, e.g. `'{1b2c..., 3d4e...}'`). Evidence copies you kept
+separated by commas, e.g. `'{1b2c..., 3d4e...}'`), or hold it with
+`private.report_hold` (`moderation-guidelines.md`, step 8). A report from
+the form that is held has `hold_reason` set and stays; so do the decisions
+that answered held reports. Evidence copies you kept
 outside the database (screenshots) go with their report: delete them by
 hand when the report goes.
 
@@ -136,6 +191,18 @@ DELETE FROM public.reports
 DELETE FROM private.moderation_record WHERE created_at < now() - interval '24 months';
 UPDATE private.moderation_record SET admin_note = ''
   WHERE admin_note <> '' AND created_at < now() - interval '12 months';
+-- Since the database update of 21 October 2026:
+DELETE FROM private.notices
+  WHERE status = 'closed' AND created_at < now() - interval '12 months' AND hold_reason = '';
+DELETE FROM private.notice_log WHERE at < now() - interval '1 day';
+UPDATE private.moderation_action a SET snapshot = NULL
+  WHERE snapshot IS NOT NULL AND created_at < now() - interval '6 months'
+    AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = ANY (a.report_ids))
+    AND NOT EXISTS (SELECT 1 FROM private.notices n WHERE n.id = a.notice_id AND n.hold_reason <> '');
+DELETE FROM private.moderation_action a
+  WHERE created_at < now() - interval '24 months'
+    AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = ANY (a.report_ids))
+    AND NOT EXISTS (SELECT 1 FROM private.notices n WHERE n.id = a.notice_id AND n.hold_reason <> '');
 COMMIT;
 ```
 
@@ -177,6 +244,8 @@ Keep a request log (date, who, what, deadline, date answered; see
 
 ## Log
 
-| Date | Photo files deleted | Accounts deleted | Notices, reports, records | Mailbox | By |
-|---|---|---|---|---|---|
-| | | | | | |
+Photo files aren't logged here: the admin panel deletes them by itself.
+
+| Date | Accounts deleted | Notices, reports, records | Mailbox | By |
+|---|---|---|---|---|
+| | | | | |

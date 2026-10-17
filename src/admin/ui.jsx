@@ -36,6 +36,7 @@ const PATHS = {
   message: ["M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"],
   trash: ["M3 6h18", "M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"],
   eye: ["M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z", "M12 9a3 3 0 100 6 3 3 0 000-6z"],
+  lock: ["M19 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2z", "M7 11V7a5 5 0 0110 0v4"],
 };
 
 export function Icon({ name, size = 16, strokeWidth = 1.7, style, className }) {
@@ -154,14 +155,17 @@ export function SkeletonRows({ rows = 4 }) {
   );
 }
 
-// A small modal for confirmations. Keys pressed inside it don't reach the
-// panel's keyboard shortcuts.
-export function ConfirmDialog({ title, children, confirmLabel = "Confirm", tone = "danger", busy = false, error = "", onConfirm, onCancel }) {
-  const confirmRef = useRef(null);
-  useEffect(() => { confirmRef.current?.focus(); }, []);
+// A small modal for confirmations. Cancel has the focus when it opens, so
+// Enter or a stray key never confirms something that can't be undone. Keys
+// pressed inside it don't reach the panel's keyboard shortcuts. wide: for a
+// form (e.g. the reasons for a moderation decision); confirmDisabled keeps
+// the confirm button off until the form is complete.
+export function ConfirmDialog({ title, children, confirmLabel = "Confirm", tone = "danger", busy = false, error = "", onConfirm, onCancel, wide = false, confirmDisabled = false }) {
+  const cancelRef = useRef(null);
+  useEffect(() => { cancelRef.current?.focus(); }, []);
   return (
-    <div className="adm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
-      <div className="adm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="adm-dialog-title"
+    <div className={`adm-overlay${wide ? " adm-overlay-top" : ""}`} onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
+      <div className={`adm-dialog${wide ? " adm-dialog-wide" : ""}`} role="alertdialog" aria-modal="true" aria-labelledby="adm-dialog-title"
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Escape" && !busy) { e.preventDefault(); onCancel(); }
@@ -170,8 +174,8 @@ export function ConfirmDialog({ title, children, confirmLabel = "Confirm", tone 
         {children && <div className="adm-dialog-text">{children}</div>}
         {error && <ErrorNote>{error}</ErrorNote>}
         <div className="adm-dialog-actions">
-          <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
-          <Button variant={tone === "danger" ? "danger-solid" : "primary"} onClick={onConfirm} disabled={busy} ref={confirmRef}>
+          <button type="button" ref={cancelRef} className="adm-btn adm-btn-secondary adm-btn-md" onClick={onCancel} disabled={busy}><span>Cancel</span></button>
+          <Button variant={tone === "danger" ? "danger-solid" : "primary"} onClick={onConfirm} disabled={busy || confirmDisabled}>
             {busy ? "Working…" : confirmLabel}
           </Button>
         </div>
@@ -347,7 +351,7 @@ body { margin:0; background:#fff; }
 .adm-peek-bar { display:flex; align-items:center; gap:2px; height:44px; padding:0 10px; flex-shrink:0; }
 .adm-peek-pos { font-size:12px; color:var(--faint); margin-left:6px; font-variant-numeric:tabular-nums; }
 .adm-peek-hints { margin-left:auto; display:flex; align-items:center; gap:3px; font-size:12px; color:var(--faint); white-space:nowrap; }
-.adm-peek-util { display:flex; align-items:center; gap:8px; margin-top:8px; margin-left:-8px; }
+.adm-peek-util { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; margin-top:8px; margin-left:-8px; }
 .adm-peek-body { flex:1; overflow-y:auto; padding:12px 40px 28px; }
 .adm-peek-head { display:flex; align-items:center; gap:14px; margin-bottom:6px; }
 .adm-peek-name { font-size:26px; font-weight:700; line-height:1.2; letter-spacing:-0.01em; overflow-wrap:anywhere; }
@@ -393,7 +397,21 @@ body { margin:0; background:#fff; }
 .adm-dialog { background:#fff; border-radius:10px; width:100%; max-width:400px; padding:20px; box-shadow:rgba(15,15,15,0.1) 0 5px 10px, rgba(15,15,15,0.2) 0 15px 40px; }
 .adm-dialog-title { font-size:16px; font-weight:600; margin-bottom:6px; }
 .adm-dialog-text { color:var(--muted); margin-bottom:16px; }
-.adm-dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:4px; }
+.adm-dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:4px; flex-wrap:wrap; }
+.adm-overlay-top { align-items:flex-start; overflow-y:auto; }
+.adm-dialog-wide { max-width:540px; margin:auto 0; }
+.adm-dialog-wide .adm-dialog-text { color:var(--text); }
+.adm-form { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
+.adm-radio-row { display:flex; gap:14px; flex-wrap:wrap; }
+.adm-radio { display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:var(--text); }
+.adm-select { width:100%; border:1px solid rgba(55,53,47,0.16); border-radius:6px; padding:7px 8px; background:#fff; font:inherit; color:var(--text); }
+.adm-statement { padding:10px 12px; background:#F7F7F5; border-radius:6px; font-size:13px; line-height:1.55; color:var(--text); white-space:pre-wrap; overflow-wrap:anywhere; }
+.adm-warn-note { padding:8px 10px; border-radius:6px; background:#FBF0E6; color:#7A3E06; font-size:13px; line-height:1.5; }
+.adm-safety { margin-top:10px; padding:10px 12px; border-radius:6px; background:#FBE4E4; color:#5D1715; font-size:13px; line-height:1.5; }
+.adm-safety ol { margin:6px 0 0; padding-left:18px; }
+.adm-history { list-style:none; padding:0; margin:0; }
+.adm-history li { padding:8px 0; border-bottom:1px solid var(--line); font-size:13px; line-height:1.5; }
+.adm-history li:last-child { border-bottom:0; }
 .adm-toast { position:fixed; left:calc(240px + 32px); bottom:28px; z-index:80; display:flex; align-items:center; gap:10px; max-width:min(520px, calc(100vw - 32px)); padding:10px 10px 10px 14px; border-radius:8px; background:#37352F; color:#fff; font-size:14px; box-shadow:0 6px 24px rgba(15,15,15,0.22); animation:adm-rise .16s ease-out; }
 .adm-toast-error { background:#B42318; }
 .adm-toast-text { min-width:0; }

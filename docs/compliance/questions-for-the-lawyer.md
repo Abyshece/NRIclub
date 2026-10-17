@@ -107,28 +107,29 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
 
 ### For the owner and the next legal review
 
-1. **Who sees whose profile.** After the migration, approved members can
-   still read the profile of every account: waiting, unfinished, declined
-   and blocked ones too, and the Find tab lists them. The lawyer finds no
-   legal basis for showing declined and unfinished accounts and prefers a
-   database change (`private.is_listed_member`: only active, approved
-   accounts are shown to other members). That change belongs in a
-   migration, outside the legal-texts work. Until it ships, the Privacy
-   Policy says honestly that approved members can see a waiting member's
-   profile, and a declined or blocked one until it is deleted
-   (`VISIBILITY.onlyApprovedListed = false` in
-   `src/content/legal/privacy.js`; set it to `true` with the change).
-   Open product choice: whether blocked authors' profiles stay visible next
-   to their old posts.
+1. **Who sees whose profile.** *Done in
+   `20261023000000_admin_access.sql`, as the lawyer preferred:* other
+   members see only the profiles of approved, active members
+   (`private.is_listed_member`); waiting, unfinished, declined and blocked
+   accounts aren't shown (admins see everyone, everyone sees their own).
+   The product choice: what such an account posted stays until it is
+   deleted, shown as "NRIClub member" with no name, photo or profile, and
+   its name is taken off events it organised; the same while an approved
+   member is back in review (e.g. after a name change). The Privacy Policy
+   says so (`VISIBILITY.onlyApprovedListed = true`). For the next review:
+   confirm that keeping the content without the name is fine, or whether
+   blocked members' content should be hidden until it is reviewed.
 2. **Reports: "12 months after closing".** The database stores when a report
    was sent, not when it was closed. The Policy therefore says reports are
    deleted "once they're closed and 12 months old", which can be sooner
    after closing than the lawyer's wording. Confirm, or add a closing date
    to reports (then the routine can count from it).
 3. **By hand, once a month.** Until clean-up jobs exist (plan C20), the
-   periods are kept by hand: photo files weekly, the rest monthly, so data
-   can stay up to a month longer than the period given (the Policy says
-   so). Confirm that is acceptable for the interim.
+   periods are kept by hand monthly, so data can stay up to a month longer
+   than the period given (the Policy says so). Confirm that is acceptable
+   for the interim. (Photo files are no longer by hand: since 2026-10-22
+   the site deletes them with their content and account, and the admin
+   panel's photo clean-up deletes what is left behind within 7 days.)
 4. **Vercel has no DPA on the Hobby plan.** vercel.com/legal/dpa applies
    only "for Customers who are on Enterprise and Pro plans". The Policy
    names no agreement and no safeguard for Vercel until
@@ -159,19 +160,39 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
    12 October. The lawyer's conclusion (awareness of the published password
    in April) still holds; the register now says 24 April for item (4) and
    asks the founder to confirm.
-9. **Dates.** `TERMS_DATE` and `PRIVACY_DATE` say "16 October 2026", the
-   day this version went live (the lawyer's advice). The version strings
-   stay `2026-10-19`.
+9. **Dates.** `TERMS_DATE` and `PRIVACY_DATE` say "17 October 2026", the
+   day the current wording went live (the lawyer's advice). The Terms version
+   stays `2026-10-19`; the Privacy Policy is `2026-10-21` since round 2
+   (item 12).
 10. **"Ended" memberships.** The database knows "blocked", not "ended". The
     Policy promises deletion 6 months after we end a membership; the
     routine lists blocked accounts older than 6 months and the admin
     deletes the ones whose membership ended (`deletion-routine.md`,
     step 3). A separate status would make this exact.
+11. **Terms changed within version 2026-10-19 (compliance round 2).**
+    Sections 9 and 10 now describe the Report button on every item, the
+    form at nriclub.app/report, decisions in the app or by email, the
+    reason for a block shown at sign-in, and that declining a mentor's
+    membership cancels their booked sessions; section 8 that photo files
+    left behind are deleted within 7 days. The version string and date were
+    not changed: when this was written, version 2026-10-19 was live but its
+    database update (round 1) had not run, so no member could have
+    accepted it yet. Confirm that no new version is needed (in particular
+    for the mentoring sentence), or publish these changes as a new version
+    ("Legal texts and the Impressum" in `LAUNCH-GUIDE.md`).
+12. **The Privacy Policy** is version 2026-10-21 since round 2 (reporting
+    and moderation records, photo files, invite codes, who sees whom, admin
+    access). Members don't accept it; tell them in the app about the
+    important changes.
 
 ### In the code, outside the legal texts (the texts allow for them)
 
-- **Photo files deleted with their post or account** (plan C1), then
-  `RETENTION.photoFilesDeleted = true`.
+- *Done (2026-10-22):* **photo files deleted with their post or account**
+  (plan C1, `RETENTION.photoFilesDeleted = true`), photos re-encoded
+  without EXIF/GPS and given random names (C2), invite links with a random
+  code instead of the member ID (C19, first part). Private buckets (C19,
+  second part) are still open; until then the Policy says photos open for
+  anyone with their exact address.
 - **Clean-up jobs** (plan C20), then `RETENTION.byHand = false`.
 - **City pages** (plan C17): the page shows member counts only from 5, but
   the public API returns any count (live: Forchheim 1), which with Art. 9
@@ -202,12 +223,16 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
     your own case see a lawyer or tax adviser.";
   - rename the mentoring topic "Visas & residence" to "Moving & visa
     experiences".
-- **nriclub_invite** (plan C30): delete it after sign-up or after 30 days;
-  then the Policy (section 8) says "Kept: until you sign up, at most 30
-  days".
-- **Report page** (plan C6): then `REPORT_HREF = "/report"` and
-  `REPORT_LINK_TEXT = REPORT_LINK_LABEL` in `src/content/legal/reporting.js`,
-  and Terms section 9 names the page.
+- *Done (2026-10-22):* **nriclub_invite** (plan C30) is kept in session
+  storage (that tab only) and deleted once the check details are sent; the
+  Policy (section 8) says so. Also: `nriclub_reset_requested` goes after
+  24 hours or the reset, `nriclub_profile_cache` is no longer written, and
+  a member's own per-member flags go when they delete their account.
+- *Done (2026-10-21):* **Report page** (plan C6): nriclub.app/report
+  (`REPORT_HREF = "/report"` in `src/content/legal/reporting.js`), named in
+  the footers, the Impressum and Terms section 9. Receipts and decisions for
+  reports sent there are emailed by hand from hello@nriclub.app
+  (`moderation-guidelines.md`).
 
 ## 3. What changed after the review
 

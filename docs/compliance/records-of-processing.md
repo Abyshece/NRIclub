@@ -28,15 +28,23 @@ as it holds no secrets.
 ## Recipients that apply to most activities
 
 - **Approved members** (verification_status `approved`, active, 18+, current
-  Terms and Art. 9 consent): see other members' profiles and content. Members
-  waiting for review see only the list of groups and the guides (migration
-  `20261019000000_access_consent.sql`). Approved members can still see the
-  profiles of waiting, unfinished, declined and blocked accounts until the
-  profiles policy shows only approved, active ones (`VISIBILITY` in
-  `src/content/legal/privacy.js`; the lawyer finds no legal basis for showing
-  declined and unfinished accounts).
-- **Admins** (rows in `public.admins`): see everything members see plus email
-  addresses, verification details, notes, reports. Not private messages.
+  Terms and Art. 9 consent): see other members' content and the profiles of
+  approved, active members only (`private.is_listed_member`, migration
+  `20261023000000_admin_access.sql`). Waiting, unfinished, declined and
+  blocked accounts aren't shown to other members; what they posted before
+  stays, shown as "NRIClub member" without name or photo, and their name is
+  taken off events they organised. Members waiting for review see only the
+  list of groups and the guides (migration
+  `20261019000000_access_consent.sql`).
+- **Admins** (rows in `public.admins` whose account isn't blocked; once
+  "Require two-step login for admin rights" is on, only in sessions signed in
+  with the 6-digit code): see everything members see plus the profiles of
+  accounts members don't see, email addresses, verification details, notes,
+  reports and our decisions. Not private messages, except a single message a
+  member reported (shown only with that report). Admins change members'
+  content and accounts only through database functions that record what they
+  did (`private.moderation_action`; membership decisions in
+  `verification_log`).
 - **Processors** (Art. 28): Supabase Pte. Ltd., Singapore (database, Auth,
   Storage, Realtime; AWS eu-west-1, Ireland), Vercel Inc., USA (hosting and
   CDN, worldwide edge network), Plus Five Five, Inc. (Resend), USA
@@ -89,7 +97,7 @@ references the member cascades, except where noted).
 | Purpose | Check that each member is a real person with a genuine connection to the Indian community; ask for more information; approve or decline; hold sign-ups that match a declined or blocked account |
 | Legal basis | Art. 6(1)(b) (the check is part of the membership under the Terms); Art. 6(1)(f) (a safe community of genuine people) |
 | Data subjects | Applicants and members |
-| Data | City, country, location, LinkedIn profile link or a note, voucher (member who vouches, or the inviter from an invite link), decision, message to the member, admin notes, dates (`profile_private`, `verification_log`, `private.review_hold`, `private.reviewed_link`). Admins also look at the LinkedIn profile itself (data from another source, Art. 14) |
+| Data | City, country, location, LinkedIn profile link or a note, voucher (member who vouches, or the inviter from an invite link), decision, message to the member, admin notes, dates (`profile_private`, `verification_log`, `private.review_hold`, `private.reviewed_link`). Each member's random invite code (`public.invites`, deleted with the account): an invite link carries the code, and at signup the code is looked up to fill in the inviter (`public.resolve_invite`, for signed-in accounts, 30 lookups a day), so the new member sees the inviter's first name and member ID. Admins also look at the LinkedIn profile itself (data from another source, Art. 14) |
 | Recipients | Admins; the member sees decisions and messages, not admin notes |
 | Retention | Until account deletion. Accounts that never sent their details: 90 days *(by hand)*. Declined accounts, and accounts whose membership we ended: 6 months after the decision *(by hand)* |
 
@@ -111,8 +119,8 @@ references the member cascades, except where noted).
 | Purpose | Let members find, recognise and contact each other |
 | Legal basis | Art. 6(1)(b); Art. 9(2)(a) explicit consent for information that can reveal ethnic origin, religion or health |
 | Data | Name, photo, city, country, location, hometown, profession, occupation, years abroad, bio, "ask me about", LinkedIn link, mentoring fields, Verified badge, ambassador city, last active time |
-| Recipients | Approved members; admins; Supabase (photos in Storage are reachable by anyone who has the exact URL while the buckets are public) |
-| Retention | Until changed or account deletion. Photo files nothing uses any more: within 7 days *(by hand, weekly)* |
+| Recipients | Approved members; admins; Supabase (photos in Storage are reachable by anyone who has the exact URL while the buckets are public; new photos have random file names) |
+| Retention | Until changed or account deletion. A replaced or removed profile photo's file is deleted at once by the site; files nothing uses any more: within 7 days at most (photo clean-up in the admin panel, daily when an admin opens it; `deletion-routine.md`) |
 
 ### 5. Community content and features
 
@@ -120,9 +128,9 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Provide groups, posts, comments, likes, guides (docs) and comments, questions and answers (incl. urgent questions to up to 500 city members), events and RSVPs, Market listings, places and recommendations, Namaste connections, mentoring slots, bookings and reviews, blocks, settings |
 | Legal basis | Art. 6(1)(b); Art. 9(2)(a) where content reveals special categories |
-| Data | The content itself, photos, timestamps, author |
+| Data | The content itself, photos (re-encoded as JPEG in the browser before upload, which removes EXIF data such as GPS position; random file names), timestamps, author |
 | Recipients | Approved members (bookings: only mentor and mentee; blocks and settings: only the member); admins |
-| Retention | Until deleted by the member or account deletion. Places and groups the member created stay without the creator (`created_by` set to NULL) |
+| Retention | Until deleted by the member or account deletion. Photo files go with their post, listing or event (deleted by the site), or within 7 days at most when left behind (photo clean-up). Places and groups the member created stay without the creator (`created_by` set to NULL) |
 
 ### 6. Private messages
 
@@ -138,8 +146,8 @@ references the member cascades, except where noted).
 
 | | |
 |---|---|
-| Purpose | Tell members about likes, comments, Namaste, answers, events, bookings, verification results, urgent questions in their city, members joining (ambassadors) |
-| Legal basis | Art. 6(1)(b) |
+| Purpose | Tell members about likes, comments, Namaste, answers, events, bookings, verification results, urgent questions in their city, members joining (ambassadors); statements of reasons and warnings (type `moderation`), outcomes of reports they sent (`report`), and for admins new reports from the form and safety reports (`alert`) |
+| Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5) and 17 DSA for statements of reasons and report outcomes |
 | Data | Recipient, actor, short text, reference, read state (`public.notifications`) |
 | Recipients | The recipient only |
 | Retention | Until account deletion; read notices after 6 months *(by hand)* |
@@ -160,15 +168,15 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Handle reports from members and notices from anyone (Art. 16 DSA), decide, give statements of reasons (Art. 17), inform the reporter (Art. 16(5)), escalate threats to life or safety (Art. 18), handle bug reports and ideas |
 | Legal basis | Art. 6(1)(c) with Art. 16-18 DSA; otherwise Art. 6(1)(f) (a safe community; defending decisions) |
-| Data | Reporter, reported member or content, reason (the in-app report writes the reported member's name or the item's title into it); evidence copies of reported content where needed; bug reports with user agent and screen size; emails to hello@; decisions |
-| Recipients | Admins; the reporter and the affected member (decision); police where Art. 18 applies |
-| Retention | Closed reports, with evidence copies, once 12 months old *(by hand)*, unless a legal dispute or police matter is open. A report about a deleted member stays without the link to the member (its text can still name them); a reporter's own reports are deleted with their account |
+| Data | In-app reports: reporter, reported member or content, kind, reason category, the reporter's explanation, good-faith confirmation (`public.reports`; the reason line also names the item). Reports from the form at nriclub.app/report: where, category, explanation, name and email of the sender (may be empty for child sexual abuse material), reference code, decision and when the receipt and decision emails were sent (`private.notices`); keyed SHA-256 hashes of the sender's email and IP address (for IPv6, its /64 network) for the daily limits (`private.notice_log`). Decisions: admin, action, rule or law, facts, urgency, source, the reports answered, a copy of removed content (text; of photos only the file path), the statement sent (`private.moderation_action`); block reason on the account (`profile_private.block_reason/block_rule/blocked_at`); admins' notes on reports (`private.report_note`). Evidence copies where needed; bug reports with user agent and screen size; emails to hello@ |
+| Recipients | Admins; the affected member (statement of reasons, in the app) and the reporter (outcome: in the app, or by email from hello@ for the form); police where Art. 18 applies. A reported message is shown to admins (only that message) |
+| Retention | Closed reports and closed reports from the form, with evidence copies, once 12 months old, unless held for a legal dispute or police matter (`private.report_hold`, `notices.hold_reason`). Limit hashes: 1 day. Decisions: 24 months, the copy of removed content 6 months (unless held). Feedback (bug reports, ideas) is deleted with the sender's account; other reports stay without the link to the reporter. Reports and decisions about a deleted member stay without the link to the member (their text can still name them). Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
 
 ### 10. Transactional email
 
 | | |
 |---|---|
-| Purpose | Sign-up and sign-in codes, password links, email-change confirmations; emails from our team about the membership (check decisions, statements of reasons, block warnings, report outcomes, changes to the Terms or the service, termination, breach notices) |
+| Purpose | Sign-up and sign-in codes, password links, email-change confirmations; emails from our team about the membership (check decisions, changes to the Terms or the service, termination, breach notices; statements of reasons, warnings and report outcomes go in the app and may also be emailed); receipt and decision emails to senders of reports from the form at nriclub.app/report (sent by hand from hello@, prefilled by the admin panel) |
 | Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5), 17 DSA and Art. 34 GDPR |
 | Data | Email address, subject and content (incl. code or link), delivery events |
 | Recipients | Resend (Amazon SES eu-west-1) as processor of Supabase Auth's custom SMTP; the mailbox provider for our team's emails |
@@ -211,7 +219,7 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Keep the member signed in; remember dismissed tips and an invite |
 | Legal basis | § 25(2) No. 2 TDDDG (strictly necessary, no consent); Art. 6(1)(b) |
-| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested`, `nriclub_invite`, `nriclub_profile_cache`, per-member flags (list in the Privacy Policy, section 8). No cookies, no analytics |
+| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested` (at most 24 hours), `nriclub_invite` (session storage, until the check details are sent; Get verified sends its code to `public.resolve_invite` to fill in the inviter), per-member flags (removed when the account is deleted in that browser); list in the Privacy Policy, section 8. `nriclub_profile_cache` and `nriclub_cookie_consent` are no longer written, and the site deletes them. No cookies, no analytics |
 | Retention | See the Privacy Policy, section 8 |
 
 ### 15. Compliance records

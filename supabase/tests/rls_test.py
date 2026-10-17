@@ -9,6 +9,7 @@ as the API role a real request would use (anon or authenticated + JWT claims).
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -20,6 +21,12 @@ ACCESS_CONSENT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", 
                               "20261019000000_access_consent.sql")
 NOTIFICATIONS_LIMITS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                                     "20261020000000_notifications_limits_privacy.sql")
+MODERATION = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                          "20261021000000_moderation_dsa.sql")
+STORAGE_IMAGES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                              "20261022000000_storage_images.sql")
+ADMIN_ACCESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                            "20261023000000_admin_access.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -70,28 +77,30 @@ BOB_POST = "10000000-0000-0000-0000-000000000005"
 failures = []
 
 
-def psql_args(sql, role=None, uid=None):
+def psql_args(sql, role=None, uid=None, claims=None):
+    """claims: more JWT claims for the request, e.g. {"aal": "aal2"}."""
     prelude = ""
     if role:
-        claims = json.dumps({"sub": uid, "role": role} if uid else {"role": role})
+        claims = json.dumps({**({"sub": uid, "role": role} if uid else {"role": role}), **(claims or {})})
         prelude = f"SET ROLE {role}; SELECT set_config('request.jwt.claims', '{claims}', false);\n"
     return ["psql", DSN, "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-c", prelude + sql]
 
 
-def psql(sql, role=None, uid=None):
-    proc = subprocess.run(psql_args(sql, role, uid), capture_output=True, text=True)
+def psql(sql, role=None, uid=None, claims=None):
+    proc = subprocess.run(psql_args(sql, role, uid, claims), capture_output=True, text=True)
     lines = [l for l in proc.stdout.strip().splitlines() if l != ""]
     if role:
         lines = lines[1:]  # drop set_config's output
     return proc.returncode == 0, "\n".join(lines), proc.stderr.strip()
 
 
-def check(name, sql, as_user=None, expect="ok", role="authenticated", error_has=None):
+def check(name, sql, as_user=None, expect="ok", role="authenticated", error_has=None, claims=None):
     """expect: 'ok', 'error', or the exact text the last statement prints.
-    error_has: the call must fail with this text in the error."""
+    error_has: the call must fail with this text in the error. claims: more
+    JWT claims, e.g. {"aal": "aal2"} for a session signed in with the code."""
     if as_user is None and role == "authenticated":
         role = None  # run as the table owner (setup / inspection)
-    ok, out, err = psql(sql, role, as_user)
+    ok, out, err = psql(sql, role, as_user, claims)
     if error_has is not None:
         expect = f"error: {error_has}"
         passed = not ok and error_has in err
@@ -134,6 +143,36 @@ def sign_up(uid, email, meta, accept_terms=False, confirmed=True):
         ok, _, err = psql(f"SELECT public.accept_terms('{TERMS_VERSION}', true)", "authenticated", uid)
         if not ok:
             sys.exit(f"accept_terms for {email} failed: {err}")
+
+
+def moderate(kind, target, action, ground="terms", rule="Spam, scams or advertising (§ 6)",
+             facts="it sent the same advert to many members", reports=None, urgent=None, notice=None, member=None):
+    """A call of public.admin_moderate (migration 20261021000000), the way the
+    admin panel makes it."""
+    args = [f"p_kind => '{kind}'", f"p_id => '{target}'", f"p_action => '{action}'"]
+    if action != "unblock":
+        args += [f"p_ground => '{ground}'", f"p_rule => '{rule}'", f"p_explanation => '{facts}'"]
+    if reports:
+        args.append("p_report_ids => ARRAY[" + ", ".join(f"'{r}'::uuid" for r in reports) + "]")
+    if urgent:
+        args.append(f"p_urgent => '{urgent}'")
+    if notice:
+        args.append(f"p_notice => '{notice}'")
+    if member:
+        args.append(f"p_member => '{member}'")
+    return f"public.admin_moderate({', '.join(args)})"
+
+
+def block(uid, urgent="fraud"):
+    """An admin blocks a member straight away (a serious case), then the
+    member's status is read."""
+    return f"DO $$BEGIN PERFORM {moderate('member', uid, 'block', urgent=urgent)}; END$$; " \
+           f"SELECT status FROM profile_private WHERE id = '{uid}'"
+
+
+def unblock(uid):
+    return f"DO $$BEGIN PERFORM {moderate('member', uid, 'unblock')}; END$$; " \
+           f"SELECT status FROM profile_private WHERE id = '{uid}'"
 
 
 def migration_section(banner, path=REVIEW_FIXES):
@@ -255,13 +294,20 @@ def main():
           "UPDATE profile_private SET email = 'x@evil.com' WHERE id = auth.uid() RETURNING email",
           as_user=ALICE, expect="alice@example.com")
     check("admin can read all private data", "SELECT count(*) FROM profile_private", as_user=ADMIN, expect="4")
-    check("admin can approve a member -> Verified badge",
-          f"UPDATE profile_private SET verification_status = 'approved' WHERE id = '{BOB}'; "
+    check("admins can't change a member's status directly (C23)",
+          f"UPDATE profile_private SET verification_status = 'approved', status = 'blocked' WHERE id = '{BOB}' "
+          "RETURNING 1", as_user=ADMIN, expect="")
+    check("... nor their profile", f"UPDATE profiles SET name = 'Bobby', avatar_url = '' WHERE id = '{BOB}' RETURNING 1",
+          as_user=ADMIN, expect="")
+    check("admin approves a member (review_member) -> Verified badge",
+          f"SELECT public.review_member('{BOB}', 'approved', '', ''); "
           f"SELECT linkedin_verified::text FROM profiles WHERE id = '{BOB}'",
-          as_user=ADMIN, expect="true")
+          as_user=ADMIN, expect="approved\ntrue")
     check("admin approves alice and carol too",
-          f"UPDATE profile_private SET verification_status = 'approved' WHERE id IN ('{ALICE}', '{CAROL}') "
-          "RETURNING verification_status", as_user=ADMIN, expect="approved\napproved")
+          f"SELECT public.review_member('{ALICE}', 'approved', '', ''); SELECT public.review_member('{CAROL}', 'approved', '', '')",
+          as_user=ADMIN, expect="approved\napproved")
+    # (Their "You're verified" notifications aren't part of the checks below.)
+    psql("DELETE FROM notifications WHERE type = 'verification'")
     check("profiles cannot be deleted via the API",
           "DELETE FROM profiles WHERE id = auth.uid() RETURNING id", as_user=ALICE, expect="")
 
@@ -294,9 +340,15 @@ def main():
           as_user=BOB, expect="error")
     check("member cannot approve groups",
           "UPDATE groups SET is_approved = true WHERE name = 'Indians in Testville' RETURNING id", as_user=ALICE, expect="")
-    check("admin approves group",
+    check("admins can't approve groups by hand (C23)",
           "UPDATE groups SET is_approved = true WHERE name = 'Indians in Testville' RETURNING is_approved::text",
+          as_user=ADMIN, expect="")
+    check("admin approves group (admin_set_group)",
+          "SELECT public.admin_set_group(id, 'approve') ->> 'is_approved' FROM groups WHERE name = 'Indians in Testville'",
           as_user=ADMIN, expect="true")
+    check("... and the member who asked is told",
+          f"SELECT type || '|' || text FROM notifications WHERE user_id = '{ALICE}'",
+          expect='group|Your community "Indians in Testville" has been approved!')
     check("joining forces role=member and bumps count",
           f"INSERT INTO group_members (group_id, user_id, role) SELECT id, '{BOB}', 'admin' FROM groups WHERE name = 'Indians in Testville' RETURNING role; "
           , as_user=BOB, expect="member")
@@ -411,9 +463,9 @@ def main():
     check("members cannot send verification or system notifications",
           f"INSERT INTO notifications (user_id, type, actor_id, text) VALUES ('{BOB}', 'verification', '{ALICE}', 'You are verified')",
           as_user=ALICE, expect="error")
-    check("admin can send system notifications",
+    check("admins can't write notifications either: the database's functions send our team's messages (C23)",
           f"INSERT INTO notifications (user_id, type, text) VALUES ('{ALICE}', 'group', 'Your community was approved') RETURNING 1",
-          as_user=ADMIN, expect="1")
+          as_user=ADMIN, expect="error")
     check("cannot read others' notifications", "SELECT count(*) FROM notifications", as_user=CAROL, expect="0")
     check("recipient marks read but can't rewrite text",
           "UPDATE notifications SET read = true, text = 'changed' WHERE user_id = auth.uid() RETURNING read::text || text",
@@ -429,10 +481,19 @@ def main():
     check("others can't read reports", "SELECT count(*) FROM reports", as_user=ALICE, expect="0")
     check("member cannot resolve/delete reports",
           "DELETE FROM reports RETURNING id", as_user=BOB, expect="")
-    check("admin sees and resolves reports",
-          "UPDATE reports SET status = 'resolved' RETURNING 1", as_user=ADMIN, expect="1\n1")
-    check("admin can delete reported post",
-          "DELETE FROM posts WHERE id = '10000000-0000-0000-0000-000000000001' RETURNING 1", as_user=ADMIN, expect="1")
+    check("admin sees the reports", "SELECT count(*) FROM reports", as_user=ADMIN, expect="2")
+    check("... but can't close them by hand (C23)", "UPDATE reports SET status = 'resolved' RETURNING 1",
+          as_user=ADMIN, expect="")
+    check("... nor delete them", "DELETE FROM reports RETURNING 1", as_user=ADMIN, expect="")
+    check("admin closes them, saying why (admin_close_reports)",
+          "SELECT count(*) FROM public.admin_close_reports(ARRAY(SELECT id FROM reports), 'reviewed', "
+          "'we found no breach of our rules')", as_user=ADMIN, expect="2")
+    psql(f"DELETE FROM notifications WHERE type = 'report' AND user_id = '{BOB}'")  # (not part of the checks below)
+    check("admins can't delete content directly (C23)",
+          "DELETE FROM posts WHERE id = '10000000-0000-0000-0000-000000000001' RETURNING 1", as_user=ADMIN, expect="")
+    check("admin removes a post (admin_moderate), and its author gets the reasons",
+          f"SELECT ({moderate('post', '10000000-0000-0000-0000-000000000001', 'remove')} ->> 'statement') "
+          "LIKE 'We removed your post \"%\" on %'", as_user=ADMIN, expect="t")
 
     # --- events / help / marketplace / docs ---------------------------------
     check("event counters forced, organizer must be self",
@@ -465,8 +526,7 @@ def main():
     check("carol posts before being blocked",
           f"INSERT INTO posts (id, user_id, content) VALUES ('10000000-0000-0000-0000-000000000003', '{CAROL}', 'hello') RETURNING 1",
           as_user=CAROL, expect="1")
-    check("admin blocks carol",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{CAROL}' RETURNING status", as_user=ADMIN, expect="blocked")
+    check("admin blocks carol", block(CAROL), as_user=ADMIN, expect="blocked")
     check("other members can't see who is blocked",
           f"SELECT count(*) FROM profile_private WHERE id = '{CAROL}'", as_user=ALICE, expect="0")
     check("blocked member cannot post",
@@ -1006,9 +1066,7 @@ def main():
     check("... the admin sees the change in the history",
           f"SELECT admin_note FROM verification_log WHERE member_id = '{FRANK}' AND admin_note <> ''", as_user=ADMIN,
           expect="Changed their name or LinkedIn while waiting for review. Before: Frank F, no LinkedIn.")
-    check("admin blocks and unblocks frank",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{FRANK}'; "
-          f"UPDATE profile_private SET status = 'active' WHERE id = '{FRANK}' RETURNING status", as_user=ADMIN, expect="active")
+    check("admin blocks and unblocks frank", f"{block(FRANK)}; {unblock(FRANK)}", as_user=ADMIN, expect="blocked\nactive")
     check("... which leaves no block record",
           f"SELECT count(*) FROM private.moderation_record WHERE member_id = '{FRANK}'", expect="0")
     check("a member restored as blocked gets a moderation record too", f"""
@@ -1021,8 +1079,7 @@ def main():
 
     # --- blocked members can't submit (F30) ---------------------------------
     sign_up(BO, "bo@example.com", {"full_name": "Bo B"}, accept_terms=True)
-    check("admin blocks bo before he submits",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{BO}' RETURNING status", as_user=ADMIN, expect="blocked")
+    check("admin blocks bo before he submits", block(BO), as_user=ADMIN, expect="blocked")
     check("a blocked member can't submit their details",
           "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/bo-b', '', '', NULL)",
           as_user=BO, error_has="has been blocked")
@@ -1206,8 +1263,9 @@ def main():
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=ALICE,
           expect="account,answer_thanks,blocks,comments,connections,conversations,conversations_hidden,doc_comments,docs,"
                  "event_rsvps,events_organised,exported_at,files,group_memberships,groups_requested,help_requests,"
-                 "help_responses,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
-                 "mentoring_sessions,messages,name_changes,notifications,place_recommendations,places_added,posts,profile,"
+                 "help_responses,invite_code,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
+                 "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,place_recommendations,"
+                 "places_added,posts,profile,"
                  "profile_private,rate_limit_log,readme,reports_about_me,reports_filed,sessions,terms_acceptances,"
                  "urgent_questions_sent,user_settings,verification_log")
     check("... with the member's profile, private details, consent and rows of each kind",
@@ -1260,6 +1318,9 @@ def main():
     review_fixes_3()
     access_consent()
     notifications_limits_privacy()
+    moderation_dsa()
+    storage_images()
+    admin_access()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -1397,9 +1458,7 @@ def review_fixes_2():
           "SELECT string_agg(DISTINCT linkedin_slug || '|' || admin_note, ',') || '|' || count(*) || '|' "
           f"|| count(DISTINCT created_at) FROM private.moderation_record WHERE member_id = '{MALLORY}'",
           expect="mallory-m|fake profile|2|1")
-    check("blocking her also keeps the reviewed link",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{MALLORY}' RETURNING status", as_user=ADMIN,
-          expect="blocked")
+    check("blocking her also keeps the reviewed link", block(MALLORY), as_user=ADMIN, expect="blocked")
     check("... and so does another email change while blocked",
           f"UPDATE auth.users SET email = 'mallory3@example.com' WHERE id = '{MALLORY}'; "
           "SELECT count(*) FILTER (WHERE linkedin_slug = 'mallory-m') || '|' || count(*) "
@@ -1621,8 +1680,7 @@ def review_fixes_3():
     check("admin rejects the unfinished signup",
           f"SELECT public.review_member('{SPAMMER}', 'rejected', 'Spam', 'spam signup', NULL, NULL, 'incomplete')",
           as_user=ADMIN, expect="rejected")
-    check("admin blocks it too", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{SPAMMER}' RETURNING status",
-          as_user=ADMIN, expect="blocked")
+    check("admin blocks it too", block(SPAMMER), as_user=ADMIN, expect="blocked")
     check("the records keep the link and the note, but not the unconfirmed address (Q5)",
           "SELECT string_agg(concat_ws('|', decision, linkedin_slug, admin_note, (email_hash IS NULL)::text), ',' "
           f"ORDER BY decision) FROM private.moderation_record WHERE member_id = '{SPAMMER}'",
@@ -1645,9 +1703,7 @@ def review_fixes_3():
           f"INSERT INTO private.reviewed_link (member_id, linkedin_url) VALUES ('{TROLL}', 'x')",
           as_user=TROLL, expect="error")
     check("... (or read them)", "SELECT count(*) FROM private.reviewed_link", as_user=TROLL, expect="error")
-    check("admin blocks them from the Reports page (which sends only the status)",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{TROLL}' RETURNING status", as_user=ADMIN,
-          expect="blocked")
+    check("admin blocks them from the Reports page", block(TROLL), as_user=ADMIN, expect="blocked")
     check("the record has the link the admin approved, not the one put there since (Q6)",
           f"SELECT decision || '|' || linkedin_slug FROM private.moderation_record WHERE member_id = '{TROLL}'",
           expect="blocked|troll-own")
@@ -1666,9 +1722,7 @@ def review_fixes_3():
     check("a member blocked before any admin looked at their details",
           "SELECT public.submit_verification('Pune', 'IN', '', 'linkedin.com/in/someone-famous', '', '', NULL)",
           as_user=ROGUE, expect="pending")
-    check("... (from the Reports page)",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{ROGUE}' RETURNING status", as_user=ADMIN,
-          expect="blocked")
+    check("... (from the Reports page)", block(ROGUE), as_user=ADMIN, expect="blocked")
     check("... records the link they had when blocked (the Reports page shows it)",
           f"SELECT decision || '|' || COALESCE(linkedin_slug, 'none') FROM private.moderation_record "
           f"WHERE member_id = '{ROGUE}'", expect="blocked|someone-famous")
@@ -1731,7 +1785,7 @@ def access_consent():
     sign_up(AMBA, "amba@example.com", {"full_name": "Amba A"}, accept_terms=True)
     check("amba sends her details", "SELECT public.submit_verification('Berlin', 'DE', '', 'linkedin.com/in/amba-a', "
           "'', '', NULL)", as_user=AMBA, expect="pending")
-    make_ambassador = f"UPDATE profiles SET ambassador_city = 'Berlin' WHERE id = '{AMBA}' RETURNING ambassador_city"
+    make_ambassador = f"SELECT public.admin_set_ambassador('{AMBA}', 'Berlin')"
     is_ambassador = f"SELECT ambassador_city FROM profiles WHERE id = '{AMBA}'"
     check("a member waiting for review can't be made an ambassador", make_ambassador, as_user=ADMIN,
           error_has="Only active, verified members can be ambassadors.")
@@ -1741,16 +1795,13 @@ def access_consent():
     check("members can't make themselves ambassadors",
           "UPDATE profiles SET ambassador_city = 'Munich' WHERE id = auth.uid() RETURNING ambassador_city",
           as_user=AMBA, expect="Berlin")
-    check("blocking an ambassador ends the role",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{AMBA}'; {is_ambassador}", as_user=ADMIN, expect="")
-    check("... and a blocked member can't be made one",
-          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{AMBA}'; {make_ambassador}", as_user=ADMIN,
+    check("blocking an ambassador ends the role", f"{block(AMBA)}; {is_ambassador}", as_user=ADMIN, expect="blocked")
+    check("... and a blocked member can't be made one", make_ambassador, as_user=ADMIN,
           error_has="Only active, verified members")
-    check("admins can still change a blocked member's profile (e.g. remove a photo)",
-          f"UPDATE profiles SET bio = '' WHERE id = '{AMBA}' RETURNING 1", as_user=ADMIN, expect="1")
-    check("unblocked, she can be made one again",
-          f"UPDATE profile_private SET status = 'active' WHERE id = '{AMBA}'; {make_ambassador}", as_user=ADMIN,
-          expect="Berlin")
+    check("admins can't set it by hand (C23)",
+          f"UPDATE profiles SET ambassador_city = 'Berlin', bio = '' WHERE id = '{AMBA}' RETURNING 1", as_user=ADMIN, expect="")
+    check("unblocked, she can be made one again", f"{unblock(AMBA)}; {make_ambassador}", as_user=ADMIN,
+          expect="active\nBerlin")
     check("moving an ambassador back to review ends the role",
           f"SELECT public.review_member('{AMBA}', 'pending', '', ''); {is_ambassador}", as_user=ADMIN,
           expect="pending")
@@ -1903,9 +1954,9 @@ def notifications_limits_privacy():
           "UPDATE profiles SET name = 'Pia Q' WHERE id = auth.uid()", as_user=pia,
           error_has="You can change your name 3 times in 30 days.")
     check("members can't see or reset the count", "DELETE FROM private.name_changes", as_user=pia, expect="error")
-    check("an admin can still rename her (it isn't counted)",
+    check("an admin can't rename her (admins change members only through the audited functions, C23)",
           f"UPDATE profiles SET name = 'Pia Patel-Rao' WHERE id = '{pia}' RETURNING name", as_user=ADMIN,
-          expect="Pia Patel-Rao")
+          expect="")
     check("... and approve her again (a new name sends a member back to review)",
           f"SELECT public.review_member('{pia}', 'approved', '', '')", as_user=ADMIN, expect="approved")
     check("... and use a team name for an account",
@@ -2233,6 +2284,962 @@ def notifications_limits_privacy():
             (SELECT string_agg(k, ',' ORDER BY k) FROM auth.users u, jsonb_object_keys(u.raw_user_meta_data) k WHERE u.id = '{oldie}'),
             (SELECT content FROM posts WHERE id = '{oldie_post}'));
           ROLLBACK;""", expect="Old One|full_name,sub|Questions? Write to hello@nriclub.app (or hello@nriclub.app).")
+
+
+def moderation_dsa():
+    """Notices from the public report page (C6a), reports of every kind
+    (C6b, C27), what our team does and the record of it (C7), admin writes
+    only through those functions (C23), mentoring (C24), ambassadors (C26),
+    clean-up and "Download my data": migration 20261021000000_moderation_dsa."""
+    ravi, sita, usha, meera, neel, kira, vik, mohan = (
+        f"00000000-0000-0000-0000-0000000006{n}" for n in ("01", "02", "03", "04", "05", "06", "07", "08"))
+    for uid, name in ((ravi, "Ravi R"), (sita, "Sita S"), (usha, "Usha U"), (meera, "Meera M"), (neel, "Neel N"),
+                      (kira, "Kira K"), (vik, "Vik V"), (mohan, "Mohan M")):
+        approved_member(uid, f"{name.split()[0].lower()}@example.com", name)
+    psql(f"INSERT INTO public.admins (user_id) VALUES ('{kira}')")
+    post, comment = "10000000-0000-0000-0000-000000000601", "20000000-0000-0000-0000-000000000601"
+    convo, hello, insult = ("30000000-0000-0000-0000-000000000601", "31000000-0000-0000-0000-000000000601",
+                            "31000000-0000-0000-0000-000000000602")
+    redress = ("Think we got it wrong? Write to hello@nriclub.app within 6 months, and a person on our team will look at "
+               "it again. You can also go to court.")
+
+    # --- notices from the public page (C6a) ----------------------------------
+    def notice(email="reporter@example.org", name="Rita Reporter", category="defamation",
+               explanation="It says I stole money, which is false.", good_faith="true"):
+        return (f"public.submit_notice('https://nriclub.app/post/{post}', '{category}', '{explanation}', '{name}', "
+                f"'{email}', {good_faith})")
+    from_ip = """DO $$BEGIN PERFORM set_config('request.headers', '{"x-forwarded-for": "203.0.113.7, 10.0.0.1"}', false); END$$; """
+    check("anyone can report illegal content on the public page, signed out (C6a)",
+          f"SELECT {notice()} ~ '^R-[0-9A-F]{{8}}$'", role="anon", expect="t")
+    check("... it waits for our team, and both admins are told in the app",
+          "SELECT (SELECT count(*) FROM private.notices WHERE status = 'open') || '|' || "
+          "(SELECT bool_and(text LIKE 'New report of illegal content R-% from the public report page.%') FROM notifications WHERE type = 'alert') || '|' || "
+          "(SELECT count(DISTINCT user_id) FROM notifications WHERE type = 'alert')", expect="1|true|2")
+    check("a notice needs the sender's name and email", f"SELECT {notice(name='', email='')}", role="anon",
+          error_has="Please give your name and email address, so we can tell you what we decided.")
+    check("... except about the sexual abuse of a child (Art. 16(2)(c) DSA)",
+          f"SELECT {notice(name='', email='', category='child_abuse')} LIKE 'R-%'", role="anon", expect="t")
+    check("... a known reason", f"SELECT {notice(category='nonsense')}", role="anon",
+          error_has="Please choose what the problem is.")
+    check("... an explanation", f"SELECT {notice(explanation='bad')}", role="anon",
+          error_has="Please explain in a sentence or two")
+    check("... a real email address", f"SELECT {notice(email='not-an-address')}", role="anon",
+          error_has="Please check your name and email address.")
+    check("... and the good-faith confirmation", f"SELECT {notice(good_faith='false')}", role="anon",
+          error_has="Please confirm that your report is accurate and made in good faith.")
+    check("5 notices a day from one email address",
+          f"SELECT count({notice()}) FROM generate_series(1, 4) g", role="anon", expect="4")
+    check("... the 6th isn't taken (the same address in another form neither)",
+          f"SELECT {notice(email='Reporter+again@Example.org')}", role="anon",
+          error_has="You've sent several reports today.")
+    check("10 a day from one internet address (the first in X-Forwarded-For)",
+          from_ip + f"SELECT count({notice(email='p' + chr(39) + ' || g || ' + chr(39) + '@example.org')}) "
+          "FROM generate_series(1, 10) g",
+          role="anon", expect="10")
+    check("... the 11th isn't", from_ip + f"SELECT {notice(email='someone.else@example.org')}", role="anon",
+          error_has="You've sent several reports today.")
+    cf_ip = """DO $$BEGIN PERFORM set_config('request.headers', '{"cf-connecting-ip": "198.51.100.9", "x-forwarded-for": "203.0.113.7"}', false); END$$; """
+    check("... behind Cloudflare its address counts, not the first in X-Forwarded-For",
+          cf_ip + f"SELECT {notice(email='cf.sender@example.org')} LIKE 'R-%'", role="anon", expect="t")
+    check("the limits keep only a keyed hash, never the address",
+          "SELECT count(*) > 0 AND bool_and(key !~ '203\\.0\\.113|example\\.org') FROM private.notice_log", expect="t")
+    check("nobody reads notices through the API", "SELECT count(*) FROM private.notices", role="anon", expect="error")
+    check("... members neither", "SELECT count(*) FROM private.notices", as_user=usha, expect="error")
+    check("... nor the admin list", "SELECT count(*) FROM public.admin_notices()", as_user=usha, error_has="Admins only")
+    check("admins see them", "SELECT count(*) FROM public.admin_notices() WHERE status = 'open'", as_user=ADMIN,
+          expect="17")
+    first_notice = "(SELECT id FROM public.admin_notices() ORDER BY created_at, reference LIMIT 1)"
+    check("the decision can't be marked as sent before there is one",
+          f"SELECT public.admin_update_notice({first_notice}, 'decision_sent')", as_user=ADMIN,
+          error_has="Decide on the notice first.")
+    check("our team records the receipt, the decision (kept, and why) and that they emailed it",
+          f"SELECT public.admin_update_notice({first_notice}, 'receipt_sent'); "
+          f"SELECT public.admin_update_notice({first_notice}, 'decide', 'kept', 'it is a fair review of a business. '); "
+          f"SELECT public.admin_update_notice({first_notice}, 'decision_sent')", as_user=ADMIN,
+          expect="open\nclosed\nclosed")
+    check("... (on the notice)",
+          "SELECT concat_ws('|', decision, decision_reason, receipt_sent_at IS NOT NULL, decision_sent_at IS NOT NULL, "
+          f"decided_by = '{ADMIN}') FROM private.notices ORDER BY created_at, reference LIMIT 1",
+          expect="kept|it is a fair review of a business|t|t|t")
+    check("removing, warning or blocking is recorded from the content itself",
+          f"SELECT public.admin_update_notice((SELECT id FROM public.admin_notices() WHERE status = 'open' LIMIT 1), 'decide', "
+          "'removed', 'it is defamatory')", as_user=ADMIN, error_has="Remove, warn or block from the content itself")
+    check("members can't touch notices", f"SELECT public.admin_update_notice({first_notice}, 'reopen')", as_user=usha,
+          error_has="Admins only")
+    check("a notice about something already gone (e.g. removed after a member's report of it) is closed as such",
+          "SELECT public.admin_update_notice((SELECT id FROM public.admin_notices() WHERE status = 'open' "
+          "ORDER BY created_at, reference LIMIT 1), 'decide', 'gone', 'we removed it after a member reported it')",
+          as_user=ADMIN, expect="closed")
+    check("... (on the notice)", "SELECT count(*) FROM private.notices WHERE decision = 'gone' "
+          "AND decision_reason = 'we removed it after a member reported it'", expect="1")
+    check("an IPv6 address counts by its /64 (one connection has a whole /64 to choose from): 10 a day",
+          "DO $$BEGIN FOR g IN 1..10 LOOP PERFORM set_config('request.headers', json_build_object('x-forwarded-for', "
+          f"'2001:db8:7:9::' || to_hex(g))::text, false); PERFORM {notice(email='v6-' + chr(39) + ' || g || ' + chr(39) + '@example.org')}; "
+          "END LOOP; END$$; SELECT 1", role="anon", expect="1")
+    check("... the 11th from another address in that network isn't",
+          """DO $$BEGIN PERFORM set_config('request.headers', '{"x-forwarded-for": "2001:db8:7:9:ffff::1"}', false); END$$; """
+          + f"SELECT {notice(email='v6-last@example.org')}", role="anon", error_has="You've sent several reports today.")
+    check("an email address can't carry mailto: fields of its own (cc, body) into our team's reply",
+          f"SELECT {notice(email='eve@example.org?cc=third.party%40example.net&body=hi')}", role="anon",
+          error_has="Please check your name and email address.")
+    check("at most 100 notices a day in all; then the page points to email",
+          "INSERT INTO private.notices (reference, location, category, explanation, good_faith) "
+          "SELECT 'R-CAP' || lpad(g::text, 5, '0'), 'x', 'spam', 'a filler notice', true FROM generate_series(1, 100) g; "
+          f"SET ROLE anon; SELECT {notice(email='late.sender@example.org')}",
+          error_has="We've received a lot of reports today. Please write to hello@nriclub.app instead")
+
+    # --- reports of every kind (C6b) -------------------------------------------
+    check("ravi posts; sita comments on it, rudely", f"""
+          INSERT INTO posts (id, user_id, content) VALUES ('{post}', '{ravi}', 'Diwali party at my place on Saturday');""",
+          as_user=ravi)
+    check("... (the comment)", f"INSERT INTO comments (id, post_id, user_id, content) VALUES ('{comment}', '{post}', "
+          f"'{sita}', 'Nobody wants to come to your party, idiot') RETURNING 1", as_user=sita, expect="1")
+    report = lambda kind, target, category="harassment", explanation="She insults Ravi under every post he writes.", \
+        good_faith="true", user=None: (
+        f"INSERT INTO reports (reporter_id, reported_post_id, reported_user_id, reason, content_type, category, explanation, "
+        f"good_faith) VALUES (auth.uid(), {'NULL' if kind == 'profile' else repr(target)}, "
+        f"{repr(user) if user else (repr(target) if kind == 'profile' else 'NULL')}, '[{kind.upper()}] Reported', '{kind}', "
+        f"'{category}', '{explanation}', {good_faith})")
+    check("usha reports the comment: its kind, her reason and words, and who wrote it (looked up, not taken from her)",
+          report("comment", comment, user=ravi) + " RETURNING content_type || '|' || category || '|' || reported_user_id",
+          as_user=usha, expect=f"comment|harassment|{sita}")
+    check("a reason needs an explanation of 10 characters or more",
+          report("post", post, explanation="bad"), as_user=vik, expect="error")
+    check("... and the good-faith confirmation", report("post", post, good_faith="false"), as_user=vik, expect="error")
+    check("... and must be one of the form's reasons", report("post", post, category="boring"), as_user=vik, expect="error")
+    check("one open report per member and item: the second is dropped",
+          report("comment", comment) + f"; SELECT count(*) FROM reports WHERE reporter_id = auth.uid() "
+          f"AND reported_post_id = '{comment}'", as_user=usha, expect="1")
+    check("a report the way the site sent it before (the kind in the prefix) still works",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES (auth.uid(), '{post}', "
+          "'[POST] Diwali party — Spam') RETURNING content_type || '|' || reported_user_id", as_user=vik,
+          expect=f"post|{ravi}")
+    check("ravi writes to sita", f"""
+          INSERT INTO conversations (id, participant_1, participant_2) VALUES ('{convo}', '{ravi}', '{sita}');
+          INSERT INTO messages (id, conversation_id, sender_id, content) VALUES ('{hello}', '{convo}', '{ravi}', 'hello there');
+          INSERT INTO messages (id, conversation_id, sender_id, content) VALUES ('{insult}', '{convo}', '{ravi}', 'You owe me, pay up or else');
+          SELECT last_message_text FROM conversations WHERE id = '{convo}'""", as_user=ravi,
+          expect="You owe me, pay up or else")
+    check("only the member a message was sent to can report it",
+          report("message", insult, category="harassment"), as_user=vik,
+          error_has="You can only report messages sent to you.")
+    check("... not the sender", report("message", insult), as_user=ravi, error_has="You can only report messages sent to you.")
+    check("... sita can", report("message", insult, explanation="He threatens me over money he says I owe him.")
+          + " RETURNING content_type || '|' || reported_user_id", as_user=sita, expect=f"message|{ravi}")
+    check("a report of a threat to someone's life or safety tells every admin at once (C27)",
+          report("profile", ravi, category="safety", explanation="He wrote that he knows where I live and will come.")
+          + "; SELECT 1", as_user=sita, expect="1")
+    check("... (both admins)", "SELECT count(DISTINCT user_id) FROM notifications WHERE type = 'alert' "
+          "AND text LIKE 'Safety report: a member reported a threat%'", expect="2")
+    check("feedback is kept apart", f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES "
+          f"(auth.uid(), auth.uid(), '[BUG] Feed: the heart is grey') RETURNING content_type", as_user=usha,
+          expect="feedback")
+    pia = "00000000-0000-0000-0000-000000000611"
+    sign_up(pia, "pia@example.com", {"full_name": "Pia P"}, accept_terms=True)
+    check("pia, new, sends her details and waits for review",
+          "SELECT public.submit_verification('Berlin', 'DE', '', 'linkedin.com/in/pia-p-waiting', '', '', NULL)",
+          as_user=pia, expect="pending")
+    check("a member waiting for review can't pass a (safety) report about someone off as feedback: the prefix decides",
+          f"INSERT INTO reports (reporter_id, reported_user_id, reason, content_type, category, explanation, good_faith) "
+          f"VALUES (auth.uid(), '{ravi}', '[BUG] he threatens people', 'profile', 'safety', 'He threatens people here.', "
+          "true) RETURNING content_type || '|' || (category IS NULL)", as_user=pia, expect="feedback|true")
+    check("... and no admin is alerted", "SELECT count(*) FROM notifications WHERE type = 'alert' AND reference_id IN "
+          f"(SELECT id FROM reports WHERE reporter_id = '{pia}')", expect="0")
+    check("... nor can a report pass as feedback",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith) "
+          f"VALUES (auth.uid(), '{post}', '[POST] Diwali party — Spam', 'feedback', 'spam', "
+          "'It advertises his own business here.', true) RETURNING content_type", as_user=neel, expect="post")
+    check("members can't read our team's notes on reports", "SELECT count(*) FROM private.report_note", as_user=usha,
+          expect="error")
+    safety = f"(SELECT id FROM reports WHERE category = 'safety' AND reported_user_id = '{ravi}')"
+    check("admins note what they did about a safety report",
+          f"SELECT public.admin_set_report_note({safety}, 'Told the police (BKA) on 21 Oct, reference 123.'); "
+          f"SELECT note FROM public.admin_report_notes(ARRAY[{safety}])", as_user=ADMIN,
+          expect="Told the police (BKA) on 21 Oct, reference 123.")
+    check("... members can't", f"SELECT public.admin_set_report_note({safety}, 'x')", as_user=sita, error_has="Admins only")
+
+    # --- what our team does, and the record of it (C7) ----------------------------
+    usha_report = f"(SELECT id FROM reports WHERE reporter_id = '{usha}' AND reported_post_id = '{comment}')"
+    check("members can't moderate", f"SELECT {moderate('comment', comment, 'remove')}", as_user=usha,
+          error_has="Admins only")
+    check("... nor can anyone signed out", f"SELECT {moderate('comment', comment, 'remove')}", role="anon", expect="error")
+    check("reasons are needed: the ground, the rule and the facts",
+          f"SELECT {moderate('comment', comment, 'remove', facts='rude')}", as_user=ADMIN,
+          error_has="Say in a sentence (10 to 600 characters) what it said or did.")
+    check("ravi was told about sita's comment", f"SELECT count(*) FROM notifications WHERE user_id = '{ravi}' "
+          "AND type = 'comment'", expect="1")
+    check("admin removes the reported comment, answering usha's report",
+          f"SELECT jsonb_array_length({moderate('comment', comment, 'remove', rule='Insults, hate or discrimination (§ 6)', facts='it calls another member an idiot.', reports=['__R__'])} -> 'closed_reports')"
+          .replace("'__R__'::uuid", usha_report), as_user=ADMIN, expect="1")
+    check("... the comment is gone, the report closed, and the notification that quoted it too",
+          f"SELECT concat_ws('|', (SELECT count(*) FROM comments WHERE id = '{comment}'), "
+          f"(SELECT status FROM reports WHERE id = {usha_report}), "
+          f"(SELECT count(*) FROM notifications WHERE user_id = '{ravi}' AND type = 'comment'))", expect="0|resolved|0")
+    check("... sita gets the statement of reasons (Art. 17 DSA)",
+          f"SELECT text FROM notifications WHERE user_id = '{sita}' AND type = 'moderation'",
+          expect=f'We removed your comment "Nobody wants to come to your party, idiot" on {berlin_date()}. Reason: it '
+                 'breaks our Terms of Use, Insults, hate or discrimination (§ 6), because it calls another member an idiot. '
+                 'This followed a report from someone else. No automated tools were used: a person on our team decided. '
+                 + redress)
+    check("... usha gets the outcome (Art. 16(5) DSA)",
+          f"SELECT text FROM notifications WHERE user_id = '{usha}' AND type = 'report'",
+          expect='We looked at your report about the comment "Nobody wants to come to your party, idiot": we removed it '
+                 'because it calls another member an idiot. ' + redress)
+    check("... and it's on record: who, what, why, a copy of it",
+          "SELECT concat_ws('|', actor_id, action, target_kind, target_user, ground, rule, explanation, source, "
+          "cardinality(report_ids), snapshot -> 'row' ->> 'content') FROM private.moderation_action "
+          f"WHERE target_id = '{comment}'",
+          expect=f"{ADMIN}|remove|comment|{sita}|terms|Insults, hate or discrimination (§ 6)|it calls another member an idiot|"
+                 "report|1|Nobody wants to come to your party, idiot")
+    check("members can't read the record", "SELECT count(*) FROM private.moderation_action", as_user=sita, expect="error")
+    check("removing it again: it's gone", f"SELECT {moderate('comment', comment, 'remove')}", as_user=ADMIN,
+          error_has="Not found: it may already have been deleted.")
+    check("reports someone else handled meanwhile stop a second decision",
+          f"SELECT {moderate('post', post, 'remove', reports=['__R__'])}".replace("'__R__'::uuid", usha_report),
+          as_user=ADMIN, error_has="These reports were already handled by someone else.")
+    sita_report = f"(SELECT id FROM reports WHERE reporter_id = '{sita}' AND reported_post_id = '{insult}')"
+    check("admins see only the reported message, never the conversation",
+          f"SELECT string_agg(content, ',') FROM public.admin_get_reported_message({sita_report})", as_user=ADMIN,
+          expect="You owe me, pay up or else")
+    check("... members can't use that", f"SELECT count(*) FROM public.admin_get_reported_message({sita_report})",
+          as_user=vik, error_has="Admins only")
+    check("a message nobody reported can't be removed",
+          f"SELECT {moderate('message', hello, 'remove')}", as_user=ADMIN,
+          error_has="Only a message someone reported can be removed.")
+    check("the reported one can",
+          f"SELECT public.admin_delete_reported_message({sita_report}, 'terms', 'Threats, harassment or calls for violence "
+          "(§ 6)', 'it pressures the member it was sent to with a threat') ->> 'statement' LIKE 'We removed your message %'",
+          as_user=ADMIN, expect="t")
+    check("... only that one, and the conversation's preview no longer shows it",
+          f"SELECT string_agg(content, ',') || '|' || (SELECT last_message_text FROM conversations WHERE id = '{convo}') "
+          f"FROM messages WHERE conversation_id = '{convo}'", expect="hello there|hello there")
+    check("an admin can't act on their own account", f"SELECT {moderate('member', ADMIN, 'warn')}", as_user=ADMIN,
+          error_has="You can't act on your own account or content.")
+    check("... nor on another admin's (C4)", f"SELECT {moderate('member', kira, 'block', urgent='threat')}",
+          as_user=ADMIN, error_has="This belongs to an admin.")
+
+    # --- warnings and blocks (C7) ----------------------------------------------------
+    check("a block comes after a warning", f"SELECT {moderate('member', sita, 'block')}", as_user=ADMIN,
+          error_has="Warn the member first and give them 14 days to reply")
+    check("admin warns sita",
+          f"SELECT {moderate('member', sita, 'warn', rule='Insults, hate or discrimination (§ 6)', facts='you insulted other members in several comments')} ->> 'statement'",
+          as_user=ADMIN,
+          expect="We're writing about how you use NRIClub. Please read this warning. Reason: it breaks our Terms of Use, "
+                 "Insults, hate or discrimination (§ 6), because you insulted other members in several comments. This "
+                 "followed our own check. No automated tools were used: a person on our team decided. If this happens "
+                 "again we may block your account. Please reply to hello@nriclub.app within 14 days if you want to tell "
+                 "us your side. " + redress)
+    check("... a block before the 14 days are up needs a serious reason",
+          f"SELECT {moderate('member', sita, 'block')}", as_user=ADMIN, error_has="Warn the member first")
+    psql(f"UPDATE private.moderation_action SET created_at = now() - interval '15 days' WHERE target_user = '{sita}' "
+         "AND action = 'warn'")
+    check("after 14 days the block goes ahead",
+          f"DO $$BEGIN PERFORM {moderate('member', sita, 'block', rule='Insults, hate or discrimination (§ 6)', facts='you went on insulting members after our warning')}; END$$; "
+          f"SELECT concat_ws('|', status, block_rule, block_reason, blocked_at IS NOT NULL) FROM profile_private WHERE id = '{sita}'",
+          as_user=ADMIN, expect="blocked|Terms of Use: Insults, hate or discrimination (§ 6)|you went on insulting members "
+                                "after our warning|t")
+    check("... sita sees why, and can't change it",
+          "UPDATE profile_private SET block_reason = '', block_rule = '', blocked_at = NULL WHERE id = auth.uid(); "
+          "SELECT block_rule || '|' || block_reason FROM profile_private", as_user=sita,
+          expect="Terms of Use: Insults, hate or discrimination (§ 6)|you went on insulting members after our warning")
+    check("admin unblocks her; the reason goes",
+          f"{unblock(sita)}; SELECT block_reason || block_rule || (blocked_at IS NULL)::text FROM profile_private "
+          f"WHERE id = '{sita}'", as_user=ADMIN, expect="active\ntrue")
+    check("... and she's told", f"SELECT text FROM notifications WHERE user_id = '{sita}' AND text LIKE 'We unblocked%'",
+          expect=f"We unblocked your account on {berlin_date()}. You can use NRIClub again.")
+    omar = "00000000-0000-0000-0000-000000000612"
+    approved_member(omar, "omar@example.com", "Omar O")
+    check("admin warns omar", f"SELECT {moderate('member', omar, 'warn')} ->> 'statement' LIKE 'We''re writing about%'",
+          as_user=ADMIN, expect="t")
+    psql(f"UPDATE private.moderation_action SET created_at = now() - interval '30 days' WHERE target_user = '{omar}'")
+    check("... and again a month later, about something new",
+          f"SELECT {moderate('member', omar, 'warn', facts='you posted the same advert in every group again')} ->> "
+          "'statement' LIKE 'We''re writing about%'", as_user=ADMIN, expect="t")
+    check("... a block must wait for the 14 days of the latest warning, not just of any earlier one",
+          f"SELECT {moderate('member', omar, 'block')}", as_user=ADMIN, error_has="Warn the member first")
+    long_law, long_facts = "' || repeat('§ 185 StGB ', 27) || '", "' || repeat('it insults ', 53) || 'members"
+    check("a long statement of reasons reaches the member whole, with how to reply and how to challenge it",
+          f"SELECT char_length({moderate('member', omar, 'warn', ground='illegal', rule=long_law, facts=long_facts)} "
+          "->> 'statement') > 1000", as_user=ADMIN, expect="t")
+    check("... (whole)", "SELECT text LIKE '%within 14 days%You can also go to court.' FROM notifications "
+          f"WHERE user_id = '{omar}' AND type = 'moderation' ORDER BY created_at DESC LIMIT 1", expect="t")
+    check("a serious case is blocked straight away, and the statement says why",
+          f"SELECT {moderate('member', vik, 'block', urgent='threat', rule='Threats, harassment or calls for violence (§ 6)', facts='you threatened to hurt a member')} ->> 'statement' "
+          "LIKE '%Because this is a serious case (threats), we blocked your account straight away, without a warning "
+          "first.%You can still sign in to download your data and delete your account.'", as_user=ADMIN, expect="t")
+    check("... (recorded)", f"SELECT urgent FROM private.moderation_action WHERE target_user = '{vik}' AND action = 'block'",
+          expect="threat")
+    psql(f"UPDATE profiles SET avatar_url = '{STORE}/avatars/{ravi}/a.jpg', bio = 'Call me for cheap visas' WHERE id = '{ravi}'")
+    check("admin removes a profile photo (the file's path stays on record; Storage cleans up the file)",
+          f"DO $$BEGIN PERFORM {moderate('profile_photo', ravi, 'remove', rule='Pretending to be someone else (§ 6)', facts='the photo shows another person')}; END$$; "
+          f"SELECT '[' || avatar_url || ']' FROM profiles WHERE id = '{ravi}'", as_user=ADMIN, expect="[]")
+    check("... (the record)", "SELECT snapshot -> 'files' ->> 0 FROM private.moderation_action "
+          f"WHERE target_kind = 'profile_photo' AND target_user = '{ravi}'", expect=f"avatars/{ravi}/a.jpg")
+    check("neel reports ravi's profile", report("profile", ravi, category="spam", explanation="His bio advertises a paid visa service.")
+          + " RETURNING 1", as_user=neel, expect="1")
+    neel_report = f"(SELECT id FROM reports WHERE reporter_id = '{neel}' AND content_type = 'profile')"
+    check("... and a bio", f"SELECT {moderate('profile_bio', ravi, 'remove', facts='it advertises a paid visa service', reports=['__R__'])} "
+          f"->> 'statement' LIKE 'We removed the bio on your profile on %'; SELECT bio FROM profiles WHERE id = '{ravi}'"
+          .replace("'__R__'::uuid", neel_report), as_user=ADMIN, expect="t")
+    check("... neel hears that the bio was removed (not \"the member\")",
+          f"SELECT text FROM notifications WHERE user_id = '{neel}' AND type = 'report'",
+          expect="We looked at your report about the bio of the member Ravi R: we removed it because it advertises a paid "
+                 "visa service. " + redress)
+
+    # --- closing reports without action, and Undo (C7, C36) ----------------------------
+    check("usha reports ravi's post", report("post", post, category="spam", explanation="It advertises his own business.")
+          + " RETURNING 1", as_user=usha, expect="1")
+    usha_post_report = f"(SELECT id FROM reports WHERE reporter_id = '{usha}' AND reported_post_id = '{post}')"
+    check("members can't close reports", f"SELECT count(*) FROM public.admin_close_reports(ARRAY[{usha_post_report}], "
+          "'reviewed', 'it is fine')", as_user=usha, error_has="Admins only")
+    check("closing without action needs a reason",
+          f"SELECT count(*) FROM public.admin_close_reports(ARRAY[{usha_post_report}], 'reviewed', '')", as_user=ADMIN,
+          error_has="Say in a few words why")
+    check("admin keeps the post",
+          f"SELECT count(*) FROM public.admin_close_reports(ARRAY[{usha_post_report}], 'reviewed', "
+          "'it is an invitation, not an advert')", as_user=ADMIN, expect="1")
+    check("... and usha is told why",
+          f"SELECT text FROM notifications WHERE user_id = '{usha}' AND reference_id = {usha_post_report}",
+          expect="We looked at your report about the post \"Diwali party at my place on Saturday\": we kept it because it "
+                 "is an invitation, not an advert. " + redress)
+    check("Undo opens it again",
+          f"SELECT count(*) FROM public.admin_reopen_reports(ARRAY[{usha_post_report}], 'reviewed'); "
+          f"SELECT status FROM reports WHERE id = {usha_post_report}", as_user=ADMIN, expect="1\npending")
+    check("... and takes the message back",
+          f"SELECT count(*) FROM notifications WHERE user_id = '{usha}' AND reference_id = {usha_post_report}", expect="0")
+    check("admins still mark feedback done by hand",
+          "UPDATE reports SET status = 'resolved' WHERE content_type = 'feedback' AND reason = '[BUG] Feed: the heart is grey' "
+          "RETURNING 1",
+          as_user=ADMIN, expect="1")
+
+    # --- what the admin panel shows with a member; "Download my data" (C7, C21) ---------
+    check("the admin panel shows what our team did about a member, newest first",
+          f"SELECT string_agg(e ->> 'action', ',' ORDER BY o) FROM jsonb_array_elements("
+          f"public.admin_member_overview('{sita}') -> 'history') WITH ORDINALITY x(e, o)", as_user=ADMIN,
+          expect="unblock,block,remove,warn")
+    check("... members can't see it", f"SELECT public.admin_member_overview('{sita}')", as_user=sita,
+          error_has="Admins only")
+    check("... with the open reports about her profile counted apart from those about what she posted",
+          f"SELECT (o ->> 'open_profile_reports')::int <= (o ->> 'open_reports')::int "
+          f"FROM public.admin_member_overview('{sita}') o", as_user=ADMIN, expect="t")
+    check("sita's download has what our team did about her, with the statements, but not who on our team",
+          "SELECT string_agg(e ->> 'action', ',' ORDER BY e ->> 'created_at') || '|' || bool_and(NOT (e ? 'actor_id') "
+          "AND NOT (e ? 'by')) || '|' || count(e -> 'statement_sent_to_you') FROM "
+          "jsonb_array_elements(public.export_my_data() -> 'moderation_actions_about_me') e", as_user=sita,
+          expect="warn,remove,block,unblock|true|4")
+    check("meera reports ravi the way the site sent reports before the update (her own words in the reason line)",
+          f"INSERT INTO reports (reporter_id, reported_user_id, reason) VALUES (auth.uid(), '{ravi}', "
+          "'[USER] Ravi R — Against our rules: Harassment or bullying: I am Meera from flat 3, he shouts at me') "
+          "RETURNING content_type", as_user=meera, expect="profile")
+    check("ravi's download has the reasons, but not the words of the members who reported him",
+          "SELECT bool_and(e ->> 'reason' NOT LIKE '%flat 3%' AND NOT (e ? 'explanation')) || '|' || "
+          "bool_or(e ->> 'reason' = '[USER] Ravi R — Against our rules: Harassment or bullying') FROM "
+          "jsonb_array_elements(public.export_my_data() -> 'reports_about_me') e", as_user=ravi, expect="true|true")
+    check("ravi's download lists the reports about him, without who sent them (none about his message: only sita "
+          "could have sent that one)",
+          "SELECT bool_and(NOT (e ? 'reporter_id')) || '|' || string_agg(DISTINCT e ->> 'about', ',' ORDER BY e ->> 'about') FROM "
+          "jsonb_array_elements(public.export_my_data() -> 'reports_about_me') e", as_user=ravi,
+          expect="true|post,profile")
+    check("sita reports ravi's other message too", report("message", hello, category="spam",
+          explanation="He sends me the same greeting again and again.") + " RETURNING 1", as_user=sita, expect="1")
+    check("... our team keeps it", "SELECT count(*) FROM public.admin_close_reports(ARRAY(SELECT id FROM reports "
+          f"WHERE reported_post_id = '{hello}'), 'reviewed', 'a greeting is not spam')", as_user=ADMIN, expect="1")
+    check("... ravi's download doesn't show that a message of his was reported or kept (it would say who reported it, "
+          "Art. 15(4) GDPR); the message we removed is there, as he was told then",
+          "SELECT (SELECT count(*) FROM jsonb_array_elements(d -> 'reports_about_me') e WHERE e ->> 'about' = 'message') "
+          "|| '|' || (SELECT string_agg(e ->> 'action', ',') FROM jsonb_array_elements(d -> 'moderation_actions_about_me') e "
+          "WHERE e ->> 'about' = 'message') || '|' || (d -> 'readme' ->> 'left_out' LIKE '%reports about messages you sent%') "
+          "FROM public.export_my_data() d", as_user=ravi, expect="0|remove|true")
+
+    # --- a report stays when its sender deletes their account (C6b) ---------------------
+    check("usha deletes her account", "SELECT public.delete_my_account()", as_user=usha)
+    check("... her reports stay, no longer linked to her; her feedback goes",
+          "SELECT string_agg(content_type || ':' || (reporter_id IS NULL)::text, ',' ORDER BY content_type) FROM reports "
+          "WHERE explanation IN ('She insults Ravi under every post he writes.', 'It advertises his own business.') "
+          "OR reason = '[BUG] Feed: the heart is grey'", expect="comment:true,post:true")
+
+    # --- admins act only through the functions (C23) -----------------------------------
+    check("an admin's own writes don't set server columns either",
+          "INSERT INTO groups (name, created_by, is_approved) VALUES ('Indians in Adminville', auth.uid(), true) "
+          "RETURNING is_approved::text", as_user=ADMIN, expect="false")
+    check("communities: approve, Undo while nobody has joined, and the creator hears about each",
+          "SELECT public.admin_set_group(id, 'approve') ->> 'is_approved' FROM groups WHERE name = 'Indians in Adminville'; "
+          "SELECT public.admin_set_group(id, 'unapprove') ->> 'is_approved' FROM groups WHERE name = 'Indians in Adminville'; "
+          "SELECT public.admin_set_group(id, 'approve') ->> 'is_approved' FROM groups WHERE name = 'Indians in Adminville'",
+          as_user=ADMIN, expect="true\nfalse\ntrue")
+    check("... once a member has joined, the approval stays",
+          "INSERT INTO group_members (group_id, user_id) SELECT id, auth.uid() FROM groups WHERE name = 'Indians in Adminville' "
+          "RETURNING 1", as_user=ravi, expect="1")
+    check("... (Undo refused)", "SELECT public.admin_set_group(id, 'unapprove') FROM groups WHERE name = 'Indians in Adminville'",
+          as_user=ADMIN, error_has="Members have already joined or posted")
+    check("deleting a community needs a reason",
+          "SELECT public.admin_set_group(id, 'delete') FROM groups WHERE name = 'Indians in Adminville'", as_user=ADMIN,
+          error_has="Say in a few words why the community is deleted.")
+    check("... and is recorded",
+          "SELECT public.admin_set_group(id, 'delete', 'it duplicates Indians in Berlin') IS NULL FROM groups "
+          "WHERE name = 'Indians in Adminville'", as_user=ADMIN, expect="t")
+    check("... (the record)", "SELECT string_agg(action, ',' ORDER BY created_at) FROM private.moderation_action "
+          "WHERE target_kind = 'group' AND snapshot -> 'row' ->> 'name' = 'Indians in Adminville'",
+          expect="group_approve,group_unapprove,group_approve,group_delete")
+    check("members can't use the community or ambassador functions",
+          f"SELECT public.admin_set_ambassador('{ravi}', 'Berlin')", as_user=ravi, error_has="Admins only")
+
+    # --- ambassadors only active and verified (C26) ------------------------------------
+    check("ravi becomes Berlin's ambassador (recorded)",
+          f"SELECT public.admin_set_ambassador('{ravi}', 'Berlin')", as_user=ADMIN, expect="Berlin")
+    check("... (the record)", "SELECT explanation FROM private.moderation_action "
+          f"WHERE action = 'ambassador' AND target_user = '{ravi}'", expect="Ambassador for Berlin")
+    check("members see the city's active, verified ambassadors",
+          "SELECT string_agg(name, ',') FROM public.city_ambassadors('berlin')", as_user=neel, expect="Ravi R")
+    check("... members who can't take part see none", "SELECT count(*) FROM public.city_ambassadors('Berlin')",
+          as_user=vik, expect="0")
+    check("... nor anyone signed out", "SELECT count(*) FROM public.city_ambassadors('Berlin')", role="anon",
+          expect="error")
+
+    # --- mentoring (C24) -----------------------------------------------------------------
+    for mentor in (meera, mohan):
+        psql(f"""UPDATE profiles SET mentor_open = true WHERE id = '{mentor}';
+          WITH s AS (INSERT INTO mentor_slots (mentor_id, starts_at, duration_min, booked)
+                     VALUES ('{mentor}', now() + interval '2 days', 30, true) RETURNING id, starts_at)
+          INSERT INTO mentor_bookings (slot_id, mentor_id, mentee_id, starts_at, duration_min, topic)
+          SELECT id, '{mentor}', '{neel}', starts_at, 30, 'CV review' FROM s;
+          INSERT INTO mentor_slots (mentor_id, starts_at) VALUES ('{mentor}', now() + interval '3 days')""")
+    check("the admin panel counts a mentor's upcoming sessions and open times",
+          f"SELECT (o ->> 'upcoming_sessions') || '|' || (o ->> 'free_slots') FROM public.admin_member_overview('{meera}') o",
+          as_user=ADMIN, expect="1|1")
+    check("rejecting a mentor cancels their booked sessions, and the member is told",
+          f"SELECT public.review_member('{meera}', 'rejected', 'We couldn''t verify you.', '')", as_user=ADMIN,
+          expect="rejected")
+    check("... (cancelled, told)", f"SELECT status FROM mentor_bookings WHERE mentor_id = '{meera}'; "
+          f"SELECT count(*) FROM notifications WHERE user_id = '{neel}' AND type = 'booking_cancelled'",
+          expect="cancelled\n1")
+    check("moving a mentor back to review keeps their booked sessions (their open times go)",
+          f"SELECT public.review_member('{mohan}', 'pending', '', '')", as_user=ADMIN, expect="pending")
+    check("... (kept)", f"SELECT string_agg(status, ',') FROM mentor_bookings WHERE mentor_id = '{mohan}'; "
+          f"SELECT count(*) FROM mentor_slots WHERE mentor_id = '{mohan}' AND NOT booked", expect="booked\n0")
+
+    # --- clean-up (C20) ---------------------------------------------------------------------
+    check("the clean-up deletes closed notices after 12 months unless held, the copies in the record after 6 "
+          "months and the record after 24 unless a report it answers is held, and the notice limits after a day", f"""
+          BEGIN;
+          INSERT INTO private.notices (reference, location, category, explanation, good_faith, status, created_at, hold_reason) VALUES
+            ('R-OLD00001', 'x', 'spam', 'closed 13 months', true, 'closed', now() - interval '13 months', ''),
+            ('R-OLD00002', 'x', 'spam', 'closed 13 months, held', true, 'closed', now() - interval '13 months', 'police'),
+            ('R-OLD00003', 'x', 'spam', 'open 13 months', true, 'open', now() - interval '13 months', ''),
+            ('R-NEW00004', 'x', 'spam', 'closed 11 months', true, 'closed', now() - interval '11 months', '');
+          INSERT INTO reports (id, reporter_id, reported_post_id, reason, status) VALUES
+            ('99000000-0000-0000-0000-000000000601', NULL, '{post}', '[POST] held', 'resolved');
+          INSERT INTO private.report_hold (report_id, reason) VALUES ('99000000-0000-0000-0000-000000000601', 'police');
+          INSERT INTO private.moderation_action (action, target_kind, source, snapshot, created_at, explanation, report_ids) VALUES
+            ('remove', 'post', 'report', '{{"row": {{}}}}', now() - interval '7 months', 'a7', '{{}}'),
+            ('remove', 'post', 'report', '{{"row": {{}}}}', now() - interval '7 months', 'a7 held', '{{99000000-0000-0000-0000-000000000601}}'),
+            ('remove', 'post', 'report', '{{"row": {{}}}}', now() - interval '5 months', 'a5', '{{}}'),
+            ('remove', 'post', 'report', NULL, now() - interval '25 months', 'a25', '{{}}'),
+            ('remove', 'post', 'report', NULL, now() - interval '25 months', 'a25 held', '{{99000000-0000-0000-0000-000000000601}}');
+          INSERT INTO private.notice_log (key, at) VALUES ('k-old', now() - interval '25 hours'), ('k-new', now() - interval '1 hour');
+          SELECT concat_ws(',', c ->> 'closed_notices', c ->> 'moderation_copies_cleared', c ->> 'moderation_actions')
+            FROM (SELECT private.daily_cleanup() AS c) x;
+          SELECT string_agg(reference, ',' ORDER BY reference) FROM private.notices WHERE reference ~ '^R-(OLD|NEW)0';
+          SELECT string_agg(explanation || ':' || (snapshot IS NOT NULL)::text, ',' ORDER BY explanation COLLATE "C")
+            FROM private.moderation_action WHERE explanation ~ '^a[0-9]';
+          SELECT string_agg(key, ',') FROM private.notice_log WHERE key LIKE 'k-%';
+          ROLLBACK;""",
+          expect="1,1,1\nR-NEW00004,R-OLD00002,R-OLD00003\na25 held:false,a5:true,a7:false,a7 held:true\nk-new")
+
+    # --- the migration's changes to existing rows --------------------------------------------
+    r1, r2, r3, r4 = (f"99000000-0000-0000-0000-00000000070{n}" for n in range(1, 5))
+    check("existing rows: reports get their kind from the prefix, and a member's second open report about the same "
+          "item is closed as a duplicate", f"""
+          BEGIN;
+          DROP INDEX public.reports_one_open_per_member;
+          ALTER TABLE public.reports DISABLE TRIGGER fill_report_details;
+          INSERT INTO reports (id, reporter_id, reported_post_id, reported_user_id, reason, status, created_at) VALUES
+            ('{r1}', '{ravi}', '{post}', NULL, '[DOC] Visa guide — Spam', 'pending', now() - interval '3 hours'),
+            ('{r2}', '{ravi}', '{post}', NULL, '[DOC] Visa guide — Spam again', 'pending', now() - interval '2 hours'),
+            ('{r3}', '{ravi}', NULL, '{neel}', '[USER] Neel — Harassment', 'pending', now() - interval '1 hour'),
+            ('{r4}', '{ravi}', '{ravi}', NULL, '[BUG] Feed: broken', 'pending', now());
+          ALTER TABLE public.reports ENABLE TRIGGER fill_report_details;
+          {migration_section("EXISTING DATA", MODERATION)}
+          SELECT string_agg(content_type || ':' || status, ',' ORDER BY created_at) FROM reports
+            WHERE id IN ('{r1}', '{r2}', '{r3}', '{r4}');
+          SELECT note FROM private.report_note WHERE report_id = '{r2}';
+          ROLLBACK;""",
+          expect="doc:pending,doc:reviewed,profile:pending,feedback:pending\n"
+                 "Closed as a duplicate: the same member had already reported this, and that report is still open.")
+
+
+def berlin_date():
+    """Today in Germany, as the database writes dates in its messages."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    d = datetime.now(ZoneInfo("Europe/Berlin"))
+    return f"{d.day} {d.strftime('%B')} {d.year}"
+
+
+def migration_part(start, end, path):
+    """The part of a migration from its line '-- <start>' up to (not
+    including) its line '-- <end>'."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    return text[text.index(f"-- {start}"):text.index(f"-- {end}")]
+
+
+def storage_images():
+    """Photo files (C1, C2) and invite codes (C19): migration
+    20261022000000_storage_images."""
+    tara, uma, vik, wen = (f"00000000-0000-0000-0000-0000000007{n}" for n in ("01", "02", "03", "04"))
+    gone = "00000000-0000-0000-0000-000000000799"  # an account deleted long ago
+    approved_member(tara, "tara@example.com", "Tara T")
+    approved_member(uma, "uma@example.com", "Uma U")
+    approved_member(wen, "wen@example.com", "Wen W")
+    sign_up(vik, "viktor@example.com", {"full_name": "Viktor V"}, accept_terms=True)
+    new_name = "0b9d0c4e-5d6f-4a8b-9c1d-2e3f4a5b6c7d.jpg"  # as the site names uploads now
+    old = "now() - interval '2 days'"
+
+    # --- buckets and file names (C2) --------------------------------------------
+    check("the photo buckets take JPEG, PNG and WebP (no GIF), profile photos up to 2 MB, other photos up to 4 MB",
+          "SELECT string_agg(id || ':' || file_size_limit || ':' || array_to_string(allowed_mime_types, ','), ' ' ORDER BY id) "
+          "FROM storage.buckets WHERE id IN ('avatars', 'post-images', 'marketplace-images')",
+          expect="avatars:2097152:image/jpeg,image/png,image/webp "
+                 "marketplace-images:4194304:image/jpeg,image/png,image/webp "
+                 "post-images:4194304:image/jpeg,image/png,image/webp")
+    check("a member uploads a photo with a random name into their own folder",
+          f"INSERT INTO storage.objects (bucket_id, name) VALUES ('avatars', '{tara}/{new_name}') RETURNING 1",
+          as_user=tara, expect="1")
+    check("... and uses it as their profile photo (random names pass the photo-link check)",
+          f"UPDATE profiles SET avatar_url = '{STORE}/avatars/{tara}/{new_name}' WHERE id = auth.uid() RETURNING 1",
+          as_user=tara, expect="1")
+    check("... and for a post",
+          f"INSERT INTO posts (user_id, content, image_url) VALUES (auth.uid(), 'new name', '{STORE}/post-images/{tara}/{new_name}') "
+          "RETURNING 1", as_user=tara, expect="1")
+    check("setup: a post with an old-style photo link, from before random names",
+          f"INSERT INTO posts (id, user_id, content, image_url) VALUES ('10000000-0000-0000-0000-000000000701', '{tara}', 'old', "
+          f"'{STORE}/post-images/{tara}/1776988015790.jpeg')")
+    check("... old links keep working when the post is edited",
+          "UPDATE posts SET content = 'old, edited' WHERE id = '10000000-0000-0000-0000-000000000701' RETURNING 1",
+          as_user=tara, expect="1")
+
+    # --- the photo clean-up (C1) --------------------------------------------------
+    escaped_store = STORE.replace("/", "\\/")  # a link written with JSON escapes
+    check("setup: photo files, and the rows that use some of them", f"""
+          INSERT INTO storage.buckets (id, name, public) VALUES ('photos', 'photos', true), ('documents', 'documents', false);
+          INSERT INTO storage.objects (bucket_id, name, created_at) VALUES
+            ('avatars', '{tara}/avatar_1700000000000.png', {old}),
+            ('avatars', '{tara}/now-used.jpg', {old}),
+            ('post-images', '{tara}/fresh.jpg', now()),
+            ('post-images', '{tara}/post.jpg', {old}),
+            ('post-images', '{tara}/event.jpg', {old}),
+            ('post-images', '{tara}/group.jpg', {old}),
+            ('marketplace-images', '{tara}/m1.jpg', {old}),
+            ('marketplace-images', '{tara}/m 2.jpg', {old}),
+            ('marketplace-images', '{tara}/m3.jpg', {old}),
+            ('marketplace-images', '{uma}/single.jpg', {old}),
+            ('post-images', '{gone}/a.jpg', now()),
+            ('avatars', '{gone}/b.jpg', {old}),
+            ('photos', '{gone}/c.jpg', {old}),
+            ('post-images', 'starter/new.jpg', now()),
+            ('post-images', 'starter/old.jpg', {old}),
+            ('documents', '{gone}/d.pdf', {old});
+          UPDATE profiles SET avatar_url = '{STORE}/avatars/{tara}/now-used.jpg?t=1700000000001' WHERE id = '{tara}';
+          INSERT INTO posts (user_id, content, image_url) VALUES ('{tara}', 'with photo', '{STORE}/post-images/{tara}/post.jpg');
+          INSERT INTO events (organizer_id, title, date, image_url) VALUES ('{tara}', 'Garba', '2030-10-01', '{STORE}/post-images/{tara}/event.jpg');
+          INSERT INTO groups (name, image_url) VALUES ('Indians who take photos', '{STORE}/post-images/{tara}/group.jpg');
+          INSERT INTO marketplace (user_id, title, price, image_url) VALUES
+            ('{tara}', 'Lamp', '€5', '["{STORE}/marketplace-images/{tara}/m1.jpg", "{STORE}/marketplace-images/{tara}/m%202.jpg"]'),
+            ('{uma}', 'Chair', '€5', '{STORE}/marketplace-images/{uma}/single.jpg'),
+            ('{uma}', 'Odd', '€5', '{{"length": 5}}'),
+            ('{tara}', 'Escaped', '€5', '["{escaped_store}\\/marketplace-images\\/{tara}\\/m\\u0033.jpg"]');""")
+    mine = (f"WHERE name LIKE '{tara}/%' OR name LIKE '{uma}/%' OR name LIKE '{gone}/%' OR name LIKE 'starter/%'")
+    check("members can't list the files to delete", "SELECT * FROM public.admin_storage_orphans()", as_user=tara,
+          error_has="Admins only")
+    check("... nor signed-out visitors", "SELECT * FROM public.admin_storage_orphans()", role="anon", expect="error")
+    check("the clean-up lists files of deleted accounts (at once) and day-old files nothing uses, and nothing else",
+          "SELECT string_agg(bucket_id || '/' || name || ':' || reason, ' ' ORDER BY reason, bucket_id, name) "
+          f"FROM public.admin_storage_orphans(1000) {mine}", as_user=ADMIN,
+          expect=f"avatars/{gone}/b.jpg:account_deleted photos/{gone}/c.jpg:account_deleted "
+                 f"post-images/{gone}/a.jpg:account_deleted avatars/{tara}/avatar_1700000000000.png:unused "
+                 "post-images/starter/old.jpg:unused")
+    check("... a few at a time", "SELECT count(*) FROM public.admin_storage_orphans(2)", as_user=ADMIN, expect="2")
+    check("admins see every photo file (Storage needs it to delete one)",
+          f"SELECT count(*) FROM storage.objects WHERE name LIKE '{uma}/%'", as_user=ADMIN, expect="1")
+    check("... members only their own", f"SELECT count(*) FROM storage.objects WHERE name LIKE '{uma}/%'", as_user=tara,
+          expect="0")
+    for label, name in [("a profile photo (link with ?t=)", f"{tara}/now-used.jpg"), ("a post's photo", f"{tara}/post.jpg"),
+                        ("an event's photo", f"{tara}/event.jpg"), ("a group's photo", f"{tara}/group.jpg"),
+                        ("a listing's photo", f"{tara}/m1.jpg"), ("a listing's photo, linked with %20", f"{tara}/m 2.jpg"),
+                        ("a listing's photo, linked with JSON escapes", f"{tara}/m3.jpg"),
+                        ("a listing's only photo (not a list)", f"{uma}/single.jpg")]:
+        check(f"an admin can't delete a photo file that is used: {label}",
+              f"DELETE FROM storage.objects WHERE name = '{name}' RETURNING 1", as_user=ADMIN, expect="")
+    check("an admin deletes files nothing uses",
+          f"WITH d AS (DELETE FROM storage.objects WHERE bucket_id = 'avatars' "
+          f"AND name IN ('{tara}/avatar_1700000000000.png', '{gone}/b.jpg') RETURNING name) "
+          "SELECT string_agg(name, ',' ORDER BY name) FROM d", as_user=ADMIN,
+          expect=f"{tara}/avatar_1700000000000.png,{gone}/b.jpg")
+    check("... also in the old bucket 'photos'",
+          f"DELETE FROM storage.objects WHERE bucket_id = 'photos' RETURNING name", as_user=ADMIN, expect=f"{gone}/c.jpg")
+    check("... but not files in other buckets",
+          f"DELETE FROM storage.objects WHERE bucket_id = 'documents' RETURNING name", as_user=ADMIN, expect="")
+    # The policy's list of names in use is made once per request, not once
+    # per file: with a few thousand rows (here listings full of %-escaped
+    # links, which any member can store) a 100-file Storage request must
+    # still finish within Supabase's 8-second limit for signed-in requests.
+    ok, plan, err = psql(f"""
+          BEGIN;
+          SELECT set_config('request.jwt.claims', '{{"sub": "{ADMIN}", "role": "authenticated"}}', true) IS NULL;
+          SET LOCAL ROLE authenticated;
+          EXPLAIN (VERBOSE, COSTS OFF) DELETE FROM storage.objects WHERE bucket_id = 'avatars' AND name = ANY ('{{a/b.jpg,c/d.jpg}}');
+          ROLLBACK;""")
+    filters = [l for l in plan.splitlines() if "Filter:" in l]
+    verdict("an admin's delete looks up the photos in use once per request (InitPlan), not for each file",
+            ok and "InitPlan" in plan and "admin_image_refs" in plan and filters
+            and not any("admin_image_refs" in l or "image_names" in l for l in filters), plan[:600] + err[:300])
+    check("... and 100 files go within Supabase's 8 seconds, with 4,000 posts and 300 listings of %-escaped links", f"""
+          BEGIN;
+          SET LOCAL session_replication_role = replica;
+          INSERT INTO posts (user_id, content, image_url)
+            SELECT '{uma}', 'load ' || g, '{STORE}/post-images/{uma}/load%5F' || g || '.jpg' FROM generate_series(1, 4000) g;
+          INSERT INTO marketplace (user_id, title, price, image_url)
+            SELECT '{uma}', 'load ' || g, '1',
+                   (SELECT json_agg('{STORE}/marketplace-images/{uma}/l%20' || g || '-' || k || '.jpg')::text FROM generate_series(1, 20) k)
+            FROM generate_series(1, 300) g;
+          INSERT INTO storage.objects (bucket_id, name, created_at)
+            SELECT 'post-images', '{uma}/load_' || g || '.jpg', {old} FROM generate_series(1, 4000) g
+            UNION ALL SELECT 'post-images', '{uma}/gone' || g || '.jpg', {old} FROM generate_series(1, 95) g;
+          SET LOCAL session_replication_role = origin;
+          SELECT set_config('request.jwt.claims', '{{"sub": "{ADMIN}", "role": "authenticated"}}', true) IS NULL;
+          SET LOCAL ROLE authenticated;
+          SET LOCAL statement_timeout = '8s';
+          WITH d AS (
+            DELETE FROM storage.objects WHERE bucket_id = 'post-images' AND name = ANY (
+              ARRAY(SELECT '{uma}/gone' || g || '.jpg' FROM generate_series(1, 95) g)
+              || ARRAY(SELECT '{uma}/load_' || g || '.jpg' FROM generate_series(1, 5) g))
+            RETURNING name)
+          SELECT count(*) || ' deleted, ' || count(*) FILTER (WHERE name LIKE '%/load_%') || ' in use' FROM d;
+          ROLLBACK;""", expect="f\n95 deleted, 0 in use")
+    check("%-escapes of printable ASCII are decoded (Storage names are ASCII); anything else stays as it is",
+          "SELECT private.percent_decode('m%202.jpg') || '|' || private.percent_decode('a%2Fb%5f') || '|' "
+          "|| private.percent_decode('%zz%e2%82%ac%00%') || '|' || private.percent_decode('plain')",
+          expect="m 2.jpg|a/b_|%zz%e2%82%ac%00%|plain")
+    check("the list of photos in use is for admins only", "SELECT private.admin_image_refs() IS NULL", as_user=tara,
+          expect="t")
+    check("... (an admin gets it)", f"SELECT '{tara}/post.jpg' = ANY (private.admin_image_refs())", as_user=ADMIN,
+          expect="t")
+    check("a member can't delete another member's file, used or not",
+          f"DELETE FROM storage.objects WHERE name IN ('{gone}/a.jpg', '{uma}/single.jpg') RETURNING 1", as_user=tara, expect="")
+    check("tara deletes the post with the photo",
+          "DELETE FROM posts WHERE content = 'with photo' AND user_id = auth.uid() RETURNING 1", as_user=tara, expect="1")
+    check("... now the clean-up lists its photo, and an admin can delete it",
+          f"SELECT count(*) FROM public.admin_storage_orphans(1000) WHERE name = '{tara}/post.jpg'; "
+          f"DELETE FROM storage.objects WHERE name = '{tara}/post.jpg' RETURNING 1", as_user=ADMIN, expect="1\n1")
+    check("a member deletes their own files, used or not (the site deletes them with what used them)",
+          f"DELETE FROM storage.objects WHERE name IN ('{tara}/fresh.jpg', '{tara}/m1.jpg') RETURNING 1", as_user=tara,
+          expect="1\n1")
+    check("setup: wen is blocked", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{wen}'; "
+          f"INSERT INTO storage.objects (bucket_id, name) VALUES ('avatars', '{wen}/me.jpg')")
+    check("... a blocked member can still delete their own files (before deleting the account)",
+          f"DELETE FROM storage.objects WHERE name = '{wen}/me.jpg' RETURNING 1", as_user=wen, expect="1")
+    check("members can't start the daily clean-up", "SELECT public.admin_photo_cleanup_due()", as_user=tara,
+          error_has="Admins only")
+    check("the first admin to open the panel on a day runs the daily clean-up, nobody after them that day",
+          "SELECT public.admin_photo_cleanup_due()::text || ',' || public.admin_photo_cleanup_due()::text", as_user=ADMIN,
+          expect="true,false")
+    check("... the next day it runs again",
+          "UPDATE private.app_config SET value = '2020-01-01' WHERE key = 'photo_cleanup_on'; "
+          "SET ROLE authenticated; "
+          f"SELECT set_config('request.jwt.claims', '{{\"sub\": \"{ADMIN}\", \"role\": \"authenticated\"}}', true) IS NOT NULL; "
+          "SELECT public.admin_photo_cleanup_due()", expect="t\nt")
+    stub_delete = """
+          CREATE FUNCTION storage.no_deletes() RETURNS trigger LANGUAGE plpgsql AS $f$
+            BEGIN RAISE EXCEPTION 'Direct deletion from storage tables is not allowed. Use the Storage API instead.'; END $f$;
+          CREATE TRIGGER protect_buckets_delete BEFORE DELETE ON storage.buckets FOR EACH STATEMENT EXECUTE FUNCTION storage.no_deletes();"""
+    photos_bucket = migration_part('The bucket "photos"', "Admins see every photo file", STORAGE_IMAGES)
+    check("the migration deletes the empty bucket 'photos'", f"""
+          BEGIN;
+          {photos_bucket}
+          SELECT count(*) FROM storage.buckets WHERE id = 'photos';
+          ROLLBACK;""", expect="0")
+    check("... keeps it while it has files", f"""
+          BEGIN;
+          INSERT INTO storage.objects (bucket_id, name) VALUES ('photos', 'x/y.jpg');
+          {photos_bucket}
+          SELECT count(*) FROM storage.buckets WHERE id = 'photos';
+          ROLLBACK;""", expect="1")
+    check("... and goes on where the database refuses to delete it (as Supabase can)", f"""
+          BEGIN;
+          {stub_delete}
+          {photos_bucket}
+          SELECT count(*) FROM storage.buckets WHERE id = 'photos';
+          ROLLBACK;""", expect="1")
+    buckets_block = migration_part("What the buckets accept", 'The bucket "photos"', STORAGE_IMAGES)
+    ok, _, err = psql(f"""
+          BEGIN;
+          {buckets_block}
+          ROLLBACK;""")
+    verdict("the migration changes all three photo buckets without a notice", ok and "NRIClub" not in err, err[:300])
+    ok, _, err = psql(f"""
+          BEGIN;
+          CREATE FUNCTION storage.skip_avatars() RETURNS trigger LANGUAGE plpgsql AS $f$
+            BEGIN IF NEW.id = 'avatars' THEN RETURN NULL; END IF; RETURN NEW; END $f$;
+          CREATE TRIGGER skip_avatars BEFORE UPDATE ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.skip_avatars();
+          {buckets_block}
+          ROLLBACK;""")
+    verdict("... and says so where it can change only some of them (set the rest in the dashboard)",
+            ok and "only 2 of the photo buckets" in err, err[:300])
+
+    # --- invite codes (C19) ---------------------------------------------------------
+    check("a member's invite code: 12 random letters and digits, the same every time",
+          "SELECT (public.my_invite_code() ~ '^[a-z2-9]{12}$')::text || ',' || (public.my_invite_code() = public.my_invite_code())::text",
+          as_user=tara, expect="true,true")
+    check("... another member gets another", "SELECT public.my_invite_code() IS NOT NULL", as_user=uma, expect="t")
+    check("... (two codes)", f"SELECT count(DISTINCT code) FROM invites WHERE member_id IN ('{tara}', '{uma}')", expect="2")
+    check("signed-out visitors get no code", "SELECT public.my_invite_code()", role="anon", expect="error")
+    check("a blocked member gets no code", "SELECT public.my_invite_code()", as_user=wen, error_has="blocked")
+    check("members see only their own invite code", "SELECT count(*) FROM invites", as_user=uma, expect="1")
+    check("... admins all of them", "SELECT (count(*) >= 2)::text FROM invites", as_user=ADMIN, expect="true")
+    check("members can't make up a code", "INSERT INTO invites (code, member_id) VALUES ('abcdefghijkm', auth.uid())",
+          as_user=vik, expect="error")
+    check("... or change theirs", "UPDATE invites SET code = 'abcdefghijkm' WHERE member_id = auth.uid()", as_user=tara,
+          expect="error")
+    ok, tara_code, err = psql(f"SELECT code FROM invites WHERE member_id = '{tara}'")
+    if not ok or not tara_code:
+        sys.exit("reading tara's invite code failed: " + err)
+    check("\"Download my data\" has the member's invite code (export_my_data of 20261021)",
+          "SELECT public.export_my_data() ->> 'invite_code'", as_user=tara, expect=tara_code)
+    check("... and null for a member who never asked for one",
+          "SELECT (public.export_my_data() -> 'invite_code') = 'null'::jsonb", as_user=wen, expect="t")
+    check("a new member's invite code tells who invited them",
+          f"SELECT member_id || ',' || first_name FROM public.resolve_invite('{tara_code}')", as_user=vik,
+          expect=f"{tara},Tara")
+    check("... also in capitals", f"SELECT first_name FROM public.resolve_invite(' {tara_code.upper()} ')", as_user=vik,
+          expect="Tara")
+    check("an unknown code finds nobody", "SELECT count(*) FROM public.resolve_invite('zzzzzzzzzzzz')", as_user=vik, expect="0")
+    check("... nor does the member's own", f"SELECT count(*) FROM public.resolve_invite('{tara_code}')", as_user=tara,
+          expect="0")
+    check("signed-out visitors can't look codes up", f"SELECT * FROM public.resolve_invite('{tara_code}')", role="anon",
+          expect="error")
+    check("codes can't be tried out: 30 lookups a day",
+          "SELECT count(*) FROM generate_series(1, 40) g, LATERAL public.resolve_invite('zzzzzzzzzzzz' || g) r", as_user=vik,
+          error_has="too often")
+    check("uma deletes her account", "SELECT public.delete_my_account()", as_user=uma)
+    check("... (no code left)", f"SELECT count(*) FROM invites WHERE member_id = '{uma}'", expect="0")
+    check("... and the clean-up lists the account's files at once, although a listing used them until now",
+          "SELECT string_agg(name || ':' || reason, ' ') FROM public.admin_storage_orphans(1000) "
+          f"WHERE name LIKE '{uma}/%'", as_user=ADMIN, expect=f"{uma}/single.jpg:account_deleted")
+
+
+def admin_access():
+    """Admin rights need an active account and, once switched on, two-step
+    login (C4); other members see only approved, active members; admin search
+    and the review queue in pages (C25): migration 20261023000000_admin_access."""
+    zara, lena, pema, bodhi, rudra, inka = (f"00000000-0000-0000-0000-0000000008{n}"
+                                            for n in ("01", "02", "03", "04", "05", "06"))
+    approved_member(zara, "zara@example.com", "Zara Z")
+    psql(f"INSERT INTO public.admins (user_id) VALUES ('{zara}')")
+    approved_member(lena, "lena@example.com", "Lena L", city="Hamburg")
+    approved_member(bodhi, "bodhi@example.com", "Bodhi B")
+    approved_member(rudra, "rudra@example.com", "Rudra R")
+    sign_up(pema, "pema@example.com", {"full_name": "Pema P"}, accept_terms=True)
+    sign_up(inka, "inka@example.com", {"full_name": "Inka I"}, accept_terms=True)
+    bodhi_post, bodhi_event = "10000000-0000-0000-0000-000000000804", "20000000-0000-0000-0000-000000000804"
+    aal1, aal2 = {"aal": "aal1"}, {"aal": "aal2"}
+    five = f"('{lena}', '{pema}', '{bodhi}', '{rudra}', '{inka}')"
+    seen = f"SELECT string_agg(name, ',' ORDER BY name) FROM profiles WHERE id IN {five}"
+
+    # --- who sees whom ----------------------------------------------------------
+    # (His LinkedIn link as it was when he was approved: a change would send
+    # him back to review.)
+    psql(f"UPDATE profiles SET linkedin_url = 'https://www.linkedin.com/in/bodhi-b' WHERE id = '{bodhi}'")
+    check("bodhi posts, organises an event and shows his LinkedIn link while he's approved", f"""
+          INSERT INTO posts (id, user_id, content) VALUES ('{bodhi_post}', '{bodhi}', 'Cricket on Sunday?');
+          INSERT INTO events (id, title, date, location, organizer_id) VALUES ('{bodhi_event}', 'Cricket', '2099-01-01', 'Park', '{bodhi}');
+          UPDATE profiles SET linkedin_public = TRUE WHERE id = auth.uid();
+          SELECT organizer_name FROM events WHERE id = '{bodhi_event}'""", as_user=bodhi, expect="Bodhi B")
+    check("pema waits for review", "SELECT public.submit_verification('Berlin', 'DE', '', 'linkedin.com/in/pema-p', '', '', NULL)",
+          as_user=pema, expect="pending")
+    check("rudra is declined, bodhi blocked; inka never sent her details", f"""
+          UPDATE profile_private SET verification_status = 'rejected', reviewed_at = now() WHERE id = '{rudra}';
+          UPDATE profile_private SET status = 'blocked' WHERE id = '{bodhi}'""")
+    check("an approved member sees only approved, active members", seen, as_user=lena, expect="Lena L")
+    check("... members waiting for review see only themselves", seen, as_user=pema, expect="Pema P")
+    check("... a blocked member sees only themselves", seen, as_user=bodhi, expect="Bodhi B")
+    check("... unfinished accounts see only themselves", seen, as_user=inka, expect="Inka I")
+    check("... admins see everyone", seen, as_user=zara, expect="Bodhi B,Inka I,Lena L,Pema P,Rudra R")
+    check("what bodhi posted stays, without his profile", f"""
+          SELECT (p.id IS NOT NULL) || '|' || (pr.id IS NULL)
+          FROM posts p LEFT JOIN profiles pr ON pr.id = p.user_id WHERE p.id = '{bodhi_post}'""",
+          as_user=lena, expect="true|true")
+    check("... his events lose his name",
+          f"SELECT organizer_id || '|' || organizer_name FROM events WHERE id = '{bodhi_event}'",
+          as_user=lena, expect=f"{bodhi}|")
+    check("... members get no LinkedIn link of his (though he shows it)",
+          f"SELECT count(*) FROM public.profile_links(ARRAY['{bodhi}', '{lena}']::uuid[]) WHERE id = '{bodhi}'",
+          as_user=lena, expect="0")
+    check("... but admins do", f"SELECT linkedin_url FROM public.profile_links(ARRAY['{bodhi}']::uuid[])",
+          as_user=zara, expect="https://www.linkedin.com/in/bodhi-b")
+    check("... and so does he", f"SELECT linkedin_url FROM public.profile_links(ARRAY['{bodhi}']::uuid[])",
+          as_user=bodhi, expect="https://www.linkedin.com/in/bodhi-b")
+    check("... members get no contact settings of accounts that aren't shown",
+          f"SELECT count(*) FROM public.get_member_preferences('{bodhi}')", as_user=lena, expect="0")
+    check("... but of members who are",
+          f"INSERT INTO user_settings (user_id) VALUES ('{lena}') ON CONFLICT DO NOTHING; "
+          f"SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{{\"sub\": \"{zara}\", \"role\": \"authenticated\"}}', false) IS NULL; "
+          f"SELECT receive_messages FROM public.get_member_preferences('{lena}')", expect="f\nEveryone")
+    check("unblocked, bodhi's name is back on his event", f"""
+          UPDATE profile_private SET status = 'active' WHERE id = '{bodhi}';
+          SELECT organizer_name FROM events WHERE id = '{bodhi_event}'""", expect="Bodhi B")
+    check("... and members see him again", seen, as_user=lena, expect="Bodhi B,Lena L")
+    check("an approved member who changes their name is back in review", """
+          UPDATE profiles SET name = 'Bodhi Bose' WHERE id = auth.uid();
+          SELECT verification_status FROM profile_private WHERE id = auth.uid()""", as_user=bodhi, expect="pending")
+    check("... and isn't shown until approved again", seen, as_user=lena, expect="Lena L")
+    check("... then with the new name on his event", f"""
+          UPDATE profile_private SET verification_status = 'approved' WHERE id = '{bodhi}';
+          SELECT organizer_name FROM events WHERE id = '{bodhi_event}'""", expect="Bodhi Bose")
+
+    # --- admin rights: an active account (C4) -------------------------------------
+    rights = "SELECT ((SELECT count(*) FROM profile_private) > 1)::text"
+    check("an admin has admin rights", rights, as_user=zara, expect="true")
+    check("an admin can't block her own account", "UPDATE profile_private SET status = 'blocked' WHERE id = auth.uid()",
+          as_user=zara, error_has="You can't block your own account.")
+    check("... but can block a member (through admin_moderate, 20261021), and unblock them",
+          block(inka) + "; " + unblock(inka), as_user=zara, expect="blocked\nactive")
+    check("an admin's account is blocked (in the SQL editor)", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{zara}'")
+    check("... and has no admin rights", rights, as_user=zara, expect="false")
+    check("... not even signed in with the code", rights, as_user=zara, claims=aal2, expect="false")
+    check("... can't change the two-step setting", "SELECT public.admin_set_mfa_required(true)", as_user=zara,
+          claims=aal2, error_has="Admins only")
+    check("... and is told she isn't an admin now",
+          "SELECT concat_ws('|', s->>'listed', s->>'active', s->>'is_admin') FROM public.admin_mfa_status() s",
+          as_user=zara, expect="true|false|false")
+    check("unblocked again (in the SQL editor)", f"UPDATE profile_private SET status = 'active' WHERE id = '{zara}'")
+
+    # --- admin rights: two-step login (C4) ----------------------------------------
+    status = ("SELECT concat_ws('|', s->>'listed', s->>'mfa_required', s->>'aal', s->>'is_admin') "
+              "FROM public.admin_mfa_status() s")
+    check("two-step login isn't required to start with", status, as_user=zara, claims=aal1, expect="true|false|aal1|true")
+    check("a member learns only that she isn't an admin", "SELECT public.admin_mfa_status()::text", as_user=lena,
+          expect='{"listed": false, "is_admin": false}')
+    check("anon can't ask", "SELECT public.admin_mfa_status()", role="anon", expect="error")
+    check("anon can't switch it on", "SELECT public.admin_set_mfa_required(true)", role="anon", expect="error")
+    check("a member can't switch it on, even signed in with a code", "SELECT public.admin_set_mfa_required(true)",
+          as_user=lena, claims=aal2, error_has="Admins only")
+    check("an admin signed in with the password only can't switch it on", "SELECT public.admin_set_mfa_required(true)",
+          as_user=zara, claims=aal1, error_has="Confirm with the 6-digit code")
+    check("an admin signed in with the code can", "SELECT public.admin_set_mfa_required(true)::text", as_user=zara,
+          claims=aal2, expect="true")
+    check("... which is kept with who changed it and when",
+          f"SELECT concat_ws('|', value, (updated_by = '{zara}')::text, (updated_at > now() - interval '1 minute')::text) "
+          "FROM private.app_settings WHERE key = 'admin_mfa_required'", expect="true|true|true")
+    check("members can't read the settings", "SELECT count(*) FROM private.app_settings", as_user=lena, expect="error")
+    check("now a session signed in with the password only has no admin rights", rights, as_user=zara, claims=aal1,
+          expect="false")
+    check("... nor one that doesn't say", rights, as_user=ADMIN, expect="false")
+    check("... and is told so", status, as_user=zara, claims=aal1, expect="true|true|aal1|false")
+    check("... can't search members", "SELECT public.admin_search_members('')", as_user=zara, claims=aal1,
+          error_has="Admins only")
+    check("... nor read the review queue", "SELECT count(*) FROM public.admin_verification_queue()", as_user=zara,
+          claims=aal1, error_has="Admins only")
+    check("... sees members as any member does", seen, as_user=zara, claims=aal1, expect="Bodhi Bose,Lena L")
+    check("... and can't switch two-step login off", "SELECT public.admin_set_mfa_required(false)", as_user=zara,
+          claims=aal1, error_has="Confirm with the 6-digit code")
+    check("a session signed in with the code has admin rights", rights, as_user=zara, claims=aal2, expect="true")
+    check("... and is told so", status, as_user=zara, claims=aal2, expect="true|true|aal2|true")
+    check("... and can switch two-step login off again", "SELECT public.admin_set_mfa_required(false)::text",
+          as_user=zara, claims=aal2, expect="false")
+    check("then the other admin has admin rights again", rights, as_user=ADMIN, expect="true")
+    check("the setting is on or off, nothing else", "SELECT public.admin_set_mfa_required(NULL)", as_user=zara,
+          claims=aal2, error_has="Say whether")
+
+    # --- admin search (C25) ---------------------------------------------------------
+    search = ("SELECT (r->>'total') || '|' || COALESCE((SELECT string_agg(m->>'name', ',' ORDER BY m->>'name') "
+              "FROM jsonb_array_elements(r->'members') m), '') FROM public.admin_search_members({}) r")
+    check("admins find members by part of the name, in any case", search.format("'aRA z'"), as_user=zara, expect="1|Zara Z")
+    check("... by part of the email address", search.format("'pema@exam'"), as_user=zara, expect="1|Pema P")
+    check("... by city", search.format("'hambu'"), as_user=zara, expect="1|Lena L")
+    check("... declined members too", search.format("'rudra'"), as_user=zara, expect="1|Rudra R")
+    check("... % and _ match only themselves", search.format("'%'") + "; " + search.format("'_'"), as_user=zara,
+          expect="0|\n0|")
+    check("... by status", "SELECT ((r->>'total')::int = (SELECT count(*) FROM profile_private WHERE verification_status = 'rejected'))::text "
+          "FROM public.admin_search_members('', 'rejected') r", as_user=zara, expect="true")
+    check("rudra is blocked too", f"UPDATE profile_private SET status = 'blocked' WHERE id = '{rudra}'")
+    check("... blocked or not", "SELECT ((r->>'total')::int = (SELECT count(*) FROM profile_private WHERE status = 'blocked') "
+          "AND (r->>'total')::int > 0)::text FROM public.admin_search_members('', NULL, TRUE) r", as_user=zara, expect="true")
+    check("... with their private details and LinkedIn link", """
+          SELECT concat_ws('|', m->'profile_private'->>'email', m->'profile_private'->>'status',
+            m->'profile_private'->>'verification_status', m->>'linkedin_url')
+          FROM public.admin_search_members('bodhi') r, jsonb_array_elements(r->'members') m""",
+          as_user=zara, expect="bodhi@example.com|active|approved|https://www.linkedin.com/in/bodhi-b")
+    check("... newest first, in pages, with the total", """
+          SELECT ((a->>'total') = (b->>'total') AND (a->>'total')::int = (SELECT count(*) FROM profiles)
+            AND jsonb_array_length(a->'members') = 2 AND jsonb_array_length(b->'members') = 2
+            AND (a->'members'->0->>'id') NOT IN (b->'members'->0->>'id', b->'members'->1->>'id')
+            AND (a->'members'->0->>'created_at')::timestamptz >= (a->'members'->1->>'created_at')::timestamptz)::text
+          FROM public.admin_search_members('', NULL, NULL, 2, 0) a, public.admin_search_members('', NULL, NULL, 2, 2) b""",
+          as_user=zara, expect="true")
+    check("... at most 200 at a time, at least 1",
+          "SELECT (jsonb_array_length(r->'members') = LEAST((r->>'total')::int, 200))::text || '|' || "
+          "jsonb_array_length(s->'members') FROM public.admin_search_members('', NULL, NULL, 100000) r, "
+          "public.admin_search_members('', NULL, NULL, 0) s", as_user=zara, expect="true|1")
+    check("members can't search", "SELECT public.admin_search_members('a')", as_user=lena, error_has="Admins only")
+    check("anon can't search", "SELECT public.admin_search_members('a')", role="anon", expect="error")
+    check("the search has trigram indexes on names, places and email addresses",
+          "SELECT string_agg(indexname, ',' ORDER BY indexname) FROM pg_indexes WHERE indexname LIKE '%trgm'",
+          expect="idx_profile_private_email_trgm,idx_profiles_city_trgm,idx_profiles_location_trgm,idx_profiles_name_trgm")
+    ok, out, err = psql("SET enable_seqscan = off; EXPLAIN SELECT id FROM public.profiles WHERE name ILIKE '%len%'")
+    verdict("... which a search for part of a name uses", ok and "idx_profiles_name_trgm" in out, out or err)
+
+    # --- the review queue in pages (C25) ---------------------------------------------
+    check("approved members were decided on at different times", f"""
+          UPDATE profile_private SET reviewed_at = now() - interval '1 day' * (CASE id WHEN '{lena}' THEN 1
+            WHEN '{zara}' THEN 2 ELSE 3 END) WHERE verification_status = 'approved'""")
+    queue = ("SELECT string_agg(q.id::text, ',' ORDER BY q.ordinality) "
+             "FROM public.admin_verification_queue(ARRAY['approved']{}) WITH ORDINALITY q")
+    ok, everyone, err = psql(queue.format(""), "authenticated", zara)
+    ids = everyone.split(",") if ok and everyone else []
+    verdict("approved members come newest decision first", ok and ids[:2] == [lena, zara], f"{ids[:3]} {err}")
+    check("... in pages", queue.format(", 2, 0") + "; " + queue.format(", 2, 2"), as_user=zara,
+          expect=",".join(ids[:2]) + "\n" + ",".join(ids[2:4]))
+    check("... each saying how many there are in all",
+          "SELECT DISTINCT (total_count = (SELECT count(*) FROM profile_private WHERE verification_status = 'approved'))::text "
+          "FROM public.admin_verification_queue(ARRAY['approved'], 2, 0)", as_user=zara, expect="true")
+    check("... and asked as before (statuses only), the whole list as before",
+          "SELECT (count(*) = (SELECT count(*) FROM profile_private WHERE verification_status = 'pending'))::text "
+          "FROM public.admin_verification_queue(ARRAY['pending'])", as_user=zara, expect="true")
+    check("... one member by id, whatever their status", f"""
+          SELECT string_agg(name || ':' || verification_status || ':' || total_count, ',')
+          FROM public.admin_verification_queue(NULL, 1000, 0, ARRAY['{pema}']::uuid[])""", as_user=zara,
+          expect="Pema P:pending:1")
+    check("... and nobody without statuses or ids",
+          "SELECT count(*) FROM public.admin_verification_queue(NULL)", as_user=zara, expect="0")
+    check("... members can't read it", "SELECT count(*) FROM public.admin_verification_queue(ARRAY['approved'], 2, 0)",
+          as_user=lena, error_has="Admins only")
+
+    # --- the migration's changes to existing rows ---------------------------------------
+    check("existing rows: events of organisers who aren't shown lose the name; shown ones without it get it", f"""
+          BEGIN;
+          ALTER TABLE public.profile_private DISABLE TRIGGER sync_organizer_name;
+          UPDATE profile_private SET status = 'blocked' WHERE id = '{bodhi}';
+          ALTER TABLE public.profile_private ENABLE TRIGGER sync_organizer_name;
+          INSERT INTO events (title, date, location, organizer_id, organizer_name) VALUES ('Picnic', '2099-02-02', 'Park', '{lena}', 'Lena L');
+          INSERT INTO events (title, date, location, organizer_id, organizer_name) VALUES ('Quiz', '2099-03-03', 'Pub', '{lena}', '');
+          INSERT INTO events (title, date, location, organizer_id, organizer_name) VALUES ('Yoga', '2099-03-04', 'Park', '{pema}', '');
+          SELECT organizer_name FROM events WHERE id = '{bodhi_event}';
+          {migration_section("EXISTING DATA", ADMIN_ACCESS)}
+          SELECT string_agg(organizer_name, ',' ORDER BY title) FROM events WHERE organizer_id IN ('{bodhi}', '{lena}', '{pema}');
+          ROLLBACK;""", expect="Bodhi Bose\n,Lena L,Lena L,")
+    # (acc-rev) An admin account members don't see (not approved) hides its
+    # posts' author: the update says how many there are.
+    ok, out, err = psql(f"""BEGIN;
+          INSERT INTO public.admins (user_id) VALUES ('{pema}');
+          {migration_section("EXISTING DATA", ADMIN_ACCESS)}
+          SELECT count(*) FROM public.admins a LEFT JOIN public.profile_private pp ON pp.id = a.user_id
+          WHERE pp.id IS NULL OR pp.status <> 'active' OR pp.verification_status <> 'approved';
+          ROLLBACK;""")
+    found = re.search(r"; (\d+) not shown to members", err) if ok else None
+    shown = found.group(1) if found else None
+    verdict("existing rows: the update says how many admin accounts members don't see",
+            shown is not None and out.splitlines()[-1:] == [shown] and int(shown) >= 1, f"{out} | {err}")
 
 
 if __name__ == "__main__":

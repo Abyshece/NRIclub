@@ -238,6 +238,28 @@ export async function signOut() {
   endServerSession(token, refreshing);
 }
 
+// Signs out every device and browser this member is signed in on, this one
+// included (Settings → Account): Supabase Auth ends all their sessions, so
+// no device can renew its sign-in (an access token another device already
+// has still reads the database until it expires, within the hour; a reload
+// there signs out at once). Throws if that can't be confirmed (e.g.
+// no connection); then nothing is signed out here either, so the member can
+// try again.
+export async function signOutEverywhere() {
+  const send = () => fetch(`${SUPABASE_URL}/auth/v1/logout?scope=global`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+  });
+  if (!accessToken) throw new Error("Not logged in");
+  let res = await send();
+  if ((res.status === 401 || res.status === 403) && await refreshSession()) res = await send();
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.msg || data.message || `Couldn't sign out everywhere (${res.status}).`);
+  }
+  await signOut();
+}
+
 // Saves the session verifyOtp (or signIn) kept in memory with persist: false,
 // once signup has finished setting the account up: from now on it lasts
 // across reloads and other tabs share it. Rejects if that session has ended
@@ -275,8 +297,25 @@ async function endServerSession(token, refreshing) {
 // Which address this browser last asked a reset link for, and when:
 // { email, at }. Only then may the login form be filled in with the address
 // a reset link was for; a link someone else made must not fill in theirs.
+// Kept for 24 hours at most (removed as the site loads after that), and
+// removed once the new password is set (forgetResetRequest).
 const RESET_REQUEST_KEY = "nriclub_reset_requested";
 const RESET_REQUEST_MS = 24 * 60 * 60 * 1000;
+
+(function dropOldResetRequest() {
+  try {
+    const raw = localStorage.getItem(RESET_REQUEST_KEY);
+    if (raw === null) return;
+    const age = Date.now() - Number(JSON.parse(raw)?.at);
+    if (!(age >= 0 && age < RESET_REQUEST_MS)) localStorage.removeItem(RESET_REQUEST_KEY);
+  } catch {
+    try { localStorage.removeItem(RESET_REQUEST_KEY); } catch {}
+  }
+})();
+
+export function forgetResetRequest() {
+  try { localStorage.removeItem(RESET_REQUEST_KEY); } catch {}
+}
 
 export async function resetPassword(email) {
   const redirectTo = encodeURIComponent(window.location.origin + window.location.pathname);
@@ -396,9 +435,20 @@ function expiredLinkError() {
 }
 
 // The access token was refused as expired or invalid: 401, or (as Supabase
-// Auth answers an expired token) 403 with error_code "bad_jwt".
+// Auth answers an expired token) 403 with error_code "bad_jwt". Not when
+// the session is fine but wasn't signed in with the 6-digit code
+// (insufficient_aal, e.g. a new password for an account with two-step login).
 function isRefusedToken(res, data) {
+  if (data.error_code === "insufficient_aal") return false;
   return res.status === 401 || data.error_code === "bad_jwt" || /\bbad_jwt\b|invalid jwt/i.test(data.msg || data.message || "");
+}
+
+// An Auth API error for the caller: Supabase Auth's message, and its
+// error_code as err.code (e.g. "insufficient_aal").
+function authError(data, fallback) {
+  const err = new Error(data.msg || data.error_description || data.message || fallback);
+  err.code = data.error_code || "";
+  return err;
 }
 
 // An Auth API call made with the reset link's session. Renews that session
@@ -422,7 +472,7 @@ async function recoveryRequest(method, path, body = null, fallback = "Something 
     recovery = null;
     throw expiredLinkError();
   }
-  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || fallback);
+  if (!res.ok) throw authError(data, fallback);
   return data;
 }
 
@@ -464,6 +514,28 @@ export function cancelRecovery() {
   logoutOnServer(token);
 }
 
+// For an account with two-step login (admins), Supabase Auth sets a new
+// password only from a session confirmed with the 6-digit code:
+// updatePassword then fails with err.code "insufficient_aal". This confirms
+// the reset link's session with a code from the authenticator app; then
+// updatePassword works. Throws with a message for the member when the code
+// is wrong or too old.
+export async function confirmRecoveryCode(code) {
+  const user = await recoveryRequest("GET", "/auth/v1/user");
+  const factor = (user.factors || []).find((f) => f.factor_type === "totp" && f.status === "verified");
+  if (!factor) throw new Error("This account has no authenticator app set up. Please try again.");
+  const id = encodeURIComponent(factor.id);
+  try {
+    const challenge = await recoveryRequest("POST", `/auth/v1/factors/${id}/challenge`, {});
+    const data = await recoveryRequest("POST", `/auth/v1/factors/${id}/verify`, { challenge_id: challenge.id, code: String(code || "").replace(/\s+/g, "") });
+    if (!data.access_token || !recovery) throw new Error("Couldn't confirm the code. Please try again.");
+    recovery.accessToken = data.access_token;
+    if (data.refresh_token) recovery.refreshToken = data.refresh_token;
+  } catch (err) {
+    throw wrongCodeError(err);
+  }
+}
+
 // A password change that gets no answer fails after this long, so a hung
 // request goes down the caller's "try again" path instead of waiting forever.
 const PASSWORD_TIMEOUT_MS = 15000;
@@ -492,7 +564,7 @@ export async function updatePassword(password) {
       signal: controller.signal,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.msg || data.error_description || data.message || "Couldn't update your password.");
+    if (!res.ok) throw authError(data, "Couldn't update your password.");
     if (data.id && data.id === currentUser?.id) currentUser = data;
     return data;
   } catch (err) {
@@ -664,6 +736,100 @@ async function checkStoredSession(retry) {
 export function getCurrentUser() { return currentUser; }
 export function getToken() { return accessToken; }
 
+// ----------------------------------------------------------------------------
+// Two-step login (Supabase Auth TOTP), for admins
+// ----------------------------------------------------------------------------
+
+// How this session was signed in, from its access token: "aal2" after the
+// 6-digit code from an authenticator app, "aal1" with the password only.
+export function sessionAal() {
+  return tokenClaims(accessToken || "").aal || "aal1";
+}
+
+// An Auth API call as the signed-in member, renewing the session once if
+// its token has expired. Throws with Supabase Auth's message; err.code is
+// its error_code (e.g. "mfa_verification_failed").
+async function authCall(method, path, body = null) {
+  const send = () => fetch(`${SUPABASE_URL}/auth/v1${path}`, {
+    method,
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!accessToken) throw new Error("Not logged in");
+  let res = await send();
+  let data = await res.json().catch(() => ({}));
+  if (isRefusedToken(res, data) && await refreshSession()) {
+    res = await send();
+    data = await res.json().catch(() => ({}));
+  }
+  if (!res.ok) throw authError(data, `Request failed (${res.status})`);
+  return data;
+}
+
+// A refused 6-digit code (wrong, or too old) as a message for the member;
+// any other error as it is.
+function wrongCodeError(err) {
+  if (/^mfa_(verification_failed|challenge_expired)$/.test(err.code || "") || /invalid totp|totp code/i.test(err.message || "")) {
+    const wrong = new Error("That code didn't work. Codes change every 30 seconds: type the one your app shows now, and check that your phone's clock is right.");
+    wrong.code = err.code;
+    return wrong;
+  }
+  return err;
+}
+
+// The member's authenticator-app (TOTP) factors: { verified, unverified },
+// each a list of { id, friendly_name, created_at }.
+export async function getTotpFactors() {
+  const user = await authCall("GET", "/user");
+  const totp = (user.factors || []).filter((f) => f.factor_type === "totp");
+  return {
+    verified: totp.filter((f) => f.status === "verified"),
+    unverified: totp.filter((f) => f.status !== "verified"),
+  };
+}
+
+// The QR code Supabase Auth sends with a new factor, as an image address the
+// page can show in an <img> (the site's Content Security Policy allows data:
+// images). Supabase sends either the SVG itself or an SVG data address,
+// sometimes unencoded; both become an encoded SVG data address.
+function qrImage(qr) {
+  const text = String(qr || "").trim();
+  if (!text) return "";
+  if (/^data:image\/[a-z+]+;base64,/i.test(text)) return text;
+  const svg = text.startsWith("data:") ? text.slice(text.indexOf(",") + 1) : text;
+  let markup = svg;
+  try { if (!svg.trimStart().startsWith("<")) markup = decodeURIComponent(svg); } catch {}
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
+}
+
+// Starts setting up two-step login: a new authenticator-app factor. Returns
+// { id, qr, secret, uri }: show the QR code (or the secret, to type in),
+// then confirm the first code with verifyTotp(id, code). Factors left
+// unconfirmed by an earlier try are removed first.
+export async function enrollTotp() {
+  const { unverified } = await getTotpFactors();
+  await Promise.all(unverified.map((f) => authCall("DELETE", `/factors/${encodeURIComponent(f.id)}`).catch(() => {})));
+  const data = await authCall("POST", "/factors", { factor_type: "totp", friendly_name: "NRIClub admin", issuer: "NRIClub" });
+  return { id: data.id, qr: qrImage(data.totp?.qr_code), secret: data.totp?.secret || "", uri: data.totp?.uri || "" };
+}
+
+// Signs this session in with a 6-digit code from the authenticator app
+// (the factor's first code confirms a new factor). The session becomes a
+// two-step one (aal2) and is kept as the session always is. Throws with a
+// message for the member when the code is wrong or too old.
+export async function verifyTotp(factorId, code) {
+  const id = encodeURIComponent(factorId);
+  try {
+    const challenge = await authCall("POST", `/factors/${id}/challenge`, {});
+    const data = await authCall("POST", `/factors/${id}/verify`, { challenge_id: challenge.id, code: String(code || "").replace(/\s+/g, "") });
+    if (!data.access_token) throw new Error("Couldn't confirm the code. Please try again.");
+    saveSession(data);
+    return data;
+  } catch (err) {
+    throw wrongCodeError(err);
+  }
+}
+
 // ============================================================================
 // PROFILES
 // ============================================================================
@@ -675,6 +841,22 @@ export function getToken() { return accessToken; }
 const PROFILE_FIELDS = "id,name,avatar_url,location,hometown,profession,occupation_status,years_abroad,city,country_code,"
   + "bio,email_verified,linkedin_verified,created_at,updated_at,ambassador_city,ask_me_about,mentor_open,mentor_areas,"
   + "mentee_open,mentee_needs";
+
+// Since the 2026-10-23 database update members see only the profiles of
+// members our team has approved and who aren't blocked. What an account
+// that isn't shown (waiting for review, declined, blocked, unfinished)
+// posted or wrote before stays, but comes without its profile: the site
+// shows it as UNLISTED_NAME, with no photo and no profile to open
+// (unlisted: true).
+export const UNLISTED_NAME = "NRIClub member";
+const unlistedPerson = (id) => ({ id: id || null, name: UNLISTED_NAME, avatar_url: "", unlisted: true });
+
+// Rows with an embedded profile (key, e.g. "profiles"), whose foreign key is
+// idKey: a profile the member can't see becomes the placeholder above.
+function withPerson(rows, key = "profiles", idKey = "user_id") {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((r) => (r && r[key] == null && r[idKey] ? { ...r, [key]: unlistedPerson(r[idKey]) } : r));
+}
 
 // A database function the database doesn't have yet (or a column) was asked
 // for at this time (Date.now()): the old way is used for a few minutes, then
@@ -834,6 +1016,37 @@ export async function submitVerification({ city, countryCode, location, linkedin
   });
 }
 
+// ----------------------------------------------------------------------------
+// Invite links
+// ----------------------------------------------------------------------------
+
+// The signed-in member's invite code, for nriclub.app/?invite=<code> (made
+// the first time they ask). null before the 2026-10-22 database update,
+// which adds codes: then the link carries the member's ID, as before.
+export async function getInviteCode() {
+  try {
+    const code = await restCall("POST", "/rest/v1/rpc/my_invite_code", {});
+    return typeof code === "string" && code ? code : null;
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+
+// Who invited the signed-in member, from the code in their invite link:
+// { id, first } (the inviter's member ID and first name), or null for an
+// unknown code (or before the database update).
+export async function resolveInvite(code) {
+  try {
+    const rows = await restCall("POST", "/rest/v1/rpc/resolve_invite", { p_code: code });
+    const r = rows?.[0];
+    return r?.member_id ? { id: r.member_id, first: r.first_name || "" } : null;
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+
 // Whether a request failed because the database doesn't have the function or
 // column it asked for yet (the site goes live a little before the database
 // update that adds them): PostgREST's "not found" codes, or Postgres's.
@@ -896,11 +1109,41 @@ export async function exportMyData() {
   return restCall("POST", "/rest/v1/rpc/export_my_data", {});
 }
 
-// Deletes the auth user server-side; every row the user owns cascades with it.
-export async function deleteAccount() {
-  if (!currentUser) throw new Error("Not logged in");
-  await restCall("POST", "/rest/v1/rpc/delete_my_account", {});
-  await signOut();
+// Deletes the account: first the member's photo files (Storage keeps them
+// apart from the database, and the session that may delete them ends with
+// the account), then the auth user server-side; every row the user owns
+// cascades with it. Files that couldn't be deleted (the request goes on to
+// the account anyway) the clean-up in the admin panel deletes. Afterwards
+// this browser forgets what it kept for the member (forgetMember). A second
+// call while one runs (a double tap) waits for the first.
+let accountDeletion = null;
+export function deleteAccount() {
+  if (!currentUser) return Promise.reject(new Error("Not logged in"));
+  if (!accountDeletion) {
+    const uid = currentUser.id;
+    accountDeletion = (async () => {
+      await deleteMyFiles();
+      await restCall("POST", "/rest/v1/rpc/delete_my_account", {});
+      forgetMember(uid);
+      await signOut();
+    })().finally(() => { accountDeletion = null; });
+  }
+  return accountDeletion;
+}
+
+// Removes what this browser keeps for one member: the items named
+// nriclub_<what>_<member id> (welcome messages and tips already seen, the
+// last catch-up; Privacy Policy, section 8).
+export function forgetMember(uid) {
+  if (!uid) return;
+  try {
+    const mine = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("nriclub_") && key.endsWith(`_${uid}`)) mine.push(key);
+    }
+    mine.forEach((key) => localStorage.removeItem(key));
+  } catch (e) {}
 }
 
 export async function searchProfiles(query = "", filters = {}) {
@@ -920,19 +1163,19 @@ export async function searchProfiles(query = "", filters = {}) {
 export async function getPosts(limit = 30, groupId = null) {
   let url = `/rest/v1/posts?select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)&order=created_at.desc&limit=${limit}`;
   if (groupId) url += `&group_id=eq.${groupId}`;
-  return restCall("GET", url);
+  return withPerson(await restCall("GET", url));
 }
 
 // One post with its author, or null: for a shared link (#post=<id>) to a
 // post older than the ones the feed loads.
 export async function getPost(postId) {
-  const rows = await restCall("GET", `/rest/v1/posts?id=eq.${encodeURIComponent(postId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)`);
+  const rows = withPerson(await restCall("GET", `/rest/v1/posts?id=eq.${encodeURIComponent(postId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)`));
   return rows?.[0] || null;
 }
 
 // A member's latest posts (with author), for their profile page.
 export async function getUserPosts(userId, limit = 20) {
-  return restCall("GET", `/rest/v1/posts?user_id=eq.${encodeURIComponent(userId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)&order=created_at.desc&limit=${limit}`);
+  return withPerson(await restCall("GET", `/rest/v1/posts?user_id=eq.${encodeURIComponent(userId)}&select=*,profiles:user_id(id,name,avatar_url,profession,occupation_status,location,hometown)&order=created_at.desc&limit=${limit}`));
 }
 
 // The groups a member belongs to (ids), for "Groups in common".
@@ -952,13 +1195,24 @@ export async function createPost(content, tags = [], imageUrl = null, groupId = 
   }, { Prefer: "return=representation" });
 }
 
+// Deletes one of the member's own rows and then the photo files it used
+// (image_url: one link, or a listing's JSON array of links). The files go
+// only once the row is gone; if deleting them fails, the clean-up in the
+// admin panel deletes them later.
+async function deleteWithPhotos(table, filter) {
+  const rows = await restCall("DELETE", `/rest/v1/${table}?${filter}&select=image_url`, null, { Prefer: "return=representation" });
+  const links = (rows || []).map((r) => r.image_url).filter(Boolean);
+  if (links.length) await deleteOwnImages(links);
+  return rows;
+}
+
 export async function deletePost(postId) {
-  return restCall("DELETE", `/rest/v1/posts?id=eq.${postId}&user_id=eq.${currentUser.id}`);
+  return deleteWithPhotos("posts", `id=eq.${postId}&user_id=eq.${currentUser.id}`);
 }
 
 export async function deleteMarketItem(id) {
   if (!currentUser) throw new Error("Not logged in");
-  return restCall("DELETE", `/rest/v1/marketplace?id=eq.${id}&user_id=eq.${currentUser.id}`);
+  return deleteWithPhotos("marketplace", `id=eq.${id}&user_id=eq.${currentUser.id}`);
 }
 
 export async function deleteHelpRequest(id) {
@@ -973,7 +1227,7 @@ export async function deleteDoc(id) {
 
 export async function deleteEvent(id) {
   if (!currentUser) throw new Error("Not logged in");
-  return restCall("DELETE", `/rest/v1/events?id=eq.${id}&organizer_id=eq.${currentUser.id}`);
+  return deleteWithPhotos("events", `id=eq.${id}&organizer_id=eq.${currentUser.id}`);
 }
 
 // ============================================================================
@@ -981,7 +1235,7 @@ export async function deleteEvent(id) {
 // ============================================================================
 
 export async function getComments(postId) {
-  return restCall("GET", `/rest/v1/comments?post_id=eq.${postId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+  return withPerson(await restCall("GET", `/rest/v1/comments?post_id=eq.${postId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`));
 }
 
 export async function addComment(postId, content) {
@@ -1044,7 +1298,9 @@ export async function unfollowUser(userId) {
 
 export async function getMyConnections() {
   if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/connections?or=(requester_id.eq.${currentUser.id},recipient_id.eq.${currentUser.id})&status=eq.accepted&select=*,requester:requester_id(id,name,avatar_url,profession),recipient:recipient_id(id,name,avatar_url,profession)`);
+  // Followers and following who are shown (see UNLISTED_NAME).
+  const rows = await restCall("GET", `/rest/v1/connections?or=(requester_id.eq.${currentUser.id},recipient_id.eq.${currentUser.id})&status=eq.accepted&select=*,requester:requester_id(id,name,avatar_url,profession),recipient:recipient_id(id,name,avatar_url,profession)`);
+  return (rows || []).filter((c) => c.requester && c.recipient);
 }
 
 export async function getAllConnections() {
@@ -1084,7 +1340,9 @@ export async function getMyGroupIds() {
 }
 
 export async function getGroupMembers(groupId) {
-  return restCall("GET", `/rest/v1/group_members?group_id=eq.${groupId}&select=*,profiles:user_id(id,name,avatar_url,profession,location)`);
+  // Only members who are shown (see UNLISTED_NAME).
+  const rows = await restCall("GET", `/rest/v1/group_members?group_id=eq.${groupId}&select=*,profiles:user_id(id,name,avatar_url,profession,location)`);
+  return (rows || []).filter((m) => m.profiles);
 }
 
 // A new city group ("Indians in Paris") or university group ("Indians at
@@ -1106,14 +1364,25 @@ export async function pinGroupPost(groupId, postId) {
   return restCall("POST", "/rest/v1/rpc/pin_group_post", { p_group: groupId, p_post: postId });
 }
 
-// The ambassadors of a city (name and photo): verified members only. (The
-// database also ends the role when an ambassador is blocked, rejected or
-// back in review.)
+// The ambassadors of a city (name and photo): active, verified members only.
+// Since the 2026-10-21 database update the database says so itself
+// (city_ambassadors, which also leaves out blocked members); before it, the
+// Verified badge is all the site can see. (The database also ends the role
+// when an ambassador is blocked, rejected or back in review.)
 export async function getCityAmbassadors(city) {
+  const name = String(city || "").trim();
+  if (!name) return [];
+  if (!knownMissing("city_ambassadors")) {
+    try {
+      return (await restCall("POST", "/rest/v1/rpc/city_ambassadors", { p_city: name })) || [];
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.city_ambassadors = Date.now();
+    }
+  }
   // ilike without wildcards: "%" and "*" become "_" (one character), so
   // only this city matches, brackets and commas included.
-  const q = String(city || "").trim().replace(/[%_*\\]/g, "_");
-  if (!q) return [];
+  const q = name.replace(/[%_*\\]/g, "_");
   return (await restCall("GET", `/rest/v1/profiles?ambassador_city=ilike.${encodeURIComponent(q)}&linkedin_verified=is.true&select=id,name,avatar_url&limit=5`)) || [];
 }
 
@@ -1224,10 +1493,10 @@ export async function getConversations() {
   ]);
   return (data || [])
     .filter(c => !hiddenAt.has(c.id) || new Date(c.last_message_at) > new Date(hiddenAt.get(c.id)))
-    .map(c => ({
-      ...c,
-      otherUser: c.participant_1 === currentUser.id ? c.p2 : c.p1,
-    }));
+    .map(c => {
+      const otherId = c.participant_1 === currentUser.id ? c.participant_2 : c.participant_1;
+      return { ...c, otherUser: (c.participant_1 === currentUser.id ? c.p2 : c.p1) || unlistedPerson(otherId) };
+    });
 }
 
 // "Delete conversation": removes it from this member's list only.
@@ -1282,7 +1551,7 @@ export async function getOrCreateConversation(otherUserId) {
 }
 
 export async function getMessages(conversationId) {
-  const rows = await restCall("GET", `/rest/v1/messages?conversation_id=eq.${conversationId}&select=*,sender:sender_id(id,name,avatar_url)&order=created_at.asc`);
+  const rows = withPerson(await restCall("GET", `/rest/v1/messages?conversation_id=eq.${conversationId}&select=*,sender:sender_id(id,name,avatar_url)&order=created_at.asc`), "sender", "sender_id");
   const h = hiddenAt.get(conversationId);
   return h && rows ? rows.filter(m => new Date(m.created_at) > new Date(h)) : rows;
 }
@@ -1305,7 +1574,7 @@ export async function getMarketItems(filters = {}) {
   if (filters.category && filters.category !== "All") url += `&category=eq.${filters.category}`;
   if (filters.city && filters.city !== "All") url += `&location=ilike.%25${filters.city}%25`;
   if (filters.search) url += `&or=(title.ilike.%25${filters.search}%25,description.ilike.%25${filters.search}%25)`;
-  return restCall("GET", url);
+  return withPerson(await restCall("GET", url));
 }
 
 export async function createMarketItem(item) {
@@ -1323,7 +1592,7 @@ export async function createMarketItem(item) {
 export async function getDocs(cityFilter = "All") {
   let url = "/rest/v1/docs?select=*,profiles:user_id(id,name,avatar_url,profession,location)&order=created_at.desc";
   if (cityFilter !== "All") url += `&city=ilike.%25${cityFilter}%25`;
-  return restCall("GET", url);
+  return withPerson(await restCall("GET", url));
 }
 
 export async function createDoc(doc) {
@@ -1335,7 +1604,7 @@ export async function createDoc(doc) {
 }
 
 export async function getDocComments(docId) {
-  return restCall("GET", `/rest/v1/doc_comments?doc_id=eq.${docId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+  return withPerson(await restCall("GET", `/rest/v1/doc_comments?doc_id=eq.${docId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`));
 }
 
 export async function addDocComment(docId, content) {
@@ -1352,7 +1621,7 @@ export async function addDocComment(docId, content) {
 // ============================================================================
 
 export async function getHelpRequests() {
-  return restCall("GET", "/rest/v1/help_requests?select=*,profiles:user_id(id,name,avatar_url)&order=created_at.desc");
+  return withPerson(await restCall("GET", "/rest/v1/help_requests?select=*,profiles:user_id(id,name,avatar_url)&order=created_at.desc"));
 }
 
 export async function createHelpRequest({ urgent = false, ...req }) {
@@ -1374,7 +1643,7 @@ export async function createHelpRequest({ urgent = false, ...req }) {
 
 // One question (with the asker), e.g. from a notification.
 export async function getHelpRequest(id) {
-  const rows = await restCall("GET", `/rest/v1/help_requests?id=eq.${encodeURIComponent(id)}&select=*,profiles:user_id(id,name,avatar_url)`);
+  const rows = withPerson(await restCall("GET", `/rest/v1/help_requests?id=eq.${encodeURIComponent(id)}&select=*,profiles:user_id(id,name,avatar_url)`));
   return rows?.[0] || null;
 }
 
@@ -1408,7 +1677,7 @@ export async function getHelpedCount(memberId) {
 
 export async function getHelpResponses(requestId) {
   if (requestId) {
-    return restCall("GET", `/rest/v1/help_responses?request_id=eq.${requestId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`);
+    return withPerson(await restCall("GET", `/rest/v1/help_responses?request_id=eq.${requestId}&select=*,profiles:user_id(id,name,avatar_url)&order=created_at.asc`));
   }
   // Fetch all responses (for counting)
   return restCall("GET", `/rest/v1/help_responses?select=id,request_id&order=created_at.desc`);
@@ -1430,7 +1699,7 @@ export async function addHelpResponse(requestId, content) {
 export async function getNotifications() {
   if (!currentUser) return [];
   // Get all unread + non-request read notifications (exclude handled requests)
-  const all = await restCall("GET", `/rest/v1/notifications?user_id=eq.${currentUser.id}&select=*,actor:actor_id(id,name,avatar_url)&order=created_at.desc&limit=20`);
+  const all = withPerson(await restCall("GET", `/rest/v1/notifications?user_id=eq.${currentUser.id}&select=*,actor:actor_id(id,name,avatar_url)&order=created_at.desc&limit=20`), "actor", "actor_id");
   if (!all) return [];
   // Filter out request notifications that have been read (they were accepted/ignored)
   return all.filter(n => !(n.type === "request" && n.read === true));
@@ -1507,6 +1776,8 @@ export async function reportUser(userId, reason) {
   });
 }
 
+// Feedback (a bug report or an idea: reason "[BUG] ..." / "[IDEA] ...") is
+// sent this way too, about the member themself.
 export async function reportPost(postId, reason) {
   if (!currentUser) throw new Error("Not logged in");
   return restCall("POST", "/rest/v1/reports", {
@@ -1517,9 +1788,90 @@ export async function reportPost(postId, reason) {
   });
 }
 
+// A report from the in-app dialog. type: what is reported, as the database
+// calls it (reports.content_type: "post", "comment", "answer", "doc",
+// "doc_comment", "event", "help", "market", "review", "place", "message" or
+// "profile"); id: its id (the member's for "profile"); userId: who wrote it,
+// if known (the database looks it up itself); name: a few words to recognise
+// it by; category: a REPORT_REASONS key; explanation: the member's words.
+// Since the 2026-10-21 database update these go in their own columns, with
+// the good-faith confirmation. Before it, the database has no such columns:
+// the reason line then carries the category's label and the explanation,
+// with the kind in its "[TYPE]" prefix, as the admin panel read reports
+// before.
+export async function reportContent({ type, id, userId = null, name = "", category, categoryLabel, explanation }) {
+  if (!currentUser) throw new Error("Not logged in");
+  const profile = type === "profile";
+  const prefix = `[${type === "market" ? "MARKETPLACE" : profile ? "USER" : type.toUpperCase()}] ${name ? `${String(name).slice(0, 80)} — ` : ""}`;
+  const base = {
+    reporter_id: currentUser.id,
+    reported_post_id: profile ? null : id,
+    reported_user_id: profile ? id : (userId || null),
+    status: "pending",
+  };
+  const legacy = () => restCall("POST", "/rest/v1/reports", {
+    ...base, reason: `${prefix}${categoryLabel}: ${explanation}`.slice(0, 5000),
+  });
+  if (knownMissing("report_columns")) return legacy();
+  try {
+    return await restCall("POST", "/rest/v1/reports", {
+      ...base, reason: `${prefix}${categoryLabel}`.slice(0, 5000),
+      content_type: type, category, explanation, good_faith: true,
+    });
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.report_columns = Date.now();
+    return legacy();
+  }
+}
+
+// What the member reported that is still waiting for our team, as
+// "type:id" keys (and the plain id, for posts and members), so the app can
+// hide Report on them. Before the 2026-10-21 database update reports have no
+// kind or open status to go by: every item the member ever reported counts.
 export async function getMyReports() {
-  if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/reports?reporter_id=eq.${currentUser.id}&select=reported_post_id`);
+  if (!currentUser) return new Set();
+  const keys = new Set();
+  const add = (r) => {
+    const id = r.reported_post_id || r.reported_user_id;
+    if (!id) return;
+    keys.add(id);
+    if (r.content_type) keys.add(`${r.content_type}:${id}`);
+    else if (!r.reported_post_id) keys.add(`profile:${id}`);
+  };
+  if (!knownMissing("report_columns")) {
+    try {
+      const rows = await restCall("GET", `/rest/v1/reports?reporter_id=eq.${currentUser.id}&status=eq.pending&content_type=neq.feedback&select=reported_post_id,reported_user_id,content_type`);
+      (rows || []).forEach(add);
+      return keys;
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.report_columns = Date.now();
+    }
+  }
+  const rows = await restCall("GET", `/rest/v1/reports?reporter_id=eq.${currentUser.id}&select=reported_post_id,reported_user_id,reason`);
+  (rows || []).filter((r) => !/^\[(BUG|IDEA)\]/.test(r.reason || "")).forEach(add);
+  return keys;
+}
+
+// A report from the public page (nriclub.app/report), signed in or not:
+// returns its reference code. Before the 2026-10-21 database update there's
+// nowhere to send it: the error then has notAvailable set, and the page
+// offers email instead.
+export async function submitNotice({ location, category, explanation, name, email, goodFaith }) {
+  try {
+    return await restCall("POST", "/rest/v1/rpc/submit_notice", {
+      p_location: location, p_category: category, p_explanation: explanation,
+      p_name: name, p_email: email, p_good_faith: !!goodFaith,
+    });
+  } catch (err) {
+    if (isMissingInDatabase(err)) {
+      const e = new Error("Reports can't be sent here yet.");
+      e.notAvailable = true;
+      throw e;
+    }
+    throw err;
+  }
 }
 
 export async function blockUser(userId) {
@@ -1541,82 +1893,264 @@ export async function unblockUser(userId) {
 
 export async function getBlockedUsers() {
   if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/blocks?blocker_id=eq.${currentUser.id}&select=*,blocked:blocked_id(id,name,avatar_url,profession)`);
+  return withPerson(await restCall("GET", `/rest/v1/blocks?blocker_id=eq.${currentUser.id}&select=*,blocked:blocked_id(id,name,avatar_url,profession)`), "blocked", "blocked_id");
 }
 
 
 // ============================================================================
-// FILE UPLOAD
+// PHOTO FILES
 // ============================================================================
 
-export async function uploadFile(bucket, filePath, file) {
-  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${filePath}`, {
-    method: "POST",
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": file.type || "application/octet-stream",
-      "x-upsert": "true",
-    },
-    body: file,
+// The public buckets members upload photos to (event photos go to
+// post-images). Each member writes only inside their own folder
+// (<member id>/...); since the 2026-10-22 database update the buckets take
+// JPEG, PNG and WebP up to 2 MB (profile photos) or 4 MB.
+const PHOTO_BUCKETS = ["avatars", "post-images", "marketplace-images"];
+const PHOTO_LIMIT = { avatars: 2 * 1024 * 1024, "post-images": 4 * 1024 * 1024, "marketplace-images": 4 * 1024 * 1024 };
+const PUBLIC_PATH = "/storage/v1/object/public/";
+
+// An error whose message the site may show as it is (apiErrorMessage).
+function userError(message) {
+  const err = new Error(message);
+  err.userMessage = message;
+  return err;
+}
+
+const PHOTO_UNREADABLE = "This photo couldn't be read. Try a JPEG or PNG.";
+const PHOTO_TOO_LARGE = "This photo is too large. Please choose a smaller one.";
+
+// A request to Storage as the signed-in member: renews an expired session
+// once, like restRequest. Storage answers an expired token with 400 or 403
+// and "jwt expired" as well as with 401.
+async function storageRequest(method, path, body, contentType = "application/json") {
+  const send = () => fetch(`${SUPABASE_URL}${path}`, {
+    method,
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}`, "Content-Type": contentType },
+    body: body == null ? undefined : contentType === "application/json" ? JSON.stringify(body) : body,
   });
-  if (!res.ok) {
-    let err = "";
-    try { const j = await res.json(); err = j.message || j.error || ""; } catch(e) {}
-    throw new Error(err || `Upload failed (${res.status})`);
+  let res = await send();
+  if (!res.ok && accessToken) {
+    const text = await res.clone().text().catch(() => "");
+    if ((res.status === 401 || /jwt|token/i.test(text)) && await refreshSession()) res = await send();
   }
-  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${filePath}`;
+  return res;
 }
 
-// Phone photos are often 3-8 MB. Before uploading, photos are scaled down to
-// at most `max` pixels on the long side and saved as JPEG (about 150-300 KB),
-// so uploads and feeds are fast. GIFs, SVGs and files that can't be read are
-// uploaded as they are; a smaller original is kept.
-async function shrinkImage(file, max = 1600, quality = 0.82) {
-  if (!file || !/^image\/(jpeg|png|webp|heic|heif)$/i.test(file.type || "") || typeof createImageBitmap !== "function") return file;
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#fff"; // transparent PNG areas become white, not black
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close?.();
-    const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", quality));
-    if (!blob || blob.size >= file.size) return file;
-    return new File([blob], (file.name || "photo").replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
-  } catch (e) {
-    return file;
+// Uploads a file to bucket/filePath and returns its public link. Paths are
+// random (photoPath), so an upload never replaces another file.
+export async function uploadFile(bucket, filePath, file) {
+  const res = await storageRequest("POST", `/storage/v1/object/${bucket}/${filePath}`, file, file.type || "application/octet-stream");
+  if (!res.ok) {
+    let j = {};
+    try { j = await res.json(); } catch (e) {}
+    const said = `${j.statusCode || ""} ${j.error || ""} ${j.message || ""}`;
+    if (/413|too large|maximum allowed size/i.test(said)) throw userError(PHOTO_TOO_LARGE);
+    if (/415|mime/i.test(said)) throw userError("Please choose a photo (JPEG or PNG).");
+    throw new Error(j.message || j.error || `Upload failed (${res.status})`);
   }
+  return `${SUPABASE_URL}${PUBLIC_PATH}${bucket}/${filePath}`;
+}
+
+// A photo the browser can show, ready to draw: an ImageBitmap (the photo's
+// own rotation applied), or an <img> on browsers without createImageBitmap.
+// Throws if the browser can't read it (e.g. a HEIC photo outside Safari).
+async function readPhoto(file) {
+  if (typeof createImageBitmap === "function") {
+    try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch (e) {}
+    try { return await createImageBitmap(file); } catch (e) {}
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = url;
+    });
+    if (img.decode) await img.decode().catch(() => {});
+    return img;
+  } catch (e) {
+    throw userError(PHOTO_UNREADABLE);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+}
+
+// Every photo is drawn again and saved as a new JPEG before it is uploaded:
+// at most `max` pixels on the long side (about 150-300 KB), and without the
+// hidden details the original file carries (EXIF: where and when it was
+// taken, the camera). Only the first frame of a GIF is kept. Throws a
+// message for the member if the photo can't be read or stays too large.
+async function toJpeg(file, max, limit, quality = 0.82) {
+  if (!file || (file.type && !/^image\//i.test(file.type))) throw userError("Please choose a photo.");
+  if (file.size > 25 * 1024 * 1024) throw userError(PHOTO_TOO_LARGE);
+  const photo = await readPhoto(file);
+  const width = photo.naturalWidth || photo.width;
+  const height = photo.naturalHeight || photo.height;
+  if (!width || !height) throw userError(PHOTO_UNREADABLE);
+  const scale = Math.min(1, max / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff"; // transparent PNG areas become white, not black
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(photo, 0, 0, canvas.width, canvas.height);
+  photo.close?.();
+  for (const q of [quality, 0.6]) {
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", q));
+    if (!blob) throw userError(PHOTO_UNREADABLE);
+    if (blob.size <= limit) return new File([blob], "photo.jpg", { type: "image/jpeg" });
+  }
+  throw userError(PHOTO_TOO_LARGE);
+}
+
+// <member id>/<random>.jpg: the name says nothing about the member's
+// photos or when they were taken, and can't be guessed.
+function photoPath() {
+  let id;
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    id = crypto.randomUUID();
+  } else {
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    id = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  }
+  return `${currentUser.id}/${id}.jpg`;
+}
+
+async function uploadPhoto(bucket, file, max) {
+  if (!currentUser) throw new Error("Not logged in");
+  const jpeg = await toJpeg(file, max, PHOTO_LIMIT[bucket]);
+  return uploadFile(bucket, photoPath(), jpeg);
 }
 
 export async function uploadAvatar(file) {
-  if (!currentUser) throw new Error("Not logged in");
-  file = await shrinkImage(file, 512);
-  const ext = file.name.split(".").pop();
-  const path = `${currentUser.id}/avatar_${Date.now()}.${ext}`;
-  const url = await uploadFile("avatars", path, file);
-  // Add cache-busting param
-  return url + "?t=" + Date.now();
+  return uploadPhoto("avatars", file, 512);
 }
 
+// Photos for posts and events.
 export async function uploadPostImage(file) {
-  if (!currentUser) throw new Error("Not logged in");
-  file = await shrinkImage(file, 1600);
-  const ext = file.name.split(".").pop();
-  const path = `${currentUser.id}/${Date.now()}.${ext}`;
-  return uploadFile("post-images", path, file);
+  return uploadPhoto("post-images", file, 1600);
 }
 
 export async function uploadMarketImage(file) {
-  if (!currentUser) throw new Error("Not logged in");
-  file = await shrinkImage(file, 1600);
-  const ext = file.name.split(".").pop();
-  const path = `${currentUser.id}/${Date.now()}.${ext}`;
-  return uploadFile("marketplace-images", path, file);
+  return uploadPhoto("marketplace-images", file, 1600);
+}
+
+// The bucket and path of a photo link from this project's Storage, or null.
+function storageObject(url) {
+  if (typeof url !== "string") return null;
+  const at = url.indexOf(PUBLIC_PATH);
+  if (at < 0) return null;
+  const rest = url.slice(at + PUBLIC_PATH.length).split(/[?#]/)[0];
+  const slash = rest.indexOf("/");
+  if (slash < 1) return null;
+  let path = rest.slice(slash + 1);
+  try { path = decodeURIComponent(path); } catch (e) {}
+  return { bucket: rest.slice(0, slash), path };
+}
+
+// The photo links in a stored value: one link, or a Market listing's JSON
+// array of links.
+function photoLinks(value) {
+  if (!value || typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.filter((u) => typeof u === "string");
+    if (typeof parsed === "string") return [parsed];
+  } catch (e) {}
+  return [value];
+}
+
+// Deletes files (paths) from a bucket through the Storage API, 100 at a
+// time; returns the paths Storage says it deleted. Storage deletes only
+// what the policies let this account delete, and says nothing about the rest.
+async function deleteStorageObjects(bucket, paths) {
+  const gone = [];
+  for (let i = 0; i < paths.length; i += 100) {
+    const res = await storageRequest("DELETE", `/storage/v1/object/${bucket}`, { prefixes: paths.slice(i, i + 100) });
+    if (!res.ok) throw new Error(`Deleting photo files failed (${res.status})`);
+    const rows = await res.json().catch(() => []);
+    (Array.isArray(rows) ? rows : []).forEach((r) => { if (r?.name) gone.push(r.name); });
+  }
+  return gone;
+}
+
+// Deletes the signed-in member's own photo files behind these links (other
+// links are skipped): after their post, listing or event is deleted, or a
+// profile photo is replaced. Never throws: what is left behind, the
+// clean-up in the admin panel deletes. Returns how many were deleted.
+export async function deleteOwnImages(urls) {
+  if (!currentUser) return 0;
+  const byBucket = {};
+  (urls || []).flatMap(photoLinks).map(storageObject).forEach((o) => {
+    if (!o || !PHOTO_BUCKETS.includes(o.bucket) || !o.path.startsWith(`${currentUser.id}/`)) return;
+    (byBucket[o.bucket] = byBucket[o.bucket] || new Set()).add(o.path);
+  });
+  let count = 0;
+  for (const [bucket, paths] of Object.entries(byBucket)) {
+    try { count += (await deleteStorageObjects(bucket, [...paths])).length; } catch (e) {}
+  }
+  return count;
+}
+
+// A photo the member uploaded but then didn't use (taken off a post being
+// written, or the post was cancelled).
+export function discardUpload(url) {
+  if (url) deleteOwnImages([url]);
+}
+
+// Every file in the signed-in member's own folder of a bucket (paths).
+async function listMyFiles(bucket, folder = currentUser.id, depth = 0) {
+  const paths = [];
+  for (let offset = 0; ; offset += 1000) {
+    const res = await storageRequest("POST", `/storage/v1/object/list/${bucket}`, { prefix: `${folder}/`, limit: 1000, offset });
+    if (!res.ok) throw new Error(`Listing photo files failed (${res.status})`);
+    const rows = (await res.json().catch(() => [])) || [];
+    for (const r of rows) {
+      if (!r?.name) continue;
+      if (r.id) paths.push(`${folder}/${r.name}`);
+      else if (depth < 3) paths.push(...await listMyFiles(bucket, `${folder}/${r.name}`, depth + 1));
+    }
+    if (rows.length < 1000) return paths;
+  }
+}
+
+// Deletes every photo file of the signed-in member, bucket by bucket (for
+// account deletion). A bucket that fails is skipped. Returns how many files
+// were deleted.
+async function deleteMyFiles() {
+  let count = 0;
+  for (const bucket of PHOTO_BUCKETS) {
+    try {
+      const paths = await listMyFiles(bucket);
+      if (paths.length) count += (await deleteStorageObjects(bucket, paths)).length;
+    } catch (e) {}
+  }
+  return count;
+}
+
+// A new profile photo: uploads it, saves it on the profile, then deletes
+// the previous one. If the profile can't be saved, the new file is deleted
+// again. Returns the new link.
+export async function changeAvatar(file, previousUrl = "") {
+  const url = await uploadAvatar(file);
+  try {
+    const rows = await updateProfile({ avatar_url: url });
+    if (!rows?.[0] || rows[0].avatar_url !== url) throw new Error("Your photo couldn't be saved. Please try again.");
+  } catch (err) {
+    await deleteOwnImages([url]);
+    throw err;
+  }
+  if (previousUrl && previousUrl !== url) await deleteOwnImages([previousUrl]);
+  return url;
+}
+
+// Takes the profile photo off the profile and deletes its file.
+export async function removeAvatar(previousUrl) {
+  const rows = await updateProfile({ avatar_url: "" });
+  if (!rows?.[0] || rows[0].avatar_url !== "") throw new Error("Your photo couldn't be removed. Please try again.");
+  await deleteOwnImages([previousUrl]);
 }
 
 // ============================================================================
@@ -1713,10 +2247,39 @@ export function unsubscribeFromMessages() {
 // for accounts listed in public.admins.
 // ============================================================================
 
-export async function isAdmin() {
-  if (!currentUser) return false;
+// What the signed-in account may do in the admin panel, as the database
+// says (public.admin_mfa_status): { listed, active, mfaRequired, aal,
+// isAdmin }. listed: in public.admins; active: not blocked; mfaRequired:
+// admin rights need two-step login; aal: how this session was signed in;
+// isAdmin: admin rights now; changedAt: when an admin last switched the
+// requirement. Before the 2026-10-23 database update there is no such
+// function: being listed is enough then (and there's no two-step
+// requirement), so the answer comes from public.admins, with before: true.
+export async function adminAccess() {
+  if (!currentUser) return { listed: false, active: false, mfaRequired: false, aal: "", isAdmin: false };
+  if (!knownMissing("admin_mfa_status")) {
+    try {
+      const s = (await restCall("POST", "/rest/v1/rpc/admin_mfa_status", {})) || {};
+      return { listed: !!s.listed, active: s.active !== false, mfaRequired: !!s.mfa_required, aal: s.aal || sessionAal(), isAdmin: !!s.is_admin, changedAt: s.mfa_changed_at || null };
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.admin_mfa_status = Date.now();
+    }
+  }
   const rows = await restCall("GET", `/rest/v1/admins?user_id=eq.${currentUser.id}&select=user_id`);
-  return Array.isArray(rows) && rows.length > 0;
+  const listed = Array.isArray(rows) && rows.length > 0;
+  return { listed, active: true, mfaRequired: false, aal: sessionAal(), isAdmin: listed, before: true };
+}
+
+export async function isAdmin() {
+  return (await adminAccess()).isAdmin;
+}
+
+// Turns "Require two-step login for admin rights" on or off. Works only from
+// a session signed in with the 6-digit code (the database refuses it
+// otherwise, with a message to show).
+export async function adminSetMfaRequired(on) {
+  return restCall("POST", "/rest/v1/rpc/admin_set_mfa_required", { p_on: !!on });
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1877,14 +2440,20 @@ export async function adminCountMembers() {
 }
 
 // Reported content by kind, with the same fields as the previews in
-// adminGetDashboardData ("marketplace" is accepted for "market").
+// adminGetDashboardData ("marketplace" is accepted for "market"). Comments,
+// answers, guide comments and places can be reported since the 2026-10-21
+// database update; messages are read through adminGetReportedMessage.
 const REPORTED_ITEMS = {
   post: ["posts", "id,content,image_url,user_id,created_at"],
+  comment: ["comments", "id,content,post_id,user_id,created_at"],
+  answer: ["help_responses", "id,content,request_id,user_id,created_at"],
   doc: ["docs", "id,title,excerpt,user_id"],
+  doc_comment: ["doc_comments", "id,content,doc_id,user_id,created_at"],
   event: ["events", "id,title,description,date,organizer_id"],
   help: ["help_requests", "id,title,description,user_id"],
   market: ["marketplace", "id,title,description,price,user_id,image_url"],
   review: ["mentor_reviews", "id,rating,comment,mentee_id,mentor_id,created_at"],
+  place: ["places", "id,name,kind,city,address,note,created_by,created_at"],
 };
 REPORTED_ITEMS.marketplace = REPORTED_ITEMS.market;
 
@@ -1902,6 +2471,26 @@ export async function adminGetReportedItem(kind, id) {
   return rows?.[0] || null;
 }
 
+// The members who recommend a place (admins can see them), newest first.
+export async function adminGetPlaceRecommenders(placeId) {
+  if (!UUID.test(placeId || "")) return [];
+  const rows = await restCall("GET", `/rest/v1/place_recommendations?place_id=eq.${placeId}&select=user_id,created_at,profiles:user_id(name)&order=created_at.desc&limit=100`);
+  return (rows || []).map((r) => ({ id: r.user_id, name: r.profiles?.name || "", created_at: r.created_at }));
+}
+
+// A reported message (admins can't read messages otherwise): only the
+// message the report is about. Since the 2026-10-21 database update; before
+// it, null with missing set.
+export async function adminGetReportedMessage(reportId) {
+  try {
+    const rows = await restCall("POST", "/rest/v1/rpc/admin_get_reported_message", { p_report: reportId });
+    return rows?.[0] || null;
+  } catch (err) {
+    if (isMissingInDatabase(err)) return { missing: true };
+    throw err;
+  }
+}
+
 // RLS turns a forbidden write into a silent no-op, so ask for the changed
 // rows back and treat "none" as a failure.
 async function adminWrite(method, path, body = null) {
@@ -1912,8 +2501,8 @@ async function adminWrite(method, path, body = null) {
   return rows;
 }
 
-// Moderation only (block / unblock). Verification decisions go through
-// adminReviewMember.
+// Before the 2026-10-21 database update only: block / unblock by writing the
+// status. Since then admins can't write members' rows (adminModerate).
 export async function adminSetMemberStatus(userId, status) {
   return adminWrite("PATCH", `/rest/v1/profile_private?id=eq.${userId}`, { status });
 }
@@ -1923,15 +2512,179 @@ export async function adminCityStats() {
   return (await restCall("POST", "/rest/v1/rpc/admin_city_stats", {})) || [];
 }
 
-// Makes a member the NRIClub ambassador for a city ('' to stop).
+// A function of the 2026-10-21 database update, or `old()` (the way the
+// panel did it before) while the database doesn't have it yet. old()
+// returns what the function would, or throws.
+async function adminRpc(name, body, old) {
+  if (!knownMissing(name)) {
+    try {
+      return await restCall("POST", `/rest/v1/rpc/${name}`, body);
+    } catch (err) {
+      if (!isMissingInDatabase(err) || !old) throw err;
+      missingSince[name] = Date.now();
+    }
+  }
+  if (!old) throw new Error("This needs the database update of 21 October 2026.");
+  return old();
+}
+
+// Whether the database has the 2026-10-21 moderation functions: our team's
+// decisions then reach the members concerned in the app (statements of
+// reasons, report outcomes) and are recorded. Before it, the panel acts as
+// before and says that the members aren't told.
+export async function adminHasModeration() {
+  if (knownMissing("admin_member_overview")) return false;
+  try {
+    await restCall("POST", "/rest/v1/rpc/admin_member_overview", { p_member: "00000000-0000-0000-0000-000000000000" });
+    return true;
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.admin_member_overview = Date.now();
+    return false;
+  }
+}
+
+// What the panel shows with a member: { is_admin, is_me, upcoming_sessions
+// (mentoring sessions they give), free_slots, open_reports (about them or
+// their content), open_profile_reports, last_warning_at, history: [{
+// created_at, action, kind, ground, rule, explanation, urgent, source, by }]
+// }. null before the 2026-10-21 database update.
+export async function adminMemberOverview(memberId) {
+  if (!UUID.test(memberId || "")) return null;
+  try {
+    return await adminRpc("admin_member_overview", { p_member: memberId }, () => null);
+  } catch (err) {
+    return null;
+  }
+}
+
+const MODERATED_TABLES = {
+  post: "posts", comment: "comments", answer: "help_responses", doc: "docs", doc_comment: "doc_comments",
+  event: "events", help: "help_requests", market: "marketplace", review: "mentor_reviews", place: "places",
+};
+
+// One decision of our team on a member's content or account
+// (public.admin_moderate): kind ("post", "comment", "answer", "doc",
+// "doc_comment", "event", "help", "market", "review", "place", "message",
+// "place_recommendation" with member, "profile_photo", "profile_bio" or
+// "member"), id, action ("remove", "warn", "block", "unblock"), ground
+// ("terms" or "illegal"), rule (the rule in the Terms, or the law), facts
+// (finishing "because ..."), reportIds (the reports it answers; every other
+// open report about the same item is closed with them), urgent (for a block
+// without an earlier warning), notice (a report from the public page).
+// The database records it, tells the member why and the reporters what was
+// decided: { action_id, statement, closed_reports, cancelled_sessions }.
+// Before the 2026-10-21 database update it's done the old way (reports
+// closed first, then the content deleted or the status written), nobody is
+// told, and the answer has fallback set.
+export async function adminModerate({ kind, id, action, ground = null, rule = "", facts = "", reportIds = [], urgent = null, notice = null, member = null }) {
+  const body = {
+    p_kind: kind, p_id: id, p_action: action, p_ground: ground, p_rule: rule, p_explanation: facts,
+    p_report_ids: (reportIds || []).filter((r) => UUID.test(r || "")),
+  };
+  if (urgent) body.p_urgent = urgent;
+  if (notice) body.p_notice = notice;
+  if (member) body.p_member = member;
+  return adminRpc("admin_moderate", body, async () => {
+    if (notice || action === "warn" || kind === "message" || kind === "place_recommendation") {
+      throw new Error("This needs the database update of 21 October 2026.");
+    }
+    // Close the reports first, so a decision another admin took meanwhile
+    // stops this one.
+    let claimed = [];
+    if (body.p_report_ids.length) {
+      claimed = await adminSetReportStatus(body.p_report_ids, "resolved");
+      if (!claimed.length) throw new Error("These reports were already handled by someone else. Reload to see the latest.");
+    }
+    try {
+      if (kind === "member") await adminSetMemberStatus(id, action === "block" ? "blocked" : "active");
+      else if (kind === "profile_photo") await adminWrite("PATCH", `/rest/v1/profiles?id=eq.${id}&select=id`, { avatar_url: "" });
+      else if (kind === "profile_bio") await adminWrite("PATCH", `/rest/v1/profiles?id=eq.${id}&select=id`, { bio: "" });
+      else if (MODERATED_TABLES[kind]) await adminWrite("DELETE", `/rest/v1/${MODERATED_TABLES[kind]}?id=eq.${id}`);
+      else throw new Error(`Cannot moderate ${kind}`);
+    } catch (err) {
+      if (claimed.length) await adminReopenReports(claimed.map((r) => r.id), "resolved").catch(() => {});
+      throw err;
+    }
+    return { fallback: true, closed_reports: claimed.map((r) => r.id), statement: "", cancelled_sessions: 0 };
+  });
+}
+
+// Makes a member the NRIClub ambassador for a city ('' to stop). Recorded
+// since the 2026-10-21 database update.
 export async function adminSetAmbassador(userId, city) {
-  return adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}&select=id,ambassador_city`, { ambassador_city: city });
+  return adminRpc("admin_set_ambassador", { p_member: userId, p_city: city },
+    () => adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}&select=id,ambassador_city`, { ambassador_city: city }));
 }
 
 // Members waiting for a decision (or any other verification statuses), with
 // everything needed to decide: email, LinkedIn or note, voucher, duplicates.
+// All of them, up to 1,000 (the API's limit).
 export async function adminVerificationQueue(statuses = ["pending"]) {
   return restCall("POST", "/rest/v1/rpc/admin_verification_queue", { p_statuses: statuses });
+}
+
+// One page of a verification list (see adminVerificationQueue): limit
+// members from offset. Waiting members come oldest first, approved and
+// rejected ones newest decision first, unfinished sign-ups newest first.
+// { rows, total, paged }. Before the 2026-10-23 database update there are
+// no pages: the first call gets the whole list (up to 1,000; total is its
+// length) and paged is false.
+export const VERIFICATION_PAGE = 200;
+export async function adminVerificationPage(status, offset = 0, limit = VERIFICATION_PAGE) {
+  if (!knownMissing("queue_pages")) {
+    try {
+      const rows = (await restCall("POST", "/rest/v1/rpc/admin_verification_queue", { p_statuses: [status], p_limit: limit, p_offset: offset })) || [];
+      const total = rows.length ? Number(rows[0].total_count) : null;
+      return { rows, total: Number.isFinite(total) ? total : (offset === 0 ? rows.length : null), paged: true };
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.queue_pages = Date.now();
+    }
+  }
+  if (offset > 0) return { rows: [], total: null, paged: false };
+  const rows = (await adminVerificationQueue([status])) || [];
+  return { rows, total: rows.length, paged: false };
+}
+
+// One member's row of the review queue (what the peek shows: email,
+// LinkedIn or note, voucher, duplicates, hold), or null. status: their
+// verification status, used before the 2026-10-23 database update, when the
+// row can only be found in that status's whole list.
+export async function adminMemberDetails(memberId, status) {
+  if (!UUID.test(memberId || "")) return null;
+  if (!knownMissing("queue_pages")) {
+    try {
+      const rows = await restCall("POST", "/rest/v1/rpc/admin_verification_queue", { p_statuses: null, p_ids: [memberId], p_limit: 1 });
+      return (rows || [])[0] || null;
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.queue_pages = Date.now();
+    }
+  }
+  const rows = (await adminVerificationQueue([status || "pending"])) || [];
+  return rows.find((r) => r.id === memberId) || null;
+}
+
+// Searches every member, not only the newest loaded in the panel
+// (public.admin_search_members): query matches part of the name, email
+// address, city or place; status a verification status; blocked true or
+// false; null for any. { members, total }, members shaped like the panel's
+// other member rows, newest first. null before the 2026-10-23 database
+// update (no such function): the panel then searches the members it has.
+export const SEARCH_PAGE = 100;
+export async function adminSearchMembers({ query = "", status = null, blocked = null, limit = SEARCH_PAGE, offset = 0 } = {}) {
+  if (knownMissing("admin_search")) return null;
+  try {
+    const res = (await restCall("POST", "/rest/v1/rpc/admin_search_members", {
+      p_query: String(query || "").slice(0, 200), p_status: status, p_blocked: blocked, p_limit: limit, p_offset: offset,
+    })) || {};
+    return { members: (res.members || []).map(adminMember), total: Number(res.total) || 0 };
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.admin_search = Date.now();
+    return null;
+  }
 }
 
 // decision: "approved" | "needs_info" | "rejected" | "pending" (reopen/undo)
@@ -1949,30 +2702,36 @@ export async function adminReviewMember(memberId, decision, message = "", adminN
   return restCall("POST", "/rest/v1/rpc/review_member", body);
 }
 
-// Approve and reject act only on a request that is still waiting, so a panel
-// that's out of date can't touch a community that is already live.
-export async function adminApproveGroup(groupId) {
-  return adminWrite("PATCH", `/rest/v1/groups?id=eq.${groupId}&is_approved=eq.false`, { is_approved: true });
+// A community: action "approve" or "reject" (a request that is still
+// waiting), "unapprove" (Undo of an approval, while nobody has joined or
+// posted), "delete" (a live community; reason needed). The member who asked
+// for it is told. Recorded since the 2026-10-21 database update; before it,
+// written directly as the panel did.
+export async function adminSetGroup(group, action, reason = "") {
+  return adminRpc("admin_set_group", { p_group: group.id, p_action: action, p_reason: reason }, async () => {
+    if (action === "approve") {
+      await adminWrite("PATCH", `/rest/v1/groups?id=eq.${group.id}&is_approved=eq.false`, { is_approved: true });
+      if (group.created_by) { try { await adminNotify(group.created_by, "group", `Your community "${group.name}" has been approved!`); } catch { /* the approval itself worked */ } }
+    } else if (action === "unapprove") {
+      await adminWrite("PATCH", `/rest/v1/groups?id=eq.${group.id}&is_approved=eq.true&members_count=eq.0`, { is_approved: false });
+    } else if (action === "reject") {
+      await adminWrite("DELETE", `/rest/v1/groups?id=eq.${group.id}&is_approved=eq.false`);
+      if (group.created_by) { try { await adminNotify(group.created_by, "group", `Your community request "${group.name}" was not approved.${reason ? ` Reason: ${reason}.` : ""}`); } catch { /* the rejection itself worked */ } }
+    } else if (action === "delete") {
+      await adminWrite("DELETE", `/rest/v1/groups?id=eq.${group.id}`);
+      if (group.created_by) { try { await adminNotify(group.created_by, "group", `We deleted the community "${group.name}" because ${reason}. Think we got it wrong? Write to hello@nriclub.app.`); } catch { /* the deletion itself worked */ } }
+    }
+    return null;
+  });
 }
 
-export async function adminRejectGroupRequest(groupId) {
-  return adminWrite("DELETE", `/rest/v1/groups?id=eq.${groupId}&is_approved=eq.false`);
-}
-
-// Deletes any community, live or not. Community requests are rejected with
-// adminRejectGroupRequest.
-export async function adminDeleteGroup(groupId) {
-  return adminWrite("DELETE", `/rest/v1/groups?id=eq.${groupId}`);
-}
-
-// Marks reports as handled ("reviewed": dismissed, "resolved": acted on).
-// They stay on record and show under Handled. Takes one id or several (every
-// report about the same item). Only reports that are still open change, so
-// a panel that's out of date can't overwrite another admin's decision.
-// Returns the reports that changed: none means they were already handled
-// (or this account is no longer an admin); reload to see the latest.
-// Removing content or blocking claims the reports this way first, so it only
-// goes ahead if some are still open.
+// Before the 2026-10-21 database update: marks reports as handled
+// ("reviewed": dismissed, "resolved": acted on) by writing their status.
+// They stay on record and show under Handled. Only reports that are still
+// open change, so a panel that's out of date can't overwrite another
+// admin's decision. Returns the reports that changed. Since that update this
+// is only for feedback (bug reports and ideas); reports about members and
+// content are closed with adminCloseReports or adminModerate.
 export async function adminSetReportStatus(reportIds, status) {
   if (status !== "reviewed" && status !== "resolved") throw new Error(`Unknown report status: ${status}`);
   const ids = (Array.isArray(reportIds) ? reportIds : [reportIds]).filter((id) => UUID.test(id || ""));
@@ -1981,28 +2740,129 @@ export async function adminSetReportStatus(reportIds, status) {
   return Array.isArray(rows) ? rows : [];
 }
 
-// Opens reports again that adminSetReportStatus just claimed with status,
-// when the action they were claimed for failed. Only reports still in that
-// status change (other admins only change open ones). Returns them.
+// Closes reports about members and content without acting on what they're
+// about. status "reviewed": we kept it (reason finishes "because ..."),
+// "resolved": it's already gone. The members who sent them are told why.
+// Returns the reports that were still open (none: someone else handled them
+// first). Before the 2026-10-21 database update, the status is written and
+// nobody is told.
+export async function adminCloseReports(reportIds, status, reason) {
+  const ids = (Array.isArray(reportIds) ? reportIds : [reportIds]).filter((id) => UUID.test(id || ""));
+  if (!ids.length) throw new Error("No reports to update.");
+  const rows = await adminRpc("admin_close_reports", { p_ids: ids, p_status: status, p_reason: reason },
+    () => adminSetReportStatus(ids, status));
+  return Array.isArray(rows) ? rows : [];
+}
+
+// Opens reports again that were just closed with status (an Undo, or when
+// the action they were closed for failed), and takes back the outcome their
+// senders were sent. Only reports still in that status change. Returns them.
 export async function adminReopenReports(reportIds, status) {
   if (status !== "reviewed" && status !== "resolved") throw new Error(`Unknown report status: ${status}`);
   const ids = reportIds.filter((id) => UUID.test(id || ""));
   if (!ids.length) return [];
-  const rows = await restCall("PATCH", `/rest/v1/reports?id=in.(${ids.join(",")})&status=eq.${status}`, { status: "pending" }, { Prefer: "return=representation" });
+  const rows = await adminRpc("admin_reopen_reports", { p_ids: ids, p_status: status },
+    () => restCall("PATCH", `/rest/v1/reports?id=in.(${ids.join(",")})&status=eq.${status}`, { status: "pending" }, { Prefer: "return=representation" }));
   return Array.isArray(rows) ? rows : [];
 }
 
-// Deletes a report for good (no record is kept); handling a report uses
-// adminSetReportStatus.
-export async function adminDeleteReport(reportId) {
-  return adminWrite("DELETE", `/rest/v1/reports?id=eq.${reportId}`);
+// Our team's notes on reports, { [report id]: note } (e.g. which police
+// authority they told about a safety report, and when). null before the
+// 2026-10-21 database update, which has nowhere to keep them.
+export async function adminReportNotes(reportIds) {
+  const ids = (reportIds || []).filter((id) => UUID.test(id || ""));
+  if (!ids.length) return {};
+  try {
+    const rows = await adminRpc("admin_report_notes", { p_ids: ids }, () => null);
+    return rows ? Object.fromEntries(rows.map((r) => [r.report_id, r.note])) : null;
+  } catch {
+    return null;
+  }
 }
 
-const MODERATED_TABLES = ["posts", "docs", "events", "help_requests", "marketplace", "mentor_reviews"];
+export async function adminSetReportNote(reportId, note) {
+  return adminRpc("admin_set_report_note", { p_report: reportId, p_note: note });
+}
 
-export async function adminDeleteContent(table, id) {
-  if (!MODERATED_TABLES.includes(table)) throw new Error(`Cannot moderate ${table}`);
-  return adminWrite("DELETE", `/rest/v1/${table}?id=eq.${id}`);
+// Reports from the public page (nriclub.app/report): open ones oldest
+// first, then the newest closed ones. null before the 2026-10-21 database
+// update (reports then arrive by email only).
+export async function adminNotices() {
+  try {
+    return await adminRpc("admin_notices", {}, () => null);
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+
+// A step on a notice: "receipt_sent" / "decision_sent" (our team emailed
+// the sender), "decide" (decision "kept", with reason), "reopen", "note".
+export async function adminUpdateNotice(noticeId, step, decision = null, reason = null) {
+  return adminRpc("admin_update_notice", { p_notice: noticeId, p_step: step, p_decision: decision, p_reason: reason });
+}
+
+// The photo clean-up: deletes photo files nothing uses any more (of deleted
+// posts, listings, events and accounts, replaced profile photos, content our
+// team removed), which public.admin_storage_orphans lists, through the
+// Storage API with the admin's own session. The database lets an admin
+// delete a file only while nothing uses it. auto: only if no admin has run
+// today's automatic clean-up yet (public.admin_photo_cleanup_due); then
+// null when there was nothing to run. Returns { deleted: [{ bucket, name,
+// reason }], failed: n } (reason: "account_deleted" or "unused"). Before the
+// 2026-10-22 database update: auto does nothing (null), otherwise it throws
+// an error with missing: true. An automatic run that took today's turn and
+// then failed throws an error with claimed: true (no other admin runs it
+// today, so the panel says so).
+export const PHOTO_CLEANUP_PAGE = 200;
+
+export async function adminCleanUpPhotoFiles({ auto = false } = {}) {
+  const missing = (err) => {
+    if (!isMissingInDatabase(err)) {
+      if (auto && err) err.claimed = true;
+      return err;
+    }
+    const e = new Error("The photo clean-up needs the database update of 22 October 2026 (20261022000000_storage_images.sql).");
+    e.missing = true;
+    return e;
+  };
+  if (auto) {
+    try {
+      if (!await restCall("POST", "/rest/v1/rpc/admin_photo_cleanup_due", {})) return null;
+    } catch (err) {
+      if (isMissingInDatabase(err)) return null;
+      throw err;
+    }
+  }
+  const deleted = [];
+  let failed = 0;
+  const tried = new Set();
+  for (let round = 0; round < 50; round += 1) {
+    let rows;
+    try {
+      rows = (await restCall("POST", "/rest/v1/rpc/admin_storage_orphans", { p_limit: PHOTO_CLEANUP_PAGE })) || [];
+    } catch (err) {
+      throw missing(err);
+    }
+    // Files that couldn't be deleted come back: they aren't tried again.
+    const fresh = rows.filter((r) => !tried.has(`${r.bucket_id}/${r.name}`));
+    if (!fresh.length) break;
+    const byBucket = {};
+    fresh.forEach((r) => {
+      tried.add(`${r.bucket_id}/${r.name}`);
+      (byBucket[r.bucket_id] = byBucket[r.bucket_id] || []).push(r);
+    });
+    for (const [bucket, files] of Object.entries(byBucket)) {
+      let gone = new Set();
+      try { gone = new Set(await deleteStorageObjects(bucket, files.map((f) => f.name))); } catch (e) {}
+      files.forEach((f) => {
+        if (gone.has(f.name)) deleted.push({ bucket, name: f.name, reason: f.reason });
+        else failed += 1;
+      });
+    }
+    if (rows.length < PHOTO_CLEANUP_PAGE) break;
+  }
+  return { deleted, failed };
 }
 
 export async function adminNotify(userId, type, text) {
@@ -2048,7 +2908,8 @@ export async function deleteMentorSlot(id) {
 // Sessions the member is in (as mentor or as the one being helped).
 export async function getMySessions() {
   if (!currentUser) return [];
-  return (await restCall("GET", `/rest/v1/mentor_bookings?or=(mentor_id.eq.${currentUser.id},mentee_id.eq.${currentUser.id})&select=*,mentor:mentor_id(id,name,avatar_url),mentee:mentee_id(id,name,avatar_url)&order=starts_at.desc&limit=100`)) || [];
+  const rows = await restCall("GET", `/rest/v1/mentor_bookings?or=(mentor_id.eq.${currentUser.id},mentee_id.eq.${currentUser.id})&select=*,mentor:mentor_id(id,name,avatar_url),mentee:mentee_id(id,name,avatar_url)&order=starts_at.desc&limit=100`);
+  return withPerson(withPerson(rows, "mentor", "mentor_id"), "mentee", "mentee_id") || [];
 }
 
 export async function bookMentorSession(slotId, topic, note) {
@@ -2074,7 +2935,7 @@ export async function getMentorRatings() {
 }
 
 export async function getMentorReviews(mentorId) {
-  return (await restCall("GET", `/rest/v1/mentor_reviews?mentor_id=eq.${encodeURIComponent(mentorId)}&select=*,mentee:mentee_id(id,name,avatar_url)&order=created_at.desc&limit=50`)) || [];
+  return withPerson(await restCall("GET", `/rest/v1/mentor_reviews?mentor_id=eq.${encodeURIComponent(mentorId)}&select=*,mentee:mentee_id(id,name,avatar_url)&order=created_at.desc&limit=50`), "mentee", "mentee_id") || [];
 }
 
 // The reviews the member wrote (booking ids), to know which sessions are rated.

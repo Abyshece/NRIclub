@@ -1,12 +1,15 @@
 // NRIClub Admin: a minimal, Notion-like admin panel.
-// Sections: Verification, Members, Communities, Reports, Feedback, Overview.
+// Sections: Verification, Members, Communities, Reports, Feedback, Overview,
+// Security (two-step login).
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import VerificationView from "./VerificationView";
 import MembersView from "./MembersView";
 import CommunitiesView from "./CommunitiesView";
 import OverviewView from "./OverviewView";
-import { FeedbackView, ReportsView, contentPreview, isFeedback, isOpenBug, isOpenIdea, isOpenReport, personOf, targetKey } from "./ReportsView";
+import SecurityView from "./SecurityView";
+import { usePhotoCleanup } from "./PhotoCleanup";
+import { FeedbackView, ReportsView, contentPreview, isFeedback, isOpenBug, isOpenIdea, isOpenReport, isSafetyReport, personOf, targetKey } from "./ReportsView";
 import { ADMIN_CSS, ErrorNote, Icon, SkeletonRows, Toast } from "./ui";
 import { friendlyError } from "./format";
 
@@ -68,6 +71,11 @@ export default function AdminPanel({ onLogout }) {
   const [handledTotals, setHandledTotals] = useState({ reports: 0, bugs: 0 });
   const [moreOpen, setMoreOpen] = useState({ reports: { hidden: 0, after: null }, feedback: { hidden: 0, after: null } });
   const [loadingMore, setLoadingMore] = useState(false);
+  // Reports from the public page (nriclub.app/report); null before the
+  // 2026-10-21 database update. recorded: whether the database records our
+  // team's decisions and tells the members concerned (the same update).
+  const [notices, setNotices] = useState(null);
+  const [recorded, setRecorded] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [toast, setToast] = useState(null);
@@ -90,20 +98,24 @@ export default function AdminPanel({ onLogout }) {
     setLoading(true);
     setLoadError("");
     const countsMark = ++countsSeq.current;
-    const [dash, queue, totals] = await Promise.allSettled([
+    const [dash, queue, totals, noticeRows, moderation] = await Promise.allSettled([
       api.adminGetDashboardData(),
-      api.adminVerificationQueue(["pending"]),
+      api.adminVerificationPage("pending", 0),
       api.adminCountMembers(),
+      api.adminNotices(),
+      api.adminHasModeration(),
     ]);
     // A later reload has started: its answers are newer.
     if (req !== loadSeq.current) return;
     let pendingCount = 0;
     if (queue.status === "fulfilled") {
-      const rows = Array.isArray(queue.value) ? queue.value : [];
-      queueCache.current.pending = { rows, at: Date.now() };
-      pendingCount = rows.length;
+      const { rows, total, paged } = queue.value;
+      queueCache.current.pending = { rows, at: Date.now(), total, paged };
+      pendingCount = total ?? rows.length;
     }
     if (countsMark === countsSeq.current) setMemberCounts(totals.status === "fulfilled" ? totals.value : null);
+    if (noticeRows.status === "fulfilled") setNotices(noticeRows.value);
+    if (moderation.status === "fulfilled") setRecorded(moderation.value);
     if (dash.status === "fulfilled") {
       const data = dash.value;
       // Members and reports changed here since the reload started stay as
@@ -149,6 +161,9 @@ export default function AdminPanel({ onLogout }) {
   }, [page]);
 
   const showToast = useCallback((t) => setToast({ id: Date.now() + Math.random(), ...t }), []);
+  // Photo files nothing uses any more: deleted once a day when the panel
+  // opens, and from Overview.
+  const photoCleanup = usePhotoCleanup(showToast);
 
   const undoToast = async () => {
     const t = toast;
@@ -249,8 +264,11 @@ export default function AdminPanel({ onLogout }) {
   }, [users, memberCounts]);
   const membersTotal = Math.max(memberCounts?.total ?? usersTotal, users.length);
   const blockedTotal = memberCounts ? memberCounts.blocked : users.filter((u) => u.status === "blocked").length;
-  // Open ones loaded here, plus those not loaded yet.
-  const openReports = reports.filter(isOpenReport).length + moreOpen.reports.hidden;
+  // Open ones loaded here, plus those not loaded yet, plus open reports from
+  // the public page. A threat to someone's safety makes the count stand out.
+  const openNotices = (notices || []).filter((n) => n.status === "open");
+  const openReports = reports.filter(isOpenReport).length + moreOpen.reports.hidden + openNotices.length;
+  const safetyOpen = reports.some((r) => isOpenReport(r) && isSafetyReport(r)) || openNotices.some((n) => n.category === "safety");
   const feedbackCount = reports.filter((r) => isOpenBug(r) || isOpenIdea(r)).length + moreOpen.feedback.hidden;
   const pendingGroups = groups.filter((g) => !g.is_approved).length;
 
@@ -258,9 +276,10 @@ export default function AdminPanel({ onLogout }) {
     { key: "verification", label: "Verification", icon: "shieldCheck", count: counts.pending, hot: counts.pending > 0 },
     { key: "members", label: "Members", icon: "users", count: membersTotal },
     { key: "communities", label: "Communities", icon: "globe", count: pendingGroups },
-    { key: "reports", label: "Reports", icon: "flag", count: openReports },
+    { key: "reports", label: "Reports", icon: "flag", count: openReports, hot: safetyOpen },
     { key: "bugs", label: "Feedback", icon: "bug", count: feedbackCount },
     { key: "overview", label: "Overview", icon: "chart" },
+    { key: "security", label: "Security", icon: "lock" },
   ];
 
   const go = (key) => {
@@ -285,17 +304,19 @@ export default function AdminPanel({ onLogout }) {
       </>
     );
   } else if (page === "verification") {
-    content = <VerificationView usersById={usersById} counts={counts} countsExact={countsExact} cache={queueCache} onMemberChange={onMemberChange} showToast={showToast} />;
+    content = <VerificationView usersById={usersById} counts={counts} countsExact={countsExact} cache={queueCache} onMemberChange={onMemberChange} showToast={showToast} recorded={recorded} />;
   } else if (page === "members") {
-    content = <MembersView users={users} total={membersTotal} blockedTotal={blockedTotal} onMemberChange={onMemberChange} showToast={showToast} />;
+    content = <MembersView users={users} total={membersTotal} blockedTotal={blockedTotal} onMemberChange={onMemberChange} showToast={showToast} recorded={recorded} />;
   } else if (page === "communities") {
-    content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} />;
+    content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} recorded={recorded} />;
   } else if (page === "reports") {
-    content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} moreOpen={moreOpen.reports.after ? moreOpen.reports.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(false)} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
+    content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} moreOpen={moreOpen.reports.after ? moreOpen.reports.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(false)} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} notices={notices} setNotices={setNotices} recorded={recorded} />;
+  } else if (page === "security") {
+    content = <SecurityView showToast={showToast} />;
   } else if (page === "bugs") {
     content = <FeedbackView reports={reports} setReports={setReports} handledTotal={handledTotals.bugs} moreOpen={moreOpen.feedback.after ? moreOpen.feedback.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(true)} onReportsChange={onReportsChange} showToast={showToast} onReload={load} />;
   } else {
-    content = <OverviewView users={users} membersTotal={membersTotal} blockedTotal={blockedTotal} counts={counts} openReports={openReports} pendingGroups={pendingGroups} onNavigate={go} />;
+    content = <OverviewView users={users} membersTotal={membersTotal} blockedTotal={blockedTotal} counts={counts} openReports={openReports} pendingGroups={pendingGroups} onNavigate={go} photoCleanup={photoCleanup} />;
   }
 
   return (
@@ -312,7 +333,7 @@ export default function AdminPanel({ onLogout }) {
         <nav className="adm-nav">
           {nav.map((n, i) => (
             <Fragment key={n.key}>
-              {i === nav.length - 1 && <div className="adm-nav-divider" aria-hidden="true" />}
+              {n.key === "overview" && <div className="adm-nav-divider" aria-hidden="true" />}
               <button type="button" className="adm-nav-item" aria-current={page === n.key ? "page" : undefined} onClick={() => go(n.key)}>
                 <Icon name={n.icon} size={16} />
                 <span>{n.label}</span>
