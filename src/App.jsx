@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import * as api from "./supabaseApi";
 import LandingPage from "./LandingPage";
-import FlagIcon from "./FlagIcon";
+import LogoMark from "./LogoMark";
 import "./member/base.css";
 import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToAccept } from "./member/profile";
 import { hasImprint } from "./content/imprint";
@@ -60,7 +60,7 @@ const legalPage = () => {
 const LoadingScreen = () => (
   <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
     <div style={{ textAlign: "center" }}>
-      <div style={{ display: "inline-block", marginBottom: 16 }}><FlagIcon size={48} /></div>
+      <div style={{ display: "inline-block", marginBottom: 16 }}><LogoMark size={44} title="NRIClub" /></div>
       <p style={{ color: "#9B9A97", fontSize: 14 }}>Loading...</p>
     </div>
   </div>
@@ -454,7 +454,7 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ display: "inline-block", marginBottom: 16 }}><FlagIcon size={48} /></div>
+          <div style={{ display: "inline-block", marginBottom: 16 }}><LogoMark size={44} title="NRIClub" /></div>
           <p style={{ color: "#9B9A97", fontSize: 14 }}>Loading...</p>
         </div>
       </div>
@@ -466,7 +466,7 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 16px", background: "#FAFAF8", fontFamily: "'DM Sans', sans-serif" }}>
         <div role="alert" style={{ textAlign: "center", maxWidth: 360 }}>
-          <div style={{ display: "inline-block", marginBottom: 16 }}><FlagIcon size={48} /></div>
+          <div style={{ display: "inline-block", marginBottom: 16 }}><LogoMark size={44} title="NRIClub" /></div>
           <h2 style={{ fontSize: 20, fontWeight: 700, color: "#37352F", marginBottom: 8 }}>We couldn't load your profile</h2>
           <p style={{ color: "#6B6A67", fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>Please check your connection and try again.</p>
           <button type="button" onClick={() => restoreSession()} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Try again</button>

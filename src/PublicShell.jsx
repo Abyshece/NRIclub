@@ -1,17 +1,20 @@
 import { Fragment, useEffect } from "react";
-import FlagIcon from "./FlagIcon";
+import LogoMark from "./LogoMark";
 import { hasImprint } from "./content/imprint";
 import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
 
 // ============================================================================
-// The frame of the public pages (city pages, guides and the legal pages): the
-// tricolour line, a header that stays in view with Log in and Join free, a
+// The frame of the public pages (city pages, guides and the legal pages): a
+// thin saffron line, a header that stays in view with Log in and Join free, a
 // hero, and a footer with the Terms, the Privacy Policy, the Impressum and
 // how to report illegal content.
 // ============================================================================
 
 export const INK = "#37352F";
 export const MUTED = "#6B6A67";
+// Saffron and green are brand colours, each used on its own. Never put them
+// together with white as bands or stripes, and never use a wheel: that reads
+// as the Indian flag, which may not be used as a mark (see src/content/logo.js).
 export const SAFFRON = "#FF9933";
 export const GREEN = "#138808";
 export const NAVY = "#000080";
@@ -59,7 +62,7 @@ export function PublicNav({ onLogin, onJoin, maxWidth = 1100, loginLabel = "Log 
       <style>{`html { scroll-padding-top: 72px; } @media (max-width: 359px) { .pub-logo-text { display: none; } }`}</style>
       <nav aria-label="NRIClub" style={{ ...section, maxWidth, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 10, paddingBottom: 10 }}>
         <a href="/" aria-label="NRIClub home" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: INK, minHeight: 44 }}>
-          <FlagIcon size={30} />
+          <LogoMark size={28} />
           <span className="pub-logo-text" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></span>
         </a>
         <div style={{ display: "flex", gap: 8 }}>
@@ -76,10 +79,10 @@ export default function PublicShell({ onLogin, onJoin, loginLabel, hero, childre
   return (
     <div className="pub-root" style={{ minHeight: "100vh", background: "#fff", color: INK, fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
       <style>{`.pub-root { overflow-x: hidden; overflow-x: clip; }`}</style>
-      <div aria-hidden="true" style={{ height: 4, background: `linear-gradient(90deg, ${SAFFRON} 0 33.3%, #fff 33.3% 66.6%, ${GREEN} 66.6%)` }} />
+      <div aria-hidden="true" style={{ height: 4, background: SAFFRON }} />
       <PublicNav onLogin={onLogin} onJoin={onJoin} loginLabel={loginLabel} />
       <main>
-        <div style={{ background: "radial-gradient(700px 360px at 0% 0%, rgba(255,153,51,0.10), transparent 70%), radial-gradient(600px 360px at 100% 10%, rgba(19,136,8,0.07), transparent 70%)" }}>
+        <div style={{ background: "radial-gradient(700px 360px at 0% 0%, rgba(255,153,51,0.10), transparent 70%)" }}>
           {hero}
         </div>
         {children}

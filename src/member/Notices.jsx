@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import FlagIcon from "../FlagIcon";
+import LogoMark from "../LogoMark";
 import { useDialogFocus } from "./LegalModals";
 import { firstName } from "./profile";
 
@@ -126,7 +126,7 @@ export function WelcomeNotice({ user, verified, cityGroup, cityMissing, onClose,
     : [{ label: "Later", onClick: onClose }, { label: first.label, onClick: onCityGroup, primary: true }];
   return (
     <NoticeModal id="notice-welcome" onClose={onClose} actions={actions}>
-      <div style={{ marginBottom: 14 }}><FlagIcon size={40} /></div>
+      <div style={{ marginBottom: 14 }}><LogoMark size={38} /></div>
       <h2 id="notice-welcome-title" style={title}>Welcome to NRIClub, {firstName(user.name)}!</h2>
       <p style={para}>One home for Indians abroad: your city's group, answers from people who've been there, desi places, festivals and free mentors.</p>
       {status}

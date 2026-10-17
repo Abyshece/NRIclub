@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import * as api from "./supabaseApi";
-import FlagIcon from "./FlagIcon";
-import PublicShell, { Phrases, useCanonical, INK, MUTED, NAVY, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, AMBASSADOR_MAIL, whatsappShare } from "./PublicShell";
+import LogoMark from "./LogoMark";
+import PublicShell, { Phrases, useCanonical, INK, MUTED, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, AMBASSADOR_MAIL, whatsappShare } from "./PublicShell";
 import { ESSENTIALS } from "./content/essentials";
 import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
@@ -75,7 +75,7 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
   const hero = (
     <div style={{ ...section, paddingTop: "clamp(24px, 6vh, 56px)", paddingBottom: 48, textAlign: "center" }}>
       <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px 6px 8px", borderRadius: 999, background: "#fff", border: "1px solid #ECEBE8", fontSize: 13, fontWeight: 500, color: MUTED, marginBottom: 22 }}>
-        <FlagIcon size={20} /> NRIClub {city}
+        <LogoMark size={18} /> NRIClub {city}
       </div>
       <h1 style={{ fontSize: "clamp(36px, 6vw, 56px)", fontWeight: 800, lineHeight: 1.05, letterSpacing: "-0.04em", margin: "0 0 18px", overflowWrap: "anywhere" }}>Indians in {city}</h1>
       <p style={{ fontSize: "clamp(16px, 1.8vw, 18px)", lineHeight: 1.65, color: MUTED, maxWidth: 560, margin: "0 auto 28px" }}>
@@ -92,9 +92,11 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
     <PublicShell onLogin={onLogin} onJoin={onJoin} hero={hero}>
       {showCounts && (
         <section style={{ ...section, paddingTop: 8, paddingBottom: 40 }}>
+          {/* Ink between saffron and green: never saffron, navy and green side
+              by side, which echoes the flag (see src/content/logo.js). */}
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
             <Stat value={members} label="members" color={SAFFRON_TEXT} />
-            {summary.events != null && summary.events >= SHOW_COUNTS_FROM && <Stat value={summary.events} label="events" color={NAVY} />}
+            {summary.events != null && summary.events >= SHOW_COUNTS_FROM && <Stat value={summary.events} label="events" color={INK} />}
             <Stat value={summary.places || 0} label={summary.places === 1 ? "desi place" : "desi places"} color={GREEN_TEXT} />
           </div>
         </section>

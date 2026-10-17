@@ -1,4 +1,4 @@
-import FlagIcon from "../FlagIcon";
+import LogoMark from "../LogoMark";
 // Small shared building blocks for the member screens (signup, login code
 // entry, Get verified), in the app's existing Notion-like style.
 
@@ -103,8 +103,8 @@ export function ErrorBox({ children, id, boxRef, style }) {
   );
 }
 
-// The NRIClub flag used at the top of the signup screens.
-export const GlobeTile = () => <FlagIcon size={36} />;
+// The NRIClub mark at the top of the signup screens.
+export const GlobeTile = () => <LogoMark size={34} title="NRIClub" />;
 
 export const ArrowRight = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
