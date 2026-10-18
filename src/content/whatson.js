@@ -47,7 +47,7 @@ export const WHATS_ON = [];
 export const CATEGORY_LABELS = {
   festival: "Festival",
   music: "Music and dance",
-  party: "Bollywood night",
+  party: "Parties and club nights",
   comedy: "Comedy",
   film: "Film",
   food: "Food",
@@ -55,13 +55,14 @@ export const CATEGORY_LABELS = {
   spiritual: "Temple and spiritual",
   community: "Community and family",
   talk: "Talks and networking",
+  culture: "Art and exhibitions",
 };
 
 // The words both the page and the build (vite.config.js) use.
 export const WHATS_ON_PATH = "/whats-on";
 export const WHATS_ON_TITLE = "What's on for Indians in Germany";
-export const WHATS_ON_LEAD = "Diwali and Holi celebrations, Garba nights, concerts, Bollywood nights, comedy and cricket: Indian events across Germany, in one list.";
-export const WHATS_ON_DESCRIPTION = "Indian events in Germany: Diwali, Navratri and Holi celebrations, concerts, Bollywood nights, comedy and cricket in Berlin, Munich, Frankfurt and more.";
+export const WHATS_ON_LEAD = "Diwali and Durga Puja celebrations, Garba nights, concerts, Bollywood nights, comedy and talks: Indian events across Germany, in one list.";
+export const WHATS_ON_DESCRIPTION = "Indian events in Germany: Diwali, Navratri and Durga Puja celebrations, concerts, Bollywood nights, comedy and talks in Berlin, Munich, Frankfurt and more.";
 export const WHATS_ON_NOTE = "Events run by other organisers, listed for information. NRIClub is not the organiser; details can change, so check the organiser's page before you go.";
 export const WHATS_ON_SHORT_NOTE = "Run by other organisers, listed for information. Check the organiser's page before you go.";
 export const whatsOnCta = (city) => `Going? Join NRIClub free to meet Indians in ${city || "your city"} who are going too.`;

@@ -19,6 +19,9 @@ import {
 // JavaScript; past events never show in either.
 // ============================================================================
 
+// How many cities get a chip; the others are under "More cities".
+const MAIN_CITIES = 8;
+
 const titleCase = (s) => s.replace(/(^|[\s-])(\p{L})/gu, (_, p, c) => p + c.toLocaleUpperCase());
 const cityFromAddress = () => {
   try { return citySlug(new URLSearchParams(window.location.search).get("city") || ""); } catch (e) { return ""; }
@@ -47,7 +50,9 @@ function EventCard({ event: e, today, highlighted }) {
       border: highlighted ? `2px solid ${SAFFRON_TEXT}` : "1px solid #ECEBE8", margin: highlighted ? -1 : 0,
       boxShadow: highlighted ? "0 6px 20px rgba(179,84,0,0.12)" : "none",
     }}>
-      <DateBadge iso={e.start} />
+      {/* An event already on (an exhibition, a festival over several days)
+          sits under today in the list, so its badge shows today too. */}
+      <DateBadge iso={isOnNow(e, today) ? today : e.start} />
       <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: "#45443F", background: "#F4F3F0", borderRadius: 999, padding: "3px 10px" }}>{CATEGORY_LABELS[e.category] || e.category}</span>
@@ -82,6 +87,10 @@ export default function WhatsOnPage({ onJoin, onLogin }) {
   // Past events never show, also when the page was built before they ended.
   const events = useMemo(() => upcoming(WHATS_ON, today), [today]);
   const cities = useMemo(() => citiesOf(events), [events]);
+  // Chips for the cities with the most events, the rest in a menu, so a long
+  // list of towns doesn't fill a phone screen.
+  const mainCities = cities.slice(0, MAIN_CITIES);
+  const moreCities = cities.slice(MAIN_CITIES).sort((a, b) => a.name.localeCompare(b.name));
   const [city, setCity] = useState(cityFromAddress);
   const [category, setCategory] = useState("all");
   const [target, setTarget] = useState(""); // the event #<id> points at
@@ -181,13 +190,23 @@ export default function WhatsOnPage({ onJoin, onLogin }) {
             <nav aria-label="Events by city">
               <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexWrap: "wrap", gap: 8 }}>
                 <li><a href={WHATS_ON_PATH} onClick={chooseCity("")} aria-current={!city ? "true" : undefined} style={chip(!city)}>All cities</a></li>
-                {cities.map((c) => (
+                {mainCities.map((c) => (
                   <li key={c.slug}>
                     <a href={`${WHATS_ON_PATH}?city=${encodeURIComponent(c.slug)}`} onClick={chooseCity(c.slug)} aria-current={city === c.slug ? "true" : undefined} style={chip(city === c.slug)}>
                       {c.name} <span style={{ fontSize: 12, opacity: 0.75 }}>{c.count}</span>
                     </a>
                   </li>
                 ))}
+                {moreCities.length > 0 && (
+                  <li>
+                    <select aria-label="More cities" value={moreCities.some((c) => c.slug === city) ? city : ""}
+                      onChange={(ev) => ev.target.value && chooseCity(ev.target.value)(ev)}
+                      style={{ ...chip(moreCities.some((c) => c.slug === city)), appearance: "auto", paddingRight: 10 }}>
+                      <option value="">More cities…</option>
+                      {moreCities.map((c) => <option key={c.slug} value={c.slug}>{c.name} ({c.count})</option>)}
+                    </select>
+                  </li>
+                )}
               </ul>
             </nav>
             {categories.length > 1 && (

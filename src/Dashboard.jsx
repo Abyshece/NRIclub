@@ -762,7 +762,9 @@ const AlsoOnInGermany = ({ user, cityFilter, search, target, font }) => {
     el.scrollIntoView({ block: "center" });
   });
 
-  if (!all.length) return null;
+  // Members outside Germany see them only when they pick a German city or
+  // open a shared link to one.
+  if (!all.length || (user.countryCode && user.countryCode !== "DE" && !filterKey && !target)) return null;
   const sub = { fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", margin: "16px 0 2px", fontFamily: font };
   return (
     <section aria-labelledby="also-on-title" style={{ marginTop: 28, background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "18px 20px 8px" }}>

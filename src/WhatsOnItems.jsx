@@ -1,5 +1,5 @@
 import { INK, MUTED, SAFFRON_TEXT } from "./PublicShell";
-import { dayParts, whenText, placeText, safeUrl } from "./content/whatson";
+import { dayParts, whenText, placeText, safeUrl, isOnNow, todayInGermany } from "./content/whatson";
 
 // ============================================================================
 // Pieces of the "What's on" listings (src/content/whatson.js), shared by the
@@ -44,7 +44,7 @@ export function CompactEvent({ event: e, href, Title = "h3", font = "inherit", i
   const meta = { fontSize: 13, color: MUTED, margin: "2px 0 0", lineHeight: 1.5, overflowWrap: "anywhere" };
   return (
     <li id={id} style={{ display: "flex", gap: 12, padding: highlighted ? "14px 10px" : "14px 0", margin: highlighted ? "0 -10px" : 0, borderRadius: highlighted ? 10 : 0, background: highlighted ? "#FFF6EC" : "transparent", borderTop: "1px solid #F0EFED", fontFamily: font }}>
-      <DateBadge iso={e.start} compact />
+      <DateBadge iso={isOnNow(e, todayInGermany()) ? todayInGermany() : e.start} compact />
       <div style={{ flex: 1, minWidth: 0 }}>
         <Title style={{ fontSize: 15, fontWeight: 650, lineHeight: 1.35, margin: 0, color: INK, display: "block", overflowWrap: "anywhere" }}>
           {href ? <a href={href} style={{ color: INK }}>{e.title}</a> : e.title}
