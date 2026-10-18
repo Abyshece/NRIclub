@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import * as api from "./supabaseApi";
 import LogoMark from "./LogoMark";
-import PublicShell, { Phrases, useCanonical, INK, MUTED, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, AMBASSADOR_MAIL, whatsappShare } from "./PublicShell";
+import PublicShell, { Phrases, useCanonical, INK, MUTED, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, whatsappShare } from "./PublicShell";
 import { ESSENTIALS } from "./content/essentials";
 import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
@@ -22,6 +22,9 @@ const titleCase = (s) => s.replace(/(^|[\s-])(\p{L})/gu, (_, p, c) => p + (c ===
 // shows that one or two members live in a small town.
 const SHOW_COUNTS_FROM = 5;
 
+// The ambassador application form, loaded when it is opened.
+const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
+
 const Stat = ({ value, label, color }) => (
   <div style={{ flex: "1 1 140px", padding: "18px 16px", borderRadius: 14, border: "1px solid #ECEBE8", background: "#FCFCFB", textAlign: "center" }}>
     <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", color }}>{value}</div>
@@ -32,6 +35,7 @@ const Stat = ({ value, label, color }) => (
 export default function CityPage({ city: rawCity, onJoin, onLogin }) {
   const [summary, setSummary] = useState(null);
   const [cities, setCities] = useState([]);
+  const [applying, setApplying] = useState(false); // the ambassador application form is open
 
   // The address can be "berlin", "new-york-city", "Düsseldorf" or another
   // spelling ("munchen", "nyc"): find the city's real name in the groups.
@@ -140,7 +144,7 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
       <section style={{ ...section, paddingTop: 40, paddingBottom: 16, textAlign: "center" }}>
         <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 6px" }}>Bring Indians in {city} together</h2>
         <p style={{ fontSize: 14, color: MUTED, margin: "0 auto 14px", maxWidth: 520 }}>City ambassadors welcome newcomers and host the first meetups. It takes an hour or two a month.</p>
-        <a href={AMBASSADOR_MAIL} style={{ display: "inline-block", padding: "10px 8px", fontSize: 14, fontWeight: 600, color: INK }}>Become a city ambassador →</a>
+        <button type="button" onClick={() => setApplying(true)} style={{ display: "inline-block", padding: "10px 8px", minHeight: 44, fontSize: 14, fontWeight: 600, color: INK, background: "none", border: "none", textDecoration: "underline", cursor: "pointer", fontFamily: "inherit" }}>Become a city ambassador →</button>
         <p style={{ fontSize: 14, margin: "10px 0 0" }}>
           <a href={whatsappShare(`Indians in ${city} on NRIClub, a free community for Indians abroad: https://nriclub.app${cityPath}`)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", padding: "10px 8px", fontWeight: 600, color: INK }}>Share the {city} page on WhatsApp</a>
         </p>
@@ -155,6 +159,11 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
             ))}
           </div>
         </section>
+      )}
+      {applying && (
+        <Suspense fallback={null}>
+          <AmbassadorApply city={city} onClose={() => setApplying(false)} onJoin={onJoin} />
+        </Suspense>
       )}
     </PublicShell>
   );

@@ -35,8 +35,6 @@ export const primaryBtn = {
 };
 
 export const SUPPORT_EMAIL = "hello@nriclub.app";
-export const AMBASSADOR_MAIL = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("I'd like to be a city ambassador")}`
-  + `&body=${encodeURIComponent("My city: \nMy LinkedIn (or a few words about me): \nHow I'd help: \n")}`;
 // "Free · Our team checks… · Your phone…", wrapping only between the parts.
 // (The spaces sit between the spans, where a line may break.)
 export const Phrases = ({ text }) => text.split(" · ").map((part, i, all) => (

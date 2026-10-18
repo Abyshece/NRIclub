@@ -1,12 +1,14 @@
 // NRIClub Admin: a minimal, Notion-like admin panel.
-// Sections: Verification, Members, Communities, Reports, Feedback, Overview,
-// Security (two-step login).
+// Sections: Verification, Members, Communities, Ambassadors (applications to
+// be a city ambassador), Reports, Feedback, Overview, Security (two-step
+// login).
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import LogoMark from "../LogoMark";
 import VerificationView from "./VerificationView";
 import MembersView from "./MembersView";
 import CommunitiesView from "./CommunitiesView";
+import AmbassadorsView from "./AmbassadorsView";
 import OverviewView from "./OverviewView";
 import SecurityView from "./SecurityView";
 import { usePhotoCleanup } from "./PhotoCleanup";
@@ -77,6 +79,10 @@ export default function AdminPanel({ onLogout }) {
   // team's decisions and tells the members concerned (the same update).
   const [notices, setNotices] = useState(null);
   const [recorded, setRecorded] = useState(true);
+  // Applications to be a city ambassador, by status ({ new, contacted,
+  // accepted, declined }); null before the 2026-10-24 database update or
+  // when they couldn't be loaded.
+  const [ambassadorCounts, setAmbassadorCounts] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [toast, setToast] = useState(null);
@@ -99,12 +105,13 @@ export default function AdminPanel({ onLogout }) {
     setLoading(true);
     setLoadError("");
     const countsMark = ++countsSeq.current;
-    const [dash, queue, totals, noticeRows, moderation] = await Promise.allSettled([
+    const [dash, queue, totals, noticeRows, moderation, ambassadors] = await Promise.allSettled([
       api.adminGetDashboardData(),
       api.adminVerificationPage("pending", 0),
       api.adminCountMembers(),
       api.adminNotices(),
       api.adminHasModeration(),
+      api.adminAmbassadorApplications({ status: "new", limit: 1 }),
     ]);
     // A later reload has started: its answers are newer.
     if (req !== loadSeq.current) return;
@@ -117,6 +124,7 @@ export default function AdminPanel({ onLogout }) {
     if (countsMark === countsSeq.current) setMemberCounts(totals.status === "fulfilled" ? totals.value : null);
     if (noticeRows.status === "fulfilled") setNotices(noticeRows.value);
     if (moderation.status === "fulfilled") setRecorded(moderation.value);
+    if (ambassadors.status === "fulfilled") setAmbassadorCounts(ambassadors.value?.counts || null);
     if (dash.status === "fulfilled") {
       const data = dash.value;
       // Members and reports changed here since the reload started stay as
@@ -277,6 +285,7 @@ export default function AdminPanel({ onLogout }) {
     { key: "verification", label: "Verification", icon: "shieldCheck", count: counts.pending, hot: counts.pending > 0 },
     { key: "members", label: "Members", icon: "users", count: membersTotal },
     { key: "communities", label: "Communities", icon: "globe", count: pendingGroups },
+    { key: "ambassadors", label: "Ambassadors", icon: "star", count: ambassadorCounts?.new || 0 },
     { key: "reports", label: "Reports", icon: "flag", count: openReports, hot: safetyOpen },
     { key: "bugs", label: "Feedback", icon: "bug", count: feedbackCount },
     { key: "overview", label: "Overview", icon: "chart" },
@@ -310,6 +319,8 @@ export default function AdminPanel({ onLogout }) {
     content = <MembersView users={users} total={membersTotal} blockedTotal={blockedTotal} onMemberChange={onMemberChange} showToast={showToast} recorded={recorded} />;
   } else if (page === "communities") {
     content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} recorded={recorded} />;
+  } else if (page === "ambassadors") {
+    content = <AmbassadorsView showToast={showToast} onCountsChange={setAmbassadorCounts} initialCounts={ambassadorCounts} />;
   } else if (page === "reports") {
     content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} moreOpen={moreOpen.reports.after ? moreOpen.reports.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(false)} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} notices={notices} setNotices={setNotices} recorded={recorded} />;
   } else if (page === "security") {

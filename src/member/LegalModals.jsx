@@ -122,7 +122,7 @@ function Block({ block, inDialog }) {
   if (block.h) return <Sub style={z.sub}>{block.h}</Sub>;
   if (block.entries) {
     return block.entries.map((entry, i) => (
-      <div key={i} style={{ margin: `0 0 ${z.gap}px`, paddingLeft: 12, borderLeft: "3px solid #ECEBE8" }}>
+      <div key={i} id={!inDialog && entry.id ? entry.id : undefined} style={{ margin: `0 0 ${z.gap}px`, paddingLeft: 12, borderLeft: "3px solid #ECEBE8", scrollMarginTop: 80 }}>
         <Sub style={{ ...z.sub, marginTop: 0, overflowWrap: "anywhere" }}>{entry.title}</Sub>
         {entry.fields.map(([label, value]) => (
           <p key={label} style={{ margin: "0 0 4px" }}><strong style={{ color: INK }}>{label}:</strong> <Rich value={value} inDialog={inDialog} /></p>

@@ -146,7 +146,7 @@ references the member cascades, except where noted).
 
 | | |
 |---|---|
-| Purpose | Tell members about likes, comments, Namaste, answers, events, bookings, verification results, urgent questions in their city, members joining (ambassadors); statements of reasons and warnings (type `moderation`), outcomes of reports they sent (`report`), and for admins new reports from the form and safety reports (`alert`) |
+| Purpose | Tell members about likes, comments, Namaste, answers, events, bookings, verification results, urgent questions in their city, members joining (ambassadors); statements of reasons and warnings (type `moderation`), outcomes of reports they sent (`report`), and for admins new reports from the form, safety reports and new applications to be a city ambassador (`alert`) |
 | Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5) and 17 DSA for statements of reasons and report outcomes |
 | Data | Recipient, actor, short text, reference, read state (`public.notifications`) |
 | Recipients | The recipient only |
@@ -229,6 +229,21 @@ references the member cascades, except where noted).
 | Purpose | Accountability (Art. 5(2)): this record, the breach register (Art. 33(5)), the request log, DPAs |
 | Legal basis | Art. 6(1)(c) |
 | Retention | As long as NRIClub runs, plus 3 years **[confirm with the lawyer]** |
+
+### 16. Applications to be a city ambassador
+
+Since 18 October 2026 (site) and the database update
+`20261024000000_ambassador_applications.sql`; before it, applications came
+by email (No. 13).
+
+| | |
+|---|---|
+| Purpose | Look at applications to be a volunteer city ambassador (welcoming newcomers, sharing NRIClub at universities and workplaces, local meetups), write to the applicants, and make accepted members the ambassador for their city |
+| Legal basis | Art. 6(1)(b) (steps at the applicant's request before agreeing on the volunteer role); Art. 6(1)(f) for keeping decided applications for a while (knowing whom we spoke to, answering questions about a decision) and for the daily limits on the form (protecting it from misuse) |
+| Data subjects | Members and non-members who apply |
+| Data | Name, email address, city, country, optional university or employer and LinkedIn link, motivation, time they could give, reference code, status (new, contacted, accepted, declined), deciding admin and date, admins' note; for members who were signed in, the link to the account (`private.ambassador_applications`). Keyed SHA-256 hashes of the email address and of the IP address (IPv6 by its /64) for the daily limits: 3 a day per email address, 10 per IP address, 50 in all (`private.ambassador_application_log`); a visitor told that an address has already applied uses up one of these too, so the form can't be used to test addresses. Accepting a member who is approved sets `profiles.ambassador_city`, recorded in `private.moderation_action` (No. 9) |
+| Recipients | Admins only (admin panel → Ambassadors; an in-app `alert` notice per new application with the city and reference only, not the applicant's name, No. 7); the applicant's own applications in "Download my data" (without the note). Replies go by email from hello@ (No. 13) |
+| Retention | 6 months after the decision (accepted or declined); undecided ones 12 months after they were sent; limit hashes 1 day. Not deleted with the account: the link to it is removed, and the application stays for these periods. Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
 
 ## Technical and organisational measures
 

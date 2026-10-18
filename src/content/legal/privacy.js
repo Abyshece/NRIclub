@@ -12,8 +12,8 @@ import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
 
-export const PRIVACY_VERSION = "2026-10-21";
-export const PRIVACY_DATE = "17 October 2026";
+export const PRIVACY_VERSION = "2026-10-24";
+export const PRIVACY_DATE = "18 October 2026";
 
 // How long data is kept: the periods this Policy promises. Until clean-up
 // jobs run on the database (plan C20), our team deletes by hand once a month
@@ -29,6 +29,9 @@ export const RETENTION = {
   closedReportsMonths: 12, // closed reports (and evidence kept with them), from when they were sent
   closedNoticesMonths: 12, // reports from nriclub.app/report once closed, from when they were sent
   noticeLimitHours: 24, // the coded email and internet addresses behind the daily report limits
+  ambassadorDecidedMonths: 6, // applications to be a city ambassador, from our decision (accepted or declined)
+  ambassadorUndecidedMonths: 12, // applications we haven't decided on, from when they were sent
+  ambassadorLimitHours: 24, // the coded email and internet addresses behind the daily application limits
   moderationActionMonths: 24, // the record of our team's decisions on content and accounts
   moderationCopyMonths: 6, // the copy of removed content in that record
   moderationRecordMonths: 24, // record of declined and blocked accounts, from the decision
@@ -197,6 +200,13 @@ export function privacyDoc() {
             ["Legal basis", "legitimate interests (protecting our members from people we removed)."],
             ["How long", `the record stays when the account is deleted, but its link to the account is removed then. The record is deleted ${months(R.moderationRecordMonths)} after our decision; the note in it after ${months(R.moderationNoteMonths)}.`],
           ] },
+          { id: "ambassadors", title: "Applications to be a city ambassador", fields: [
+            ["What", "if you apply to be a city ambassador, on our website or in the app: your name and email address (if you're signed in, those of your account, and a link to your account), the city and country, your university or employer and your LinkedIn profile link if you give them, why you'd like to be an ambassador and how much time you could give; the reference code we give your application, its status (new, contacted, accepted or declined), when and by whom on our team it was decided, and our team's notes on it. To limit how many applications can be sent, a coded form of the email address and of the internet address it was sent from."],
+            ["Why", "to look at your application, to write to you about it and, if we agree, to make you the ambassador for your city (members then see it on your profile and in your city's group, section 4)."],
+            ["Legal basis", "steps you ask us to take before we agree with you on the volunteer role (Art. 6(1)(b) GDPR). Keeping your application for a while after our decision, and the daily limits on the form: legitimate interests (knowing whom we've spoken to and being able to answer questions about our decision; protecting the form from misuse)."],
+            ["Who sees it", "only our team. Other members don't see your application."],
+            ["How long", `an application we've decided on (accepted or declined) is deleted ${months(R.ambassadorDecidedMonths)} after our decision; one we haven't decided on, ${months(R.ambassadorUndecidedMonths)} after you sent it. The coded addresses behind the daily limits are deleted after ${R.ambassadorLimitHours} hours. Deleting your account doesn't delete an application you sent: it stays, no longer linked to the account, for these periods (write to us to have it deleted sooner). Emails about it are kept like the other emails you send us (below).`],
+          ] },
           { title: "Server and security logs", fields: [
             ["What", "when you use NRIClub, the servers of our providers automatically log each request: IP address, time, the page or data requested, browser and device type, and any error."],
             ["Why", "to deliver the site, find faults, and detect and stop attacks and misuse."],
@@ -257,7 +267,7 @@ export function privacyDoc() {
             ["Your invite link", "it carries a random code, not your member ID. Someone who signs up through it sees your first name and member ID in the details they send for our check, where we fill in who invited them."],
           ] },
           { title: "Our team", fields: [
-            ["What", `everything approved members see${VISIBILITY.onlyApprovedListed ? " (your profile also while other members don't see it)" : ""}, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, our decisions about your content and account, your account status and the record of your confirmations and consent. Not your messages, except one reported to us (above).`],
+            ["What", `everything approved members see${VISIBILITY.onlyApprovedListed ? " (your profile also while other members don't see it)" : ""}, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, our decisions about your content and account, your account status, the record of your confirmations and consent, and an application to be a city ambassador if you send one. Not your messages, except one reported to us (above).`],
           ] },
           { title: "Our service providers", fields: [
             ["What", "they store and process data for us (section 7)."],
@@ -270,7 +280,7 @@ export function privacyDoc() {
 
       { id: "sources", title: "5. Where your data comes from", blocks: [
         { p: "Mostly from you. Some comes from other members: when they invite you or vouch for you, report something, or rate a mentoring session with you. Our team looks at the LinkedIn profile you link to (section 2, \"The membership check\"). Our systems add technical data such as dates and logs." },
-        { p: ["If you're not a member: when you report content to us, we process what you send us (section 2). If you run a business or practice that a member added to Places, we show its name and the details the member entered, because members recommend places to each other (legitimate interests). You can ask us to correct or remove it, or object, at ", mail("Places entry"), "."] },
+        { p: ["If you're not a member: when you report content to us or apply to be a city ambassador, we process what you send us (section 2). If you run a business or practice that a member added to Places, we show its name and the details the member entered, because members recommend places to each other (legitimate interests). You can ask us to correct or remove it, or object, at ", mail("Places entry"), "."] },
       ] },
 
       { id: "automated", title: "6. No automated decisions", blocks: [
@@ -335,7 +345,7 @@ export function privacyDoc() {
           [strong("Your account, profile and content"), " stay until you delete them or your account, or until we delete an account as section 2 says (a sign-up never confirmed, an account that never sent its check details, or one we declined or whose membership we ended)."],
           [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
           photoFilesText(),
-          [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports you sent about content or members, and reports other members made about you, no longer linked to your account (their text can still contain your name); the record of our decisions about your content and account, no longer linked to it; copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; emails you sent us (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
+          [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports you sent about content or members, and reports other members made about you, no longer linked to your account (their text can still contain your name); the record of our decisions about your content and account, no longer linked to it; copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; an application to be a city ambassador, no longer linked to your account, until it is deleted (section 2); emails you sent us (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
           ...(R.byHand ? [`Until these deletions run automatically, our team carries them out by hand${R.photoFilesDeleted ? " once a month" : ": photo files every week, everything else once a month"}, so data can stay up to a month longer than the period given.`] : []),
         ] },
       ] },
@@ -356,7 +366,7 @@ export function privacyDoc() {
 
       { id: "object", title: "11. Your right to object", blocks: [
         { box: { title: "Right to object (Widerspruchsrecht, Art. 21 GDPR)", blocks: [
-          { p: [strong("Where we process your data on the basis of legitimate interests (Art. 6(1)(f) GDPR), you can object at any time, on grounds relating to your particular situation."), " This covers in particular the membership check, sign-in sessions as far as they serve security, the record of your age confirmation and of which Terms you accepted, reports and moderation, the record of declined and blocked accounts, places members add about businesses and practices (section 5), server and security logs, and emails we answer on that basis (section 2)."] },
+          { p: [strong("Where we process your data on the basis of legitimate interests (Art. 6(1)(f) GDPR), you can object at any time, on grounds relating to your particular situation."), " This covers in particular the membership check, sign-in sessions as far as they serve security, the record of your age confirmation and of which Terms you accepted, reports and moderation, the record of declined and blocked accounts, keeping applications to be a city ambassador after our decision and the limits on that form, places members add about businesses and practices (section 5), server and security logs, and emails we answer on that basis (section 2)."] },
           { p: "If you object, we stop unless we can show compelling legitimate grounds that override your interests, rights and freedoms, or we need the data to establish, exercise or defend legal claims." },
           { p: ["To object, write to ", mail("Objection"), "."] },
         ] } },

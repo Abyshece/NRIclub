@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import * as api from "./supabaseApi";
 import LogoMark from "./LogoMark";
 import { slug } from "./content/slug";
@@ -7,7 +7,10 @@ import { findCity } from "./content/findCity";
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT } from "./content/home";
 import { hasImprint } from "./content/imprint";
 import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
-import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, TRICOLOUR_LINE, HERO_GLOW, AMBASSADOR_MAIL, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
+import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, TRICOLOUR_LINE, HERO_GLOW, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
+
+// The ambassador application form, loaded when it is opened.
+const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
 
 // ============================================================================
 // LANDING PAGE: what NRIClub is for, before anyone signs up. Everything is
@@ -154,6 +157,7 @@ export default function LandingPage({ onJoin, onLogin }) {
   const [groups, setGroups] = useState([]); // [{ city, members }]: the live city groups
   const [cityQuery, setCityQuery] = useState("");
   const [guides, setGuides] = useState(null); // all guides, loaded after the page (they're long)
+  const [applying, setApplying] = useState(false); // the ambassador application form is open
   useEffect(() => {
     api.getPublicCities().then((rows) => { if (Array.isArray(rows)) setGroups(rows); }).catch(() => {});
     import("./content/essentials").then((m) => setGuides(m.ESSENTIALS)).catch(() => {});
@@ -351,8 +355,7 @@ export default function LandingPage({ onJoin, onLogin }) {
                 <a href={whatsappShare(SHARE_TEXT)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", padding: "10px 8px", color: INK, fontWeight: 600 }}>Know Indians abroad? Share NRIClub on WhatsApp</a>
               </p>
               <p style={{ fontSize: 14, color: MUTED, margin: "6px 0 0" }}>
-                Know your city well? <a href={AMBASSADOR_MAIL} style={{ display: "inline-block", padding: "10px 4px", color: INK, fontWeight: 600 }}>Become its ambassador</a>
-                <br />or write to {SUPPORT_EMAIL}
+                Know your city well? <button type="button" onClick={() => setApplying(true)} style={{ display: "inline-block", padding: "10px 4px", minHeight: 44, color: INK, fontWeight: 600, fontSize: "inherit", fontFamily: "inherit", background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>Become its ambassador</button>
               </p>
             </div>
           </div>
@@ -388,6 +391,11 @@ export default function LandingPage({ onJoin, onLogin }) {
         </div>
         <span>Made for Indians everywhere</span>
       </footer>
+      {applying && (
+        <Suspense fallback={null}>
+          <AmbassadorApply onClose={() => setApplying(false)} onJoin={onJoin} />
+        </Suspense>
+      )}
     </div>
   );
 }

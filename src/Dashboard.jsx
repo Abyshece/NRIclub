@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { Fragment, lazy, Suspense, useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import * as api from "./supabaseApi";
 import LogoMark from "./LogoMark";
 import "./member/base.css";
@@ -15,9 +15,12 @@ import { upcomingFestival } from "./festivals";
 import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
 import ReportDialog from "./member/ReportDialog";
-import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview } from "./member/profile";
+import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview, countryName } from "./member/profile";
 import { findCity } from "./content/findCity";
 import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
+
+// The application to be a city ambassador, loaded when it is opened.
+const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
 
 
 // ============================================================================
@@ -1243,6 +1246,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [reportedIds, setReportedIds] = useState(new Set());
   // A message from our team opened from the bell (TeamMessageDialog).
   const [teamMessage, setTeamMessage] = useState(null);
+  // The ambassador application form, while open: { city } (the city to fill in).
+  const [ambassadorApply, setAmbassadorApply] = useState(null);
   const [selectedMarketItem, setSelectedMarketItem] = useState(null);
   const [expandedMarketItem, setExpandedMarketItem] = useState(null);
   const [marketPhotoIdx, setMarketPhotoIdx] = useState(0);
@@ -2878,6 +2883,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       ))}
                     </div>
                   )}
+                  {selectedGroup.category === "City" && placesCity && cityAmbassadors.city === placesCity && (user.ambassadorCity || "").toLowerCase() !== placesCity.toLowerCase() && (
+                    <p style={{ margin: "10px 0 0", fontSize: 12, color: "#5F5E5B", fontFamily: font }}>
+                      {cityAmbassadors.list.length ? "Know the city well?" : `${placesCity} has no ambassador yet.`}{" "}
+                      <button type="button" onClick={() => setAmbassadorApply({ city: placesCity })} style={{ background: "none", border: "none", padding: "8px 2px", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#000080", textDecoration: "underline", fontFamily: font }}>
+                        Become {cityAmbassadors.list.length ? "an" : "its"} ambassador
+                      </button>
+                    </p>
+                  )}
 
                   {/* Community Guidelines: one quiet line, open by default only for visitors */}
                   <button onClick={() => setGuidelinesOpen(prev => ({ ...prev, [selectedGroup.id]: !guidelinesShown }))} aria-expanded={guidelinesShown}
@@ -4261,7 +4274,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </span>
                 )}
               </div>
-              {user.ambassadorCity && <div style={{ marginTop: 12 }}><AmbassadorBadge city={user.ambassadorCity} /></div>}
+              {user.ambassadorCity
+                ? <div style={{ marginTop: 12 }}><AmbassadorBadge city={user.ambassadorCity} /></div>
+                : user.status !== "blocked" && <button type="button" onClick={() => setAmbassadorApply({ city: user.city || "" })} style={{ marginTop: 12, background: "none", border: "1px dashed #C7D2FE", borderRadius: 20, padding: "5px 12px", minHeight: 32, fontSize: 12, color: "#000080", cursor: "pointer", fontFamily: font }}>Become a city ambassador</button>}
               {!user.hasTopics ? null : user.askMeAbout
                 ? <div style={{ marginTop: 14 }}><p style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Ask me about</p><TopicChips text={user.askMeAbout} center /></div>
                 : <button type="button" onClick={() => openProfileEditor("askMeAbout")} style={{ marginTop: 14, background: "none", border: "1px dashed #C7D2FE", borderRadius: 20, padding: "5px 12px", fontSize: 12, color: "#3730A3", cursor: "pointer", fontFamily: font }}>+ Add what people can ask you about</button>}
@@ -5840,6 +5855,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Profile Preview Modal */}
       {teamMessage && <TeamMessageDialog notification={teamMessage} font={font} onClose={() => setTeamMessage(null)} />}
+
+      {/* Become a city ambassador: the member applies with their account's name and email */}
+      {ambassadorApply && (
+        <Suspense fallback={null}>
+          <AmbassadorApply
+            account={{ name: user.name, email: user.email, city: user.city, country: countryName(user.countryCode), linkedinUrl: user.linkedinUrl }}
+            city={ambassadorApply.city} onClose={() => setAmbassadorApply(null)} />
+        </Suspense>
+      )}
 
       {/* Report: the same dialog for everything that can be reported */}
       {reportConfirm && (
