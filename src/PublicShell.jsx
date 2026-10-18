@@ -12,11 +12,16 @@ import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
 
 export const INK = "#37352F";
 export const MUTED = "#6B6A67";
-// Saffron and green are brand colours, each used on its own. Never put them
-// together with white as bands or stripes, and never use a wheel: that reads
-// as the Indian flag, which may not be used as a mark (see src/content/logo.js).
+// Saffron and green are brand colours. The founder chose (October 2026) to
+// keep a little of the tricolour as decoration: the thin gradient line at the
+// top of pages (TRICOLOUR_LINE) and the soft glows behind the hero. Keep it
+// that small: never in the logo, never as hard flag bands, never with a wheel
+// or emblem (the flag may not be used as a mark: § 6a MarkenG, and
+// src/content/logo.js).
 export const SAFFRON = "#FF9933";
 export const GREEN = "#138808";
+export const TRICOLOUR_LINE = `linear-gradient(90deg, ${SAFFRON}, #FFFFFF 50%, ${GREEN})`;
+export const HERO_GLOW = "radial-gradient(700px 360px at 0% 0%, rgba(255,153,51,0.10), transparent 70%), radial-gradient(600px 360px at 100% 10%, rgba(19,136,8,0.07), transparent 70%)";
 export const NAVY = "#000080";
 // Saffron and green dark enough to read as text (4.5:1 or more on white and
 // on #FAFAF8); the bright ones are for lines, dots and fills.
@@ -79,10 +84,10 @@ export default function PublicShell({ onLogin, onJoin, loginLabel, hero, childre
   return (
     <div className="pub-root" style={{ minHeight: "100vh", background: "#fff", color: INK, fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
       <style>{`.pub-root { overflow-x: hidden; overflow-x: clip; }`}</style>
-      <div aria-hidden="true" style={{ height: 4, background: SAFFRON }} />
+      <div aria-hidden="true" style={{ height: 4, background: TRICOLOUR_LINE }} />
       <PublicNav onLogin={onLogin} onJoin={onJoin} loginLabel={loginLabel} />
       <main>
-        <div style={{ background: "radial-gradient(700px 360px at 0% 0%, rgba(255,153,51,0.10), transparent 70%)" }}>
+        <div style={{ background: HERO_GLOW }}>
           {hero}
         </div>
         {children}

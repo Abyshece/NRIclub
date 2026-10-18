@@ -7,7 +7,7 @@ import { findCity } from "./content/findCity";
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT } from "./content/home";
 import { hasImprint } from "./content/imprint";
 import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
-import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, AMBASSADOR_MAIL, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
+import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, TRICOLOUR_LINE, HERO_GLOW, AMBASSADOR_MAIL, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
 
 // ============================================================================
 // LANDING PAGE: what NRIClub is for, before anyone signs up. Everything is
@@ -214,12 +214,12 @@ export default function LandingPage({ onJoin, onLogin }) {
       `}</style>
 
       {/* A thin saffron line across the top (one colour: never flag stripes) */}
-      <div aria-hidden="true" style={{ height: 4, background: SAFFRON }} />
+      <div aria-hidden="true" style={{ height: 4, background: TRICOLOUR_LINE }} />
       <PublicNav onLogin={onLogin} onJoin={onJoin} />
 
       <main>
         {/* HERO */}
-        <section aria-labelledby="lp-title" style={{ background: "radial-gradient(800px 400px at 0% 0%, rgba(255,153,51,0.10), transparent 70%)" }}>
+        <section aria-labelledby="lp-title" style={{ background: HERO_GLOW }}>
           <div className="lp-hero" style={{ ...section, paddingTop: "clamp(24px, 6vh, 64px)", paddingBottom: 24 }}>
             <div>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px 6px 8px", borderRadius: 999, background: "#fff", border: "1px solid #ECEBE8", fontSize: 13, fontWeight: 500, color: MUTED, marginBottom: 24 }}>
