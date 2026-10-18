@@ -12,6 +12,7 @@
 | `src/App.jsx` | The frontend |
 | `src/content/legal/` | The Terms of Use, the Privacy Policy, the Art. 9 consent wording and the reporting texts (shown at nriclub.app/terms and /privacy and in the app) |
 | `src/content/imprint.js` | The Impressum, and the operator details the Terms and the Privacy Policy show |
+| `src/content/whatson.js` | The list of other organisers' events in Germany at nriclub.app/whats-on (see "What's on") |
 | `vercel.json` | Hosting rules and the security headers (Content-Security-Policy and others) |
 | `docs/compliance/` | Records the operator must keep (GDPR, Digital Services Act) and questions for the lawyer |
 | `.env.example` | The environment variables the app needs |
@@ -385,6 +386,33 @@ in the admin panel under **Ambassadors**.
    after 12 months: part of the monthly routine
    (`docs/compliance/deletion-routine.md`) until `private.daily_cleanup()`
    is scheduled.
+
+## What's on: other organisers' events in Germany
+
+nriclub.app/whats-on lists Indian events in Germany that other organisers run
+(temples, associations, student groups, promoters), so a shared link shows
+something useful before anyone signs up. The same list feeds the "What's on in
+[city]" block on the city pages and "Also on in Germany" under Events in the
+app. No database is involved: the list is `WHATS_ON` in
+`src/content/whatson.js`, and a deploy publishes it.
+
+1. **Add an event:** copy the item shape from the top of
+   `src/content/whatson.js` (id, title, category, start, city, organiser,
+   summary and url are required). Take the facts from the organiser's own
+   page, write the summary in your own words (160 characters at most), and
+   leave out a price or time you can't confirm. The url must be the
+   organiser's page or ticket page, https only.
+2. **Build:** `npx vite build` checks every item and stops with a list of
+   mistakes (a missing field, a date that isn't YYYY-MM-DD, a non-https
+   address, a long summary, an id used twice, "organizer" spelled the US
+   way). Past events never show (the build leaves them out, and the browser
+   drops any that end after the deploy); the build warns when some are
+   still in the list, so delete them now and then.
+3. **Redeploy every week or two** while the list is in use, so the page's
+   HTML (what link previews and search engines see) stays current.
+4. Organisers can send events to hello@nriclub.app (the page asks them to).
+   Listing is free and at our discretion; remove an event when an organiser
+   asks.
 
 ## Before inviting the public
 

@@ -14,6 +14,10 @@ export const TRUST_LINE = "Free · Our team checks every new member · Your phon
 // world (a city with 5 or more members moves to the front).
 export const POPULAR_CITIES = ["London", "Toronto", "New York City", "Dubai", "Singapore", "Sydney", "San Francisco", "Melbourne", "Doha", "Frankfurt", "Berlin", "Auckland"];
 
+// Under the city buttons: the way to What's on (Indian events in Germany by
+// other organisers, /whats-on). The second part is the link.
+export const WHATS_ON_TEASER = ["Living in Germany?", "See what's on: Diwali, Garba nights, concerts and more →"];
+
 // The guides listed on the homepage (by slug, from essentials.js).
 export const FEATURED_GUIDES = [
   "your-first-weeks-abroad-a-checklist",
