@@ -3303,10 +3303,12 @@ def ambassador_applications():
           "member_id IS NULL, decided_at IS NULL) FROM private.ambassador_applications WHERE email = 'anita.applicant@example.org'",
           expect="Anita Applicant|anita.applicant@example.org|Hamburg|Germany|Universität Hamburg|"
                  "https://www.linkedin.com/in/anita-a|1_2|new|t|t")
-    check("... and every admin is told in the app, with a link to the application", f"""
-          SELECT (count(DISTINCT n.user_id) = {admins})::text || '|' || bool_and(n.text LIKE 'New application to be the ambassador for Hamburg (A-%) from Anita Applicant.%')
+    check("... and every admin is told in the app, with a link to the application (the city and reference, "
+          "not the applicant's name: the notice outlives the application)", f"""
+          SELECT (count(DISTINCT n.user_id) = {admins})::text || '|' || bool_and(n.text LIKE 'New application to be the ambassador for Hamburg (A-%). %')
+            || '|' || bool_and(n.text NOT LIKE '%Anita%' AND n.text NOT LIKE '%anita%')
           FROM notifications n JOIN private.ambassador_applications a ON a.id = n.reference_id
-          WHERE n.type = 'alert' AND a.email = 'anita.applicant@example.org'""", expect="true|true")
+          WHERE n.type = 'alert' AND a.email = 'anita.applicant@example.org'""", expect="true|true|true")
     check("signed out, nobody can read the applications", "SELECT count(*) FROM private.ambassador_applications",
           role="anon", expect="error")
     check("... nor the counters behind the limits", "SELECT count(*) FROM private.ambassador_application_log",
@@ -3346,11 +3348,37 @@ def ambassador_applications():
     check("... (none of those was kept)",
           "SELECT count(*) FROM private.ambassador_applications WHERE email LIKE 'form.check%' OR email LIKE 'eve@%'",
           expect="0")
+    check("a name of 2 million characters is refused at once (it is cut before it is cleaned)",
+          "SELECT public.submit_ambassador_application(repeat('x', 2000000), 'long.name@example.org', 'Berlin', "
+          f"'Germany', '', '', {q(motivation)}, '1_2')", role="anon", error_has="Please give your name (up to 200 characters)")
+    check("the country as the form's list names it, with a curly apostrophe (Côte d’Ivoire), is taken; "
+          "a curly apostrophe in the city (as phones type it) counts as a straight one",
+          f"SELECT {apply(email='kofi.k@example.org', city='Val-d’Or', country='Côte d’Ivoire')} LIKE 'A-%'; RESET ROLE; "
+          "SELECT city || '|' || country FROM private.ambassador_applications WHERE email = 'kofi.k@example.org'",
+          role="anon", expect="t\nVal-d'Or|Côte d’Ivoire")
 
     # --- one open application per email address and per member ----------------------
-    check("one open application per email address: the same address in another form is refused",
-          f"SELECT {apply(email='Anita.Applicant+again@Example.org')}", role="anon",
-          error_has="An application from this email address is already waiting for our team.")
+    check("one open application per email address: the same address in another form gets no reference "
+          "(the form says it's already waiting) and nothing is saved",
+          f"SELECT ({apply(email='Anita.Applicant+again@Example.org')}) IS NULL; RESET ROLE; "
+          "SELECT count(*) FROM private.ambassador_applications WHERE email LIKE 'anita.applicant%'", role="anon",
+          expect="t\n1")
+    probe = "probe.target@example.org"
+    check("a visitor applies (probe test)", f"SELECT {apply(email=probe)} LIKE 'A-%'", role="anon", expect="t")
+    check("... that answer uses up one of the day's applications from the address, so it can't be used to test "
+          "an address again and again: two more answers, then the limit",
+          f"SELECT ({apply(email=probe)}) IS NULL; SELECT ({apply(email=probe.upper())}) IS NULL", role="anon",
+          expect="t\nt")
+    check("... (the 4th try from that address the same day)", f"SELECT {apply(email=probe)}", role="anon",
+          error_has="You've sent several applications today.")
+    check("... and from the internet address it came from", """
+          DO $$BEGIN PERFORM set_config('request.headers', '{"cf-connecting-ip": "192.0.2.77"}', false); END$$;"""
+          f"SELECT ({apply(email='Anita.Applicant@example.org')}) IS NULL; RESET ROLE; "
+          "SELECT count(*) FROM private.ambassador_application_log WHERE key = private.limit_key('ambassador-ip', '192.0.2.77')",
+          role="anon", expect="t\n1")
+    check("... (still one application from each address)",
+          "SELECT count(*) FROM private.ambassador_applications WHERE email IN ('probe.target@example.org', "
+          "'anita.applicant@example.org') GROUP BY email ORDER BY email", expect="1\n1")
     check("asha applies signed in: her account's name and email address are used, and it is linked to her",
           f"SELECT {apply(name='Someone Else', email='someone.else@example.org', city='Berlin')} LIKE 'A-%'",
           as_user=asha, expect="t")
@@ -3359,9 +3387,8 @@ def ambassador_applications():
     check("... a second one while the first is open is refused, with its reference",
           f"SELECT {apply(email='asha.other@example.org', city='Potsdam')}", as_user=asha,
           error_has="You've already applied (reference A-")
-    check("... so is one signed out with her account's address",
-          f"SELECT {apply(email='asha@example.com')}", role="anon",
-          error_has="An application from this email address is already waiting")
+    check("... so is one signed out with her account's address (no reference)",
+          f"SELECT ({apply(email='asha@example.com')}) IS NULL", role="anon", expect="t")
     check("a member waiting for review can apply too (linked)", f"SELECT {apply(city='Munich')} LIKE 'A-%'",
           as_user=bina, expect="t")
     check("chet applies for Frankfurt am Main", f"SELECT {apply(city='Frankfurt am Main', hours='3_5')} LIKE 'A-%'",
@@ -3376,6 +3403,17 @@ def ambassador_applications():
     check("... nor list them", "SELECT public.admin_ambassador_applications()", as_user=asha, error_has="Admins only")
     check("... nor change one", f"SELECT public.admin_update_ambassador_application(gen_random_uuid(), 'accepted')",
           as_user=chet, error_has="Admins only")
+    mfa_on = ("BEGIN; UPDATE private.app_settings SET value = 'true' WHERE key = 'admin_mfa_required'; SET ROLE authenticated; "
+              "SELECT set_config('request.jwt.claims', '{\"sub\": \"" + ADMIN + "\", \"role\": \"authenticated\", \"aal\": \"%s\"}', false) IS NULL; ")
+    check("with two-step login required, an admin signed in with the password only can't list applications",
+          (mfa_on % "aal1") + "SELECT public.admin_ambassador_applications()", error_has="Admins only")
+    check("... nor change one",
+          "SELECT set_config('amb.id', (SELECT id::text FROM private.ambassador_applications "
+          "WHERE email = 'anita.applicant@example.org'), false) IS NULL; " + (mfa_on % "aal1")
+          + "SELECT public.admin_update_ambassador_application(current_setting('amb.id')::uuid, 'declined')",
+          error_has="Admins only")
+    check("... signed in with the code, they can",
+          (mfa_on % "aal2") + "SELECT (public.admin_ambassador_applications()->>'total')::int > 0", expect="f\nt")
     check("\"Download my data\" has the member's own applications, without our team's note",
           "SELECT jsonb_array_length(d->'ambassador_applications') || '|' || (SELECT string_agg(k, ',' ORDER BY k) "
           "FROM jsonb_object_keys(d->'ambassador_applications'->0) k) || '|' || (d->'ambassador_applications'->0->>'city') "
@@ -3445,6 +3483,8 @@ def ambassador_applications():
           as_user=ADMIN, expect="Bina B|pending")
     check("fay (a member) applies signed out with her account's address", f"SELECT {apply(email='fay@example.com')} LIKE 'A-%'",
           role="anon", expect="t")
+    check("... signed in, she is told her address has already applied (it's her own)",
+          f"SELECT {apply(city='Bonn')}", as_user=fay, error_has="An application from this email address is already waiting")
     check("... the list says an account uses that address, without linking it",
           "SELECT (e->'member' = 'null'::jsonb)::text || '|' || (e->'email_member'->>'name') FROM jsonb_array_elements("
           "public.admin_ambassador_applications('new', 200)->'applications') e WHERE e->>'email' = 'fay@example.com'",

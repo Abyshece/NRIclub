@@ -52,9 +52,8 @@ updates each have one file to run in the SQL editor, in date order, in
 afterwards). Compliance round 1 is
 `2026-10-19-compliance-round1/run_in_sql_editor.sql`; compliance round 2 is
 `2026-10-21-compliance-round2/run_in_sql_editor.sql` (see "Compliance round
-2: what to do, in order" below). The ambassador applications update needs
-no separate file: run the migration itself,
-`supabase/migrations/20261024000000_ambassador_applications.sql` (see
+2: what to do, in order" below); applications to be a city ambassador are
+`2026-10-24-ambassador-applications/run_in_sql_editor.sql` (see
 "Ambassador applications: what to do" below). Since round 1, the site goes
 live first and the SQL runs right after, the same day: the site works with
 the database before and after the update.
@@ -366,10 +365,15 @@ in the admin panel under **Ambassadors**.
    offers the same application as a prefilled email to hello@nriclub.app,
    as before.
 2. **The same day:** run
-   `supabase/migrations/20261024000000_ambassador_applications.sql` in the
-   SQL editor, the whole file at once. It refuses to run before compliance
-   round 2, and a second time. If the admin panel still says Ambassadors
-   isn't available a few minutes later, run `NOTIFY pgrst, 'reload schema';`.
+   `supabase/oneoff/2026-10-24-ambassador-applications/run_in_sql_editor.sql`
+   in the SQL editor, the whole file at once (it is the migration
+   `20261024000000_ambassador_applications.sql` with a check in front). It
+   refuses to run before the compliance round 2 file, and a second time.
+   The message under the result says how many admins will be told about new
+   applications. If the admin panel still says Ambassadors isn't available
+   a few minutes later, run `NOTIFY pgrst, 'reload schema';`. Then, signed
+   out, send a test application from the homepage, check that it shows under
+   **Ambassadors**, and decline it.
 3. **Handling an application:** open it under **Ambassadors**, click
    **Reply by email** (a prefilled email from hello@nriclub.app), then
    **Contacted**. After talking to them, **Accept…** or **Decline…**.

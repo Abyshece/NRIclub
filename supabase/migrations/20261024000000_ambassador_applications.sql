@@ -10,8 +10,10 @@
 --     One open application (new or contacted) per member and per email
 --     address. At most 3 a day from one email address and 10 a day from one
 --     internet address (kept only as a coded form, for a day), and 50 a day
---     in all. Every admin gets an in-app notice ('alert', as for reports
---     from the public report page).
+--     in all; a visitor told that an address has already applied uses up
+--     one of these too, so the form can't be used to test address after
+--     address. Every admin gets an in-app notice ('alert', as for reports
+--     from the public report page) with the city and the reference only.
 --   * The admin panel (Ambassadors) lists the applications, newest first,
 --     by status and a page at a time (public.admin_ambassador_applications),
 --     and marks them contacted, accepted or declined, with a note
@@ -141,23 +143,30 @@ $$;
 -- ============================================================================
 
 -- An application from the form. Returns its reference code (e.g.
--- "A-7F3A92C1"). Signed in, the account's name and email address are used
--- (p_name and p_email only if the account has none) and the application is
--- linked to the account. The sender's internet address and the limits work
--- as for public.submit_notice (2026-10-21): the address Cloudflare passes on
+-- "A-7F3A92C1"), or NULL when a visitor (not signed in) sends one from an
+-- email address that already has an open application: nothing is saved,
+-- and the form says the application is already waiting. (Raising an error
+-- would undo the count, so the answer could be used, free, to test whether
+-- an address has applied; this way it counts towards the limits below.)
+-- Signed in, the account's name and email address are used (p_name and
+-- p_email only if the account has none) and the application is linked to
+-- the account. The sender's internet address and the limits work as for
+-- public.submit_notice (2026-10-21): the address Cloudflare passes on
 -- (CF-Connecting-IP), else the first one in X-Forwarded-For; an IPv6 address
 -- counts by its /64 network; since those headers can't be fully trusted, at
 -- most 50 applications a day are taken in all, after which the form points
--- to email.
+-- to email. Curly apostrophes (as phones type them: "St. John’s") count as
+-- straight ones in the city; the country may have one ("Côte d’Ivoire", as
+-- the form's list names it).
 CREATE FUNCTION public.submit_ambassador_application(p_name TEXT, p_email TEXT, p_city TEXT, p_country TEXT,
   p_organisation TEXT DEFAULT '', p_linkedin_url TEXT DEFAULT '', p_motivation TEXT DEFAULT '',
   p_hours_per_week TEXT DEFAULT '')
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   uid UUID := auth.uid();
-  v_name TEXT := LEFT(private.clean_name(p_name), 1000);
+  v_name TEXT := private.clean_name(LEFT(COALESCE(p_name, ''), 1000));
   v_email TEXT := lower(btrim(LEFT(COALESCE(p_email, ''), 1000)));
-  v_city TEXT := btrim(regexp_replace(LEFT(COALESCE(p_city, ''), 1000), '\s+', ' ', 'g'));
+  v_city TEXT := btrim(regexp_replace(translate(LEFT(COALESCE(p_city, ''), 1000), '‘’', ''''''), '\s+', ' ', 'g'));
   v_country TEXT := btrim(regexp_replace(LEFT(COALESCE(p_country, ''), 1000), '\s+', ' ', 'g'));
   v_organisation TEXT := btrim(regexp_replace(LEFT(COALESCE(p_organisation, ''), 1000), '\s+', ' ', 'g'));
   v_linkedin TEXT := btrim(LEFT(COALESCE(p_linkedin_url, ''), 1000));
@@ -202,7 +211,7 @@ BEGIN
   IF NOT private.is_city_name(v_city) THEN
     RAISE EXCEPTION 'Please give the name of your city (letters only, up to 60 characters).' USING ERRCODE = 'P0001';
   END IF;
-  IF v_country !~ '^[[:alpha:]À-ɏḀ-ỿ .,''()&-]{2,60}$' THEN
+  IF v_country !~ '^[[:alpha:]À-ɏḀ-ỿ .,''’()&-]{2,60}$' THEN
     RAISE EXCEPTION 'Please choose your country.' USING ERRCODE = 'P0001';
   END IF;
   IF char_length(v_organisation) > 200 THEN
@@ -273,8 +282,16 @@ BEGIN
   IF EXISTS (SELECT 1 FROM private.ambassador_applications a
              WHERE private.canonical_email(a.email) = private.canonical_email(v_email)
                AND a.status IN ('new', 'contacted')) THEN
-    RAISE EXCEPTION 'An application from this email address is already waiting for our team. We''ll write to you soon; if something has changed, write to hello@nriclub.app.'
-      USING ERRCODE = 'P0001';
+    IF uid IS NOT NULL THEN
+      -- (The account's own address.)
+      RAISE EXCEPTION 'An application from this email address is already waiting for our team. We''ll write to you soon; if something has changed, write to hello@nriclub.app.'
+        USING ERRCODE = 'P0001';
+    END IF;
+    -- A visitor: the answer uses up one of the day's applications from this
+    -- email and internet address, like an application.
+    INSERT INTO private.ambassador_application_log (key)
+    SELECT k FROM unnest(ARRAY[email_key, ip_key]) k WHERE k IS NOT NULL;
+    RETURN NULL;
   END IF;
 
   LOOP
@@ -287,8 +304,9 @@ BEGIN
   RETURNING id INTO v_id;
   INSERT INTO private.ambassador_application_log (key)
   SELECT k FROM unnest(ARRAY[email_key, ip_key]) k WHERE k IS NOT NULL;
-  PERFORM private.alert_admins('New application to be the ambassador for ' || v_city || ' (' || v_ref || ') from '
-    || v_name || '. Please look at it in the admin panel (Ambassadors) and write to them.', v_id);
+  -- (Without the applicant's name: the notice outlives the application.)
+  PERFORM private.alert_admins('New application to be the ambassador for ' || v_city || ' (' || v_ref
+    || '). Please look at it in the admin panel (Ambassadors) and write to the applicant.', v_id);
   RETURN v_ref;
 END;
 $$;

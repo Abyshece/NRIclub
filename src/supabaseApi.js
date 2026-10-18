@@ -1877,12 +1877,17 @@ export async function submitNotice({ location, category, explanation, name, emai
 // An application to be a city ambassador (anyone; a member who is signed
 // in applies with their account's name and email address, and the
 // application is linked to the account). Returns its reference code
-// ("A-7F3A92C1"). Before the 2026-10-24 database update there's nowhere to
-// send it: throws an error with notAvailable, and the form offers the same
-// application by email.
+// ("A-7F3A92C1"). The database answers null when a visitor's email address
+// already has an open application (nothing is saved): throws an error with
+// that in userMessage. Before the 2026-10-24 database update there's nowhere
+// to send it: throws an error with notAvailable, and the form offers the
+// same application by email.
+export const AMBASSADOR_ALREADY_WAITING = "An application from this email address is already waiting for our team. We'll write to you soon; if something has changed, write to hello@nriclub.app.";
+
 export async function submitAmbassadorApplication({ name, email, city, country, organisation = "", linkedinUrl = "", motivation, hoursPerWeek }) {
+  let ref;
   try {
-    return await restCall("POST", "/rest/v1/rpc/submit_ambassador_application", {
+    ref = await restCall("POST", "/rest/v1/rpc/submit_ambassador_application", {
       p_name: name, p_email: email, p_city: city, p_country: country, p_organisation: organisation,
       p_linkedin_url: linkedinUrl, p_motivation: motivation, p_hours_per_week: hoursPerWeek,
     });
@@ -1894,6 +1899,12 @@ export async function submitAmbassadorApplication({ name, email, city, country, 
     }
     throw err;
   }
+  if (typeof ref !== "string" || !ref) {
+    const e = new Error("Already waiting");
+    e.userMessage = AMBASSADOR_ALREADY_WAITING;
+    throw e;
+  }
+  return ref;
 }
 
 export async function blockUser(userId) {

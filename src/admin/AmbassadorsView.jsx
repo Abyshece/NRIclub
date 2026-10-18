@@ -96,6 +96,10 @@ function DecisionDialog({ app, kind, onCancel, onDone }) {
   else if (canBe) text = `${who} is an approved member: they become the ambassador for the city below. Members see the badge on their profile and in the city's group. This is recorded.`;
   else if (app.member) text = `${who}'s account isn't approved yet (${memberState(app.member)}), so they won't be the ambassador yet. The application is marked accepted; once they're approved, click Make ambassador here, or use Members.`;
   else text = `${who} has no NRIClub account. The application is marked accepted: write to them to join NRIClub, and once they're approved, make them ambassador under Members.`;
+  // A member is ambassador for one city at a time.
+  if (accept && canBe && app.member.ambassador_city && !sameCity(app.member.ambassador_city, city)) {
+    text += ` They're the ambassador for ${app.member.ambassador_city} now: this replaces it.`;
+  }
   return (
     <ConfirmDialog wide tone={accept ? "primary" : "danger"} busy={busy} error={error} onCancel={onCancel} onConfirm={confirm}
       title={accept ? (app.status === "accepted" ? `Make ${firstName(who)} ambassador?` : `Accept ${firstName(who)}'s application?`) : `Decline ${firstName(who)}'s application?`}
