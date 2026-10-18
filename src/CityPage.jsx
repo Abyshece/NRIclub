@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import * as api from "./supabaseApi";
 import LogoMark from "./LogoMark";
 import PublicShell, { Phrases, useCanonical, INK, MUTED, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, whatsappShare } from "./PublicShell";
@@ -7,6 +7,8 @@ import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
 import { TRUST_LINE } from "./content/home";
 import { slug, HOME_TITLE } from "./content/slug";
+import { WHATS_ON, WHATS_ON_PATH, WHATS_ON_SHORT_NOTE, whatsOnCta, upcoming, todayInGermany, byCity } from "./content/whatson";
+import { CompactEvent } from "./WhatsOnItems";
 
 // ============================================================================
 // PUBLIC CITY PAGE (nriclub.app/city/<city>): what NRIClub has in one city,
@@ -16,6 +18,9 @@ import { slug, HOME_TITLE } from "./content/slug";
 // ============================================================================
 
 const titleCase = (s) => s.replace(/(^|[\s-])(\p{L})/gu, (_, p, c) => p + (c === "ß" ? c : c.toLocaleUpperCase()));
+// At most this many of the city's events from What's on (src/content/whatson.js).
+const CITY_EVENTS = 6;
+
 // Below this many members the page says the group is just starting. The
 // database doesn't give out smaller numbers of members or events either
 // (they come as null since the 2026-10-20 database update), so a page never
@@ -65,6 +70,10 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
 
   useCanonical(cityPath);
 
+  // What's on in the city (other organisers' events), soonest first.
+  const cityEvents = useMemo(() => byCity(city, upcoming(WHATS_ON, todayInGermany())), [city]);
+  const eventsPath = `${WHATS_ON_PATH}?city=${encodeURIComponent(citySlug)}`;
+
   useEffect(() => {
     document.title = `Indians in ${city} · NRIClub`;
     return () => { document.title = HOME_TITLE; };
@@ -109,6 +118,25 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
         <section style={{ ...section, paddingTop: 8, paddingBottom: 32 }}>
           <p style={{ margin: 0, padding: "16px 18px", borderRadius: 14, border: "1px solid #ECEBE8", background: "#FCFCFB", fontSize: 15, lineHeight: 1.6 }}>
             <strong>NRIClub {city} is just starting.</strong> Join now as one of its first members: the first members shape the group, its meetups and its list of desi places.
+          </p>
+        </section>
+      )}
+
+      {cityEvents.length > 0 && (
+        <section aria-labelledby="city-whats-on" style={{ ...section, paddingTop: 8, paddingBottom: 32 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+            <h2 id="city-whats-on" style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em", margin: 0 }}>What's on in {city}</h2>
+            <a href={eventsPath} style={{ display: "inline-block", padding: "10px 0", fontSize: 14, fontWeight: 600, color: INK }}>
+              See all{cityEvents.length > CITY_EVENTS ? ` ${cityEvents.length}` : ""}<span className="nc-sr-only"> events in {city}</span> →
+            </a>
+          </div>
+          <p style={{ fontSize: 13, color: MUTED, margin: "2px 0 8px", lineHeight: 1.5 }}>{WHATS_ON_SHORT_NOTE}</p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, borderBottom: "1px solid #F0EFED" }}>
+            {cityEvents.slice(0, CITY_EVENTS).map((e) => <CompactEvent key={e.id} event={e} href={`${eventsPath}#${encodeURIComponent(e.id)}`} />)}
+          </ul>
+          <p style={{ fontSize: 14, margin: "14px 0 0", lineHeight: 1.6 }}>
+            {whatsOnCta(city)}{" "}
+            <button type="button" onClick={onJoin} style={{ display: "inline-block", padding: "8px 2px", minHeight: 44, fontSize: 14, fontWeight: 600, color: INK, background: "none", border: "none", textDecoration: "underline", cursor: "pointer", fontFamily: "inherit" }}>Join free</button>
           </p>
         </section>
       )}

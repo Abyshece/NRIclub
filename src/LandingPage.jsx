@@ -4,7 +4,7 @@ import LogoMark from "./LogoMark";
 import { slug } from "./content/slug";
 import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
-import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT } from "./content/home";
+import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT, WHATS_ON_TEASER } from "./content/home";
 import { hasImprint } from "./content/imprint";
 import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
 import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, TRICOLOUR_LINE, HERO_GLOW, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
@@ -262,6 +262,10 @@ export default function LandingPage({ onJoin, onLogin }) {
               <a key={c} href={`/city/${slug(c)}`} style={{ display: "inline-flex", alignItems: "center", minHeight: 44, boxSizing: "border-box", fontSize: 14, padding: "0 16px", borderRadius: 999, border: "1px solid #C9C8C5", color: INK, textDecoration: "none", background: "#fff" }}>{c}</a>
             ))}
           </div>
+          {/* Also in the homepage's HTML (homeStatic in vite.config.js): keep both the same. */}
+          <p style={{ fontSize: 15, color: MUTED, margin: "20px 0 0" }}>
+            {WHATS_ON_TEASER[0]} <a href="/whats-on" style={{ display: "inline-block", padding: "10px 4px", color: INK, fontWeight: 600 }}>{WHATS_ON_TEASER[1]}</a>
+          </p>
         </section>
 
         {/* WHY NRICLUB */}
@@ -383,6 +387,7 @@ export default function LandingPage({ onJoin, onLogin }) {
         <Logo />
         <div style={{ display: "flex", flexWrap: "wrap" }}>
           <a href="/guides" style={footerLink}>NRI guides</a>
+          <a href="/whats-on" style={footerLink}>What's on in Germany</a>
           <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>
           <a href="/terms" style={footerLink}>Terms of Use</a>
           <a href="/privacy" style={footerLink}>Privacy Policy</a>

@@ -18,6 +18,8 @@ import ReportDialog from "./member/ReportDialog";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview, countryName } from "./member/profile";
 import { findCity } from "./content/findCity";
 import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
+import { WHATS_ON, WHATS_ON_NOTE, upcoming, todayInGermany, citySlug, eventCitySlug } from "./content/whatson";
+import { CompactEvent } from "./WhatsOnItems";
 
 // The application to be a city ambassador, loaded when it is opened.
 const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
@@ -695,6 +697,8 @@ const EmptyCard = ({ text, action, onAction }) => (
 //   /messages[/conversation id]  /profile  /u/<member id>  /post/<post id>
 //   /city/<city> (the public city page's address; members get its group)
 //   /guides[/<slug>] (the public guides; members get them in Guides)
+//   /whats-on[#<id>] (the public list of other organisers' events; members
+//     get Events, with the same list under "Also on in Germany")
 //   /mentoring (your sessions and settings)  /mentors (Find → Mentors)
 const parsePath = (path, selfId) => {
   const [, a = "", b = ""] = (path || "/").split("/");
@@ -713,11 +717,74 @@ const parsePath = (path, selfId) => {
     case "post": return { view: "home", post: id || null };
     case "city": return { view: "groups", pending: id ? { kind: "city", id } : null };
     case "guides": return { view: "docs", pending: id ? { kind: "guide", id } : null };
+    case "whats-on": return { view: "events" };
     case "mentoring": return { view: "mentoring" };
     case "mentors": return { view: "network", findTab: "mentors" };
     case "impressum": return { view: "home", legal: hasImprint() ? "impressum" : null };
     default: return { view: "home" };
   }
+};
+
+// The event a shared /whats-on#<id> link points at (see parsePath), read
+// before the address becomes /events.
+const whatsOnTarget = () => {
+  try { return /^\/whats-on\/?$/.test(window.location.pathname) ? decodeURIComponent(window.location.hash.slice(1)) : ""; } catch (e) { return ""; }
+};
+
+// Events in Germany that other organisers run (src/content/whatson.js),
+// under the members' own events: the member's city first, then the others.
+// `cityFilter` and `search` are the Events page's own filters.
+const OTHERS_FIRST = 8;
+let whatsOnShown = false; // the shared event was scrolled to (once per visit)
+const AlsoOnInGermany = ({ user, cityFilter, search, target, font }) => {
+  const [expanded, setExpanded] = useState(!!target);
+  const memberCity = (user.city || (user.location || "").split(",")[0] || "").trim();
+  const memberKey = citySlug(memberCity);
+  const filterKey = cityFilter && cityFilter !== "All" ? citySlug(cityFilter) : "";
+  const q = (search || "").trim().toLowerCase();
+  const all = upcoming(WHATS_ON, todayInGermany()).filter((e) => (!filterKey || eventCitySlug(e) === filterKey)
+    && (!q || [e.title, e.summary, e.organiser, e.city, e.venue, e.area].some((t) => (t || "").toLowerCase().includes(q))));
+  const isNear = (e) => !!memberKey && eventCitySlug(e) === memberKey;
+  const ordered = [...all.filter(isNear), ...all.filter((e) => !isNear(e))];
+  const shown = expanded ? ordered : ordered.slice(0, OTHERS_FIRST);
+  const near = shown.filter(isNear);
+  const rest = shown.filter((e) => !isNear(e));
+  const groups = near.length
+    ? [{ label: `In ${findCity(memberCity) || memberCity}`, events: near }, ...(rest.length ? [{ label: "Elsewhere in Germany", events: rest }] : [])]
+    : [{ label: "", events: rest }];
+
+  // A shared link to one of them: scroll to it once.
+  useEffect(() => {
+    if (!target || whatsOnShown) return;
+    const el = document.getElementById(`wo-${target}`);
+    if (!el) return;
+    whatsOnShown = true;
+    el.scrollIntoView({ block: "center" });
+  });
+
+  if (!all.length) return null;
+  const sub = { fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", margin: "16px 0 2px", fontFamily: font };
+  return (
+    <section aria-labelledby="also-on-title" style={{ marginTop: 28, background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "18px 20px 8px" }}>
+      <h3 id="also-on-title" style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font, margin: 0 }}>
+        Also on in Germany <span style={{ fontWeight: 500, color: "#787774" }}>(by other organisers)</span>
+      </h3>
+      <p style={{ fontSize: 12, color: "#787774", lineHeight: 1.55, fontFamily: font, margin: "4px 0 4px" }}>{WHATS_ON_NOTE}</p>
+      {groups.map((g) => (
+        <Fragment key={g.label || "all"}>
+          {g.label && <h4 style={sub}>{g.label}</h4>}
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {g.events.map((e) => <CompactEvent key={e.id} id={`wo-${e.id}`} event={e} Title="p" font={font} highlighted={e.id === target} />)}
+          </ul>
+        </Fragment>
+      ))}
+      {ordered.length > shown.length && (
+        <button type="button" onClick={() => setExpanded(true)} style={{ display: "block", width: "100%", minHeight: 44, margin: "4px 0 6px", background: "none", border: "none", borderTop: "1px solid #F0EFED", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>
+          Show {ordered.length - shown.length} more
+        </button>
+      )}
+    </section>
+  );
 };
 
 // onReportItem(target) opens the report dialog for one of the comments;
@@ -1053,6 +1120,7 @@ const STATUS_FIELDS = ["verificationStatus", "status", "reviewFlag", "termsVersi
 
 const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [startRoute] = useState(() => parsePath(window.location.pathname, user?.id));
+  const [whatsOnStart] = useState(whatsOnTarget); // /whats-on#<id>: that event, under Events
   const [findTab, setFindTab] = useState(startRoute.findTab || "people"); // Find: people | mentors
   const [view, setView] = useState(startRoute.view);
   // A group, event, doc or listing the address points at, opened once the
@@ -3492,9 +3560,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               );
             }) : (
               <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", color: "#9B9A97", fontSize: 14, fontFamily: font }}>
-                No events found.
+                No member events found.
               </div>
             )}
+            {eventViewMode === "all" && <AlsoOnInGermany user={user} cityFilter={eventCityFilter} search={eventSearch} target={whatsOnStart} font={font} />}
           </div>
         );
 

@@ -29,8 +29,10 @@ const GuidePage = lazy(() => import("./GuidePage"));
 const ImpressumPage = lazy(() => import("./ImpressumPage"));
 const LegalPage = lazy(() => import("./LegalPage"));
 const ReportPage = lazy(() => import("./ReportPage"));
+const WhatsOnPage = lazy(() => import("./WhatsOnPage"));
 
-// A public page's address: /city/<city>, /guides or /guides/<slug>.
+// A public page's address: /city/<city>, /guides, /guides/<slug> or
+// /whats-on (members who open it get Events, see Dashboard.jsx).
 const publicPage = () => {
   const path = window.location.pathname;
   const city = /^\/city\/([^/]+)/.exec(path);
@@ -43,6 +45,7 @@ const publicPage = () => {
   }
   const guide = /^\/guides(?:\/([a-z0-9-]+))?\/?$/.exec(path);
   if (guide) return { kind: "guide", slug: guide[1] || "" };
+  if (/^\/whats-on\/?$/.test(path)) return { kind: "whats-on" };
   if (/^\/impressum\/?$/.test(path) && hasImprint()) return { kind: "impressum" };
   return null;
 };
@@ -496,6 +499,7 @@ export default function App() {
       const login = () => setAuthState("login");
       if (page?.kind === "city") return <CityPage city={page.city} onJoin={join} onLogin={login} />;
       if (page?.kind === "guide") return <GuidePage slug={page.slug} onJoin={join} onLogin={login} />;
+      if (page?.kind === "whats-on") return <WhatsOnPage onJoin={join} onLogin={login} />;
       if (page?.kind === "impressum") return <ImpressumPage onJoin={join} onLogin={login} />;
       return <LandingPage onJoin={join} onLogin={login} />;
     };

@@ -4,10 +4,10 @@ import { hasImprint } from "./content/imprint";
 import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
 
 // ============================================================================
-// The frame of the public pages (city pages, guides and the legal pages): a
-// thin saffron line, a header that stays in view with Log in and Join free, a
-// hero, and a footer with the Terms, the Privacy Policy, the Impressum and
-// how to report illegal content.
+// The frame of the public pages (city pages, guides, What's on and the
+// legal pages): a thin saffron line, a header that stays in view with Log in
+// and Join free, a hero, and a footer with the Terms, the Privacy Policy, the
+// Impressum and how to report illegal content.
 // ============================================================================
 
 export const INK = "#37352F";
@@ -58,17 +58,19 @@ export function useCanonical(path) {
 
 // The bar along the top of the public pages; it stays in view while the page
 // scrolls (the page around it must not have overflow hidden, or it won't).
+// "What's on" shows where there's room for it (the footer always has it).
 export function PublicNav({ onLogin, onJoin, maxWidth = 1100, loginLabel = "Log in" }) {
   const btn = { fontSize: 14, fontWeight: 600, minHeight: 44, padding: "0 16px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
   return (
     <header style={{ position: "sticky", top: 0, zIndex: 20, background: "#fff", borderBottom: "1px solid #F0EFED" }}>
-      <style>{`html { scroll-padding-top: 72px; } @media (max-width: 359px) { .pub-logo-text { display: none; } }`}</style>
+      <style>{`html { scroll-padding-top: 72px; } @media (max-width: 359px) { .pub-logo-text { display: none; } } @media (max-width: 639px) { .pub-nav-link { display: none !important; } }`}</style>
       <nav aria-label="NRIClub" style={{ ...section, maxWidth, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 10, paddingBottom: 10 }}>
         <a href="/" aria-label="NRIClub home" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: INK, minHeight: 44 }}>
           <LogoMark size={28} />
           <span className="pub-logo-text" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></span>
         </a>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <a href="/whats-on" className="pub-nav-link" aria-current={/^\/whats-on\/?$/.test(window.location.pathname) ? "page" : undefined} style={{ display: "inline-flex", alignItems: "center", minHeight: 44, padding: "0 12px", fontSize: 14, fontWeight: 500, color: INK, textDecoration: "none", whiteSpace: "nowrap" }}>What's on</a>
           <button type="button" onClick={onLogin} style={{ ...btn, border: "1px solid #C9C8C5", background: "#fff", color: INK }}>{loginLabel}</button>
           {onJoin && <button type="button" onClick={onJoin} style={{ ...btn, border: "1px solid " + INK, background: INK, color: "#fff" }}>Join free</button>}
         </div>
@@ -94,6 +96,7 @@ export default function PublicShell({ onLogin, onJoin, loginLabel, hero, childre
         <div style={{ display: "flex", flexWrap: "wrap" }}>
           <a href="/" style={footerLink}>NRIClub home</a>
           <a href="/guides" style={footerLink}>NRI guides</a>
+          <a href="/whats-on" style={footerLink}>What's on in Germany</a>
           <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap" }}>

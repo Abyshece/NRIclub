@@ -7,7 +7,11 @@ import { ESSENTIALS } from './src/content/essentials.js';
 import { CITIES } from './src/content/cities.js';
 import { slug } from './src/content/slug.js';
 import { guideBlocks } from './src/content/guideBlocks.js';
-import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES } from './src/content/home.js';
+import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, WHATS_ON_TEASER } from './src/content/home.js';
+import {
+  WHATS_ON, CATEGORY_LABELS, WHATS_ON_PATH, WHATS_ON_TITLE, WHATS_ON_LEAD, WHATS_ON_DESCRIPTION, WHATS_ON_NOTE, WHATS_ON_SHORT_NOTE, WHATS_ON_SUBMIT,
+  whatsOnCta, validateWhatsOn, upcoming, todayInGermany, byCity, groupByMonth, whenText, placeText, whatsOnShareText,
+} from './src/content/whatson.js';
 import { logoMarkSvg } from './src/content/logo.js';
 import { IMPRINT, hasImprint, imprintSections } from './src/content/imprint.js';
 import { docToHtml, CONTACT_EMAIL } from './src/content/legal/doc.js';
@@ -46,8 +50,10 @@ function homeStatic() {
 .hs-logo{display:flex;align-items:center;gap:10px;min-height:44px;font-size:20px;font-weight:700;letter-spacing:-.02em;text-decoration:none}
 .hs-logo i{font-family:"Times New Roman",serif}
 .hs-navb{display:flex;gap:8px}
+.hs-navb{align-items:center}
 .hs-navb a{display:inline-flex;align-items:center;min-height:44px;padding:0 16px;box-sizing:border-box;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;border:1px solid #C9C8C5;white-space:nowrap}
-#home-static .hs-navb a+a,#home-static .hs-btn{background:#37352F;color:#fff;border-color:#37352F}
+#home-static .hs-navb a:last-child,#home-static .hs-btn{background:#37352F;color:#fff;border-color:#37352F}
+#home-static .hs-navb .hs-wo{border:0;padding:0 12px;font-weight:500}
 .hs-top{background:radial-gradient(700px 360px at 0% 0%,rgba(255,153,51,.10),transparent 70%),radial-gradient(600px 360px at 100% 10%,rgba(19,136,8,.07),transparent 70%)}
 .hs-hero{display:grid;grid-template-columns:1.05fr 1fr;gap:40px;align-items:center;padding-top:clamp(24px,6vh,64px);padding-bottom:24px}
 .hs-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px 6px 8px;border-radius:999px;background:#fff;border:1px solid #ECEBE8;font-size:13px;font-weight:500;color:#6B6A67;margin-bottom:24px}
@@ -67,13 +73,16 @@ function homeStatic() {
 #home-static h2{font-size:clamp(28px,4vw,40px);font-weight:700;letter-spacing:-.03em;line-height:1.15;margin:0 0 16px}
 .hs-links{list-style:none;padding:0;margin:0 auto;max-width:760px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .hs-links a{display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;padding:0 16px;border:1px solid #C9C8C5;border-radius:999px;font-size:14px;text-decoration:none}
+.hs-wot{font-size:15px;color:#6B6A67;margin:20px 0 0}
+.hs-wot a{display:inline-block;padding:10px 4px;font-weight:600}
 @media (max-width:860px){.hs-hero{grid-template-columns:1fr;text-align:center}.hs-lead{margin-left:auto;margin-right:auto}}
 @media (max-width:600px){.hs-map{display:none}}
+@media (max-width:639px){#home-static .hs-navb .hs-wo{display:none}}
 @media (max-width:359px){.hs-logo span{display:none}}`.replace(/\n/g, '');
   return `<div id="home-static"><style>${css}</style>`
     + `<div class="hs-line"></div>`
     + `<header class="hs-nav"><nav class="hs-w"><a class="hs-logo" href="/" aria-label="NRIClub home">${logoMarkSvg(28)}<span>NRI<i>Club</i></span></a>`
-    + `<span class="hs-navb"><a href="/" data-start="login">Log in</a><a href="/" data-start="signup">Join free</a></span></nav></header>`
+    + `<span class="hs-navb"><a class="hs-wo" href="${WHATS_ON_PATH}">What's on</a><a href="/" data-start="login">Log in</a><a href="/" data-start="signup">Join free</a></span></nav></header>`
     + `<main><section class="hs-top"><div class="hs-w hs-hero"><div>`
     + `<div class="hs-pill">${logoMarkSvg(18)} ${esc(HOME_PILL)}</div>`
     + `<h1>One home for<br>Indians abroad.</h1><p class="hs-lead">${esc(HOME_LEAD)}</p>`
@@ -83,7 +92,7 @@ function homeStatic() {
     + `<p class="hs-sub">Groups for ${CITIES.length} cities. Many are brand new: join early and help shape yours.</p>`
     + `<div class="hs-form" aria-hidden="true"><span class="hs-input">Your city, e.g. Munich</span><span class="hs-find">Find</span></div><ul class="hs-links">`
     + POPULAR_CITIES.map((c) => `<li><a href="/city/${slug(c)}">${esc(c)}</a></li>`).join('')
-    + `</ul></section><section class="hs-w hs-sec"><h2>Free NRI guides</h2><ul class="hs-links" style="margin-top:18px">`
+    + `</ul><p class="hs-wot">${esc(WHATS_ON_TEASER[0])} <a href="${WHATS_ON_PATH}">${esc(WHATS_ON_TEASER[1])}</a></p></section><section class="hs-w hs-sec"><h2>Free NRI guides</h2><ul class="hs-links" style="margin-top:18px">`
     + guides.map((g) => `<li><a href="/guides/${g.slug}">${esc(g.title)}</a></li>`).join('')
     + `<li><a href="/guides">All ${ESSENTIALS.length} guides</a></li></ul></section></main></div>`;
 }
@@ -120,6 +129,11 @@ function publicPages() {
       if (!hasImprint()) {
         this.warn('src/content/imprint.js has no name and address yet: no Impressum page, and the Terms and Privacy Policy say NRIClub is run by its founder in Germany.');
       }
+      // The What's on list: a missing field, a wrong date or address, a long
+      // summary or a repeated id stops the build with what to fix.
+      validateWhatsOn(WHATS_ON);
+      const past = WHATS_ON.length - upcoming(WHATS_ON, todayInGermany()).length;
+      if (past) this.warn(`src/content/whatson.js has ${past} past event${past === 1 ? '' : 's'}: ${past === 1 ? 'it no longer shows' : 'they no longer show'}, so delete ${past === 1 ? 'it' : 'them'} from the list.`);
     },
     // After the bundle (and index.html) is written; never on a failed build.
     writeBundle() {
@@ -149,6 +163,34 @@ function publicPages() {
       const join = `<p><a href="/">Join NRIClub</a>: a free community for Indians abroad. Our team checks every new member.</p>`;
       const guideLinks = ESSENTIALS.map((g) => `<li><a href="/guides/${g.slug}">${esc(g.title)}</a></li>`).join('');
 
+      // What's on (src/content/whatson.js): the events still to come on the
+      // day of the build. In the browser the page leaves out any that have
+      // ended since.
+      const whatsOn = upcoming(WHATS_ON, todayInGermany());
+      const details = (e) => `<a href="${esc(e.url)}" target="_blank" rel="noopener nofollow ugc">Details and tickets</a>`;
+      const eventItem = (e) => `<li id="${esc(e.id)}"><h3>${esc(e.title)}</h3>`
+        + `<p><strong><time datetime="${esc(e.start)}">${esc(whenText(e))}</time></strong> · ${esc(placeText(e))} · ${esc(CATEGORY_LABELS[e.category])}</p>`
+        + `<p>Organised by ${esc(e.organiser)}${e.price ? ` · ${esc(e.price)}` : ''}${e.language ? ` · ${esc(e.language)}` : ''}</p>`
+        + `<p>${esc(e.summary)}</p>`
+        + `<p>${details(e)} · <a href="https://wa.me/?text=${encodeURIComponent(whatsOnShareText(e, SITE))}" target="_blank" rel="noopener noreferrer">Share on WhatsApp</a></p></li>`;
+      page(WHATS_ON_PATH, `${WHATS_ON_TITLE} · NRIClub`, WHATS_ON_DESCRIPTION,
+        `<h1>${esc(WHATS_ON_TITLE)}</h1><p>${esc(WHATS_ON_LEAD)}</p><p><strong>${esc(WHATS_ON_NOTE)}</strong></p>`
+        + (whatsOn.length
+          ? groupByMonth(whatsOn).map((m) => `<h2>${esc(m.label)}</h2><ul>${m.events.map(eventItem).join('')}</ul>`).join('')
+          : '<p>No events are listed right now. We list Indian festivals, concerts and meetups across Germany as organisers announce them. Check back soon.</p>')
+        + (whatsOn.length ? `<p>${esc(whatsOnCta())} <a href="/">Join NRIClub free</a>.</p>` : `<p>Meet Indians in your city: <a href="/">join NRIClub free</a>.</p>`)
+        + `<p>${esc(WHATS_ON_SUBMIT)} <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a></p>`);
+      // A city's events on its page: the first few, and the way to the rest.
+      const cityEvents = (city) => {
+        const list = byCity(city, whatsOn);
+        if (!list.length) return '';
+        const all = `${WHATS_ON_PATH}?city=${slug(city)}`;
+        return `<h2>What's on in ${esc(city)}</h2><p>${esc(WHATS_ON_SHORT_NOTE)}</p><ul>`
+          + list.slice(0, 6).map((e) => `<li><a href="${all}#${esc(e.id)}">${esc(e.title)}</a>: <time datetime="${esc(e.start)}">${esc(whenText(e))}</time> · ${esc(placeText(e))}. `
+            + `Organised by ${esc(e.organiser)}${e.price ? ` · ${esc(e.price)}` : ''}. ${details(e)}</li>`).join('')
+          + `</ul><p><a href="${all}">See all events in ${esc(city)}</a></p>`;
+      };
+
       page('/guides', 'NRI essentials guides · NRIClub',
         'Short, practical guides for Indians living abroad: passports, OCI, NRE and NRO accounts, taxes, sending money home and more.',
         `<h1>NRI essentials</h1><p>Short, practical guides for Indians living abroad.</p><ul>${guideLinks}</ul>${join}`);
@@ -161,7 +203,7 @@ function publicPages() {
       for (const city of CITIES) {
         page(`/city/${slug(city)}`, `Indians in ${city} · NRIClub`,
           `Indians in ${city}: ask questions, find housing and job referrals, discover desi places and celebrate festivals together. Free, and our team checks every new member.`,
-          `<h1>Indians in ${esc(city)}</h1><p>Ask questions, find a room or a referral, discover desi places and celebrate festivals with Indians in ${esc(city)}.</p>${join}<h2>NRI essentials</h2><ul>${guideLinks}</ul>`);
+          `<h1>Indians in ${esc(city)}</h1><p>Ask questions, find a room or a referral, discover desi places and celebrate festivals with Indians in ${esc(city)}.</p>${join}${cityEvents(city)}<h2>NRI essentials</h2><ul>${guideLinks}</ul>`);
       }
 
       // The Impressum, once its details are filled in (src/content/imprint.js).
@@ -212,7 +254,7 @@ function publicPages() {
         .replace('</head>', () => `  <link rel="canonical" href="${SITE}/" />\n  <script>${HOME_GUARD}</script>\n</head>`)
         .replace('<div id="root"></div>', () => `<div id="root">${homeStatic()}</div>`));
 
-      const urls = ['/', '/guides', ...ESSENTIALS.map((g) => `/guides/${g.slug}`), ...CITIES.map((c) => `/city/${slug(c)}`), REPORT_HREF];
+      const urls = ['/', '/guides', WHATS_ON_PATH, ...ESSENTIALS.map((g) => `/guides/${g.slug}`), ...CITIES.map((c) => `/city/${slug(c)}`), REPORT_HREF];
       fs.writeFileSync(path.join(outDir, 'sitemap.xml'),
         `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${SITE}${u}</loc></url>`).join('\n')}\n</urlset>\n`);
     },
