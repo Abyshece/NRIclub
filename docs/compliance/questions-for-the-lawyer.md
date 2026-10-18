@@ -160,10 +160,10 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
    12 October. The lawyer's conclusion (awareness of the published password
    in April) still holds; the register now says 24 April for item (4) and
    asks the founder to confirm.
-9. **Dates.** `TERMS_DATE` and `PRIVACY_DATE` say "17 October 2026", the
-   day the current wording went live (the lawyer's advice). The Terms version
-   stays `2026-10-19`; the Privacy Policy is `2026-10-21` since round 2
-   (item 12).
+9. **Dates.** `TERMS_DATE` and `PRIVACY_DATE` say the day the current
+   wording went live (the lawyer's advice): the Terms "17 October 2026"
+   (version `2026-10-19`), the Privacy Policy "18 October 2026" (version
+   `2026-10-24`, items 12 and 13).
 10. **"Ended" memberships.** The database knows "blocked", not "ended". The
     Policy promises deletion 6 months after we end a membership; the
     routine lists blocked accounts older than 6 months and the admin
@@ -184,6 +184,21 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
     and moderation records, photo files, invite codes, who sees whom, admin
     access). Members don't accept it; tell them in the app about the
     important changes.
+13. **Applications to be a city ambassador** (Privacy Policy 2026-10-24,
+    section 2, "Applications to be a city ambassador", anchor
+    /privacy#ambassadors). Anyone can apply with a form on the site; only
+    admins see the applications. Legal basis: Art. 6(1)(b) (steps before
+    agreeing on the volunteer role), Art. 6(1)(f) for keeping them after the
+    decision and for the daily limits. Kept 6 months after the decision,
+    undecided ones 12 months. Deleting the account doesn't delete an
+    application (the link to the account goes; the Policy says so and offers
+    deletion on request). Questions: is (b) right for an unpaid volunteer
+    role with no written agreement yet, or should it be (f) alone? Is
+    keeping the application after the account is deleted acceptable, or
+    should it go with the account? Does the role, once agreed, need a short
+    written volunteer agreement (what ambassadors may say on NRIClub's
+    behalf, posters and stickers at universities, organising meetups,
+    expenses)?
 
 ### In the code, outside the legal texts (the texts allow for them)
 

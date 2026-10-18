@@ -4,7 +4,7 @@
 
 | Path | What it is |
 |------|-----------|
-| `supabase/migrations/` | The whole database, one file per update, applied in name order: the schema (`20261012000000_nriclub_schema.sql`: tables, security policies, triggers, storage buckets, realtime), the Phase 1 review fixes (`20261013…`), the features up to mentoring (`20261014…` to `20261018…`), compliance round 1 (`20261019000000_access_consent.sql`, `20261020000000_notifications_limits_privacy.sql`) and round 2 (`20261021000000_moderation_dsa.sql`, `20261022000000_storage_images.sql`, `20261023000000_admin_access.sql`) |
+| `supabase/migrations/` | The whole database, one file per update, applied in name order: the schema (`20261012000000_nriclub_schema.sql`: tables, security policies, triggers, storage buckets, realtime), the Phase 1 review fixes (`20261013…`), the features up to mentoring (`20261014…` to `20261018…`), compliance round 1 (`20261019000000_access_consent.sql`, `20261020000000_notifications_limits_privacy.sql`) and round 2 (`20261021000000_moderation_dsa.sql`, `20261022000000_storage_images.sql`, `20261023000000_admin_access.sql`), then applications to be a city ambassador (`20261024000000_ambassador_applications.sql`) |
 | `supabase/seed.sql` | Starter data for a new project: the city communities, with no members (no example events) |
 | `supabase/tests/` | Automated security tests for the database (see "Testing the database") |
 | `supabase/oneoff/` | One-time scripts for the existing project (already applied ones are documented there) |
@@ -52,9 +52,12 @@ updates each have one file to run in the SQL editor, in date order, in
 afterwards). Compliance round 1 is
 `2026-10-19-compliance-round1/run_in_sql_editor.sql`; compliance round 2 is
 `2026-10-21-compliance-round2/run_in_sql_editor.sql` (see "Compliance round
-2: what to do, in order" below). Since round 1, the site goes live first
-and the SQL runs right after, the same day: the site works with the
-database before and after the update.
+2: what to do, in order" below). The ambassador applications update needs
+no separate file: run the migration itself,
+`supabase/migrations/20261024000000_ambassador_applications.sql` (see
+"Ambassador applications: what to do" below). Since round 1, the site goes
+live first and the SQL runs right after, the same day: the site works with
+the database before and after the update.
 
 ## Step 2: Authentication settings
 
@@ -231,12 +234,12 @@ key in the frontend or in a `VITE_` variable.
   Enterprise plans, so set `vercel: true` only once the project is on one;
   `mailbox: true` once you have accepted the mailbox provider's), and how
   long Vercel keeps request logs on your plan.
-- **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` and
-  `PRIVACY_DATE` in `src/content/legal/privacy.js` say "17 October 2026",
-  the day their current wording went live (the Terms 2026-10-19 with the
-  round-2 edits to sections 8 to 10; the Privacy Policy 2026-10-21,
-  compliance round 2). When you change a text, set its date to the day the
-  change goes live.
+- **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` says "17 October
+  2026", the day its current wording went live (the Terms 2026-10-19 with
+  the round-2 edits to sections 8 to 10); `PRIVACY_DATE` in
+  `src/content/legal/privacy.js` says "18 October 2026" (the Privacy Policy
+  2026-10-24, which adds applications to be a city ambassador). When you
+  change a text, set its date to the day the change goes live.
 - **Deleting old data:** the Privacy Policy promises retention periods
   that, for now, you keep by hand once a month
   (`docs/compliance/deletion-routine.md`). Photo files nothing uses any
@@ -297,6 +300,7 @@ With two member accounts and one admin account:
 - [ ] RSVP to an event, post a marketplace listing, a doc and a help request
 - [ ] Report a post (pick a reason, say why, confirm good faith) and file a bug report → both appear in the admin panel; **Dismiss…** the report with a reason → it moves to *Handled* and the reporter is told; **Resolve** the bug report → it moves to *Resolved*
 - [ ] Signed out, report something at nriclub.app/report → a reference code; it appears under Reports with that code; send the receipt and the decision from hello@ with the prefilled emails and click **Mark as sent**
+- [ ] Signed out, homepage → **Become its ambassador** (or a city page → **Become a city ambassador**) → fill in the form → a reference code; as a member, Profile → **Become a city ambassador** → name and email come from the account. Both appear in the admin panel under **Ambassadors** (and each admin gets an in-app notice); **Reply by email**, **Contacted**, then **Accept…** the member → the ambassador badge shows on their profile and in their city's group
 - [ ] Admin panel: a non-admin account is refused; approve a member, approve/reject a community, **Remove…** reported content with a rule and the facts → the author gets the message in the app (with how to challenge it), the reporter the outcome
 - [ ] **Block…** a member from the admin panel (after a warning 14 days ago, or for a serious reason) → they can no longer post or see other members, and see the reason and how to challenge it when they sign in
 - [ ] Admin panel → **Security**: set up two-step login, sign out, sign in again → the 6-digit code is asked
@@ -351,6 +355,32 @@ other members.
 9. Ask the lawyer whether the round-2 changes to sections 9 and 10 of the
    Terms (reporting, decisions, blocks, a declined mentor's sessions) need a
    new Terms version (`docs/compliance/questions-for-the-lawyer.md`).
+
+## Ambassador applications: what to do
+
+The site's "Become an ambassador" buttons (homepage, city pages, the app's
+profile and city groups) open a form instead of an email. Applications land
+in the admin panel under **Ambassadors**.
+
+1. **Deploy the site.** Until the SQL below runs, the form can't send and
+   offers the same application as a prefilled email to hello@nriclub.app,
+   as before.
+2. **The same day:** run
+   `supabase/migrations/20261024000000_ambassador_applications.sql` in the
+   SQL editor, the whole file at once. It refuses to run before compliance
+   round 2, and a second time. If the admin panel still says Ambassadors
+   isn't available a few minutes later, run `NOTIFY pgrst, 'reload schema';`.
+3. **Handling an application:** open it under **Ambassadors**, click
+   **Reply by email** (a prefilled email from hello@nriclub.app), then
+   **Contacted**. After talking to them, **Accept…** or **Decline…**.
+   Accepting an approved member makes them the city's ambassador (use the
+   city as in its group's name, "Indians in …"); someone without an account,
+   or not approved yet, is only marked accepted: ask them to join, approve
+   them, then click **Make ambassador…** (or use Members).
+4. Applications are deleted 6 months after the decision, undecided ones
+   after 12 months: part of the monthly routine
+   (`docs/compliance/deletion-routine.md`) until `private.daily_cleanup()`
+   is scheduled.
 
 ## Before inviting the public
 
@@ -441,7 +471,8 @@ The migrations run in name order, each in one transaction:
 `20261018000000_mentoring.sql`, `20261019000000_access_consent.sql`,
 `20261020000000_notifications_limits_privacy.sql`,
 `20261021000000_moderation_dsa.sql`, `20261022000000_storage_images.sql`,
-`20261023000000_admin_access.sql`. The test should end with
+`20261023000000_admin_access.sql`,
+`20261024000000_ambassador_applications.sql`. The test should end with
 "0 failure(s)". To check a one-off file the way the live project gets it,
 build a database with the migrations up to the one before it, then run the
 file with `psql -v ON_ERROR_STOP=1 -1 -f <file>`: it must succeed once and

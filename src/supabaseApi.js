@@ -1874,6 +1874,28 @@ export async function submitNotice({ location, category, explanation, name, emai
   }
 }
 
+// An application to be a city ambassador (anyone; a member who is signed
+// in applies with their account's name and email address, and the
+// application is linked to the account). Returns its reference code
+// ("A-7F3A92C1"). Before the 2026-10-24 database update there's nowhere to
+// send it: throws an error with notAvailable, and the form offers the same
+// application by email.
+export async function submitAmbassadorApplication({ name, email, city, country, organisation = "", linkedinUrl = "", motivation, hoursPerWeek }) {
+  try {
+    return await restCall("POST", "/rest/v1/rpc/submit_ambassador_application", {
+      p_name: name, p_email: email, p_city: city, p_country: country, p_organisation: organisation,
+      p_linkedin_url: linkedinUrl, p_motivation: motivation, p_hours_per_week: hoursPerWeek,
+    });
+  } catch (err) {
+    if (isMissingInDatabase(err) || /\(404\)$/.test(err?.message || "")) {
+      const e = new Error("Applications can't be sent here yet.");
+      e.notAvailable = true;
+      throw e;
+    }
+    throw err;
+  }
+}
+
 export async function blockUser(userId) {
   if (!currentUser) throw new Error("Not logged in");
   // Remove all connections between the two users
@@ -2800,6 +2822,41 @@ export async function adminNotices() {
 // the sender), "decide" (decision "kept", with reason), "reopen", "note".
 export async function adminUpdateNotice(noticeId, step, decision = null, reason = null) {
   return adminRpc("admin_update_notice", { p_notice: noticeId, p_step: step, p_decision: decision, p_reason: reason });
+}
+
+// Applications to be a city ambassador, newest first: status null (all),
+// "new", "contacted", "accepted", "declined" or "open" (new and contacted),
+// a page of limit from offset. Returns { total, counts: { new, contacted,
+// accepted, declined }, applications: [{ id, reference, created_at, name,
+// email, city, country, organisation, linkedin_url, motivation,
+// hours_per_week, status, decided_at, decided_by_name, admin_note, member:
+// { id, name, status, verification_status, ambassador_city } | null,
+// email_member: the same, for an account that uses the address of an
+// application without one | null }] }. null before the 2026-10-24
+// database update (applications then arrive by email).
+export const AMBASSADOR_PAGE = 50;
+
+export async function adminAmbassadorApplications({ status = null, limit = AMBASSADOR_PAGE, offset = 0 } = {}) {
+  if (knownMissing("admin_ambassador_applications")) return null;
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_ambassador_applications", { p_status: status, p_limit: limit, p_offset: offset });
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.admin_ambassador_applications = Date.now();
+    return null;
+  }
+}
+
+// Our team's step on an application: status "contacted", "accepted",
+// "declined" (or "contacted" again to reopen one), note (not null: replaces
+// the note), city (when accepting: the city they become ambassador for, if
+// not the one they wrote). Returns the application with outcome:
+// "ambassador_set", "already_ambassador", "no_account", "not_approved" or
+// null.
+export async function adminUpdateAmbassadorApplication(id, { status = null, note = null, city = null } = {}) {
+  return restCall("POST", "/rest/v1/rpc/admin_update_ambassador_application", {
+    p_application: id, p_status: status, p_note: note, p_city: city,
+  });
 }
 
 // The photo clean-up: deletes photo files nothing uses any more (of deleted

@@ -21,6 +21,8 @@ the monthly part of this routine.
 | Closed reports, and evidence copies kept with them | once closed and 12 months old | once a month |
 | Closed reports from the form at nriclub.app/report | once closed and 12 months old | once a month |
 | Coded addresses behind the report limits (`private.notice_log`) | 24 hours | once a month |
+| Applications to be a city ambassador (`private.ambassador_applications`) | 6 months after our decision (accepted or declined); undecided ones 12 months after they were sent | once a month |
+| Coded addresses behind the application limits (`private.ambassador_application_log`) | 24 hours | once a month |
 | Record of our decisions (`private.moderation_action`) | 24 months; the copy of removed content in it after 6 months | once a month |
 | Record of declined and blocked accounts | 24 months after the decision; its note after 12 months | once a month |
 | Emails about rights and reports of illegal content, with our answers | 3 years after the matter is closed | once a month (mailbox) |
@@ -150,11 +152,21 @@ SELECT 'copies of removed content, 6 months', count(*) FROM private.moderation_a
   WHERE snapshot IS NOT NULL AND created_at < now() - interval '6 months'
 UNION ALL
 SELECT 'records of our decisions, 24 months', count(*) FROM private.moderation_action
-  WHERE created_at < now() - interval '24 months';
+  WHERE created_at < now() - interval '24 months'
+UNION ALL
+SELECT 'ambassador applications decided 6 months ago', count(*) FROM private.ambassador_applications
+  WHERE status IN ('accepted', 'declined') AND decided_at < now() - interval '6 months'
+UNION ALL
+SELECT 'ambassador applications undecided after 12 months', count(*) FROM private.ambassador_applications
+  WHERE status IN ('new', 'contacted') AND created_at < now() - interval '12 months'
+UNION ALL
+SELECT 'application-limit counters, 1 day', count(*) FROM private.ambassador_application_log
+  WHERE at < now() - interval '1 day';
 ```
 
-(The last four exist once the database update of 21 October 2026 is in;
-before it, leave them out.)
+(The four before the ambassador lines exist once the database update of 21
+October 2026 is in, the last three once that of 24 October 2026 is in;
+before them, leave them out.)
 
 The first time, older accounts that never finished signing up go at once.
 If you'd like to warn them first, email them two weeks before.
@@ -203,6 +215,12 @@ DELETE FROM private.moderation_action a
   WHERE created_at < now() - interval '24 months'
     AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = ANY (a.report_ids))
     AND NOT EXISTS (SELECT 1 FROM private.notices n WHERE n.id = a.notice_id AND n.hold_reason <> '');
+-- Since the database update of 24 October 2026:
+DELETE FROM private.ambassador_applications
+  WHERE status IN ('accepted', 'declined') AND decided_at < now() - interval '6 months';
+DELETE FROM private.ambassador_applications
+  WHERE status IN ('new', 'contacted') AND created_at < now() - interval '12 months';
+DELETE FROM private.ambassador_application_log WHERE at < now() - interval '1 day';
 COMMIT;
 ```
 

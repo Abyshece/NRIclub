@@ -27,6 +27,8 @@ STORAGE_IMAGES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", 
                               "20261022000000_storage_images.sql")
 ADMIN_ACCESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                             "20261023000000_admin_access.sql")
+AMBASSADORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                           "20261024000000_ambassador_applications.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1261,7 +1263,8 @@ def main():
     # --- Download my data (F16) ---------------------------------------------
     check("the export covers every kind of the member's data",
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=ALICE,
-          expect="account,answer_thanks,blocks,comments,connections,conversations,conversations_hidden,doc_comments,docs,"
+          expect="account,ambassador_applications,answer_thanks,blocks,comments,connections,conversations,"
+                 "conversations_hidden,doc_comments,docs,"
                  "event_rsvps,events_organised,exported_at,files,group_memberships,groups_requested,help_requests,"
                  "help_responses,invite_code,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
                  "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,place_recommendations,"
@@ -1274,7 +1277,8 @@ def main():
           "(SELECT bool_and(jsonb_array_length(v) > 0)::text FROM jsonb_each(d) e(k, v) "
           "WHERE jsonb_typeof(v) = 'array' AND k NOT IN ('verification_log', 'conversations_hidden', 'places_added', "
           "'place_recommendations', 'answer_thanks', 'mentor_reviews_written', 'mentor_reviews_received', 'sessions', "
-          "'files', 'urgent_questions_sent', 'reports_about_me'))) FROM (SELECT public.export_my_data() d) x",
+          "'files', 'urgent_questions_sent', 'reports_about_me', 'ambassador_applications'))) "
+          "FROM (SELECT public.export_my_data() d) x",
           as_user=ALICE, expect=f"Alice Updated|alice@example.com|{TERMS_VERSION}|{ART9_VERSION}|art9|true")
     check("... and only the member's own rows",
           "SELECT (bool_and(p->>'user_id' = auth.uid()::text) AND position('bob2@example.com' IN public.export_my_data()::text) = 0)::text "
@@ -1321,6 +1325,7 @@ def main():
     moderation_dsa()
     storage_images()
     admin_access()
+    ambassador_applications()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -3240,6 +3245,326 @@ def admin_access():
     shown = found.group(1) if found else None
     verdict("existing rows: the update says how many admin accounts members don't see",
             shown is not None and out.splitlines()[-1:] == [shown] and int(shown) >= 1, f"{out} | {err}")
+
+
+def function_source(path, header):
+    """A function's CREATE statement in a migration, from its header line to
+    the closing $$; (the first one after the header)."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    start = text.index(header)
+    return text[start:text.index("\n$$;", start) + 4]
+
+
+def ambassador_applications():
+    """Applications to be a city ambassador from the site, the admin panel's
+    list and decisions, clean-up and "Download my data": migration
+    20261024000000_ambassador_applications."""
+    import difflib
+    asha, bina, chet, dev, eli, fay = (f"00000000-0000-0000-0000-0000000009{n}"
+                                       for n in ("01", "02", "03", "04", "05", "06"))
+    approved_member(asha, "asha@example.com", "Asha A")
+    approved_member(chet, "chet@example.com", "Chet C", city="Frankfurt am Main")
+    approved_member(dev, "dev@example.com", "Dev D")
+    approved_member(eli, "eli@example.com", "Eli E")
+    approved_member(fay, "fay@example.com", "Fay F")
+    sign_up(bina, "bina@example.com", {"full_name": "Bina B"}, accept_terms=True)
+    psql(f"UPDATE profile_private SET verification_status = 'pending', submitted_at = now() WHERE id = '{bina}'")
+    q = lambda v: "'" + v.replace("'", "''") + "'"
+    motivation = "I know the city well and love bringing people together."
+
+    def apply(name="Anita Applicant", email="anita.applicant@example.org", city="Hamburg", country="Germany",
+              org="", linkedin="", why=motivation, hours="1_2", email_sql=None):
+        return (f"public.submit_ambassador_application({q(name)}, {email_sql or q(email)}, {q(city)}, {q(country)}, "
+                f"{q(org)}, {q(linkedin)}, {q(why)}, {q(hours)})")
+
+    def app_id(email, status="new"):
+        """An application's id, as an admin finds it in the list (the oldest
+        one with that address and status)."""
+        return (f"(SELECT (e->>'id')::uuid FROM jsonb_array_elements(public.admin_ambassador_applications("
+                f"'{status}', 200)->'applications') e WHERE e->>'email' = {q(email)} "
+                f"ORDER BY (e->>'created_at')::timestamptz LIMIT 1)")
+
+    def decide(email, status, note=None, city=None, current="new"):
+        args = [app_id(email, current), q(status), q(note) if note is not None else "NULL"]
+        if city:
+            args.append(q(city))
+        return f"public.admin_update_ambassador_application({', '.join(args)})"
+
+    admins = ("(SELECT count(*) FROM public.admins a JOIN public.profile_private pp ON pp.id = a.user_id "
+              "WHERE pp.status = 'active')")
+
+    # --- applying, signed out -------------------------------------------------
+    check("anyone can apply to be a city ambassador on the site, signed out",
+          f"SELECT {apply(org='Universität Hamburg', linkedin='https://de.linkedin.com/in/anita-a/')} ~ '^A-[0-9A-F]{{8}}$'",
+          role="anon", expect="t")
+    check("... kept with what they sent (the LinkedIn link in its standard form), new, linked to no account",
+          "SELECT concat_ws('|', name, email, city, country, organisation, linkedin_url, hours_per_week, status, "
+          "member_id IS NULL, decided_at IS NULL) FROM private.ambassador_applications WHERE email = 'anita.applicant@example.org'",
+          expect="Anita Applicant|anita.applicant@example.org|Hamburg|Germany|Universität Hamburg|"
+                 "https://www.linkedin.com/in/anita-a|1_2|new|t|t")
+    check("... and every admin is told in the app, with a link to the application", f"""
+          SELECT (count(DISTINCT n.user_id) = {admins})::text || '|' || bool_and(n.text LIKE 'New application to be the ambassador for Hamburg (A-%) from Anita Applicant.%')
+          FROM notifications n JOIN private.ambassador_applications a ON a.id = n.reference_id
+          WHERE n.type = 'alert' AND a.email = 'anita.applicant@example.org'""", expect="true|true")
+    check("signed out, nobody can read the applications", "SELECT count(*) FROM private.ambassador_applications",
+          role="anon", expect="error")
+    check("... nor the counters behind the limits", "SELECT count(*) FROM private.ambassador_application_log",
+          role="anon", expect="error")
+    check("... nor the admin list", "SELECT public.admin_ambassador_applications()", role="anon", expect="error")
+    check("... nor change one",
+          "SELECT public.admin_update_ambassador_application(gen_random_uuid(), 'accepted')", role="anon", expect="error")
+    check("the tables have row-level security on (and no policies: only the functions read and write them)",
+          "SELECT bool_and(c.relrowsecurity) || '|' || (SELECT count(*) FROM pg_policies WHERE schemaname = 'private' "
+          "AND tablename LIKE 'ambassador_application%') FROM pg_class c "
+          "WHERE c.oid IN ('private.ambassador_applications'::regclass, 'private.ambassador_application_log'::regclass)",
+          expect="true|0")
+    check("anon and members may call the form, only members (admins) the admin functions",
+          "SELECT concat_ws('|', has_function_privilege('anon', 'public.submit_ambassador_application(text,text,text,text,text,text,text,text)', 'EXECUTE'), "
+          "has_function_privilege('anon', 'public.admin_ambassador_applications(text,integer,integer)', 'EXECUTE'), "
+          "has_function_privilege('anon', 'public.admin_update_ambassador_application(uuid,text,text,text)', 'EXECUTE'), "
+          "has_function_privilege('authenticated', 'public.admin_ambassador_applications(text,integer,integer)', 'EXECUTE'), "
+          "has_function_privilege('anon', 'private.ambassador_application_json(private.ambassador_applications)', 'EXECUTE'))",
+          expect="t|f|f|t|f")
+
+    # --- what the form needs ----------------------------------------------------
+    for name, kwargs, message in (
+            ("a name", {"name": " \u200b "}, "Please give your name"),
+            ("a real email address", {"email": "not-an-address"}, "Please check your email address"),
+            ("... that can't carry mailto: fields of its own", {"email": "eve@example.org?cc=x%40example.net"},
+             "Please check your email address"),
+            ("a city name", {"city": "Berlin<script>"}, "Please give the name of your city"),
+            ("... of at most 60 characters", {"city": "B" * 61}, "Please give the name of your city"),
+            ("a country", {"country": ""}, "Please choose your country"),
+            ("a university or employer of at most 200 characters", {"org": "U" * 201}, "Please keep your university"),
+            ("a LinkedIn profile link, if any", {"linkedin": "https://example.com/me"}, "doesn't look like a LinkedIn profile link"),
+            ("why, in 20 characters or more", {"why": "I like people."}, "at least 20 characters"),
+            ("... and at most 1,000", {"why": "x" * 1001}, "Please keep it to 1,000 characters"),
+            ("how much time they can give, from the form's choices", {"hours": "all day"}, "Please choose how much time")):
+        check(f"an application needs {name}", f"SELECT {apply(**{'email': 'form.check@example.org', **kwargs})}",
+              role="anon", error_has=message)
+    check("... (none of those was kept)",
+          "SELECT count(*) FROM private.ambassador_applications WHERE email LIKE 'form.check%' OR email LIKE 'eve@%'",
+          expect="0")
+
+    # --- one open application per email address and per member ----------------------
+    check("one open application per email address: the same address in another form is refused",
+          f"SELECT {apply(email='Anita.Applicant+again@Example.org')}", role="anon",
+          error_has="An application from this email address is already waiting for our team.")
+    check("asha applies signed in: her account's name and email address are used, and it is linked to her",
+          f"SELECT {apply(name='Someone Else', email='someone.else@example.org', city='Berlin')} LIKE 'A-%'",
+          as_user=asha, expect="t")
+    check("... (as kept)", "SELECT concat_ws('|', name, email, city, member_id) FROM private.ambassador_applications "
+          f"WHERE member_id = '{asha}'", expect=f"Asha A|asha@example.com|Berlin|{asha}")
+    check("... a second one while the first is open is refused, with its reference",
+          f"SELECT {apply(email='asha.other@example.org', city='Potsdam')}", as_user=asha,
+          error_has="You've already applied (reference A-")
+    check("... so is one signed out with her account's address",
+          f"SELECT {apply(email='asha@example.com')}", role="anon",
+          error_has="An application from this email address is already waiting")
+    check("a member waiting for review can apply too (linked)", f"SELECT {apply(city='Munich')} LIKE 'A-%'",
+          as_user=bina, expect="t")
+    check("chet applies for Frankfurt am Main", f"SELECT {apply(city='Frankfurt am Main', hours='3_5')} LIKE 'A-%'",
+          as_user=chet, expect="t")
+    check("eli applies too", f"SELECT {apply(city='Cologne', hours='under_1')} LIKE 'A-%'", as_user=eli, expect="t")
+    check("dev is blocked", block(dev), as_user=ADMIN, expect="blocked")
+    check("... and can't apply", f"SELECT {apply(city='Berlin')}", as_user=dev, error_has="Your account is blocked")
+
+    # --- members can't read applications ------------------------------------------
+    check("members can't read applications (not even their own) from the table",
+          "SELECT count(*) FROM private.ambassador_applications", as_user=asha, expect="error")
+    check("... nor list them", "SELECT public.admin_ambassador_applications()", as_user=asha, error_has="Admins only")
+    check("... nor change one", f"SELECT public.admin_update_ambassador_application(gen_random_uuid(), 'accepted')",
+          as_user=chet, error_has="Admins only")
+    check("\"Download my data\" has the member's own applications, without our team's note",
+          "SELECT jsonb_array_length(d->'ambassador_applications') || '|' || (SELECT string_agg(k, ',' ORDER BY k) "
+          "FROM jsonb_object_keys(d->'ambassador_applications'->0) k) || '|' || (d->'ambassador_applications'->0->>'city') "
+          "FROM (SELECT public.export_my_data() d) x", as_user=asha,
+          expect="1|city,country,created_at,decided_at,email,hours_per_week,linkedin_url,motivation,name,organisation,"
+                 "reference,status|Berlin")
+    check("... and nobody else's", "SELECT jsonb_array_length(public.export_my_data()->'ambassador_applications')",
+          as_user=fay, expect="0")
+
+    # --- the limits ---------------------------------------------------------------------
+    cap = "cap.tester@example.org"
+    for n in (1, 2, 3):
+        check(f"application {n} of the day from one email address", f"SELECT {apply(email=cap)} LIKE 'A-%'",
+              role="anon", expect="t")
+        check(f"... our team declines it", f"SELECT {decide(cap, 'declined')} ->> 'status'", as_user=ADMIN,
+              expect="declined")
+    check("... the 4th from that address on the same day isn't taken (3 a day)", f"SELECT {apply(email=cap)}",
+          role="anon", error_has="You've sent several applications today.")
+    from_ip = """DO $$BEGIN PERFORM set_config('request.headers', '{"x-forwarded-for": "198.51.100.23, 10.0.0.1"}', false); END$$; """
+    check("10 a day from one internet address (the first in X-Forwarded-For)",
+          from_ip + f"SELECT count({apply(email_sql=chr(39) + 'ip' + chr(39) + ' || g || ' + chr(39) + '@example.org' + chr(39))}) "
+          "FROM generate_series(1, 10) g", role="anon", expect="10")
+    check("... the 11th isn't", from_ip + f"SELECT {apply(email='ip.eleven@example.org')}", role="anon",
+          error_has="You've sent several applications today.")
+    check("an IPv6 address counts by its /64",
+          "DO $$BEGIN FOR g IN 1..10 LOOP PERFORM set_config('request.headers', json_build_object('x-forwarded-for', "
+          f"'2001:db8:42:7::' || to_hex(g))::text, false); PERFORM "
+          f"{apply(email_sql=chr(39) + 'v6-' + chr(39) + ' || g || ' + chr(39) + '@example.org' + chr(39))}; "
+          "END LOOP; END$$; "
+          """DO $$BEGIN PERFORM set_config('request.headers', '{"x-forwarded-for": "2001:db8:42:7:ffff::9"}', false); END$$; """
+          f"SELECT {apply(email='v6-last@example.org')}", role="anon", error_has="You've sent several applications today.")
+    check("the limits keep only a keyed hash, never the address",
+          "SELECT count(*) > 0 AND bool_and(key !~ '198\\.51|2001:db8|example\\.org') FROM private.ambassador_application_log",
+          expect="t")
+    check("at most 50 applications a day in all; then the form points to email", f"""
+          BEGIN;
+          INSERT INTO private.ambassador_applications (reference, name, email, city, country, motivation, hours_per_week, status, decided_at)
+          SELECT 'A-F' || lpad(g::text, 7, '0'), 'Filler', 'filler' || g || '@example.org', 'Berlin', 'Germany',
+            repeat('x', 20), '1_2', 'declined', now() FROM generate_series(1, 50) g;
+          SET ROLE anon; SELECT {apply(email='late.applicant@example.org')}""",
+          error_has="We've received a lot of applications today. Please write to hello@nriclub.app instead")
+
+    # --- the admin list -------------------------------------------------------------------
+    check("admins list the applications newest first, a page at a time, with the total and the counts", """
+          SELECT ((a->>'total')::int = (SELECT sum(v::int) FROM jsonb_each_text(a->'counts') x(k, v))
+            AND (a->>'total') = (b->>'total')
+            AND jsonb_array_length(a->'applications') = 2 AND jsonb_array_length(b->'applications') = 2
+            AND (a->'applications'->0->>'id') NOT IN (b->'applications'->0->>'id', b->'applications'->1->>'id')
+            AND (a->'applications'->0->>'created_at')::timestamptz >= (a->'applications'->1->>'created_at')::timestamptz
+            AND (a->'applications'->1->>'created_at')::timestamptz >= (b->'applications'->0->>'created_at')::timestamptz)::text
+          FROM public.admin_ambassador_applications(NULL, 2, 0) a, public.admin_ambassador_applications(NULL, 2, 2) b""",
+          as_user=ADMIN, expect="true")
+    check("... by status: new, declined, open (new and contacted)", """
+          SELECT concat_ws('|', (n->>'total') = (n->'counts'->>'new'),
+            (SELECT bool_and(e->>'status' = 'new') FROM jsonb_array_elements(n->'applications') e),
+            d->>'total', (o->>'total')::int = (o->'counts'->>'new')::int + (o->'counts'->>'contacted')::int)
+          FROM public.admin_ambassador_applications('new', 200) n, public.admin_ambassador_applications('declined') d,
+            public.admin_ambassador_applications('open') o""", as_user=ADMIN, expect="t|t|3|t")
+    check("... at most 200 at a time, at least 1",
+          "SELECT jsonb_array_length(public.admin_ambassador_applications(NULL, 100000)->'applications') <= 200, "
+          "jsonb_array_length(public.admin_ambassador_applications(NULL, 0)->'applications')", as_user=ADMIN, expect="t|1")
+    check("... an unknown status is refused", "SELECT public.admin_ambassador_applications('maybe')", as_user=ADMIN,
+          error_has="Unknown status")
+    check("... with the account it came from (its status now)",
+          f"SELECT e->'member'->>'name' || '|' || (e->'member'->>'verification_status') FROM jsonb_array_elements("
+          f"public.admin_ambassador_applications('new', 200)->'applications') e WHERE e->>'email' = 'bina@example.com'",
+          as_user=ADMIN, expect="Bina B|pending")
+    check("fay (a member) applies signed out with her account's address", f"SELECT {apply(email='fay@example.com')} LIKE 'A-%'",
+          role="anon", expect="t")
+    check("... the list says an account uses that address, without linking it",
+          "SELECT (e->'member' = 'null'::jsonb)::text || '|' || (e->'email_member'->>'name') FROM jsonb_array_elements("
+          "public.admin_ambassador_applications('new', 200)->'applications') e WHERE e->>'email' = 'fay@example.com'",
+          as_user=ADMIN, expect="true|Fay F")
+
+    # --- our team's steps ------------------------------------------------------------------
+    check("our team marks one contacted, with a note", f"""
+          SELECT concat_ws('|', r->>'status', r->>'admin_note', COALESCE(r->>'outcome', '-'), COALESCE(r->>'decided_at', '-'))
+          FROM {decide('anita.applicant@example.org', 'contacted', ' Called her on 18 Oct ')} r""", as_user=ADMIN,
+          expect="contacted|Called her on 18 Oct|-|-")
+    check("... a note of more than 2,000 characters is refused",
+          f"SELECT {decide('anita.applicant@example.org', 'contacted', 'x' * 2001, current='contacted')}", as_user=ADMIN,
+          error_has="Please keep the note to 2,000 characters.")
+    check("... and an unknown status",
+          f"SELECT {decide('anita.applicant@example.org', 'maybe', current='contacted')}", as_user=ADMIN,
+          error_has="Unknown status")
+    check("accepting asha (an active, approved member) makes her Berlin's ambassador", f"""
+          SELECT concat_ws('|', r->>'status', r->>'outcome', r->>'decided_by_name', r->'member'->>'ambassador_city')
+          FROM {decide('asha@example.com', 'accepted')} r""", as_user=ADMIN,
+          expect="accepted|ambassador_set|NRIClub Team|Berlin")
+    check("... recorded as any change of ambassador (admin_set_ambassador)",
+          "SELECT count(*) || '|' || max(explanation) || '|' || bool_and(actor_id = '" + ADMIN + "') "
+          f"FROM private.moderation_action WHERE action = 'ambassador' AND target_user = '{asha}'",
+          expect="1|Ambassador for Berlin|true")
+    check("... and members see her as Berlin's ambassador",
+          "SELECT bool_or(name = 'Asha A') FROM public.city_ambassadors('Berlin')", as_user=fay, expect="t")
+    check("... accepting again changes nothing", f"""
+          SELECT r->>'outcome' FROM {decide('asha@example.com', 'accepted', current='accepted')} r""",
+          as_user=ADMIN, expect="already_ambassador")
+    check("... (still one record)", "SELECT count(*) FROM private.moderation_action "
+          f"WHERE action = 'ambassador' AND target_user = '{asha}'", expect="1")
+    check("accepting bina (waiting for review) marks it accepted, but doesn't make her ambassador", f"""
+          SELECT concat_ws('|', r->>'status', r->>'outcome', r->'member'->>'ambassador_city')
+          FROM {decide('bina@example.com', 'accepted')} r""", as_user=ADMIN, expect="accepted|not_approved|")
+    check("... once she's approved, accepting again makes her the ambassador", f"""
+          UPDATE profile_private SET verification_status = 'approved' WHERE id = '{bina}';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{{"sub": "{ADMIN}", "role": "authenticated"}}', false) IS NULL;
+          SELECT r->>'outcome' || '|' || (r->'member'->>'ambassador_city')
+          FROM {decide('bina@example.com', 'accepted', current='accepted')} r""", expect="f\nambassador_set|Munich")
+    check("accepting chet with the city group's name instead of the one he wrote", f"""
+          SELECT concat_ws('|', r->>'city', r->>'outcome', r->'member'->>'ambassador_city')
+          FROM {decide('chet@example.com', 'accepted', city='Frankfurt')} r""", as_user=ADMIN,
+          expect="Frankfurt am Main|ambassador_set|Frankfurt")
+    check("accepting an application without an account only marks it accepted (our team asks them to join)", f"""
+          SELECT concat_ws('|', r->>'status', r->>'outcome') FROM {decide('anita.applicant@example.org', 'accepted', current='contacted')} r""",
+          as_user=ADMIN, expect="accepted|no_account")
+    check("eli's account is blocked after he applied",
+          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{eli}'")
+    check("... accepting him doesn't make him ambassador", f"""
+          SELECT concat_ws('|', r->>'outcome', r->'member'->>'ambassador_city')
+          FROM {decide('eli@example.com', 'accepted')} r""", as_user=ADMIN, expect="not_approved|")
+    check("a decided application can be reopened (the cap tester's first)",
+          f"SELECT concat_ws('|', r->>'status', COALESCE(r->>'decided_at', '-')) FROM {decide(cap, 'contacted', current='declined')} r",
+          as_user=ADMIN, expect="contacted|-")
+    check("... a second one from the same person can't, while the first is open",
+          f"SELECT {decide(cap, 'new', current='declined')}", as_user=ADMIN,
+          error_has="This person has another open application.")
+    check("... unknown applications are refused",
+          "SELECT public.admin_update_ambassador_application(gen_random_uuid(), 'accepted')", as_user=ADMIN,
+          error_has="Application not found.")
+
+    # --- deleted accounts -------------------------------------------------------------------
+    check("fay applies signed in after her signed-out one was declined",
+          f"SELECT {decide('fay@example.com', 'declined')} ->> 'status'; SET ROLE authenticated; "
+          f"SELECT set_config('request.jwt.claims', '{{\"sub\": \"{fay}\", \"role\": \"authenticated\"}}', false) IS NULL; "
+          f"SELECT {apply(city='Bonn')} LIKE 'A-%'", as_user=ADMIN, expect="declined\nf\nt")
+    check("... then deletes her account: her applications stay, no longer linked to it", f"""
+          SELECT public.delete_my_account()""", as_user=fay)
+    check("... (as kept)", "SELECT string_agg(city || ':' || (member_id IS NULL)::text, ',' ORDER BY city) "
+          "FROM private.ambassador_applications WHERE email = 'fay@example.com'", expect="Bonn:true,Hamburg:true")
+
+    # --- clean-up (C20) ------------------------------------------------------------------------
+    check("the clean-up deletes applications 6 months after our decision, undecided ones after 12 months, "
+          "and the limit counters after a day", """
+          BEGIN;
+          INSERT INTO private.ambassador_applications (reference, name, email, city, country, motivation, hours_per_week,
+            status, created_at, decided_at) VALUES
+            ('A-C0000001', 'Old decision', 'c1@example.org', 'Berlin', 'Germany', repeat('x', 20), '1_2', 'accepted', now() - interval '8 months', now() - interval '7 months'),
+            ('A-C0000002', 'Recent decision', 'c2@example.org', 'Berlin', 'Germany', repeat('x', 20), '1_2', 'declined', now() - interval '13 months', now() - interval '5 months'),
+            ('A-C0000003', 'Old, new', 'c3@example.org', 'Berlin', 'Germany', repeat('x', 20), '1_2', 'new', now() - interval '13 months', NULL),
+            ('A-C0000004', 'Old, contacted', 'c4@example.org', 'Berlin', 'Germany', repeat('x', 20), '1_2', 'contacted', now() - interval '12 months 1 day', NULL),
+            ('A-C0000005', 'Recent, new', 'c5@example.org', 'Berlin', 'Germany', repeat('x', 20), '1_2', 'new', now() - interval '11 months', NULL);
+          INSERT INTO private.ambassador_application_log (key, at) VALUES ('amb-old', now() - interval '25 hours'), ('amb-new', now() - interval '1 hour');
+          SELECT concat_ws(',', c ->> 'decided_ambassador_applications', c ->> 'undecided_ambassador_applications')
+            FROM (SELECT private.daily_cleanup() AS c) x;
+          SELECT string_agg(reference, ',' ORDER BY reference) FROM private.ambassador_applications WHERE reference LIKE 'A-C000000_';
+          SELECT string_agg(key, ',') FROM private.ambassador_application_log WHERE key LIKE 'amb-%';
+          ROLLBACK;""", expect="1,2\nA-C0000002,A-C0000005\namb-new")
+    check("... and still says what it deleted of everything else (the 2026-10-21 keys, plus the two new ones)", """
+          BEGIN;
+          SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(private.daily_cleanup()) k;
+          ROLLBACK;""",
+          expect="closed_notices,closed_reports,decided_ambassador_applications,declined_accounts,moderation_actions,"
+                 "moderation_copies_cleared,moderation_notes_cleared,moderation_records,read_notifications,"
+                 "unconfirmed_signups,undecided_ambassador_applications,unfinished_accounts")
+    check("members can't run the clean-up", "SELECT private.daily_cleanup()", as_user=asha, expect="error")
+
+    # --- nothing else in the clean-up and "Download my data" changed ----------------------------
+    for header, allowed in (
+            ("CREATE OR REPLACE FUNCTION private.daily_cleanup()",
+             ["    'moderation_copies_cleared', copies, 'moderation_actions', actions);"]),
+            ("CREATE OR REPLACE FUNCTION public.export_my_data()", [])):
+        old = function_source(MODERATION, header).splitlines()
+        new = function_source(AMBASSADORS, header).splitlines()
+        diff = [l for l in difflib.ndiff(old, new) if l[:2] in ("- ", "+ ")]
+        removed = [l[2:] for l in diff if l.startswith("- ")]
+        added = [l[2:] for l in diff if l.startswith("+ ")]
+        verdict(f"{header.split()[-1]} is its 2026-10-21 version with lines added only "
+                f"({len(added)} added, {len(removed)} changed)", removed == allowed and added,
+                f"removed: {removed}")
+    check("... and the database runs the migration's versions (the same keys in \"Download my data\" as before, plus one)",
+          "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=asha,
+          expect="account,ambassador_applications,answer_thanks,blocks,comments,connections,conversations,"
+                 "conversations_hidden,doc_comments,docs,event_rsvps,events_organised,exported_at,files,"
+                 "group_memberships,groups_requested,help_requests,help_responses,invite_code,likes,"
+                 "marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
+                 "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,"
+                 "place_recommendations,places_added,posts,profile,profile_private,rate_limit_log,readme,"
+                 "reports_about_me,reports_filed,sessions,terms_acceptances,urgent_questions_sent,user_settings,"
+                 "verification_log")
 
 
 if __name__ == "__main__":

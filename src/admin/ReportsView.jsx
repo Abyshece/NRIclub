@@ -196,7 +196,7 @@ function ContentPreview({ r, lookup, onRetry }) {
 
 // Our team's note on a report or notice (e.g. which police authority they
 // told about a safety report, and when). save(note) may throw.
-function NoteEditor({ value, save, label = "Note for our team", placeholder = "e.g. Told the BKA on 21 Oct by phone, reference 12345" }) {
+export function NoteEditor({ value, save, label = "Note for our team", placeholder = "e.g. Told the BKA on 21 Oct by phone, reference 12345" }) {
   const [draft, setDraft] = useState(value || "");
   const [state, setState] = useState(""); // "" | "saving" | "saved" | error text
   useEffect(() => { setDraft(value || ""); }, [value]);

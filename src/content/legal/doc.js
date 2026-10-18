@@ -9,9 +9,11 @@
 //   { p: rich }                       a paragraph
 //   { ul: [rich] } / { ol: [rich] }   a list
 //   { h: "text" }                     a small heading inside a section
-//   { entries: [{ title, fields: [[label, rich]] }] }
+//   { entries: [{ id, title, fields: [[label, rich]] }] }
 //                                     labelled items, e.g. what we process,
-//                                     why, on what legal basis, how long
+//                                     why, on what legal basis, how long;
+//                                     id (optional) is an anchor on the page
+//                                     (/privacy#ambassadors)
 //   { box: { title, blocks: [block] } }  a framed notice (e.g. the right to object)
 // Rich text is a string, or an array of strings, { text, href } links and
 // { strong: "text" } bold parts.
@@ -51,7 +53,7 @@ function blockToHtml(block) {
   if (block.ol) return `<ol>${block.ol.map((r) => `<li>${richToHtml(r)}</li>`).join("")}</ol>`;
   if (block.h) return `<h3>${esc(block.h)}</h3>`;
   if (block.entries) {
-    return block.entries.map((e) => `<h3>${esc(e.title)}</h3><ul>${e.fields
+    return block.entries.map((e) => `<h3${e.id ? ` id="${esc(e.id)}"` : ""}>${esc(e.title)}</h3><ul>${e.fields
       .map(([label, value]) => `<li><strong>${esc(label)}:</strong> ${richToHtml(value)}</li>`).join("")}</ul>`).join("");
   }
   if (block.box) {
