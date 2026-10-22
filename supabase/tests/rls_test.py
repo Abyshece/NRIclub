@@ -29,6 +29,8 @@ ADMIN_ACCESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "m
                             "20261023000000_admin_access.sql")
 AMBASSADORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                            "20261024000000_ambassador_applications.sql")
+ADMIN_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                           "20261025100000_admin_tools.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -3574,11 +3576,12 @@ def ambassador_applications():
           SELECT string_agg(reference, ',' ORDER BY reference) FROM private.ambassador_applications WHERE reference LIKE 'A-C000000_';
           SELECT string_agg(key, ',') FROM private.ambassador_application_log WHERE key LIKE 'amb-%';
           ROLLBACK;""", expect="1,2\nA-C0000002,A-C0000005\namb-new")
-    check("... and still says what it deleted of everything else (the 2026-10-21 keys, plus the two new ones)", """
+    check("... and still says what it deleted of everything else (the 2026-10-21 keys, plus the two new ones, "
+          "and since 2026-10-25 the Inbox)", """
           BEGIN;
           SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(private.daily_cleanup()) k;
           ROLLBACK;""",
-          expect="closed_notices,closed_reports,decided_ambassador_applications,declined_accounts,moderation_actions,"
+          expect="closed_notices,closed_reports,decided_ambassador_applications,declined_accounts,inbox_messages,moderation_actions,"
                  "moderation_copies_cleared,moderation_notes_cleared,moderation_records,read_notifications,"
                  "unconfirmed_signups,undecided_ambassador_applications,unfinished_accounts")
     check("members can't run the clean-up", "SELECT private.daily_cleanup()", as_user=asha, expect="error")
@@ -3791,6 +3794,78 @@ def admin_tools():
     check("members can't hide or delete", "SELECT public.admin_delete_whats_on_event('on-now')", as_user=nina,
           error_has="Admins only")
     check("... (still there)", "SELECT count(*) FROM public.whats_on_events WHERE id = 'on-now'", expect="1")
+
+    # --- Inbox (mail to hello@nriclub.app) -------------------------------------------
+    def stored(rid, subject="Question", text="Hello, how do I join?", sender="Asha <asha@example.org>", **more):
+        e = {"resend_email_id": rid, "message_id": f"<{rid}@mail.example.org>", "from": sender, "to": ["hello@nriclub.app"],
+             "subject": subject, "text": text, "html": "<p>x</p>",
+             "attachments": [{"filename": "cv.pdf", "content_type": "application/pdf", "size": 1200, "download_url": "https://x"}]}
+        e.update(more)
+        return f"SELECT public.inbox_store({q(json.dumps(e))}::jsonb) IS NOT NULL"
+    inbox_list = lambda f="inbox", query="": f"SELECT public.admin_inbox_list('{f}', 50, 0, {q(query)})"
+    # A message's id, as the admin panel has it from the list.
+    msg_id = lambda rid: "'" + psql(f"SELECT id FROM private.inbox_messages WHERE resend_email_id = '{rid}'")[1] + "'::uuid"
+    check("anon can't store an email", stored("re_1"), role="anon", expect="error")
+    check("... nor a member, nor an admin", stored("re_1"), as_user=ADMIN, expect="error")
+    check("forward-email (service role) stores one, with the attachments' names only", f"""
+          SET ROLE service_role; {stored('re_1')}; RESET ROLE;
+          SELECT attachments::text FROM private.inbox_messages WHERE resend_email_id = 're_1'""",
+          expect='t\n[{"size": 1200, "filename": "cv.pdf", "content_type": "application/pdf"}]')
+    check("... the same email again is stored once (Resend retries)",
+          f"SET ROLE service_role; {stored('re_1', subject='Changed')}; RESET ROLE; "
+          "SELECT count(*) || '|' || max(subject) FROM private.inbox_messages WHERE resend_email_id = 're_1'",
+          expect="t\n1|Question")
+    psql(f"SET ROLE service_role; {stored('re_2', subject='Room in Berlin', text='Any rooms?', sender='bo@example.org')}; "
+         f"{stored('re_3', subject='Sponsor 50% off_now', text='Buy', sender='spam@example.net')}")
+    check("members can't read the Inbox", inbox_list(), as_user=nina, error_has="Admins only")
+    check("... nor the tables", "SELECT count(*) FROM private.inbox_messages", as_user=nina, expect="error")
+    check("the admin lists it: newest first, 3 unread",
+          f"SELECT concat_ws('|', r->>'total', r->>'unread', (SELECT string_agg(m->>'subject', ',') FROM jsonb_array_elements(r->'messages') m)) "
+          f"FROM ({inbox_list()}) x(r)", as_user=ADMIN, expect="3|3|Sponsor 50% off_now,Room in Berlin,Question")
+    check("... searches sender, subject and text (% and _ are plain characters)",
+          f"SELECT concat_ws('|', ({inbox_list(query='rooms')})->>'total', ({inbox_list(query='50%')})->>'total', "
+          f"({inbox_list(query='%')})->>'total', ({inbox_list(query='asha@')})->>'total')", as_user=ADMIN, expect="1|1|1|1")
+    check("opening one marks it read and shows the text, not the HTML",
+          f"SELECT concat_ws('|', r->>'read', r->>'text', r->>'html', r->'attachment_list'->0->>'filename', jsonb_array_length(r->'replies')) "
+          f"FROM (SELECT public.admin_inbox_get({msg_id('re_1')})) x(r)", as_user=ADMIN,
+          expect="true|Hello, how do I join?||cv.pdf|0")
+    check("... unread ones come first",
+          f"SELECT concat_ws('|', r->>'unread', (SELECT string_agg(m->>'subject', ',') FROM jsonb_array_elements(r->'messages') m)) "
+          f"FROM ({inbox_list()}) x(r)", as_user=ADMIN, expect="2|Sponsor 50% off_now,Room in Berlin,Question")
+    check("archiving one takes it out of the Inbox",
+          f"SELECT (public.admin_inbox_set({msg_id('re_3')}, true))->>'archived'; "
+          f"SELECT concat_ws('|', ({inbox_list()})->>'total', ({inbox_list('archived')})->>'total', ({inbox_list('all')})->>'total')",
+          as_user=ADMIN, expect="true\n2|1|3")
+    check("... marking one unread", f"SELECT (public.admin_inbox_set({msg_id('re_1')}, NULL, false))->>'read'; "
+          f"SELECT ({inbox_list('unread')})->>'total'", as_user=ADMIN, expect="false\n2")
+    check("... an unknown filter is refused", inbox_list("spam"), as_user=ADMIN, error_has="Unknown filter")
+    prepare = lambda rid, body="Thanks, here is how.": f"SELECT public.admin_inbox_reply_prepare({msg_id(rid)}, {q(body)})"
+    check("a member can't prepare a reply", prepare("re_1"), as_user=nina, error_has="Admins only")
+    check("the admin prepares one: to the sender, Re: subject, the Message-ID for threading",
+          f"SELECT concat_ws('|', r->>'to', r->>'subject', r->>'message_id', r->>'admin' = '{ADMIN}') FROM ({prepare('re_1')}) x(r)",
+          as_user=ADMIN, expect="Asha <asha@example.org>|Re: Question|<re_1@mail.example.org>|t")
+    check("... an empty reply is refused", prepare("re_1", "   "), as_user=ADMIN, error_has="Write a reply")
+    record = f"SELECT (public.inbox_record_reply({msg_id('re_1')}, '{ADMIN}', 'Thanks, here is how.', 'resend-out-1'))->>'by'"
+    check("only the service role records the reply", record, as_user=ADMIN, expect="error")
+    check("... for an admin", record.replace(ADMIN, nina), role="service_role", error_has="Admins only")
+    check("... recorded: the message shows it, replied and read",
+          f"SET ROLE service_role; {record}; RESET ROLE; " + as_admin(
+              f"SELECT concat_ws('|', r->>'read', r->>'replied_at' IS NOT NULL, r->'replies'->0->>'body', r->'replies'->0->>'by') "
+              f"FROM (SELECT public.admin_inbox_get({msg_id('re_1')})) x(r)"),
+          expect="NRIClub Team\nf\ntrue|t|Thanks, here is how.|NRIClub Team")
+    check("the clean-up deletes messages 12 months after they arrived, with their replies", f"""
+          BEGIN;
+          UPDATE private.inbox_messages SET received_at = now() - interval '13 months' WHERE resend_email_id IN ('re_1', 're_2');
+          SELECT (private.daily_cleanup())->>'inbox_messages';
+          SELECT string_agg(resend_email_id, ',') || '|' || (SELECT count(*) FROM private.inbox_replies) FROM private.inbox_messages;
+          ROLLBACK;""", expect="2\nre_3|0")
+    import difflib
+    old = function_source(AMBASSADORS, "CREATE OR REPLACE FUNCTION private.daily_cleanup()").splitlines()
+    new = function_source(ADMIN_TOOLS, "CREATE OR REPLACE FUNCTION private.daily_cleanup()").splitlines()
+    diff = [l for l in difflib.ndiff(old, new) if l[:2] in ("- ", "+ ")]
+    removed = [l[2:] for l in diff if l.startswith("- ")]
+    verdict("private.daily_cleanup() is its 2026-10-24 version with lines added only",
+            removed == ["    'undecided_ambassador_applications', undecided_applications);"], f"removed: {removed}")
 
 
 if __name__ == "__main__":

@@ -36,6 +36,18 @@
 --     dates (end not before start), a summary of at most 160 characters, a
 --     full https:// address. public.admin_whats_on_events lists them all for
 --     the panel.
+--   * Inbox. Mail to hello@nriclub.app (received by Resend) is stored in
+--     private.inbox_messages by the Edge Function forward-email
+--     (public.inbox_store, service role only), which may still forward a
+--     copy. The admin panel lists it (public.admin_inbox_list), opens a
+--     message and marks it read (admin_inbox_get), archives it or marks it
+--     unread (admin_inbox_set), and replies through the Edge Function
+--     admin-inbox-reply (public.admin_inbox_reply_prepare as the admin, then
+--     public.inbox_record_reply, service role only, into
+--     private.inbox_replies). Messages and their replies are deleted 12
+--     months after they arrived.
+--   * Clean-up (private.daily_cleanup): the 2026-10-24 version plus the
+--     Inbox (12 months) and the log of decision emails (30 days).
 -- Needs all earlier migrations (up to 20261024000000_ambassador_applications.sql).
 -- Runs as one transaction (it can be run as it is in the SQL editor); it
 -- refuses to run before the 2026-10-24 update, and a second time.
@@ -62,8 +74,8 @@ $$;
 -- The decision emails that went out: which member, which decision (kind:
 -- 'approved', 'needs_info', 'rejected' or 'blocked') and when it was taken
 -- (decided_at: reviewed_at or blocked_at), so one decision is emailed once.
--- actor_id: the admin. Kept 30 days (admin_member_email deletes older ones),
--- and deleted with the member's account. Only the database reads it.
+-- actor_id: the admin. Kept 30 days (private.daily_cleanup, and
+-- admin_member_email), and deleted with the member's account. Only the database reads it.
 CREATE TABLE private.member_email_log (
   member_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('approved', 'needs_info', 'rejected', 'blocked')),
@@ -436,14 +448,397 @@ END;
 $$;
 
 -- ============================================================================
+-- INBOX (mail to hello@nriclub.app)
+-- ============================================================================
+
+-- Mail to hello@nriclub.app, as Resend received it. The Edge Function
+-- forward-email stores each one (public.inbox_store, service role only) and
+-- may also forward a copy. resend_email_id: Resend's id (each email is stored
+-- once). message_id: the email's own Message-ID header, for the threading of
+-- replies. from_address, reply_to, to_addresses, subject, text_body,
+-- html_body: as received (the panel shows text only; the HTML is kept for an
+-- email without text and is never shown as HTML). attachments: their names,
+-- types and sizes only (the files stay with Resend). read_at, archived,
+-- replied_at: our team's handling. Deleted 12 months after it arrived
+-- (private.daily_cleanup), with our replies.
+CREATE TABLE private.inbox_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  resend_email_id TEXT NOT NULL UNIQUE CHECK (char_length(resend_email_id) BETWEEN 1 AND 200),
+  message_id TEXT NOT NULL DEFAULT '' CHECK (char_length(message_id) <= 1000),
+  from_address TEXT NOT NULL DEFAULT '' CHECK (char_length(from_address) <= 1000),
+  reply_to TEXT NOT NULL DEFAULT '' CHECK (char_length(reply_to) <= 1000),
+  to_addresses TEXT[] NOT NULL DEFAULT '{}',
+  subject TEXT NOT NULL DEFAULT '' CHECK (char_length(subject) <= 1000),
+  text_body TEXT NOT NULL DEFAULT '' CHECK (char_length(text_body) <= 200000),
+  html_body TEXT NOT NULL DEFAULT '' CHECK (char_length(html_body) <= 500000),
+  attachments JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(attachments) = 'array'),
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  read_at TIMESTAMPTZ,
+  archived BOOLEAN NOT NULL DEFAULT FALSE,
+  replied_at TIMESTAMPTZ
+);
+CREATE INDEX idx_inbox_messages_received ON private.inbox_messages (received_at DESC);
+ALTER TABLE private.inbox_messages ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON private.inbox_messages FROM PUBLIC, anon, authenticated;
+
+-- Our team's replies from the admin panel, sent through Resend (resend_id:
+-- Resend's id of the sent email). admin_id: who replied.
+CREATE TABLE private.inbox_replies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  message_id UUID NOT NULL REFERENCES private.inbox_messages(id) ON DELETE CASCADE,
+  admin_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  body TEXT NOT NULL CHECK (char_length(body) BETWEEN 1 AND 10000),
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resend_id TEXT NOT NULL DEFAULT '' CHECK (char_length(resend_id) <= 200)
+);
+CREATE INDEX idx_inbox_replies_message ON private.inbox_replies (message_id, sent_at);
+ALTER TABLE private.inbox_replies ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON private.inbox_replies FROM PUBLIC, anon, authenticated;
+
+-- Stores one received email (forward-email, service role only): p_email
+-- with resend_email_id, message_id, from, reply_to, to (an array), subject,
+-- text, html, attachments ([{ filename, content_type, size }]) and
+-- received_at. Too long text is cut. The same email again changes nothing.
+-- Returns the message's id.
+CREATE FUNCTION public.inbox_store(p_email JSONB)
+RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  e JSONB := COALESCE(p_email, '{}'::jsonb);
+  v_key TEXT := LEFT(COALESCE(p_email ->> 'resend_email_id', ''), 200);
+  v_id UUID;
+  v_received TIMESTAMPTZ;
+BEGIN
+  IF v_key = '' THEN
+    RAISE EXCEPTION 'resend_email_id is missing.' USING ERRCODE = 'P0001';
+  END IF;
+  BEGIN
+    v_received := LEAST(COALESCE(NULLIF(e ->> 'received_at', '')::TIMESTAMPTZ, NOW()), NOW());
+  EXCEPTION WHEN OTHERS THEN
+    v_received := NOW();
+  END;
+  INSERT INTO private.inbox_messages (resend_email_id, message_id, from_address, reply_to, to_addresses, subject,
+    text_body, html_body, attachments, received_at)
+  VALUES (v_key, LEFT(COALESCE(e ->> 'message_id', ''), 1000),
+    LEFT(COALESCE(e ->> 'from', ''), 1000), LEFT(COALESCE(e ->> 'reply_to', ''), 1000),
+    COALESCE((SELECT array_agg(LEFT(x, 1000)) FROM jsonb_array_elements_text(
+      CASE WHEN jsonb_typeof(e -> 'to') = 'array' THEN e -> 'to' ELSE '[]'::jsonb END) x), '{}'),
+    LEFT(COALESCE(e ->> 'subject', ''), 1000), LEFT(COALESCE(e ->> 'text', ''), 200000),
+    LEFT(COALESCE(e ->> 'html', ''), 500000),
+    COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'filename', LEFT(COALESCE(NULLIF(a ->> 'filename', ''), 'attachment'), 300),
+        'content_type', LEFT(COALESCE(a ->> 'content_type', ''), 200),
+        'size', CASE WHEN jsonb_typeof(a -> 'size') = 'number' THEN a -> 'size' ELSE 'null'::jsonb END))
+      FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e -> 'attachments') = 'array' THEN e -> 'attachments' ELSE '[]'::jsonb END) a
+      WHERE jsonb_typeof(a) = 'object'), '[]'::jsonb),
+    v_received)
+  ON CONFLICT (resend_email_id) DO NOTHING
+  RETURNING id INTO v_id;
+  IF v_id IS NULL THEN
+    SELECT m.id INTO v_id FROM private.inbox_messages m WHERE m.resend_email_id = v_key;
+  END IF;
+  RETURN v_id;
+END;
+$$;
+
+-- A message as the Inbox lists it: who it's from, the subject, the start of
+-- the text, and our handling.
+CREATE FUNCTION private.inbox_summary(m private.inbox_messages)
+RETURNS JSONB LANGUAGE sql STABLE SET search_path = '' AS $$
+  SELECT jsonb_build_object('id', m.id, 'from', m.from_address, 'subject', m.subject,
+    'snippet', LEFT(btrim(regexp_replace(m.text_body, '\s+', ' ', 'g')), 200), 'received_at', m.received_at,
+    'read', m.read_at IS NOT NULL, 'archived', m.archived, 'replied_at', m.replied_at,
+    'attachments', jsonb_array_length(m.attachments));
+$$;
+
+-- The Inbox, for the admin panel: p_filter 'inbox' (not archived; unread
+-- first, then newest), 'unread', 'archived' or 'all' (newest first);
+-- p_query finds part of the sender, subject or text. { messages, total
+-- (matching), unread (all unread, not archived) }. At most 100 at a time.
+CREATE FUNCTION public.admin_inbox_list(p_filter TEXT DEFAULT 'inbox', p_limit INTEGER DEFAULT 50,
+  p_offset INTEGER DEFAULT 0, p_query TEXT DEFAULT '')
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  q TEXT := btrim(LEFT(COALESCE(p_query, ''), 200));
+  pat TEXT;
+  lim INTEGER := LEAST(GREATEST(COALESCE(p_limit, 50), 1), 100);
+  off INTEGER := GREATEST(COALESCE(p_offset, 0), 0);
+  f TEXT := COALESCE(p_filter, 'inbox');
+BEGIN
+  IF NOT private.is_admin() THEN
+    RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
+  END IF;
+  IF f NOT IN ('inbox', 'unread', 'archived', 'all') THEN
+    RAISE EXCEPTION 'Unknown filter: %', f USING ERRCODE = 'P0001';
+  END IF;
+  pat := '%' || replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_') || '%';
+  RETURN (
+    WITH matching AS (
+      SELECT m FROM private.inbox_messages m
+      WHERE CASE f WHEN 'inbox' THEN NOT m.archived WHEN 'unread' THEN NOT m.archived AND m.read_at IS NULL
+                   WHEN 'archived' THEN m.archived ELSE TRUE END
+        AND (q = '' OR m.from_address ILIKE pat OR m.subject ILIKE pat OR m.text_body ILIKE pat)),
+    page AS (
+      SELECT x.m, row_number() OVER (ORDER BY ((x.m).read_at IS NULL AND f = 'inbox') DESC, (x.m).received_at DESC, (x.m).id) AS n
+      FROM (SELECT y.m FROM matching y
+            ORDER BY ((y.m).read_at IS NULL AND f = 'inbox') DESC, (y.m).received_at DESC, (y.m).id
+            LIMIT lim OFFSET off) x)
+    SELECT jsonb_build_object(
+      'messages', COALESCE((SELECT jsonb_agg(private.inbox_summary(p.m) ORDER BY p.n) FROM page p), '[]'::jsonb),
+      'total', (SELECT count(*) FROM matching),
+      'unread', (SELECT count(*) FROM private.inbox_messages m WHERE NOT m.archived AND m.read_at IS NULL)));
+END;
+$$;
+
+-- One message with everything the panel shows (the text; the HTML only for
+-- an email without text, which the panel turns into text) and our replies,
+-- oldest first. Marks it read.
+CREATE FUNCTION public.admin_inbox_get(p_id UUID)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  m private.inbox_messages;
+BEGIN
+  IF NOT private.is_admin() THEN
+    RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
+  END IF;
+  UPDATE private.inbox_messages SET read_at = COALESCE(read_at, NOW()) WHERE id = p_id RETURNING * INTO m;
+  IF m.id IS NULL THEN
+    RAISE EXCEPTION 'Message not found. It may have been deleted.' USING ERRCODE = 'P0002';
+  END IF;
+  RETURN private.inbox_summary(m) || jsonb_build_object(
+    'reply_to', m.reply_to, 'to', to_jsonb(m.to_addresses), 'text', m.text_body,
+    'html', CASE WHEN btrim(m.text_body) = '' THEN m.html_body ELSE '' END,
+    'attachment_list', m.attachments,
+    'replies', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', r.id, 'body', r.body, 'sent_at', r.sent_at,
+        'by', COALESCE(NULLIF(p.name, ''), 'NRIClub Team')) ORDER BY r.sent_at)
+      FROM private.inbox_replies r LEFT JOIN public.profiles p ON p.id = r.admin_id WHERE r.message_id = m.id), '[]'::jsonb));
+END;
+$$;
+
+-- Archives a message or brings it back (p_archived), marks it read or unread
+-- (p_read); null leaves that as it is. Returns the message as listed.
+CREATE FUNCTION public.admin_inbox_set(p_id UUID, p_archived BOOLEAN DEFAULT NULL, p_read BOOLEAN DEFAULT NULL)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  m private.inbox_messages;
+BEGIN
+  IF NOT private.is_admin() THEN
+    RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
+  END IF;
+  UPDATE private.inbox_messages SET
+    archived = COALESCE(p_archived, archived),
+    read_at = CASE WHEN p_read IS NULL THEN read_at WHEN p_read THEN COALESCE(read_at, NOW()) END
+  WHERE id = p_id RETURNING * INTO m;
+  IF m.id IS NULL THEN
+    RAISE EXCEPTION 'Message not found. It may have been deleted.' USING ERRCODE = 'P0002';
+  END IF;
+  RETURN private.inbox_summary(m);
+END;
+$$;
+
+-- Before the Edge Function admin-inbox-reply sends a reply (called as the
+-- admin): admin rights, a reply of 1 to 10,000 characters, and the admin's
+-- limits (10 a minute, 200 a day). Returns { to (the sender's Reply-To,
+-- else From), subject, message_id (for In-Reply-To), admin }.
+CREATE FUNCTION public.admin_inbox_reply_prepare(p_id UUID, p_body TEXT)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  m private.inbox_messages;
+  body TEXT := btrim(COALESCE(p_body, ''));
+BEGIN
+  IF NOT private.is_admin() THEN
+    RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
+  END IF;
+  IF body = '' OR char_length(body) > 10000 THEN
+    RAISE EXCEPTION 'Write a reply of up to 10,000 characters.' USING ERRCODE = 'P0001';
+  END IF;
+  SELECT * INTO m FROM private.inbox_messages WHERE id = p_id;
+  IF m.id IS NULL THEN
+    RAISE EXCEPTION 'Message not found. It may have been deleted.' USING ERRCODE = 'P0002';
+  END IF;
+  IF btrim(COALESCE(NULLIF(m.reply_to, ''), m.from_address)) = '' THEN
+    RAISE EXCEPTION 'This message has no address to reply to.' USING ERRCODE = 'P0001';
+  END IF;
+  PERFORM private.take_rate('inbox_reply', ARRAY['10', '1 minute', '200', '1 day']);
+  RETURN jsonb_build_object('to', COALESCE(NULLIF(m.reply_to, ''), m.from_address),
+    'subject', CASE WHEN m.subject ~* '^\s*re:' THEN m.subject
+                    ELSE 'Re: ' || COALESCE(NULLIF(btrim(m.subject), ''), 'your message') END,
+    'message_id', m.message_id, 'admin', (SELECT auth.uid()));
+END;
+$$;
+
+-- After the Edge Function sent a reply (service role only): records it and
+-- marks the message replied (and read). p_admin must be an admin.
+CREATE FUNCTION public.inbox_record_reply(p_message UUID, p_admin UUID, p_body TEXT, p_resend_id TEXT)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  r private.inbox_replies;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = p_admin) THEN
+    RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
+  END IF;
+  INSERT INTO private.inbox_replies (message_id, admin_id, body, resend_id)
+  VALUES (p_message, p_admin, LEFT(btrim(COALESCE(p_body, '')), 10000), LEFT(COALESCE(p_resend_id, ''), 200))
+  RETURNING * INTO r;
+  UPDATE private.inbox_messages SET replied_at = r.sent_at, read_at = COALESCE(read_at, r.sent_at) WHERE id = p_message;
+  RETURN jsonb_build_object('id', r.id, 'body', r.body, 'sent_at', r.sent_at,
+    'by', COALESCE((SELECT NULLIF(p.name, '') FROM public.profiles p WHERE p.id = p_admin), 'NRIClub Team'));
+END;
+$$;
+
+-- ============================================================================
+-- CLEAN-UP
+-- ============================================================================
+
+-- As on 2026-10-24, plus: Inbox messages (with our replies) 12 months after
+-- they arrived, and the log of decision emails after 30 days. The periods
+-- are the Privacy Policy's (RETENTION in src/content/legal/privacy.js).
+CREATE OR REPLACE FUNCTION private.daily_cleanup()
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  unconfirmed INTEGER;
+  unfinished INTEGER;
+  declined INTEGER;
+  notices INTEGER;
+  closed_reports INTEGER;
+  records INTEGER;
+  notes INTEGER;
+  closed_notices INTEGER;
+  copies INTEGER;
+  actions INTEGER;
+  decided_applications INTEGER;
+  undecided_applications INTEGER;
+  inbox INTEGER;
+BEGIN
+  -- Sign-ups that never confirmed their email address: 30 days.
+  WITH gone AS (
+    DELETE FROM auth.users u
+    WHERE u.email_confirmed_at IS NULL AND u.created_at < NOW() - INTERVAL '30 days'
+      AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = u.id)
+    RETURNING 1)
+  SELECT count(*) INTO unconfirmed FROM gone;
+
+  -- Accounts that never sent their check details: 90 days after signing up,
+  -- or after our team last sent them back to unfinished (that decision
+  -- clears reviewed_at, so its date comes from verification_log).
+  WITH gone AS (
+    DELETE FROM auth.users u USING public.profile_private pp
+    WHERE pp.id = u.id AND pp.verification_status = 'incomplete'
+      AND pp.created_at < NOW() - INTERVAL '90 days'
+      AND NOT EXISTS (SELECT 1 FROM public.verification_log l
+                      WHERE l.member_id = pp.id AND l.decision = 'incomplete'
+                        AND l.created_at >= NOW() - INTERVAL '90 days')
+      AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = u.id)
+    RETURNING 1)
+  SELECT count(*) INTO unfinished FROM gone;
+
+  -- Accounts our team declined: 6 months after the decision. (Accounts
+  -- whose membership we ended are deleted by hand: the database can't tell
+  -- a block for a time from the end of a membership.)
+  WITH gone AS (
+    DELETE FROM auth.users u USING public.profile_private pp
+    WHERE pp.id = u.id AND pp.verification_status = 'rejected'
+      AND COALESCE(pp.reviewed_at, pp.updated_at) < NOW() - INTERVAL '6 months'
+      AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = u.id)
+    RETURNING 1)
+  SELECT count(*) INTO declined FROM gone;
+
+  -- In-app notifications the member has read: 6 months.
+  WITH gone AS (
+    DELETE FROM public.notifications n WHERE n.read AND n.created_at < NOW() - INTERVAL '6 months' RETURNING 1)
+  SELECT count(*) INTO notices FROM gone;
+
+  -- Closed reports: once closed and 12 months old, unless held.
+  WITH gone AS (
+    DELETE FROM public.reports r
+    WHERE r.status <> 'pending' AND r.created_at < NOW() - INTERVAL '12 months'
+      AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = r.id)
+    RETURNING 1)
+  SELECT count(*) INTO closed_reports FROM gone;
+
+  -- Notices from the public report page: once closed and 12 months old,
+  -- unless held.
+  WITH gone AS (
+    DELETE FROM private.notices n
+    WHERE n.status = 'closed' AND n.created_at < NOW() - INTERVAL '12 months' AND n.hold_reason = ''
+    RETURNING 1)
+  SELECT count(*) INTO closed_notices FROM gone;
+
+  -- Applications to be an ambassador: 6 months after our decision; those
+  -- we haven't decided on, 12 months after they were sent.
+  WITH gone AS (
+    DELETE FROM private.ambassador_applications a
+    WHERE a.status IN ('accepted', 'declined') AND COALESCE(a.decided_at, a.created_at) < NOW() - INTERVAL '6 months'
+    RETURNING 1)
+  SELECT count(*) INTO decided_applications FROM gone;
+  WITH gone AS (
+    DELETE FROM private.ambassador_applications a
+    WHERE a.status IN ('new', 'contacted') AND a.created_at < NOW() - INTERVAL '12 months'
+    RETURNING 1)
+  SELECT count(*) INTO undecided_applications FROM gone;
+
+  -- Record of declined and blocked accounts: 24 months after the decision;
+  -- the note in it after 12.
+  WITH gone AS (
+    DELETE FROM private.moderation_record m WHERE m.created_at < NOW() - INTERVAL '24 months' RETURNING 1)
+  SELECT count(*) INTO records FROM gone;
+  WITH cleared AS (
+    UPDATE private.moderation_record m SET admin_note = ''
+    WHERE m.admin_note <> '' AND m.created_at < NOW() - INTERVAL '12 months' RETURNING 1)
+  SELECT count(*) INTO notes FROM cleared;
+
+  -- The record of what our team did: the copy of removed content after 6
+  -- months, the rest after 24, unless a report or notice it answers is held
+  -- for a legal dispute or a police matter.
+  WITH cleared AS (
+    UPDATE private.moderation_action a SET snapshot = NULL
+    WHERE a.snapshot IS NOT NULL AND a.created_at < NOW() - INTERVAL '6 months'
+      AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = ANY (a.report_ids))
+      AND NOT EXISTS (SELECT 1 FROM private.notices n WHERE n.id = a.notice_id AND n.hold_reason <> '')
+    RETURNING 1)
+  SELECT count(*) INTO copies FROM cleared;
+  WITH gone AS (
+    DELETE FROM private.moderation_action a
+    WHERE a.created_at < NOW() - INTERVAL '24 months'
+      AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = ANY (a.report_ids))
+      AND NOT EXISTS (SELECT 1 FROM private.notices n WHERE n.id = a.notice_id AND n.hold_reason <> '')
+    RETURNING 1)
+  SELECT count(*) INTO actions FROM gone;
+
+  -- Mail to hello@nriclub.app kept in the admin panel's Inbox, with our
+  -- replies: 12 months after it arrived.
+  WITH gone AS (
+    DELETE FROM private.inbox_messages m WHERE m.received_at < NOW() - INTERVAL '12 months' RETURNING 1)
+  SELECT count(*) INTO inbox FROM gone;
+
+  -- The counters behind the limits and the name changes.
+  DELETE FROM private.rate_log r WHERE r.at < NOW() - INTERVAL '1 day';
+  DELETE FROM private.name_changes c WHERE c.changed_at < NOW() - INTERVAL '30 days';
+  DELETE FROM private.notice_log l WHERE l.at < NOW() - INTERVAL '1 day';
+  DELETE FROM private.ambassador_application_log l WHERE l.at < NOW() - INTERVAL '1 day';
+  DELETE FROM private.member_email_log l WHERE l.created_at < NOW() - INTERVAL '30 days';
+
+  RETURN jsonb_build_object(
+    'unconfirmed_signups', unconfirmed, 'unfinished_accounts', unfinished, 'declined_accounts', declined,
+    'read_notifications', notices, 'closed_reports', closed_reports, 'closed_notices', closed_notices,
+    'moderation_records', records, 'moderation_notes_cleared', notes,
+    'moderation_copies_cleared', copies, 'moderation_actions', actions)
+    || jsonb_build_object(
+    'decided_ambassador_applications', decided_applications,
+    'undecided_ambassador_applications', undecided_applications)
+    || jsonb_build_object('inbox_messages', inbox);
+END;
+$$;
+
+-- ============================================================================
 -- PERMISSIONS
 -- ============================================================================
 
 -- Helpers run as the database (inside the functions above).
 REVOKE ALL ON FUNCTION private.is_unfinished_signup(UUID), private.whats_on_categories(),
-  private.whats_on_json(public.whats_on_events) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION private.is_unfinished_signup(UUID), private.whats_on_json(public.whats_on_events)
-  TO service_role;
+  private.whats_on_json(public.whats_on_events), private.inbox_summary(private.inbox_messages) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION private.is_unfinished_signup(UUID), private.whats_on_json(public.whats_on_events),
+  private.inbox_summary(private.inbox_messages) TO service_role;
 -- The table's CHECK uses it, so whoever writes a row needs it (only the
 -- functions above do).
 GRANT EXECUTE ON FUNCTION private.whats_on_categories() TO anon, authenticated, service_role;
@@ -451,10 +846,17 @@ GRANT EXECUTE ON FUNCTION private.whats_on_categories() TO anon, authenticated, 
 -- Admin functions check private.is_admin() themselves; members get "Admins only".
 REVOKE ALL ON FUNCTION public.admin_member_email(UUID, TEXT), public.admin_check_signup_delete(UUID),
   public.admin_whats_on_events(), public.admin_save_whats_on_event(JSONB, BOOLEAN),
-  public.admin_hide_whats_on_event(TEXT, BOOLEAN), public.admin_delete_whats_on_event(TEXT) FROM PUBLIC, anon;
+  public.admin_hide_whats_on_event(TEXT, BOOLEAN), public.admin_delete_whats_on_event(TEXT),
+  public.admin_inbox_list(TEXT, INTEGER, INTEGER, TEXT), public.admin_inbox_get(UUID),
+  public.admin_inbox_set(UUID, BOOLEAN, BOOLEAN), public.admin_inbox_reply_prepare(UUID, TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_member_email(UUID, TEXT), public.admin_check_signup_delete(UUID),
   public.admin_whats_on_events(), public.admin_save_whats_on_event(JSONB, BOOLEAN),
-  public.admin_hide_whats_on_event(TEXT, BOOLEAN), public.admin_delete_whats_on_event(TEXT) TO authenticated;
--- Only the Edge Function, with the service role, records a deletion.
-REVOKE ALL ON FUNCTION public.admin_record_signup_delete(UUID, UUID, BOOLEAN) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.admin_record_signup_delete(UUID, UUID, BOOLEAN) TO service_role;
+  public.admin_hide_whats_on_event(TEXT, BOOLEAN), public.admin_delete_whats_on_event(TEXT),
+  public.admin_inbox_list(TEXT, INTEGER, INTEGER, TEXT), public.admin_inbox_get(UUID),
+  public.admin_inbox_set(UUID, BOOLEAN, BOOLEAN), public.admin_inbox_reply_prepare(UUID, TEXT) TO authenticated;
+-- Only the Edge Functions, with the service role, record a deletion, store
+-- a received email and record a reply.
+REVOKE ALL ON FUNCTION public.admin_record_signup_delete(UUID, UUID, BOOLEAN), public.inbox_store(JSONB),
+  public.inbox_record_reply(UUID, UUID, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_record_signup_delete(UUID, UUID, BOOLEAN), public.inbox_store(JSONB),
+  public.inbox_record_reply(UUID, UUID, TEXT, TEXT) TO service_role;
