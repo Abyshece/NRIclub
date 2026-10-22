@@ -10,18 +10,18 @@
 export const IMPRINT = {
   // Your full name; for a company, its name with the legal form
   // (e.g. "NRIClub UG (haftungsbeschränkt)").
-  name: "",
+  name: "Abhishek Abhishek",
   // Companies only: who represents it (e.g. "Managing director: Asha Rao").
   representative: "",
   // A postal address where letters reach you: street and number, postcode
   // and city, country. One line each. A P.O. box isn't enough.
-  address: [],
+  address: ["Am Exerzierplatz 3", "97072 Würzburg", "Germany"],
   email: "hello@nriclub.app",
   // A second quick way to reach you, usually a phone number in international
   // format, e.g. "+49 89 1234 5678" (with the country code, no leading 0).
-  phone: "",
+  phone: "+49 176 4733 5005",
   // Companies only: the register entry (e.g. "Amtsgericht München, HRB 123456").
-  register: "",
+  register: "Not yet registered: registration of the company is in progress.",
   // Your VAT ID (USt-IdNr., e.g. "DE123456789"), if you have one.
   vatId: "",
   // Your business ID (Wirtschafts-Identifikationsnummer, e.g.
@@ -45,13 +45,13 @@ export const PRIVACY_DETAILS = {
   // from the authority's own website, e.g. for Bavaria "Bayerisches
   // Landesamt für Datenschutzaufsicht (BayLDA), <street>, 91522 Ansbach,
   // Germany". While empty, the Policy describes it instead of naming it.
-  supervisoryAuthority: "",
+  supervisoryAuthority: "Bayerisches Landesamt für Datenschutzaufsicht (BayLDA), Promenade 18, 91522 Ansbach, Germany",
   // The authority's website, e.g. "https://www.lda.bayern.de".
-  supervisoryAuthorityUrl: "",
+  supervisoryAuthorityUrl: "https://www.lda.bayern.de",
   // Who hosts the hello@nriclub.app mailbox: the company and its country,
   // e.g. "Example Mail GmbH, Germany". While empty, the Policy says "the
   // provider that hosts our mailbox".
-  mailProvider: "",
+  mailProvider: "Plus Five Five, Inc. (Resend), USA, which receives the emails, and Google (Gmail), whose inbox they are forwarded to.",
   // Which providers have a data processing agreement (Auftragsverarbeitungs-
   // vertrag, Art. 28 GDPR) with NRIClub. The Policy says a provider works
   // under one, and names the transfer safeguard in it, only where this is
@@ -61,11 +61,11 @@ export const PRIVACY_DETAILS = {
   // to true once the project is on one of them. Set mailbox to true once you
   // have accepted the mailbox provider's agreement. File a copy of each
   // (docs/compliance/processor-agreements.md).
-  agreements: { supabase: true, resend: true, vercel: false, mailbox: false },
+  agreements: { supabase: true, resend: true, vercel: true, mailbox: false },
   // How long Vercel keeps the request logs of your plan, as its
   // documentation says (October 2026: "1 hour" on Hobby, "1 day" on Pro).
   // While empty, the Policy says "up to 1 day".
-  vercelLogRetention: "",
+  vercelLogRetention: "1 day",
 };
 
 export const hasImprint = () => !!(IMPRINT.name.trim() && IMPRINT.address.some((l) => l.trim()));
