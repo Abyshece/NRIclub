@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import MemberPeek, { MemberModeration } from "./MemberPeek";
 import { moderateMember } from "./moderateMember";
+import { EMAILED_DECISIONS, EMAIL_DELAY_MS, emailFailed, queueDecisionEmail } from "./memberEmail";
 import { Avatar, Button, EmptyState, ErrorNote, Icon, PageHeader, Pill, SkeletonRows } from "./ui";
 import {
   NO_HOLD, VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, holdSummary, identityChanged,
@@ -23,7 +24,7 @@ const fmt = (n) => n.toLocaleString("en-GB");
 // member (the 2026-10-21 update).
 const SEARCH_DELAY_MS = 300;
 
-export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, showToast, recorded = true }) {
+export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, onMemberDeleted, showToast, recorded = true }) {
   const [query, setQuery] = useState("");
   const [show, setShow] = useState("all"); // all | blocked
   const [limit, setLimit] = useState(PAGE);
@@ -280,6 +281,10 @@ export default function MembersView({ users, total = users.length, blockedTotal 
     // the queue, or back to unfinished for someone rejected before sending
     // their details. It's refused if someone else has decided since.
     const undoable = counted && (before === "pending" || (before === "incomplete" && decision === "rejected"));
+    // The member's email about it, once the Undo has gone.
+    const email = EMAILED_DECISIONS.has(decision)
+      ? queueDecisionEmail(m.id, decision, { delay: undoable ? EMAIL_DELAY_MS : 0, onFail: emailFailed(showToast) })
+      : null;
     showToast({
       text: {
         approved: `Approved ${who}`,
@@ -290,9 +295,12 @@ export default function MembersView({ users, total = users.length, blockedTotal 
       }[decision],
       icon: decision === "approved" ? "check" : undefined,
       undo: undoable ? async () => {
+        email?.cancel();
         try {
           await api.adminReviewMember(m.id, before, "", "Undo", { status: decision });
         } catch (e) {
+          // The decision stands: so does its email.
+          email?.sendNow();
           throw await refused(m.id, e);
         }
         touch(m.id);
@@ -330,6 +338,18 @@ export default function MembersView({ users, total = users.length, blockedTotal 
       patchDetails(id, patch);
     },
   });
+
+  // Deletes an account that never finished signing up (MemberPeek's
+  // onDeleteSignup; the server checks again). Throws so the dialog can say why.
+  const deleteSignup = async (m) => {
+    const res = await api.adminDeleteSignup(m.id);
+    touch(m.id);
+    setRemote((r) => (r && r.members.some((x) => x.id === m.id)
+      ? { ...r, members: r.members.filter((x) => x.id !== m.id), total: Math.max(0, r.total - 1) } : r));
+    setOpenId(null);
+    onMemberDeleted?.(m.id, m);
+    showToast({ text: `Deleted ${shortName(m.name)}'s unfinished sign-up${res?.recorded === false ? ". It couldn't be recorded in the log" : ""}` });
+  };
 
   const unblock = async (u) => {
     try { await moderate(u, { kind: "member", action: "unblock", reasons: {} }); } catch (e) { showToast({ text: friendlyError(e), tone: "error" }); }
@@ -445,6 +465,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
           onDecision={decide}
           onModerate={moderate}
           onSetAmbassador={setAmbassador}
+          onDeleteSignup={deleteSignup}
         />
       )}
 

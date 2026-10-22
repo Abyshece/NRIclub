@@ -6,6 +6,7 @@ import "./member/base.css";
 import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToAccept } from "./member/profile";
 import { hasImprint } from "./content/imprint";
 import { moveOldInvite, rememberInvite } from "./member/invite";
+import { isAppPath } from "./content/routes";
 
 // NRIClub sets no cookies and loads no analytics, so there is no consent
 // banner (the Privacy Policy lists what the site keeps in the browser).
@@ -30,6 +31,11 @@ const ImpressumPage = lazy(() => import("./ImpressumPage"));
 const LegalPage = lazy(() => import("./LegalPage"));
 const ReportPage = lazy(() => import("./ReportPage"));
 const WhatsOnPage = lazy(() => import("./WhatsOnPage"));
+const NotFoundPage = lazy(() => import("./NotFoundPage"));
+
+// An address the site has no page for (see src/content/routes.js); never on
+// the admin site, which answers every address.
+const unknownPath = () => !isAdminRoute() && !isAppPath(window.location.pathname);
 
 // A public page's address: /city/<city>, /guides, /guides/<slug> or
 // /whats-on (members who open it get Events, see Dashboard.jsx).
@@ -236,6 +242,11 @@ const startsSignedOut = () => {
   }
 };
 
+// Signup was waiting for the email code in this tab (see SignUpFlow).
+const pendingSignup = () => {
+  try { return !!sessionStorage.getItem("nriclub_signup"); } catch (e) { return false; }
+};
+
 export default function App() {
   const [authState, setAuthState] = useState(() => (startsSignedOut() ? "landing" : "loading"));
   const [user, setUser] = useState(null);
@@ -282,6 +293,28 @@ export default function App() {
   // Leave the signed-in screens if the session ends by itself (revoked,
   // expired, or another tab signed out or signed in as someone else).
   useEffect(() => { api.onSessionEnded(() => window.location.reload()); }, []);
+
+  // Signup and login get a browser history entry of their own (one for
+  // both), so the browser's or phone's Back button goes back to the page
+  // they were opened from instead of leaving the site. Their own Back
+  // button does the same (leaveAuthPage).
+  useEffect(() => {
+    if (authState !== "signup" && authState !== "login") return;
+    try {
+      const here = window.location.pathname + window.location.search + window.location.hash;
+      if (window.history.state?.nriAuth) window.history.replaceState({ nriAuth: authState }, "", here);
+      else window.history.pushState({ nriAuth: authState }, "", here);
+    } catch (e) {}
+    const onPop = () => setAuthState((s) => (s === "signup" || s === "login" ? "landing" : s));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [authState]);
+  const leaveAuthPage = () => {
+    if (window.history.state?.nriAuth) {
+      try { window.history.back(); return; } catch (e) {}
+    }
+    setAuthState("landing");
+  };
   // An invite link (?invite=<code>; links from before invite codes:
   // ?invite=<member id>&from=<first name>): remembered for Get verified,
   // then taken out of the address bar.
@@ -353,6 +386,9 @@ export default function App() {
     if (startsSignedOut()) {
       try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
       if (start === "signup" || start === "login") setAuthState(start);
+      // A reload while signup waited for the email code: back to that step
+      // (SignUpFlow keeps it for this tab).
+      else if (pendingSignup()) setAuthState("signup");
       return;
     }
     restoreSession();
@@ -428,6 +464,9 @@ export default function App() {
   const handleLogout = () => {
     api.signOut().catch(() => {});
     try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
+    // The address of the page the member was on (e.g. /u/<member id>) goes
+    // too: the landing page shows at the home address.
+    try { window.history.replaceState(null, "", "/"); } catch (e) {}
     setUser(null);
     setAuthState("landing");
   };
@@ -497,6 +536,14 @@ export default function App() {
       const page = publicPage();
       const join = () => setAuthState("signup");
       const login = () => setAuthState("login");
+      // Page not found: Log in and Join free move to the homepage's address first.
+      if (unknownPath()) {
+        const leave = (state) => {
+          try { window.history.replaceState(null, "", "/"); } catch (e) {}
+          setAuthState(state);
+        };
+        return <NotFoundPage onJoin={() => leave("signup")} onLogin={() => leave("login")} />;
+      }
       if (page?.kind === "city") return <CityPage city={page.city} onJoin={join} onLogin={login} />;
       if (page?.kind === "guide") return <GuidePage slug={page.slug} onJoin={join} onLogin={login} />;
       if (page?.kind === "whats-on") return <WhatsOnPage onJoin={join} onLogin={login} />;
@@ -504,9 +551,10 @@ export default function App() {
       return <LandingPage onJoin={join} onLogin={login} />;
     };
     if (authState === "landing") return landing();
-    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
-    if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
+    if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onBack={leaveAuthPage} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
+    if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={handleAuthComplete} onBack={leaveAuthPage} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
     if (authState === "authenticated" && user) {
+      if (unknownPath()) return <NotFoundPage signedIn onLogin={() => window.location.assign("/")} />;
       // In this order: blocked members only see the blocked card (whatever
       // their verification status); members who haven't given their
       // verification details do that first; then anyone who hasn't confirmed

@@ -198,12 +198,11 @@ export async function signUp(email, password, metadata = {}) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error_description || data.msg || "Signup failed");
-  // Supabase answers an existing email with empty identities instead of an
-  // error; the user object is top-level when email confirmation is on.
-  const signedUpUser = data.user || data;
-  if (Array.isArray(signedUpUser?.identities) && signedUpUser.identities.length === 0) {
-    throw new Error("An account with this email already exists. Please log in instead.");
-  }
+  // Supabase answers an address that already has an account with a user
+  // that has no identities instead of an error (the user object is
+  // top-level when email confirmation is on). That answer is returned as it
+  // is: the signup page then shows the same next step as for a new address
+  // (profile.js, isExistingAccountResponse), so it never says who is a member.
   return data;
 }
 
@@ -1000,6 +999,41 @@ export async function updateProfile(updates) {
   return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}&select=${PROFILE_FIELDS}`, publicUpdates, { Prefer: "return=representation" });
 }
 
+// The member's city, country (ISO code) and the place their profile shows
+// ("Berlin, Germany"), changed together, as Get verified sets them: urgent
+// questions go to members by their city. Since the 2026-10-25 database
+// update through public.update_my_city, which checks them; before it,
+// straight into profiles. Returns { city, country_code, location }.
+export async function updateMyCity(city, countryCode, location) {
+  if (!currentUser) throw new Error("Not logged in");
+  if (!knownMissing("update_my_city")) {
+    try {
+      return await restCall("POST", "/rest/v1/rpc/update_my_city", { p_city: city, p_country_code: countryCode, p_location: location });
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.update_my_city = Date.now();
+    }
+  }
+  await restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { city, country_code: countryCode, location });
+  return { city, country_code: countryCode, location };
+}
+
+// Changes the member's sign-in email address. Supabase Auth emails a link
+// to confirm it (with "Secure email change" on, to the old and the new
+// address); the address changes once it's confirmed. Supabase refuses an
+// address another account has; the page says the same either way, so it
+// can't be used to find out who is a member.
+export async function changeEmail(email) {
+  if (!currentUser) throw new Error("Not logged in");
+  const redirectTo = encodeURIComponent(window.location.origin + "/");
+  try {
+    await authCall("PUT", `/user?redirect_to=${redirectTo}`, { email });
+  } catch (err) {
+    if (err.code === "email_exists" || /already (been )?registered|already exists/i.test(err.message || "")) return;
+    throw err;
+  }
+}
+
 // ============================================================================
 // MEMBER VERIFICATION
 // ============================================================================
@@ -1251,17 +1285,16 @@ export async function addComment(postId, content) {
 // LIKES
 // ============================================================================
 
-export async function toggleLike(postId) {
+// Likes (on true) or unlikes a post. It says what the member wants rather
+// than flipping what the database has, so a heart shown wrongly can't undo
+// a like: liking twice keeps one like, unliking what isn't liked does nothing.
+export async function setLike(postId, on) {
   if (!currentUser) throw new Error("Not logged in");
-  // Check if already liked
-  const existing = await restCall("GET", `/rest/v1/likes?post_id=eq.${postId}&user_id=eq.${currentUser.id}`);
-  if (existing && existing.length > 0) {
-    await restCall("DELETE", `/rest/v1/likes?post_id=eq.${postId}&user_id=eq.${currentUser.id}`);
-    return false; // unliked
-  } else {
-    await restCall("POST", "/rest/v1/likes", { post_id: postId, user_id: currentUser.id });
-    return true; // liked
+  if (on) {
+    return restCall("POST", "/rest/v1/likes?on_conflict=post_id,user_id", { post_id: postId, user_id: currentUser.id },
+      { Prefer: "resolution=ignore-duplicates,return=minimal" });
   }
+  return restCall("DELETE", `/rest/v1/likes?post_id=eq.${encodeURIComponent(postId)}&user_id=eq.${currentUser.id}`);
 }
 
 export async function getUserLikes() {
@@ -1273,16 +1306,19 @@ export async function getUserLikes() {
 // CONNECTIONS (Namaste)
 // ============================================================================
 
+// Sends a Namaste request: { id, created }. created is false when the
+// member had sent one before (whatever came of it), so a request the other
+// member ignored isn't sent again.
 export async function sendNamaste(recipientId) {
   if (!currentUser) throw new Error("Not logged in");
-  // Check if connection already exists
   const existing = await restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&recipient_id=eq.${recipientId}&select=id`);
-  if (existing && existing.length > 0) return existing; // Already sent
-  return restCall("POST", "/rest/v1/connections", {
+  if (existing && existing.length > 0) return { id: existing[0].id, created: false };
+  const rows = await restCall("POST", "/rest/v1/connections", {
     requester_id: currentUser.id,
     recipient_id: recipientId,
     status: "pending",
   }, { Prefer: "return=representation" });
+  return { id: rows?.[0]?.id || null, created: true };
 }
 
 export async function respondToNamaste(connectionId, accept) {
@@ -1307,9 +1343,11 @@ export async function getAllConnections() {
   return restCall("GET", `/rest/v1/connections?status=eq.accepted&select=requester_id,recipient_id`);
 }
 
+// Requests the member sent that weren't accepted (yet). One the other
+// member ignored ("blocked") looks the same to the sender: still sent.
 export async function getSentNamastes() {
   if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&status=eq.pending&select=recipient_id`);
+  return restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&status=in.(pending,blocked)&select=recipient_id`);
 }
 
 // ============================================================================
@@ -1400,6 +1438,20 @@ export async function createEvent(eventData) {
     ...eventData,
     organizer_id: currentUser.id,
   }, { Prefer: "return=representation" });
+}
+
+// The author's changes to their event (title, description, date, time,
+// place, city, link, photo). Returns the saved event, or throws: e.g. for a
+// date that has passed (refused by the database since the 2026-10-25
+// update), or when the event is gone. A photo that was replaced or removed
+// is deleted once the change is saved.
+export async function updateEvent(eventId, changes, previousImage = "") {
+  if (!currentUser) throw new Error("Not logged in");
+  const rows = await restCall("PATCH", `/rest/v1/events?id=eq.${encodeURIComponent(eventId)}&organizer_id=eq.${currentUser.id}`,
+    changes, { Prefer: "return=representation" });
+  if (!rows?.[0]) throw Object.assign(new Error("Event not saved"), { userMessage: "This event couldn't be changed. It may have been deleted." });
+  if (previousImage && "image_url" in changes && changes.image_url !== previousImage) deleteOwnImages([previousImage]).catch(() => {});
+  return rows[0];
 }
 
 export async function toggleRsvp(eventId) {
@@ -1907,16 +1959,29 @@ export async function submitAmbassadorApplication({ name, email, city, country, 
   return ref;
 }
 
+// Blocks a member and removes the Namaste connections between the two.
+// Since the 2026-10-25 database update that is one step
+// (public.block_member) that either all happens or not at all; before it,
+// the block is recorded first, then the connections are removed. Throws if
+// the block wasn't recorded.
 export async function blockUser(userId) {
   if (!currentUser) throw new Error("Not logged in");
-  // Remove all connections between the two users
-  try { await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${currentUser.id}&recipient_id=eq.${userId}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${userId}&recipient_id=eq.${currentUser.id}`); } catch(e) {}
-  // Block the user
-  return restCall("POST", "/rest/v1/blocks", {
-    blocker_id: currentUser.id,
-    blocked_id: userId,
-  });
+  if (!knownMissing("block_member")) {
+    try {
+      return await restCall("POST", "/rest/v1/rpc/block_member", { p_member: userId });
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.block_member = Date.now();
+    }
+  }
+  try {
+    await restCall("POST", "/rest/v1/blocks", { blocker_id: currentUser.id, blocked_id: userId });
+  } catch (err) {
+    if (!/23505/.test(err?.message || "")) throw err; // already blocked
+  }
+  await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${currentUser.id}&recipient_id=eq.${userId}`);
+  await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${userId}&recipient_id=eq.${currentUser.id}`);
+  return true;
 }
 
 export async function unblockUser(userId) {
@@ -2935,6 +3000,130 @@ export async function adminCleanUpPhotoFiles({ auto = false } = {}) {
 
 export async function adminNotify(userId, type, text) {
   return restCall("POST", "/rest/v1/notifications", { user_id: userId, type, text });
+}
+
+// ---- Admin tools of the 2026-10-25 update: decision emails, deleting
+// unfinished sign-ups, What's on, the Inbox (supabase/functions/*,
+// 20261025100000_admin_tools.sql) ----
+
+// One of our Edge Functions, with the admin's session. Throws with the
+// function's own message; unreachable is set when there was no answer at
+// all (no connection, or the function isn't deployed yet: Supabase's "not
+// found" carries no CORS headers, so the browser sees no answer either).
+// keepalive: the request may finish after the page closes. body null: a GET.
+async function adminFunction(name, body, { keepalive = false } = {}) {
+  const send = () => fetch(`${SUPABASE_URL}/functions/v1/${name}`, body === null
+    ? { method: "GET", headers: headers() }
+    : { method: "POST", keepalive, headers: headers(), body: JSON.stringify(body) });
+  let res;
+  try {
+    res = await send();
+    if (res.status === 401 && accessToken && !keepalive && await refreshSession()) res = await send();
+  } catch {
+    const err = new Error("Couldn't reach the server. It may not be set up yet, or the connection dropped.");
+    err.unreachable = true;
+    throw err;
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = new Error(data?.error || data?.message || `The server said no (${res.status}).`);
+    err.status = res.status;
+    err.unreachable = res.status === 404;
+    throw err;
+  }
+  return data;
+}
+
+// The email to a member about our team's decision ("approved",
+// "needs_info", "rejected" or "blocked"); the database decides what it says
+// and sends it once per decision. { sent: true }.
+export function sendMemberEmail(memberId, kind, { keepalive = false } = {}) {
+  return adminFunction("member-email", { member_id: memberId, kind }, { keepalive });
+}
+
+// How many emails Resend has counted: { monthly_used, daily_used (free
+// plan only), observed_at }, or null while not known. Asks member-email to
+// refresh it from Resend; without that function, the last counts the
+// database has; before the 2026-10-25 database update, null.
+export async function adminEmailQuota() {
+  try {
+    const res = await adminFunction("member-email?quota=1", null);
+    if (res?.quota) return res.quota;
+  } catch { /* the database's last counts, below */ }
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_resend_quota", {});
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+
+// Deletes an account that never finished signing up (the database checks).
+// { deleted, recorded }.
+export function adminDeleteSignup(memberId) {
+  return adminFunction("admin-delete-signup", { member_id: memberId });
+}
+
+// What's on events our team added in the admin panel, still to come and not
+// hidden, as items of src/content/whatson.js. Anyone can read them. Throws
+// before the 2026-10-25 database update (no such table): the site then
+// shows the list in the code only.
+export async function getWhatsOnEvents() {
+  const rows = await restCall("GET", `/rest/v1/whats_on_events?select=${WHATS_ON_COLUMNS}&order=start_date.asc&limit=500`);
+  return Array.isArray(rows) ? rows : [];
+}
+export const WHATS_ON_COLUMNS = "id,title,category,start_date,end_date,event_time,city,venue,area,organiser,price,language,summary,url";
+
+// Every event in the table for the admin panel: { upcoming, past }, each an
+// item of src/content/whatson.js plus hidden. null before the database update.
+export async function adminWhatsOnEvents() {
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_whats_on_events", {});
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+
+// Adds (isNew) or changes an event: an item of src/content/whatson.js.
+export async function adminSaveWhatsOnEvent(event, isNew) {
+  return restCall("POST", "/rest/v1/rpc/admin_save_whats_on_event", { p_event: event, p_new: !!isNew });
+}
+export async function adminHideWhatsOnEvent(id, hidden) {
+  return restCall("POST", "/rest/v1/rpc/admin_hide_whats_on_event", { p_id: id, p_hidden: !!hidden });
+}
+export async function adminDeleteWhatsOnEvent(id) {
+  return restCall("POST", "/rest/v1/rpc/admin_delete_whats_on_event", { p_id: id });
+}
+
+// The Inbox (mail to hello@nriclub.app): filter "inbox" (not archived,
+// unread first), "unread", "archived" or "all"; query finds part of the
+// sender, subject or text. { messages, total, unread }, or null before the
+// database update.
+export const INBOX_PAGE = 50;
+export async function adminInboxList({ filter = "inbox", query = "", offset = 0, limit = INBOX_PAGE } = {}) {
+  if (knownMissing("admin_inbox_list")) return null;
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_inbox_list", {
+      p_filter: filter, p_limit: limit, p_offset: offset, p_query: String(query || "").slice(0, 200),
+    });
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.admin_inbox_list = Date.now();
+    return null;
+  }
+}
+// One message, with its text and our replies; marks it read.
+export async function adminInboxGet(id) {
+  return restCall("POST", "/rest/v1/rpc/admin_inbox_get", { p_id: id });
+}
+// Archive or bring back (archived), mark read or unread (read); null leaves it.
+export async function adminInboxSet(id, { archived = null, read = null } = {}) {
+  return restCall("POST", "/rest/v1/rpc/admin_inbox_set", { p_id: id, p_archived: archived, p_read: read });
+}
+// Sends our reply from hello@nriclub.app. { sent, reply: { id, body, sent_at, by } | null }.
+export function adminInboxReply(messageId, body) {
+  return adminFunction("admin-inbox-reply", { message_id: messageId, body });
 }
 
 // ---- Public city pages (work without signing in; counts only) ----

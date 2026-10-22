@@ -1,10 +1,13 @@
 # hello@nriclub.app: receive in Gmail, reply as hello@
 
-Mail to `hello@nriclub.app` is received by **Resend** and forwarded to the
-founder's Gmail by the Edge Function `forward-email`
-(`supabase/functions/forward-email/index.ts`, deployed without JWT checks;
-it checks Resend's webhook signature instead). Replies go out from Gmail
-as `hello@nriclub.app` through Resend's SMTP server.
+Mail to `hello@nriclub.app` is received by **Resend**. The Edge Function
+`forward-email` (`supabase/functions/forward-email/index.ts`, deployed
+without JWT checks; it checks Resend's webhook signature instead) keeps each
+email in the admin panel's **Inbox** (from the 2026-10-25 update, see
+`docs/DEPLOY-ROUND3.md`) and forwards a copy to the founder's Gmail if
+`FORWARD_TO` is set. Replies go out from the admin panel (Edge Function
+`admin-inbox-reply`), or from Gmail as `hello@nriclub.app` through Resend's
+SMTP server (section 3).
 
 ## 1. Domain and receiving in Resend
 
@@ -28,11 +31,20 @@ as `hello@nriclub.app` through Resend's SMTP server.
    Functions), add:
    - `RESEND_API_KEY` = the key from step 1
    - `RESEND_WEBHOOK_SECRET` = the signing secret from step 2
-   - `FORWARD_TO` = the Gmail address the copies go to
+   - `FORWARD_TO` = the Gmail address the copies go to (optional since the
+     admin Inbox: without it, mail is kept in the admin panel only)
 4. Test: from another address, send an email to `hello@nriclub.app`. Within
-   a minute it arrives in Gmail with the subject starting `[hello@]`.
+   a minute it arrives in Gmail with the subject starting `[hello@]`, and,
+   after the 2026-10-25 update, in the admin panel's **Inbox**.
    If not: Supabase → Edge Functions → forward-email → **Logs**, and
    Resend → Webhooks → the webhook's deliveries.
+
+The admin Inbox keeps each email (its text; attachments only by name and
+size) and our replies from the panel for 12 months after it arrived, then
+the daily clean-up deletes them. Storing and forwarding work independently:
+if one fails, the other still happens. The Inbox also shows "Emails this
+month" from Resend's own counter: sign-in codes count too, and the free plan
+allows 3,000 a month and 100 a day.
 
 ## 3. Replying as hello@nriclub.app from Gmail
 
