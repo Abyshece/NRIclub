@@ -6,6 +6,7 @@ import "./member/base.css";
 import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToAccept } from "./member/profile";
 import { hasImprint } from "./content/imprint";
 import { moveOldInvite, rememberInvite } from "./member/invite";
+import { isAppPath } from "./content/routes";
 
 // NRIClub sets no cookies and loads no analytics, so there is no consent
 // banner (the Privacy Policy lists what the site keeps in the browser).
@@ -30,6 +31,11 @@ const ImpressumPage = lazy(() => import("./ImpressumPage"));
 const LegalPage = lazy(() => import("./LegalPage"));
 const ReportPage = lazy(() => import("./ReportPage"));
 const WhatsOnPage = lazy(() => import("./WhatsOnPage"));
+const NotFoundPage = lazy(() => import("./NotFoundPage"));
+
+// An address the site has no page for (see src/content/routes.js); never on
+// the admin site, which answers every address.
+const unknownPath = () => !isAdminRoute() && !isAppPath(window.location.pathname);
 
 // A public page's address: /city/<city>, /guides, /guides/<slug> or
 // /whats-on (members who open it get Events, see Dashboard.jsx).
@@ -497,6 +503,14 @@ export default function App() {
       const page = publicPage();
       const join = () => setAuthState("signup");
       const login = () => setAuthState("login");
+      // Page not found: Log in and Join free move to the homepage's address first.
+      if (unknownPath()) {
+        const leave = (state) => {
+          try { window.history.replaceState(null, "", "/"); } catch (e) {}
+          setAuthState(state);
+        };
+        return <NotFoundPage onJoin={() => leave("signup")} onLogin={() => leave("login")} />;
+      }
       if (page?.kind === "city") return <CityPage city={page.city} onJoin={join} onLogin={login} />;
       if (page?.kind === "guide") return <GuidePage slug={page.slug} onJoin={join} onLogin={login} />;
       if (page?.kind === "whats-on") return <WhatsOnPage onJoin={join} onLogin={login} />;
@@ -507,6 +521,7 @@ export default function App() {
     if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
     if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={handleAuthComplete} onBack={() => setAuthState("landing")} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
     if (authState === "authenticated" && user) {
+      if (unknownPath()) return <NotFoundPage signedIn onLogin={() => window.location.assign("/")} />;
       // In this order: blocked members only see the blocked card (whatever
       // their verification status); members who haven't given their
       // verification details do that first; then anyone who hasn't confirmed

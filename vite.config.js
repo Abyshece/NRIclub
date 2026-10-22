@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,6 +11,7 @@ import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, WHAT
 import {
   WHATS_ON, CATEGORY_LABELS, WHATS_ON_PATH, WHATS_ON_TITLE, WHATS_ON_LEAD, WHATS_ON_DESCRIPTION, WHATS_ON_NOTE, WHATS_ON_SHORT_NOTE, WHATS_ON_SUBMIT,
   whatsOnCta, validateWhatsOn, upcoming, todayInGermany, byCity, groupByMonth, whenText, placeText, whatsOnShareText,
+  mergeWhatsOn,
 } from './src/content/whatson.js';
 import { logoMarkSvg } from './src/content/logo.js';
 import { IMPRINT, hasImprint, imprintSections } from './src/content/imprint.js';
@@ -18,6 +19,7 @@ import { docToHtml, CONTACT_EMAIL } from './src/content/legal/doc.js';
 import { privacyDoc } from './src/content/legal/privacy.js';
 import { termsDoc, TERMS_VERSION, TERMS_ARCHIVE } from './src/content/legal/terms.js';
 import { REPORT_HREF, REPORT_LINK_TEXT, REPORT_MAILTO, REPORT_PAGE } from './src/content/legal/reporting.js';
+import { APP_REWRITE_SOURCE } from './src/content/routes.js';
 
 const SITE = 'https://nriclub.app';
 
@@ -102,16 +104,45 @@ function homeStatic() {
 // search engines. The site itself still renders them in the browser; the
 // text in #root is replaced as soon as it starts. The homepage gets its top
 // part too (homeStatic, below), so it shows before the app has loaded.
+// The What's on events our team added in the admin panel
+// (public.whats_on_events), read like a visitor's browser does, with
+// VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (set in Vercel). Any problem
+// (no settings, no connection, the table not there yet, a slow answer) gives
+// [] and the pages have the list in the code only: never a failed build.
+async function whatsOnRows(env, warn) {
+  const url = env.VITE_SUPABASE_URL;
+  const key = env.VITE_SUPABASE_ANON_KEY;
+  if (!url || !key) return [];
+  try {
+    const cols = 'id,title,category,start_date,end_date,event_time,city,venue,area,organiser,price,language,summary,url';
+    const res = await fetch(`${url}/rest/v1/whats_on_events?select=${cols}&order=start_date.asc&limit=500`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`answer ${res.status}`);
+    const rows = await res.json();
+    return Array.isArray(rows) ? rows : [];
+  } catch (e) {
+    warn(`What's on: the events from the admin panel couldn't be read (${e.message}); the pages have the list in the code only.`);
+    return [];
+  }
+}
+
 function publicPages() {
-  let outDir, root;
+  let outDir, root, env = {};
+  let dbRows = [];
   return {
     name: 'nriclub-public-pages',
     apply: 'build',
-    configResolved(config) { root = config.root; outDir = path.resolve(config.root, config.build.outDir); },
+    configResolved(config) {
+      root = config.root;
+      outDir = path.resolve(config.root, config.build.outDir);
+      env = { ...loadEnv(config.mode, config.root, 'VITE_'), ...process.env };
+    },
     // Mistakes that would break the live site quietly stop the build instead.
     // (An empty Impressum never does: the texts then say who runs NRIClub
     // without a name, see src/content/imprint.js.)
-    buildStart() {
+    async buildStart() {
       // The Terms version the site shows: the text (src/content/legal/terms.js)
       // and the constant the app uses (src/member/LegalModals.jsx).
       const modals = fs.readFileSync(path.join(root, 'src/member/LegalModals.jsx'), 'utf8');
@@ -126,6 +157,16 @@ function publicPages() {
       if (!fs.readFileSync(path.join(root, 'vercel.json'), 'utf8').includes(hash)) {
         throw new Error(`The homepage script (HOME_GUARD in vite.config.js) changed: put ${hash} in place of the old hash in script-src in vercel.json.`);
       }
+      // Vercel sends the app's own addresses to the app and answers every
+      // other address with 404.html; a page left out of the list in
+      // vercel.json would be "not found" on the live site.
+      const rewrites = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8')).rewrites || [];
+      if (!rewrites.some((r) => r.source === APP_REWRITE_SOURCE && r.destination === '/app.html' && !r.has)) {
+        throw new Error(`vercel.json must send the app's addresses to the app: a rewrite { "source": "${APP_REWRITE_SOURCE}", "destination": "/app.html" } (the list is APP_SECTIONS in src/content/routes.js).`);
+      }
+      if (!rewrites.some((r) => r.source === '/(.*)' && r.destination === '/app.html' && r.has?.[0]?.value === 'admin.nriclub.app')) {
+        throw new Error('vercel.json must send every address on admin.nriclub.app to the app (a rewrite with "has" the host admin.nriclub.app).');
+      }
       if (!hasImprint()) {
         this.warn('src/content/imprint.js has no name and address yet: no Impressum page, and the Terms and Privacy Policy say NRIClub is run by its founder in Germany.');
       }
@@ -134,6 +175,7 @@ function publicPages() {
       validateWhatsOn(WHATS_ON);
       const past = WHATS_ON.length - upcoming(WHATS_ON, todayInGermany()).length;
       if (past) this.warn(`src/content/whatson.js has ${past} past event${past === 1 ? '' : 's'}: ${past === 1 ? 'it no longer shows' : 'they no longer show'}, so delete ${past === 1 ? 'it' : 'them'} from the list.`);
+      dbRows = await whatsOnRows(env, (msg) => this.warn(msg));
     },
     // After the bundle (and index.html) is written; never on a failed build.
     writeBundle() {
@@ -163,10 +205,11 @@ function publicPages() {
       const join = `<p><a href="/">Join NRIClub</a>: a free community for Indians abroad. Our team checks every new member.</p>`;
       const guideLinks = ESSENTIALS.map((g) => `<li><a href="/guides/${g.slug}">${esc(g.title)}</a></li>`).join('');
 
-      // What's on (src/content/whatson.js): the events still to come on the
-      // day of the build. In the browser the page leaves out any that have
-      // ended since.
-      const whatsOn = upcoming(WHATS_ON, todayInGermany());
+      // What's on (src/content/whatson.js, plus the events added in the admin
+      // panel): the events still to come on the day of the build. In the
+      // browser the page leaves out any that have ended since, and adds
+      // those added after the build.
+      const whatsOn = upcoming(mergeWhatsOn(WHATS_ON, dbRows), todayInGermany());
       const details = (e) => `<a href="${esc(e.url)}" target="_blank" rel="noopener nofollow ugc">Details and tickets</a>`;
       const eventItem = (e) => `<li id="${esc(e.id)}"><h3>${esc(e.title)}</h3>`
         + `<p><strong><time datetime="${esc(e.start)}">${esc(whenText(e))}</time></strong> · ${esc(placeText(e))} · ${esc(CATEGORY_LABELS[e.category])}</p>`
@@ -245,6 +288,17 @@ function publicPages() {
       // The plain page, for every other address of the app (vercel.json
       // rewrites to it): no canonical, no og:url, no homepage text.
       fs.writeFileSync(path.join(outDir, 'app.html'), shell.replace(/\s*<meta property="og:url"[^>]*>/, ''));
+
+      // Any address that is neither a file nor one of the app's (vercel.json):
+      // Vercel answers with this page and the status 404. The app then shows
+      // "Page not found" (NotFoundPage.jsx); without JavaScript, this text.
+      fs.writeFileSync(path.join(outDir, '404.html'), shell
+        .replace(/\s*<meta property="og:url"[^>]*>/, '')
+        .replace(/<title>[^<]*<\/title>/, '<title>Page not found · NRIClub</title>')
+        .replace('</head>', '  <meta name="robots" content="noindex" />\n</head>')
+        .replace('<div id="root"></div>', () => `<div id="root"><main style="max-width:720px;margin:0 auto;padding:32px 20px;font-family:system-ui,sans-serif;color:#37352F;line-height:1.6">`
+          + `<h1>Page not found</h1><p>This page doesn't exist, or it has moved. Check the address, or try one of these:</p>`
+          + `<ul><li><a href="/">NRIClub home</a></li><li><a href="${WHATS_ON_PATH}">What's on in Germany</a></li><li><a href="/guides">NRI guides</a></li></ul>${legalLinks}</main></div>`));
 
       // The homepage, last: the pages above are copies of the plain
       // index.html, and only the homepage gets this text and this canonical.
