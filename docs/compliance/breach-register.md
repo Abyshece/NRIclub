@@ -10,8 +10,8 @@ NRIClub runs.
 ## No. 1: Open admin functions and database rules, and a published admin password, before 12 October 2026
 
 **Status:** recorded 16 October 2026 (prefilled from the repository and the
-October 2026 audit). **Decision on notification: open, for the founder with
-the lawyer** (see below).
+October 2026 audit). **Decision on notification: made by the founder on 22
+October 2026: no notification** (see below).
 
 ### Facts
 
@@ -64,9 +64,9 @@ the lawyer** (see below).
 
 | | |
 |---|---|
-| Authority notified? | **[yes / no]**, date, reference number, reasons |
-| Members told? | **[yes / no]**, date, how, reasons |
-| Decided by, date | **[fill in]** |
+| Authority notified? | **No.** The founder considers that no notifiable personal data breach occurred. |
+| Members told? | **No**, for the same reason. |
+| Decided by, date | The founder, 22 October 2026. |
 
 ### Related observations from the October 2026 audit (assess separately)
 
