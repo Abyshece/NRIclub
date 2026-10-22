@@ -5,15 +5,16 @@ import { DateBadge, DetailsLink } from "./WhatsOnItems";
 import { TRUST_LINE } from "./content/home";
 import { findCity } from "./content/findCity";
 import { HOME_TITLE } from "./content/slug";
+import { useWhatsOnState } from "./whatsOnLive";
 import {
-  WHATS_ON, CATEGORY_LABELS, WHATS_ON_PATH, WHATS_ON_TITLE, WHATS_ON_LEAD, WHATS_ON_NOTE, WHATS_ON_SUBMIT, whatsOnCta,
+  CATEGORY_LABELS, WHATS_ON_PATH, WHATS_ON_TITLE, WHATS_ON_LEAD, WHATS_ON_NOTE, WHATS_ON_SUBMIT, whatsOnCta,
   upcoming, todayInGermany, citiesOf, citySlug, eventCitySlug, groupByMonth, whenText, placeText, isOnNow, whatsOnShareText,
 } from "./content/whatson";
 
 // ============================================================================
 // WHAT'S ON (nriclub.app/whats-on): Indian events in Germany that other
-// organisers run, from src/content/whatson.js, so a shared link shows them
-// before anyone signs up. ?city=berlin opens the list at one city, and
+// organisers run, from src/content/whatson.js and the admin panel
+// (whatsOnLive.js), so a shared link shows them before anyone signs up. ?city=berlin opens the list at one city, and
 // #<event id> at one event. The build writes the same list into the page's
 // HTML (vite.config.js), for link previews and for browsers without
 // JavaScript; past events never show in either.
@@ -85,7 +86,9 @@ export default function WhatsOnPage({ onJoin, onLogin }) {
   useCanonical(WHATS_ON_PATH);
   const today = useMemo(() => todayInGermany(), []);
   // Past events never show, also when the page was built before they ended.
-  const events = useMemo(() => upcoming(WHATS_ON, today), [today]);
+  // The events added in the admin panel join the list once they've loaded.
+  const { events: all, loaded } = useWhatsOnState();
+  const events = useMemo(() => upcoming(all, today), [all, today]);
   const cities = useMemo(() => citiesOf(events), [events]);
   // Chips for the cities with the most events, the rest in a menu, so a long
   // list of towns doesn't fill a phone screen.
@@ -110,7 +113,8 @@ export default function WhatsOnPage({ onJoin, onLogin }) {
       const id = hashId();
       if (!id) return;
       const e = events.find((x) => x.id === id);
-      if (!e) { setGone(true); return; }
+      // (It may be one added in the admin panel: wait for those.)
+      if (!e) { setGone(loaded); return; }
       setGone(false);
       setCategory("all");
       if (cityRef.current && cityRef.current !== eventCitySlug(e)) {
@@ -122,7 +126,7 @@ export default function WhatsOnPage({ onJoin, onLogin }) {
     open();
     window.addEventListener("hashchange", open);
     return () => window.removeEventListener("hashchange", open);
-  }, [events]);
+  }, [events, loaded]);
   useEffect(() => {
     if (!target) return;
     const el = document.getElementById(target);
