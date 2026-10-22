@@ -46,6 +46,10 @@
 --     public.inbox_record_reply, service role only, into
 --     private.inbox_replies). Messages and their replies are deleted 12
 --     months after they arrived.
+--   * Emails left this month: every Edge Function that calls Resend stores
+--     Resend's own counters from its answer (public.resend_quota_store,
+--     service role only, into private.app_settings 'resend_quota'); the
+--     admin panel reads them (public.admin_resend_quota).
 --   * Clean-up (private.daily_cleanup): the 2026-10-24 version plus the
 --     Inbox (12 months) and the log of decision emails (30 days).
 -- Needs all earlier migrations (up to 20261024000000_ambassador_applications.sql).
@@ -135,6 +139,45 @@ BEGIN
     'rule', CASE WHEN p_kind = 'blocked' THEN pp.block_rule ELSE '' END,
     'reason', CASE WHEN p_kind = 'blocked' THEN pp.block_reason ELSE '' END,
     'decided_at', decided);
+END;
+$$;
+
+-- ============================================================================
+-- EMAILS LEFT THIS MONTH (Resend's counter)
+-- ============================================================================
+
+-- How many emails Resend has counted, as its answers say
+-- (x-resend-monthly-quota, x-resend-daily-quota): kept in
+-- private.app_settings under 'resend_quota' as { monthly_used, daily_used,
+-- observed_at }. Every Edge Function that calls Resend stores it after the
+-- call (service role only). Sign-in and sign-up codes go through Resend too
+-- and count, which only Resend's own counter shows. null: not in the answer.
+CREATE FUNCTION public.resend_quota_store(p_monthly_used INTEGER, p_daily_used INTEGER)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v JSONB;
+BEGIN
+  IF p_monthly_used IS NULL AND p_daily_used IS NULL THEN
+    RETURN NULL;
+  END IF;
+  IF p_monthly_used < 0 OR p_daily_used < 0 THEN
+    RAISE EXCEPTION 'Counts can''t be negative.' USING ERRCODE = 'P0001';
+  END IF;
+  v := jsonb_build_object('monthly_used', p_monthly_used, 'daily_used', p_daily_used, 'observed_at', NOW());
+  INSERT INTO private.app_settings (key, value, updated_at) VALUES ('resend_quota', v, NOW())
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+  RETURN v;
+END;
+$$;
+
+-- The last counts, for the admin panel; null before any was seen.
+CREATE FUNCTION public.admin_resend_quota()
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NOT private.is_admin() THEN
+    RAISE EXCEPTION 'Admins only' USING ERRCODE = '42501';
+  END IF;
+  RETURN (SELECT s.value FROM private.app_settings s WHERE s.key = 'resend_quota');
 END;
 $$;
 
@@ -844,12 +887,12 @@ GRANT EXECUTE ON FUNCTION private.is_unfinished_signup(UUID), private.whats_on_j
 GRANT EXECUTE ON FUNCTION private.whats_on_categories() TO anon, authenticated, service_role;
 
 -- Admin functions check private.is_admin() themselves; members get "Admins only".
-REVOKE ALL ON FUNCTION public.admin_member_email(UUID, TEXT), public.admin_check_signup_delete(UUID),
+REVOKE ALL ON FUNCTION public.admin_member_email(UUID, TEXT), public.admin_resend_quota(), public.admin_check_signup_delete(UUID),
   public.admin_whats_on_events(), public.admin_save_whats_on_event(JSONB, BOOLEAN),
   public.admin_hide_whats_on_event(TEXT, BOOLEAN), public.admin_delete_whats_on_event(TEXT),
   public.admin_inbox_list(TEXT, INTEGER, INTEGER, TEXT), public.admin_inbox_get(UUID),
   public.admin_inbox_set(UUID, BOOLEAN, BOOLEAN), public.admin_inbox_reply_prepare(UUID, TEXT) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.admin_member_email(UUID, TEXT), public.admin_check_signup_delete(UUID),
+GRANT EXECUTE ON FUNCTION public.admin_member_email(UUID, TEXT), public.admin_resend_quota(), public.admin_check_signup_delete(UUID),
   public.admin_whats_on_events(), public.admin_save_whats_on_event(JSONB, BOOLEAN),
   public.admin_hide_whats_on_event(TEXT, BOOLEAN), public.admin_delete_whats_on_event(TEXT),
   public.admin_inbox_list(TEXT, INTEGER, INTEGER, TEXT), public.admin_inbox_get(UUID),
@@ -857,6 +900,6 @@ GRANT EXECUTE ON FUNCTION public.admin_member_email(UUID, TEXT), public.admin_ch
 -- Only the Edge Functions, with the service role, record a deletion, store
 -- a received email and record a reply.
 REVOKE ALL ON FUNCTION public.admin_record_signup_delete(UUID, UUID, BOOLEAN), public.inbox_store(JSONB),
-  public.inbox_record_reply(UUID, UUID, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+  public.inbox_record_reply(UUID, UUID, TEXT, TEXT), public.resend_quota_store(INTEGER, INTEGER) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_record_signup_delete(UUID, UUID, BOOLEAN), public.inbox_store(JSONB),
-  public.inbox_record_reply(UUID, UUID, TEXT, TEXT) TO service_role;
+  public.inbox_record_reply(UUID, UUID, TEXT, TEXT), public.resend_quota_store(INTEGER, INTEGER) TO service_role;

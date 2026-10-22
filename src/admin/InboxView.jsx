@@ -10,6 +10,10 @@ import { Button, EmptyState, ErrorNote, Icon, PageHeader, Pill, SkeletonRows } f
 import { ago, formatDate, friendlyError } from "./format";
 
 const SEARCH_DELAY_MS = 300;
+// Resend's plan: emails a month and a day (the free plan's; change them
+// with the plan). Sign-in and sign-up codes count too.
+export const EMAIL_LIMITS = { month: 3000, day: 100 };
+const WARN_AT = 0.8;
 const REPLY_MAX = 10000;
 const FILTERS = [["inbox", "Inbox"], ["unread", "Unread"], ["archived", "Archived"], ["all", "All"]];
 
@@ -96,7 +100,7 @@ function Message({ id, onBack, onChange, showToast }) {
       {error ? <ErrorNote onRetry={onBack}>{error}</ErrorNote> : !m ? <SkeletonRows rows={3} /> : (
         <article aria-labelledby="adm-mail-subject">
           <h2 id="adm-mail-subject" className="adm-title" style={{ fontSize: 22, overflowWrap: "anywhere" }}>{m.subject || "(no subject)"}</h2>
-          <div className="adm-props" style={{ margin: "12px 0 16px" }}>
+          <div style={{ margin: "12px 0 16px", display: "grid", gap: 2 }}>
             <div className="adm-muted adm-small" style={{ overflowWrap: "anywhere" }}>
               From <strong style={{ color: "var(--text)" }}>{m.from || "unknown"}</strong>
               {m.reply_to && m.reply_to !== m.from ? <> · Reply to {m.reply_to}</> : null}
@@ -153,6 +157,35 @@ function Message({ id, onBack, onChange, showToast }) {
   );
 }
 
+const fmt = (n) => Number(n).toLocaleString("en-GB");
+
+// "Emails this month: 1,234 of 3,000 used · 1,766 left", and today's, from
+// Resend's own counter (api.adminEmailQuota); warns above 80%.
+export function EmailQuota() {
+  const [q, setQ] = useState(undefined); // undefined: loading; null: not known
+  useEffect(() => {
+    let alive = true;
+    api.adminEmailQuota().then((v) => { if (alive) setQ(v || null); }).catch(() => { if (alive) setQ(null); });
+    return () => { alive = false; };
+  }, []);
+  if (q === undefined) return null;
+  const month = Number.isFinite(q?.monthly_used) ? q.monthly_used : null;
+  const day = Number.isFinite(q?.daily_used) ? q.daily_used : null;
+  if (month === null && day === null) {
+    return <p className="adm-callout" role="status">Emails this month: not known yet. Resend's count shows here after the next email goes out.</p>;
+  }
+  const warn = (month !== null && month >= EMAIL_LIMITS.month * WARN_AT) || (day !== null && day >= EMAIL_LIMITS.day * WARN_AT);
+  return (
+    <p className={warn ? "adm-warn-note" : "adm-callout"} role="status" style={{ marginTop: 12 }}>
+      {month !== null && <>Emails this month: <strong>{fmt(month)}</strong> of {fmt(EMAIL_LIMITS.month)} used · {fmt(Math.max(0, EMAIL_LIMITS.month - month))} left</>}
+      {month !== null && day !== null && <br />}
+      {day !== null && <>Today: {fmt(day)} of {fmt(EMAIL_LIMITS.day)}</>}
+      <span className="adm-faint">{q.observed_at ? ` · as of ${formatDate(q.observed_at, { time: true })}` : ""}</span>
+      {warn && <><br />Close to Resend's limit: sign-in codes stop going out when it's reached.</>}
+    </p>
+  );
+}
+
 // onUnread(n): the number of unread messages, for the nav.
 export default function InboxView({ showToast, onUnread }) {
   const [filter, setFilter] = useState("inbox");
@@ -203,7 +236,9 @@ export default function InboxView({ showToast, onUnread }) {
   const more = list ? Math.max(0, (Number(list.total) || 0) - messages.length) : 0;
   return (
     <>
-      <PageHeader title="Inbox" description="Mail sent to hello@nriclub.app. Reply from here as hello@nriclub.app, or archive what's done. Messages are deleted 12 months after they arrive." />
+      <PageHeader title="Inbox" description="Mail sent to hello@nriclub.app. Reply from here as hello@nriclub.app, or archive what's done. Messages are deleted 12 months after they arrive.">
+        <EmailQuota />
+      </PageHeader>
       {list === null ? (
         <p className="adm-callout" role="note">
           The Inbox needs the database update of 25 October 2026 and the new version of the forward-email function. Until then, mail to hello@nriclub.app is forwarded to Gmail as before.

@@ -2945,11 +2945,11 @@ export async function adminNotify(userId, type, text) {
 // function's own message; unreachable is set when there was no answer at
 // all (no connection, or the function isn't deployed yet: Supabase's "not
 // found" carries no CORS headers, so the browser sees no answer either).
-// keepalive: the request may finish after the page closes.
+// keepalive: the request may finish after the page closes. body null: a GET.
 async function adminFunction(name, body, { keepalive = false } = {}) {
-  const send = () => fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
-    method: "POST", keepalive, headers: headers(), body: JSON.stringify(body),
-  });
+  const send = () => fetch(`${SUPABASE_URL}/functions/v1/${name}`, body === null
+    ? { method: "GET", headers: headers() }
+    : { method: "POST", keepalive, headers: headers(), body: JSON.stringify(body) });
   let res;
   try {
     res = await send();
@@ -2974,6 +2974,23 @@ async function adminFunction(name, body, { keepalive = false } = {}) {
 // and sends it once per decision. { sent: true }.
 export function sendMemberEmail(memberId, kind, { keepalive = false } = {}) {
   return adminFunction("member-email", { member_id: memberId, kind }, { keepalive });
+}
+
+// How many emails Resend has counted: { monthly_used, daily_used (free
+// plan only), observed_at }, or null while not known. Asks member-email to
+// refresh it from Resend; without that function, the last counts the
+// database has; before the 2026-10-25 database update, null.
+export async function adminEmailQuota() {
+  try {
+    const res = await adminFunction("member-email?quota=1", null);
+    if (res?.quota) return res.quota;
+  } catch { /* the database's last counts, below */ }
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_resend_quota", {});
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
 }
 
 // Deletes an account that never finished signing up (the database checks).

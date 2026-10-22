@@ -71,6 +71,33 @@ function address(value: string): string {
   return /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/.test(inner) ? inner : "";
 }
 
+// Resend's own counters in its answer (x-resend-monthly-quota: emails this
+// month; x-resend-daily-quota: today, on the free plan), kept for the admin
+// panel's "Emails this month" (public.resend_quota_store, service role).
+// Never throws: a missing counter or a failed store changes nothing else.
+async function keepQuota(res: Response): Promise<Record<string, unknown> | null> {
+  const count = (name: string) => {
+    const v = (res.headers.get(name) || "").trim();
+    return /^\d+$/.test(v) ? Number(v) : null;
+  };
+  const monthly = count("x-resend-monthly-quota");
+  const daily = count("x-resend-daily-quota");
+  if (monthly === null && daily === null) return null;
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !key) return null;
+    const stored = await fetch(`${url}/rest/v1/rpc/resend_quota_store`, {
+      method: "POST",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_monthly_used: monthly, p_daily_used: daily }),
+    });
+    return stored.ok ? await stored.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 // A Message-ID as a header value ("<...>"), or "" if it isn't one.
 function messageId(value: string): string {
   const v = String(value || "").trim();
@@ -121,6 +148,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         ...(ref ? { headers: { "In-Reply-To": ref, References: ref } } : {}),
       }),
     });
+    await keepQuota(res);
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(`Resend ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
     sentId = String(data?.id || "");

@@ -3859,6 +3859,22 @@ def admin_tools():
           SELECT (private.daily_cleanup())->>'inbox_messages';
           SELECT string_agg(resend_email_id, ',') || '|' || (SELECT count(*) FROM private.inbox_replies) FROM private.inbox_messages;
           ROLLBACK;""", expect="2\nre_3|0")
+    # --- emails left this month -------------------------------------------------------
+    check("before Resend's counter was seen, the panel gets null", "SELECT public.admin_resend_quota() IS NULL",
+          as_user=ADMIN, expect="t")
+    check("members can't read it", "SELECT public.admin_resend_quota()", as_user=nina, error_has="Admins only")
+    check("only the service role stores it", "SELECT public.resend_quota_store(10, 2)", as_user=ADMIN, expect="error")
+    check("... (anon neither)", "SELECT public.resend_quota_store(10, 2)", role="anon", expect="error")
+    check("the service role stores it; the admin reads it",
+          "SET ROLE service_role; SELECT public.resend_quota_store(1234, 37) IS NOT NULL; "
+          "SELECT public.resend_quota_store(NULL, NULL) IS NULL; RESET ROLE; "
+          + as_admin("SELECT concat_ws('|', q->>'monthly_used', q->>'daily_used', q ? 'observed_at') FROM public.admin_resend_quota() q"),
+          expect="t\nt\nf\n1234|37|t")
+    check("... a count from a paid plan without the daily one", "SET ROLE service_role; "
+          "SELECT (public.resend_quota_store(1300, NULL))->>'daily_used' IS NULL", expect="t")
+    check("... negative counts are refused", "SELECT public.resend_quota_store(-1, 0)", role="service_role",
+          error_has="can't be negative")
+
     import difflib
     old = function_source(AMBASSADORS, "CREATE OR REPLACE FUNCTION private.daily_cleanup()").splitlines()
     new = function_source(ADMIN_TOOLS, "CREATE OR REPLACE FUNCTION private.daily_cleanup()").splitlines()

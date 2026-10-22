@@ -86,11 +86,39 @@ async function store(emailId: string, email: Record<string, any>, files: { data?
   if (!res.ok) throw new Error(`inbox_store: ${res.status} ${(await res.text()).slice(0, 300)}`);
 }
 
+// Resend's own counters in its answer (x-resend-monthly-quota: emails this
+// month; x-resend-daily-quota: today, on the free plan), kept for the admin
+// panel's "Emails this month" (public.resend_quota_store, service role).
+// Never throws: a missing counter or a failed store changes nothing else.
+async function keepQuota(res: Response): Promise<Record<string, unknown> | null> {
+  const count = (name: string) => {
+    const v = (res.headers.get(name) || "").trim();
+    return /^\d+$/.test(v) ? Number(v) : null;
+  };
+  const monthly = count("x-resend-monthly-quota");
+  const daily = count("x-resend-daily-quota");
+  if (monthly === null && daily === null) return null;
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !key) return null;
+    const stored = await fetch(`${url}/rest/v1/rpc/resend_quota_store`, {
+      method: "POST",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_monthly_used: monthly, p_daily_used: daily }),
+    });
+    return stored.ok ? await stored.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resend(path: string, init: RequestInit = {}) {
   const res = await fetch(`${API}${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${env("RESEND_API_KEY")}`, "Content-Type": "application/json", ...(init.headers ?? {}) },
   });
+  if (init.method === "POST") await keepQuota(res);
   if (!res.ok) throw new Error(`Resend ${path}: ${res.status} ${await res.text()}`);
   return res.json();
 }

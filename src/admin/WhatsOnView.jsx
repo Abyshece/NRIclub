@@ -58,7 +58,10 @@ function EventForm({ initial, isNew, takenIds, onSave, onCancel }) {
   const missing = FIELDS.some(([k, , , req]) => req && !String(f[k] || "").trim()) || !f.summary.trim();
 
   const save = async () => {
-    const problem = whatsOnProblem(item) || (isNew && takenIds.has(id) ? "An event with this title on this day is already listed. Change the title." : "")
+    // The usual mistakes in words; anything else as the build would say it.
+    const problem = (!/^https:\/\/\S+$/i.test(item.url || "") ? "The link must be a full https:// address." : "")
+      || (item.end && item.end < item.start ? "The last day is before the first." : "")
+      || whatsOnProblem(item) || (isNew && takenIds.has(id) ? "An event with this title on this day is already listed. Change the title." : "")
       || ((item.end || item.start) < todayInGermany() ? "This event has already ended." : "");
     if (problem) { setError(problem); return; }
     setBusy(true);

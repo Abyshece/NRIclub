@@ -15,6 +15,9 @@
 // "NRIClub <hello@send.nriclub.app>"). SUPABASE_URL, SUPABASE_ANON_KEY and
 // SUPABASE_SERVICE_ROLE_KEY are there already. The gateway checks the token
 // (verify JWT on); the database checks it again, as the admin's own request.
+// GET /functions/v1/member-email?quota=1 (an admin's session): Resend's
+// counters for "Emails this month", refreshed with one cheap call to Resend
+// when its answer has them, else the last ones seen.
 // Deploy steps and tests: docs/DEPLOY-ROUND3.md.
 
 const ALLOWED_ORIGIN = "https://admin.nriclub.app";
@@ -36,7 +39,7 @@ function cors(origin: string | null): Record<string, string> {
   return origin === ALLOWED_ORIGIN
     ? {
       "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
       "Access-Control-Max-Age": "600",
       Vary: "Origin",
@@ -49,6 +52,33 @@ function reply(origin: string | null, status: number, body: Record<string, unkno
     status,
     headers: { ...cors(origin), "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
+}
+
+// Resend's own counters in its answer (x-resend-monthly-quota: emails this
+// month; x-resend-daily-quota: today, on the free plan), kept for the admin
+// panel's "Emails this month" (public.resend_quota_store, service role).
+// Never throws: a missing counter or a failed store changes nothing else.
+async function keepQuota(res: Response): Promise<Record<string, unknown> | null> {
+  const count = (name: string) => {
+    const v = (res.headers.get(name) || "").trim();
+    return /^\d+$/.test(v) ? Number(v) : null;
+  };
+  const monthly = count("x-resend-monthly-quota");
+  const daily = count("x-resend-daily-quota");
+  if (monthly === null && daily === null) return null;
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !key) return null;
+    const stored = await fetch(`${url}/rest/v1/rpc/resend_quota_store`, {
+      method: "POST",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_monthly_used: monthly, p_daily_used: daily }),
+    });
+    return stored.ok ? await stored.json() : null;
+  } catch {
+    return null;
+  }
 }
 
 // What the database says the email may say (public.admin_member_email).
@@ -143,16 +173,48 @@ async function send(to: string, memberId: string, d: Decision): Promise<void> {
     },
     body: JSON.stringify({ from: env("MAIL_FROM"), to: [to], reply_to: REPLY_TO, subject, text }),
   });
+  await keepQuota(res);
   if (!res.ok) throw new Error(`Resend refused the email (${res.status}): ${(await res.text()).slice(0, 300)}`);
+}
+
+// Emails this month, for an admin: admin rights checked by the database
+// (admin_resend_quota, as the admin, which also gives the last counts seen),
+// then one call to Resend that sends nothing (the list of domains), whose
+// answer may carry fresh counts. { quota, fresh }.
+async function quota(origin: string | null, token: string): Promise<Response> {
+  let last: unknown = null;
+  try {
+    const res = await fetch(`${env("SUPABASE_URL")}/rest/v1/rpc/admin_resend_quota`, {
+      method: "POST",
+      headers: { apikey: env("SUPABASE_ANON_KEY"), Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    last = await res.json().catch(() => null);
+    if (!res.ok) return reply(origin, res.status === 401 || res.status === 403 ? 403 : 409, { error: (last as { message?: string })?.message || "Admins only" });
+  } catch (e) {
+    return reply(origin, 500, { error: (e as Error).message });
+  }
+  try {
+    const res = await fetch("https://api.resend.com/domains", { headers: { Authorization: `Bearer ${env("RESEND_API_KEY")}` } });
+    await res.body?.cancel();
+    const fresh = await keepQuota(res);
+    if (fresh) return reply(origin, 200, { quota: fresh, fresh: true });
+  } catch (e) {
+    console.error("member-email: quota:", (e as Error).message);
+  }
+  return reply(origin, 200, { quota: last, fresh: false });
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
   const origin = req.headers.get("Origin");
   if (origin !== ALLOWED_ORIGIN) return reply(origin, 403, { error: "Not allowed from this site." });
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origin) });
-  if (req.method !== "POST") return reply(origin, 405, { error: "Use POST." });
-
   const token = /^Bearer\s+(\S+)$/i.exec(req.headers.get("Authorization") || "")?.[1];
+  if (req.method === "GET" && new URL(req.url).searchParams.get("quota")) {
+    if (!token) return reply(origin, 401, { error: "Sign in first." });
+    return quota(origin, token);
+  }
+  if (req.method !== "POST") return reply(origin, 405, { error: "Use POST." });
   if (!token) return reply(origin, 401, { error: "Sign in first." });
   let body: { member_id?: unknown; kind?: unknown };
   try {
