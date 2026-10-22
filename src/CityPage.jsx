@@ -7,8 +7,9 @@ import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
 import { TRUST_LINE } from "./content/home";
 import { slug, HOME_TITLE } from "./content/slug";
-import { WHATS_ON, WHATS_ON_PATH, WHATS_ON_SHORT_NOTE, whatsOnCta, upcoming, todayInGermany, byCity } from "./content/whatson";
+import { WHATS_ON_PATH, WHATS_ON_SHORT_NOTE, whatsOnCta, upcoming, todayInGermany, byCity } from "./content/whatson";
 import { CompactEvent } from "./WhatsOnItems";
+import { useWhatsOn } from "./whatsOnLive";
 
 // ============================================================================
 // PUBLIC CITY PAGE (nriclub.app/city/<city>): what NRIClub has in one city,
@@ -71,7 +72,8 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
   useCanonical(cityPath);
 
   // What's on in the city (other organisers' events), soonest first.
-  const cityEvents = useMemo(() => byCity(city, upcoming(WHATS_ON, todayInGermany())), [city]);
+  const whatsOn = useWhatsOn();
+  const cityEvents = useMemo(() => byCity(city, upcoming(whatsOn, todayInGermany())), [city, whatsOn]);
   const eventsPath = `${WHATS_ON_PATH}?city=${encodeURIComponent(citySlug)}`;
 
   useEffect(() => {

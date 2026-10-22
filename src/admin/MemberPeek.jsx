@@ -128,9 +128,11 @@ function CheckMark({ ok }) {
 
 // recorded: whether the database records our team's decisions and tells the
 // member (the 2026-10-21 update). onModerate: as for MemberModeration.
+// onDeleteSignup(member): deletes an account that never finished signing up
+// (offered only for those); throws so the dialog can say why it didn't work.
 export default function MemberPeek({
   member, loadingDetails = false, index = 0, total = 1, recorded = true,
-  onClose, onPrev, onNext, onDecision, onModerate, onSetAmbassador,
+  onClose, onPrev, onNext, onDecision, onModerate, onSetAmbassador, onDeleteSignup,
 }) {
   const [composer, setComposer] = useState(null); // null | "needs_info" | "rejected"
   const [message, setMessage] = useState("");
@@ -141,6 +143,7 @@ export default function MemberPeek({
   // { kind, action }.
   const [moderation, setModeration] = useState(null);
   const [confirmReopen, setConfirmReopen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [ambassadorDraft, setAmbassadorDraft] = useState(null); // null = not editing
   // From api.adminMemberOverview: mentoring sessions, earlier warnings, what
   // our team did (null before the 2026-10-21 database update; undefined
@@ -154,7 +157,7 @@ export default function MemberPeek({
   useEffect(() => {
     idRef.current = member.id;
     setComposer(null); setMessage(""); setNote(""); setBusy(""); setError("");
-    setModeration(null); setConfirmReopen(false); setAmbassadorDraft(null);
+    setModeration(null); setConfirmReopen(false); setConfirmDelete(false); setAmbassadorDraft(null);
     setOverview(undefined);
     loadOverview();
     peekRef.current?.focus({ preventScroll: true });
@@ -232,7 +235,14 @@ export default function MemberPeek({
   const unblock = () => run("unblock", () => onModerate(member, { kind: "member", action: "unblock", reasons: {}, overview }))
     .then((ok) => { if (ok) loadOverview(); });
   const openModeration = (kind, action) => { setError(""); setModeration({ kind, action }); };
-  const dialogOpen = !!moderation || confirmReopen;
+  // An account that never sent its check details (whether or not it
+  // confirmed its email address) can be deleted; the database checks again.
+  const unfinishedSignup = status === "incomplete" && detailsLoaded && !sentDetails && !blocked;
+  const deleteSignup = async () => {
+    const ok = await run("delete", () => onDeleteSignup(member));
+    if (ok) setConfirmDelete(false);
+  };
+  const dialogOpen = !!moderation || confirmReopen || confirmDelete;
 
   // Keyboard shortcuts while the peek is open.
   const keyHandler = useRef(null);
@@ -498,6 +508,10 @@ export default function MemberPeek({
                 ))}
               {!protectedAccount && member.avatar_url && <Button variant="ghost" size="sm" onClick={() => openModeration("profile_photo", "remove")} disabled={!!busy || overview === undefined}>Remove photo…</Button>}
               {!protectedAccount && member.bio && <Button variant="ghost" size="sm" onClick={() => openModeration("profile_bio", "remove")} disabled={!!busy || overview === undefined}>Remove bio…</Button>}
+              {!protectedAccount && onDeleteSignup && unfinishedSignup && (
+                <Button variant="ghost" size="sm" icon="trash" className="adm-btn-ghost-danger" onClick={() => { setError(""); setConfirmDelete(true); }}
+                  disabled={!!busy || overview === undefined}>Delete account…</Button>
+              )}
               <div className="adm-peek-hints" aria-hidden="true">
                 <Kbd>J</Kbd><Kbd>K</Kbd><span style={{ marginRight: 10 }}>&nbsp;next / previous</span>
                 <Kbd>Esc</Kbd><span>&nbsp;close</span>
@@ -512,6 +526,21 @@ export default function MemberPeek({
           overview={overview === undefined ? null : overview} onModerate={onModerate}
           onDone={() => { setModeration(null); loadOverview(); peekRef.current?.focus({ preventScroll: true }); }}
           onCancel={() => { setModeration(null); peekRef.current?.focus({ preventScroll: true }); }} />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete ${member.name || "this account"}?`}
+          confirmLabel="Delete account"
+          busy={busy === "delete"}
+          error={error}
+          onConfirm={deleteSignup}
+          onCancel={() => { setConfirmDelete(false); setError(""); peekRef.current?.focus({ preventScroll: true }); }}>
+          {member.email_verified === false
+            ? "This account never confirmed its email address."
+            : "This account never sent its check details."}
+          {" "}It is deleted for good, with everything in it, and nobody is told. The person can sign up again. This can't be undone.
+        </ConfirmDialog>
       )}
 
       {confirmReopen && (

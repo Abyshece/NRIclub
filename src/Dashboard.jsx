@@ -18,8 +18,9 @@ import ReportDialog from "./member/ReportDialog";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview, countryName, getCountryOptions, MAJOR_INDIAN_CITIES } from "./member/profile";
 import { findCity } from "./content/findCity";
 import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
-import { WHATS_ON, WHATS_ON_NOTE, upcoming, todayInGermany, citySlug, eventCitySlug } from "./content/whatson";
+import { WHATS_ON_NOTE, upcoming, todayInGermany, citySlug, eventCitySlug } from "./content/whatson";
 import { CompactEvent } from "./WhatsOnItems";
+import { useWhatsOn } from "./whatsOnLive";
 
 // The application to be a city ambassador, loaded when it is opened.
 const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
@@ -814,11 +815,12 @@ const OTHERS_FIRST = 8;
 let whatsOnShown = false; // the shared event was scrolled to (once per visit)
 const AlsoOnInGermany = ({ user, cityFilter, search, target, font }) => {
   const [expanded, setExpanded] = useState(!!target);
+  const whatsOn = useWhatsOn();
   const memberCity = (user.city || (user.location || "").split(",")[0] || "").trim();
   const memberKey = citySlug(memberCity);
   const filterKey = cityFilter && cityFilter !== "All" ? citySlug(cityFilter) : "";
   const q = (search || "").trim().toLowerCase();
-  const all = upcoming(WHATS_ON, todayInGermany()).filter((e) => (!filterKey || eventCitySlug(e) === filterKey)
+  const all = upcoming(whatsOn, todayInGermany()).filter((e) => (!filterKey || eventCitySlug(e) === filterKey)
     && (!q || [e.title, e.summary, e.organiser, e.city, e.venue, e.area].some((t) => (t || "").toLowerCase().includes(q))));
   const isNear = (e) => !!memberKey && eventCitySlug(e) === memberKey;
   const ordered = [...all.filter(isNear), ...all.filter((e) => !isNear(e))];

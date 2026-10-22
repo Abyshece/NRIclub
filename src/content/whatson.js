@@ -339,3 +339,49 @@ export function validateWhatsOn(list = WHATS_ON) {
   }
   return true;
 }
+
+// ============================================================================
+// Events our team adds in the admin panel (public.whats_on_events) show next
+// to the list above: in the browser (whatsOnLive.js) and in the pages the
+// build writes (vite.config.js). An id used in the list above wins.
+// ============================================================================
+
+// A row of public.whats_on_events as an item of the list (empty fields left
+// out).
+export function whatsOnFromRow(row) {
+  const item = {
+    id: row?.id, title: row?.title, category: row?.category, start: row?.start_date, end: row?.end_date,
+    time: row?.event_time, city: row?.city, venue: row?.venue, area: row?.area, organiser: row?.organiser,
+    price: row?.price, language: row?.language, summary: row?.summary, url: row?.url,
+  };
+  for (const key of Object.keys(item)) {
+    if (item[key] == null || (typeof item[key] === "string" && !item[key].trim())) delete item[key];
+  }
+  if (item.end && item.end === item.start) delete item.end;
+  return item;
+}
+
+// What validateWhatsOn finds wrong with one item, or "".
+export function whatsOnProblem(e) {
+  try {
+    validateWhatsOn([e]);
+    return "";
+  } catch (err) {
+    return String(err.message).split("\n  - ").slice(1).map((p) => p.replace(/^WHATS_ON\[0\](?: \([^)]*\))?: /, "")).join("; ") || String(err.message);
+  }
+}
+
+// The list in the code plus the events from the database (rows of
+// public.whats_on_events): those that pass the build's checks, and whose
+// id isn't taken already.
+export function mergeWhatsOn(list, rows) {
+  const seen = new Set(list.map((e) => e.id));
+  const extra = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const e = whatsOnFromRow(row);
+    if (!e.id || seen.has(e.id) || whatsOnProblem(e)) continue;
+    seen.add(e.id);
+    extra.push(e);
+  }
+  return extra.length ? [...list, ...extra] : list;
+}

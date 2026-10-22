@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import MemberPeek from "./MemberPeek";
 import { moderateMember } from "./moderateMember";
+import { EMAILED_DECISIONS, EMAIL_DELAY_MS, emailFailed, queueDecisionEmail } from "./memberEmail";
 import { Avatar, Button, EmptyState, ErrorNote, Icon, PageHeader, Pill, SkeletonRows } from "./ui";
 import {
   NO_HOLD, VERIFICATION_LABELS, VERIFICATION_TONES, formatDate, friendlyError, holdSummary, identityChanged,
@@ -61,7 +62,7 @@ function RowChecks({ m }) {
 // list then stops at 1,000 rows).
 // recorded: whether the database records our team's decisions and tells the
 // member (the 2026-10-21 update).
-export default function VerificationView({ usersById, counts, countsExact = false, cache, onMemberChange, showToast, recorded = true }) {
+export default function VerificationView({ usersById, counts, countsExact = false, cache, onMemberChange, onMemberDeleted, showToast, recorded = true }) {
   const [filter, setFilter] = useState("pending");
   const [rows, setRows] = useState(() => cache.current.pending?.rows || null);
   const pageOf = (entry) => (entry ? { total: entry.total ?? null, paged: !!entry.paged } : null);
@@ -293,13 +294,20 @@ export default function VerificationView({ usersById, counts, countsExact = fals
     // the queue, or back to unfinished for someone rejected before sending
     // their details. It's refused if someone else has decided since.
     const undoable = counted && (before === "pending" || (before === "incomplete" && decision === "rejected"));
+    // The member's email about it, once the Undo has gone.
+    const email = EMAILED_DECISIONS.has(decision)
+      ? queueDecisionEmail(m.id, decision, { delay: undoable ? EMAIL_DELAY_MS : 0, onFail: emailFailed(showToast) })
+      : null;
     showToast({
       text,
       icon: decision === "approved" ? "check" : undefined,
       undo: undoable ? async () => {
+        email?.cancel();
         try {
           await api.adminReviewMember(m.id, before, "", "Undo", { status: decision });
         } catch (e) {
+          // The decision stands: so does its email.
+          email?.sendNow();
           throw await refused(m.id, e);
         }
         touch(m.id);
@@ -332,6 +340,23 @@ export default function VerificationView({ usersById, counts, countsExact = fals
       onMemberChange(id, patch, before ? { ...m, ...before } : m);
     },
   });
+
+  // Deletes an account that never finished signing up (MemberPeek's
+  // onDeleteSignup; the server checks again). Throws so the dialog can say why.
+  const deleteSignup = async (m) => {
+    const res = await api.adminDeleteSignup(m.id);
+    touch(m.id);
+    const f = filterRef.current;
+    const current = rowsRef.current || [];
+    const index = current.findIndex((r) => r.id === m.id);
+    const next = current.filter((r) => r.id !== m.id);
+    commitRows(next, f);
+    if (index >= 0) shiftTotal(f, -1);
+    const after = next[index] || next[index - 1];
+    setOpenId(after ? after.id : null);
+    onMemberDeleted?.(m.id, m);
+    showToast({ text: `Deleted ${shortName(m.name)}'s unfinished sign-up${res?.recorded === false ? ". It couldn't be recorded in the log" : ""}` });
+  };
 
   const onRowKey = (e, id, i) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenId(id); }
@@ -426,6 +451,7 @@ export default function VerificationView({ usersById, counts, countsExact = fals
           recorded={recorded}
           onDecision={decide}
           onModerate={moderate}
+          onDeleteSignup={deleteSignup}
         />
       )}
     </>

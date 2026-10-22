@@ -13,6 +13,7 @@
 // and only the newest handled ones.
 import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
+import { emailFailed, queueDecisionEmail } from "./memberEmail";
 import ModerationDialog from "./ModerationDialog";
 import { Button, ConfirmDialog, EmptyState, ErrorNote, PageHeader, Pill, SectionTitle } from "./ui";
 import { ago, formatDate, friendlyError, firstName } from "./format";
@@ -360,6 +361,8 @@ export function ReportsView({ reports, setReports, handledTotal = 0, moreOpen = 
     if (closed.length) showHandled(closed);
     if (target.kind === "member" && action === "block") {
       onMemberChange(target.id, { status: "blocked" }, { status: "active" });
+      // The member also gets an email about it (there's no Undo here).
+      if (!res?.fallback) queueDecisionEmail(target.id, "blocked", { delay: 0, onFail: emailFailed(showToast) });
       setReports((prev) => prev.map((x) => (x.reported_user_id === target.id && x.reported_user ? { ...x, reported_user: { ...x.reported_user, status: "blocked" } } : x)));
     }
     if (target.kind === "profile_photo" || target.kind === "profile_bio") {
