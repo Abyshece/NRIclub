@@ -17,10 +17,10 @@
 --     changed, and a member can't give a new or edited event a date that has
 --     passed (an event that has already happened can still be edited, as
 --     long as its date stays as it is).
---   * LinkedIn: other members see a new member's LinkedIn link unless the
---     member chooses "Only the NRIClub team" (Settings, Privacy & Safety).
---     Existing members keep the choice they have. Admins always see it,
---     through public.profile_links as before.
+--   * LinkedIn: only the NRIClub team sees a new member's LinkedIn link
+--     until the member chooses "All members" in Edit profile (privacy by
+--     default). Existing members keep the choice they have. Admins always
+--     see it, through public.profile_links as before.
 -- Needs all earlier migrations (up to 20261024000000_ambassador_applications.sql).
 -- Can be run again: it replaces what it made the first time.
 -- Existing rows: none change.
