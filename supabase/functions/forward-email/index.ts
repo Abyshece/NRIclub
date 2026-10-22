@@ -1,18 +1,24 @@
 // ============================================================================
 // FORWARD-EMAIL: mail sent to hello@nriclub.app (received by Resend) is
-// forwarded to the founder's own inbox.
+// kept in the admin panel's Inbox and, if FORWARD_TO is set, forwarded to
+// the founder's own inbox.
 //
 // Resend calls this function with an `email.received` webhook. The webhook
 // carries only the email's id, so the function fetches the email and its
-// attachments from Resend's Receiving API and sends a copy to FORWARD_TO.
-// Reply-To is the original sender, so pressing Reply in the inbox answers
-// them (send the reply "as" hello@nriclub.app, see docs/EMAIL-SETUP.md).
+// attachments from Resend's Receiving API. It stores the email in
+// private.inbox_messages (public.inbox_store, with the service role; of the
+// attachments only their names, types and sizes) and sends a copy to
+// FORWARD_TO. Each step works without the other: a failed store doesn't stop
+// the copy, and the other way round. Reply-To of the copy is the original
+// sender, so pressing Reply in the inbox answers them (send the reply "as"
+// hello@nriclub.app, see docs/EMAIL-SETUP.md); the admin panel replies too.
 //
 // Secrets (Supabase → Edge Functions → Secrets; names only, never in git):
 //   RESEND_API_KEY         a Resend API key with full access
 //   RESEND_WEBHOOK_SECRET  the signing secret of the webhook (whsec_…)
-//   FORWARD_TO             the address the copies go to
+//   FORWARD_TO             optional: the address the copies go to (none: no copies)
 //   FORWARD_FROM           optional, default "NRIClub inbox <hello@nriclub.app>"
+//   (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are there already.)
 // Deploy without JWT checks (Resend can't send a Supabase token); the
 // webhook signature is checked instead:
 //   supabase functions deploy forward-email --no-verify-jwt
@@ -45,6 +51,41 @@ async function verified(req: Request, body: string): Promise<boolean> {
   });
 }
 
+// Keeps the email in the admin panel's Inbox (public.inbox_store). The same
+// email id is stored once, also when Resend retries. Before the 2026-10-25
+// database update there is no inbox_store; the copy still goes.
+// deno-lint-ignore no-explicit-any
+async function store(emailId: string, email: Record<string, any>, files: { data?: Array<Record<string, any>> }) {
+  const url = env("SUPABASE_URL");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) throw new Error("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY isn't set");
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : v ? [String(v)] : []);
+  const headers = (email.headers ?? {}) as Record<string, unknown>;
+  const res = await fetch(`${url}/rest/v1/rpc/inbox_store`, {
+    method: "POST",
+    headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      p_email: {
+        resend_email_id: emailId,
+        message_id: String(email.message_id ?? headers["message-id"] ?? headers["Message-ID"] ?? ""),
+        from: String(email.from ?? ""),
+        reply_to: list(email.reply_to)[0] ?? "",
+        to: list(email.to),
+        subject: String(email.subject ?? ""),
+        text: String(email.text ?? ""),
+        html: String(email.html ?? ""),
+        received_at: String(email.created_at ?? ""),
+        attachments: (files.data ?? []).map((a) => ({
+          filename: String(a.filename ?? "attachment"),
+          content_type: String(a.content_type ?? ""),
+          ...(typeof a.size === "number" ? { size: a.size } : {}),
+        })),
+      },
+    }),
+  });
+  if (!res.ok) throw new Error(`inbox_store: ${res.status} ${(await res.text()).slice(0, 300)}`);
+}
+
 async function resend(path: string, init: RequestInit = {}) {
   const res = await fetch(`${API}${path}`, {
     ...init,
@@ -65,9 +106,32 @@ Deno.serve(async (req) => {
   if (event.type !== "email.received" || !event.data?.email_id) return new Response("Ignored", { status: 200 });
   const emailId = encodeURIComponent(event.data.email_id);
 
+  // deno-lint-ignore no-explicit-any
+  let email: Record<string, any>;
+  // deno-lint-ignore no-explicit-any
+  let files: { data?: any[] };
   try {
-    const email = await resend(`/emails/receiving/${emailId}`);
-    const files = await resend(`/emails/receiving/${emailId}/attachments`).catch(() => ({ data: [] }));
+    email = await resend(`/emails/receiving/${emailId}`);
+    files = await resend(`/emails/receiving/${emailId}/attachments`).catch(() => ({ data: [] }));
+  } catch (e) {
+    // A non-2xx answer makes Resend retry later; the email also stays in
+    // Resend's dashboard under Emails → Receiving.
+    console.error(String(e));
+    return new Response("Couldn't fetch the email", { status: 500 });
+  }
+
+  let stored = true;
+  try {
+    await store(event.data.email_id, email, files);
+  } catch (e) {
+    stored = false;
+    console.error("Not stored in the Inbox:", String(e));
+  }
+  // No forwarding address: the Inbox is the only copy (if storing failed
+  // too, Resend retries).
+  if (!env("FORWARD_TO")) return new Response(stored ? "Stored" : "Storing failed", { status: stored ? 200 : 500 });
+
+  try {
     // Resend fetches each file from its signed link (valid for an hour).
     const attachments = (files.data ?? []).filter((a: { download_url?: string }) => a.download_url).map((a: {
       filename?: string; download_url: string; content_type?: string; content_id?: string;
@@ -93,11 +157,12 @@ Deno.serve(async (req) => {
         ...(attachments.length ? { attachments } : {}),
       }),
     });
-    return new Response("Forwarded", { status: 200 });
+    return new Response(stored ? "Stored and forwarded" : "Forwarded", { status: 200 });
   } catch (e) {
-    // A non-2xx answer makes Resend retry later; the email also stays in
-    // Resend's dashboard under Emails → Receiving.
+    // Not stored either: a non-2xx answer makes Resend retry later (the
+    // email also stays in Resend's dashboard under Emails → Receiving).
+    // Stored: the Inbox has it, so it isn't sent again.
     console.error(String(e));
-    return new Response("Forwarding failed", { status: 500 });
+    return new Response(stored ? "Stored; forwarding failed" : "Forwarding failed", { status: stored ? 200 : 500 });
   }
 });
