@@ -253,7 +253,7 @@ export function privacyDoc() {
               : "if we decline your sign-up or block your account, approved members can still see your profile until the account is deleted (section 2, \"The membership check\")."],
           ] },
           { title: "Your LinkedIn link", fields: [
-            ["Who sees it", "our team always does, to check members. Other approved members see it when \"Show my LinkedIn link to\" in Edit profile says \"All members\" (new members start with this), not when it says \"Only the NRIClub team\". You can change it at any time."],
+            ["Who sees it", "our team always does, to check members. Other approved members see it when \"Show my LinkedIn link to\" in Edit profile says \"All members\", not when it says \"Only the NRIClub team\" (new members start with this). You can change it at any time."],
           ] },
           { title: "Members waiting for our check", fields: [
             ["What", `until our team has approved them, new members can't see other members, their profiles or what they post. They only see the list of groups and the guides, and they can't contact anyone. ${VISIBILITY.onlyApprovedListed

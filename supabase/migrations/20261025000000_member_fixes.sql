@@ -181,11 +181,12 @@ CREATE TRIGGER check_event_date BEFORE INSERT OR UPDATE OF date ON public.events
 -- WHO SEES A MEMBER'S LINKEDIN LINK
 -- ============================================================================
 
--- New members show it to other members until they choose "Only the
--- NRIClub team". Members can't read linkedin_url from profiles (2026-10-20);
--- public.profile_links gives it to other members only when linkedin_public
--- is true, and always to the member and to admins.
-ALTER TABLE public.profiles ALTER COLUMN linkedin_public SET DEFAULT TRUE;
+-- Only the NRIClub team sees it until the member chooses "All members"
+-- (privacy by default, Art. 25(2) GDPR). Members can't read linkedin_url
+-- from profiles (2026-10-20); public.profile_links gives it to other
+-- members only when linkedin_public is true, and always to the member and
+-- to admins.
+ALTER TABLE public.profiles ALTER COLUMN linkedin_public SET DEFAULT FALSE;
 
 -- ============================================================================
 -- PERMISSIONS

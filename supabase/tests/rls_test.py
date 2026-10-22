@@ -3755,9 +3755,11 @@ def member_fixes():
 
     # --- who sees a member's LinkedIn link ---------------------------------------------------
     sign_up(ojas, "ojas@example.com", {"full_name": "Ojas O"})
-    check("a new member shows their LinkedIn link to members until they choose otherwise",
-          f"SELECT linkedin_public FROM profiles WHERE id = '{ojas}'", expect="t")
+    check("a new member's LinkedIn link is for the NRIClub team only until they choose otherwise",
+          f"SELECT linkedin_public FROM profiles WHERE id = '{ojas}'", expect="f")
     psql(f"UPDATE profiles SET linkedin_url = 'https://www.linkedin.com/in/leela-l' WHERE id = '{leela}'")
+    check("leela chooses 'All members'",
+          "UPDATE profiles SET linkedin_public = true WHERE id = auth.uid() RETURNING linkedin_public", as_user=leela, expect="t")
     check("leela's link: members see it", f"SELECT linkedin_url FROM public.profile_links(ARRAY['{leela}'::uuid])",
           as_user=mohan, expect="https://www.linkedin.com/in/leela-l")
     check("she chooses 'Only the NRIClub team'",
