@@ -12,8 +12,8 @@ import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
 
-export const PRIVACY_VERSION = "2026-10-22";
-export const PRIVACY_DATE = "22 October 2026";
+export const PRIVACY_VERSION = "2026-10-25";
+export const PRIVACY_DATE = "25 October 2026";
 
 // How long data is kept: the periods this Policy promises. Until clean-up
 // jobs run on the database (plan C20), our team deletes by hand once a month
@@ -38,6 +38,7 @@ export const RETENTION = {
   moderationNoteMonths: 12, // the note in that record is cleared after this
   requestEmailYears: 3, // emails about rights and reports of illegal content, after the matter is closed
   otherEmailMonths: 12, // all other emails, after the matter is closed
+  inboxMonths: 12, // emails to hello@ in the admin panel's inbox, after they arrived (private.daily_cleanup)
   // Photo files: true since the site deletes them with their post, listing,
   // event or profile photo and with the account (plan C1), and the photo
   // clean-up in the admin panel (src/admin/PhotoCleanup.jsx) deletes what is
@@ -73,6 +74,7 @@ function accountRetention() {
     "until you delete your account.",
     R.unconfirmedSignupDays && ` A sign-up whose email address is never confirmed is deleted after ${R.unconfirmedSignupDays} days.`,
     R.unfinishedSignupDays && ` An account that never sends its check details is deleted after ${R.unfinishedSignupDays} days.`,
+    " Our team may delete such a sign-up sooner, by hand; this is recorded like our other decisions, without the account's details.",
   ].filter(Boolean).join("");
 }
 
@@ -216,16 +218,16 @@ export function privacyDoc() {
           { title: "Emails we send you", fields: [
             // Resend keeps each email for 30 days on all its plans
             // (resend.com/pricing, October 2026).
-            ["What", "from our sign-in system: sign-up codes, sign-in codes, password links and email-change confirmations. Our email service keeps each of these emails (your address, the subject and the content, including the code or link) and whether it was delivered. From our team: messages about your membership: decisions on your membership check, notice of changes to the Terms of Use or to NRIClub, the end of your membership and, if it ever happened, a data breach that affects you; and, to whoever reports content with the form at nriclub.app/report, confirmation that we received it and our decision. Moderation decisions with their reasons, warnings and the outcome of a report you sent in the app come as in-app notices; we may also email them."],
+            ["What", "from our sign-in system: sign-up codes, sign-in codes, password links and email-change confirmations. Our email service keeps each of these emails (your address, the subject and the content, including the code or link) and whether it was delivered. From our team: messages about your membership: decisions on your membership check (approved, more information needed, not approved) and a block of your account, each with what the app also tells you, notice of changes to the Terms of Use or to NRIClub, the end of your membership and, if it ever happened, a data breach that affects you; and, to whoever reports content with the form at nriclub.app/report, confirmation that we received it and our decision. Moderation decisions with their reasons, warnings and the outcome of a report you sent in the app come as in-app notices; we may also email them."],
             ["Why", "to run your account and to give you information our Terms of Use or the law require. We send no newsletters, no advertising and no automatic notification emails: everything else shows inside NRIClub."],
             ["Legal basis", "contract; legal obligation for statements of reasons and report outcomes (Art. 16(5) and 17 DSA) and breach notices (Art. 34 GDPR)."],
-            ["How long", "our email service keeps sign-in emails for 30 days. Copies of what our team sends are kept like the emails you send us (below)."],
+            ["How long", "our email service keeps each email it sends for 30 days. Copies of what our team sends are kept like the emails you send us (below). Which decision emails we sent (the account, the decision and when; not the text) we note for 30 days, so none goes out twice."],
           ] },
           { title: "Emails you send us", fields: [
             ["What", "your message, your email address and anything you include, and our reply."],
             ["Why", "to answer you and to deal with requests about your data and reports."],
             ["Legal basis", "contract for questions about your membership; legal obligation for requests under the GDPR and reports under the DSA; otherwise legitimate interests (answering people who write to us)."],
-            ["How long", `requests about your rights and reports of illegal content, and our answers, we keep for ${R.requestEmailYears} years after the matter is closed, so we can show we handled them correctly. Other emails, and our replies, we delete ${months(R.otherEmailMonths)} after the matter is closed.`],
+            ["How long", `requests about your rights and reports of illegal content, and our answers, we keep for ${R.requestEmailYears} years after the matter is closed, so we can show we handled them correctly. Other emails, and our replies, we delete ${months(R.otherEmailMonths)} after the matter is closed. Emails to ${CONTACT_EMAIL} also show in our admin panel's inbox, with the replies we send from there (attachments only by name and size); there they are deleted automatically ${months(R.inboxMonths)} after they arrived.`],
           ] },
         ] },
         { p: "Our public pages (the homepage, the city pages and the guides) contain no personal data. A city page shows how many members its group has only once there are at least 5." },
@@ -293,7 +295,7 @@ export function privacyDoc() {
         { entries: [
           provider("supabase", "Supabase", [
             ["Company", "Supabase Pte. Ltd., Singapore."],
-            ["What for", "our database, sign-in, photo storage and live updates in the app."],
+            ["What for", "our database, sign-in, photo storage and live updates in the app, and the small server programs (\"Edge Functions\") that send our team's emails and keep the emails to hello@nriclub.app in our admin panel. These programs run on the server nearest to whoever uses them, which can be outside the EU; they keep nothing themselves."],
             ["Where", "Amazon Web Services data centres in Ireland (EU)."],
           ]),
           provider("vercel", "Vercel", [
@@ -302,7 +304,7 @@ export function privacyDoc() {
           ]),
           provider("resend", "Resend", [
             ["Company", "Plus Five Five, Inc. (Resend), USA."],
-            ["What for", "sending our sign-in and password emails, through Amazon Web Services' email service in Ireland (EU)."],
+            ["What for", "sending our sign-in and password emails and our team's emails (decisions about your membership, replies to your emails), through Amazon Web Services' email service in Ireland (EU); receiving the emails sent to us (\"Our mailbox\", below)."],
           ]),
           provider("mailbox", "Our mailbox", [
             ["Company", mailProvider() || "the provider that hosts our mailbox."],
