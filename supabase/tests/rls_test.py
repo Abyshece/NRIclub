@@ -3796,6 +3796,7 @@ def admin_tools():
     check("... (still there)", "SELECT count(*) FROM public.whats_on_events WHERE id = 'on-now'", expect="1")
 
     # --- Inbox (mail to hello@nriclub.app) -------------------------------------------
+    hours_ago = lambda h: (datetime.now(ZoneInfo("UTC")) - timedelta(hours=h)).isoformat()
     def stored(rid, subject="Question", text="Hello, how do I join?", sender="Asha <asha@example.org>", **more):
         e = {"resend_email_id": rid, "message_id": f"<{rid}@mail.example.org>", "from": sender, "to": ["hello@nriclub.app"],
              "subject": subject, "text": text, "html": "<p>x</p>",
@@ -3808,15 +3809,15 @@ def admin_tools():
     check("anon can't store an email", stored("re_1"), role="anon", expect="error")
     check("... nor a member, nor an admin", stored("re_1"), as_user=ADMIN, expect="error")
     check("forward-email (service role) stores one, with the attachments' names only", f"""
-          SET ROLE service_role; {stored('re_1')}; RESET ROLE;
+          SET ROLE service_role; {stored('re_1', received_at=hours_ago(3))}; RESET ROLE;
           SELECT attachments::text FROM private.inbox_messages WHERE resend_email_id = 're_1'""",
           expect='t\n[{"size": 1200, "filename": "cv.pdf", "content_type": "application/pdf"}]')
     check("... the same email again is stored once (Resend retries)",
           f"SET ROLE service_role; {stored('re_1', subject='Changed')}; RESET ROLE; "
           "SELECT count(*) || '|' || max(subject) FROM private.inbox_messages WHERE resend_email_id = 're_1'",
           expect="t\n1|Question")
-    psql(f"SET ROLE service_role; {stored('re_2', subject='Room in Berlin', text='Any rooms?', sender='bo@example.org')}; "
-         f"{stored('re_3', subject='Sponsor 50% off_now', text='Buy', sender='spam@example.net')}")
+    psql(f"SET ROLE service_role; {stored('re_2', subject='Room in Berlin', text='Any rooms?', sender='bo@example.org', received_at=hours_ago(2))}; "
+         f"{stored('re_3', subject='Sponsor 50% off_now', text='Buy', sender='spam@example.net', received_at=hours_ago(1))}")
     check("members can't read the Inbox", inbox_list(), as_user=nina, error_has="Admins only")
     check("... nor the tables", "SELECT count(*) FROM private.inbox_messages", as_user=nina, expect="error")
     check("the admin lists it: newest first, 3 unread",
