@@ -51,7 +51,7 @@ export const PRIVACY_DETAILS = {
   // Who hosts the hello@nriclub.app mailbox: the company and its country,
   // e.g. "Example Mail GmbH, Germany". While empty, the Policy says "the
   // provider that hosts our mailbox".
-  mailProvider: "",
+  mailProvider: "Plus Five Five, Inc. (Resend), USA, which receives the emails, and Google (Gmail), whose inbox they are forwarded to.",
   // Which providers have a data processing agreement (Auftragsverarbeitungs-
   // vertrag, Art. 28 GDPR) with NRIClub. The Policy says a provider works
   // under one, and names the transfer safeguard in it, only where this is
