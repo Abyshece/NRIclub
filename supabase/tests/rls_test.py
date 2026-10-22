@@ -29,6 +29,8 @@ ADMIN_ACCESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "m
                             "20261023000000_admin_access.sql")
 AMBASSADORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                            "20261024000000_ambassador_applications.sql")
+MEMBER_FIXES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                            "20261025000000_member_fixes.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -499,10 +501,10 @@ def main():
 
     # --- events / help / marketplace / docs ---------------------------------
     check("event counters forced, organizer must be self",
-          f"INSERT INTO events (id, title, date, time, organizer_id, organizer_name, attendees_count) VALUES ('40000000-0000-0000-0000-000000000001', 'Diwali', 'Nov 1, 2026 • 6:00 PM', '18:00', '{ALICE}', 'Alice', 300) RETURNING attendees_count",
+          f"INSERT INTO events (id, title, date, time, organizer_id, organizer_name, attendees_count) VALUES ('40000000-0000-0000-0000-000000000001', 'Diwali', '2030-11-01', '18:00', '{ALICE}', 'Alice', 300) RETURNING attendees_count",
           as_user=ALICE, expect="0")
     check("cannot create event for someone else",
-          f"INSERT INTO events (title, date, organizer_id) VALUES ('x', 'y', '{BOB}')", as_user=ALICE, expect="error")
+          f"INSERT INTO events (title, date, organizer_id) VALUES ('x', '2030-01-01', '{BOB}')", as_user=ALICE, expect="error")
     check("RSVP bumps attendees",
           f"INSERT INTO event_rsvps (event_id, user_id) VALUES ('40000000-0000-0000-0000-000000000001', '{BOB}'); "
           "SELECT attendees_count FROM events WHERE id = '40000000-0000-0000-0000-000000000001'", as_user=BOB, expect="1")
@@ -772,7 +774,7 @@ def main():
         ("like", f"INSERT INTO likes (post_id, user_id) VALUES ('10000000-0000-0000-0000-000000000002', '{WAIT}')"),
         ("join a group", f"INSERT INTO group_members (group_id, user_id) SELECT id, '{WAIT}' FROM groups WHERE name = 'Indians in Testville'"),
         ("ask for a group", f"INSERT INTO groups (name, created_by) VALUES ('Indians in Waitville', '{WAIT}')"),
-        ("create an event", f"INSERT INTO events (title, date, organizer_id) VALUES ('Meetup', 'Sun', '{WAIT}')"),
+        ("create an event", f"INSERT INTO events (title, date, organizer_id) VALUES ('Meetup', '2030-06-07', '{WAIT}')"),
         ("RSVP", f"INSERT INTO event_rsvps (event_id, user_id) VALUES ('40000000-0000-0000-0000-000000000001', '{WAIT}')"),
         ("list something", f"INSERT INTO marketplace (user_id, title, price) VALUES ('{WAIT}', 'Sofa', '1')"),
         ("write a guide", f"INSERT INTO docs (user_id, title) VALUES ('{WAIT}', 'Guide')"),
@@ -1103,7 +1105,7 @@ def main():
         ("group_members", "INSERT INTO group_members (group_id, user_id, joined_at) SELECT id, auth.uid(), '2099-01-01' "
                           "FROM groups WHERE name = 'Indians in Testville' RETURNING (joined_at = now())::text"),
         ("events", "INSERT INTO events (title, date, organizer_id, created_at) VALUES "
-                   "('Garba night', 'Oct 20, 2026', auth.uid(), '2099-01-01') RETURNING (created_at = now())::text"),
+                   "('Garba night', '2030-10-20', auth.uid(), '2099-01-01') RETURNING (created_at = now())::text"),
         ("event_rsvps", "INSERT INTO event_rsvps (event_id, user_id, created_at) VALUES "
                         "('40000000-0000-0000-0000-000000000001', auth.uid(), '2099-01-01') RETURNING (created_at = now())::text"),
         ("marketplace", "INSERT INTO marketplace (user_id, title, price, created_at) VALUES "
@@ -1152,14 +1154,14 @@ def main():
           f"DELETE FROM conversations WHERE id = '{CONVO2}' RETURNING 1", as_user=ADMIN, expect="")
     check("an event shows the organiser's own name",
           "INSERT INTO events (id, title, date, organizer_id, organizer_name) VALUES "
-          "('40000000-0000-0000-0000-000000000003', 'Holi', 'Mar 2027', auth.uid(), 'NRIClub Team') RETURNING organizer_name",
+          "('40000000-0000-0000-0000-000000000003', 'Holi', '2031-03-01', auth.uid(), 'NRIClub Team') RETURNING organizer_name",
           as_user=ALICE, expect="Alice Updated")
     check("... also when the event is edited",
           "UPDATE events SET organizer_name = 'NRIClub Team' WHERE id = '40000000-0000-0000-0000-000000000003' "
           "RETURNING organizer_name", as_user=ALICE, expect="Alice Updated")
     check("admins can still name the host",
           "INSERT INTO events (title, date, organizer_id, organizer_name) VALUES "
-          "('Diwali Mela', 'Nov 2026', auth.uid(), 'NRIClub Team') RETURNING organizer_name",
+          "('Diwali Mela', '2030-11-15', auth.uid(), 'NRIClub Team') RETURNING organizer_name",
           as_user=ADMIN, expect="NRIClub Team")
 
     # --- notifications must be about something real (F22) -------------------
@@ -1326,6 +1328,7 @@ def main():
     storage_images()
     admin_access()
     ambassador_applications()
+    member_fixes()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -2086,6 +2089,10 @@ def notifications_limits_privacy():
     check("... nor everything at once (select=*)", "SELECT * FROM profiles", as_user=om, error_has="permission denied")
     check("... admins neither: they use profile_links", "SELECT linkedin_url FROM profiles", as_user=ADMIN,
           error_has="permission denied")
+    # (Since 2026-10-25 new members show it to members unless they choose
+    # "Only the NRIClub team"; nia chooses that.)
+    check("setup: nia shows her link only to our team",
+          "UPDATE profiles SET linkedin_public = false WHERE id = auth.uid()", as_user=nia)
     check("the other columns are readable",
           f"SELECT name || '|' || linkedin_public FROM profiles WHERE id = '{nia}'", as_user=om, expect="Nia N|false")
     check("setup: nia's LinkedIn link",
@@ -3605,6 +3612,173 @@ def ambassador_applications():
                  "place_recommendations,places_added,posts,profile,profile_private,rate_limit_log,readme,"
                  "reports_about_me,reports_filed,sessions,terms_acceptances,urgent_questions_sent,user_settings,"
                  "verification_log")
+
+
+def member_fixes():
+    """Posts only in groups the author has joined (C12), the member's city
+    (update_my_city) and blocking (block_member) (C29), editing events, and
+    who sees a member's LinkedIn link: migration 20261025000000_member_fixes."""
+    kavi, leela, mohan, nora, ojas = (f"00000000-0000-0000-0000-000000000a{n}" for n in ("01", "02", "03", "04", "05"))
+    approved_member(kavi, "kavi@example.com", "Kavi K")
+    approved_member(leela, "leela@example.com", "Leela L")
+    approved_member(mohan, "mohan@example.com", "Mohan M")
+    joined, other = "70000000-0000-0000-0000-000000000a01", "70000000-0000-0000-0000-000000000a02"
+    psql(f"INSERT INTO groups (id, name, category, is_approved, created_by) VALUES "
+         f"('{joined}', 'Indians in Kavitown', 'City', true, '{kavi}'), "
+         f"('{other}', 'Indians in Otherton', 'City', true, '{leela}'); "
+         f"INSERT INTO group_members (group_id, user_id) VALUES ('{joined}', '{kavi}'), ('{other}', '{leela}')")
+
+    # --- posts go only into groups the author is in (C12) -----------------------------
+    check("kavi posts in a group he's in", f"INSERT INTO posts (user_id, content, group_id) VALUES "
+          f"(auth.uid(), 'Hello Kavitown', '{joined}') RETURNING group_id::text", as_user=kavi, expect=joined)
+    check("... and on the Home feed", "INSERT INTO posts (user_id, content) VALUES (auth.uid(), 'Hello all') "
+          "RETURNING group_id IS NULL", as_user=kavi, expect="t")
+    check("... but not in a group he never joined",
+          f"INSERT INTO posts (user_id, content, group_id) VALUES (auth.uid(), 'Wrong group', '{other}')",
+          as_user=kavi, error_has="row-level security")
+    check("... nor by moving a post there",
+          f"UPDATE posts SET group_id = '{other}' WHERE user_id = auth.uid() AND content = 'Hello all'",
+          as_user=kavi, error_has="You can only post in groups you've joined.")
+    check("... and nothing was posted there",
+          f"SELECT count(*) FROM posts WHERE group_id = '{other}' AND user_id = '{kavi}'", expect="0")
+    check("moving a post into a group he's in is fine",
+          f"UPDATE posts SET group_id = '{joined}' WHERE user_id = auth.uid() AND content = 'Hello all' RETURNING 1",
+          as_user=kavi, expect="1")
+    check("after leaving the group, his posts there stay and he can still edit them", f"""
+          DELETE FROM group_members WHERE group_id = '{joined}' AND user_id = auth.uid();
+          UPDATE posts SET content = 'Hello Kavitown!' WHERE user_id = auth.uid() AND content = 'Hello Kavitown'
+            RETURNING group_id::text""", as_user=kavi, expect=joined)
+    check("... but he can't post there any more",
+          f"INSERT INTO posts (user_id, content, group_id) VALUES (auth.uid(), 'Again', '{joined}')",
+          as_user=kavi, error_has="row-level security")
+    psql(f"INSERT INTO group_members (group_id, user_id) VALUES ('{joined}', '{kavi}')")
+
+    # --- likes as the site sends them since 2026-10-25 (C11): "like" twice keeps one -----
+    like = (f"INSERT INTO likes (post_id, user_id) SELECT id, auth.uid() FROM posts WHERE content = 'Hello Kavitown!' "
+            "ON CONFLICT (post_id, user_id) DO NOTHING")
+    check("leela likes kavi's post, twice (the heart showed it wrongly)",
+          f"{like}; {like}; SELECT likes_count FROM posts WHERE content = 'Hello Kavitown!'", as_user=leela, expect="1")
+    check("... and kavi heard about it once", f"SELECT count(*) FROM notifications WHERE user_id = '{kavi}' AND type = 'like'",
+          expect="1")
+
+    # --- the member's city (C29) ------------------------------------------------------
+    check("kavi moves to Munich: city, country and the place shown change together",
+          "SELECT public.update_my_city('  Munich ', 'de', 'Munich, Germany')::text", as_user=kavi,
+          expect='{"city": "Munich", "location": "Munich, Germany", "country_code": "DE"}')
+    check("... (saved)", f"SELECT concat_ws('|', city, country_code, location) FROM profiles WHERE id = '{kavi}'",
+          expect="Munich|DE|Munich, Germany")
+    check("a place that isn't the city's becomes the city",
+          "SELECT public.update_my_city('Pune', 'IN', 'Somewhere else, India') ->> 'location'", as_user=kavi, expect="Pune")
+    check("... also one that only looks like it (no patterns)",
+          "SELECT public.update_my_city('P_ne', 'IN', 'Pune, India') ->> 'location'", as_user=kavi, expect="P_ne")
+    check("a city is needed", "SELECT public.update_my_city('  ', 'DE')", as_user=kavi,
+          error_has="Please enter the city you live in.")
+    check("... and a country code", "SELECT public.update_my_city('Berlin', 'Germany')", as_user=kavi,
+          error_has="Please choose your country.")
+    check("... of two letters", "SELECT public.update_my_city('Berlin', '')", as_user=kavi,
+          error_has="Please choose your country.")
+    check("it changes only the member's own profile",
+          f"SELECT public.update_my_city('Berlin', 'DE', 'Berlin, Germany')::text IS NOT NULL; "
+          f"SELECT concat_ws('|', city, country_code) FROM profiles WHERE id IN ('{kavi}', '{leela}') ORDER BY name",
+          as_user=kavi, expect="t\nBerlin|DE\nBerlin|")
+    check("signed-out visitors can't call it", "SELECT public.update_my_city('Berlin', 'DE')", role="anon",
+          error_has="permission denied")
+    sign_up(nora, "nora@example.com", {"full_name": "Nora N"}, accept_terms=True)
+    psql(f"UPDATE profile_private SET status = 'blocked' WHERE id = '{nora}'")
+    check("a blocked member can't change it", "SELECT public.update_my_city('Berlin', 'DE')", as_user=nora,
+          error_has="Your profile has been blocked")
+
+    # --- blocking (C29) -----------------------------------------------------------------
+    psql(f"INSERT INTO connections (requester_id, recipient_id, status) VALUES "
+         f"('{kavi}', '{mohan}', 'accepted'), ('{mohan}', '{kavi}', 'pending'), ('{kavi}', '{leela}', 'accepted')")
+    check("kavi blocks mohan: the block, and the connections between them go, in one step",
+          f"SELECT public.block_member('{mohan}'); "
+          f"SELECT (SELECT count(*) FROM blocks WHERE blocker_id = auth.uid() AND blocked_id = '{mohan}') || '|' || "
+          f"(SELECT count(*) FROM connections WHERE '{mohan}' IN (requester_id, recipient_id) AND auth.uid() IN (requester_id, recipient_id))",
+          as_user=kavi, expect="t\n1|0")
+    check("... his other connections stay",
+          f"SELECT count(*) FROM connections WHERE requester_id = '{kavi}' AND recipient_id = '{leela}'", expect="1")
+    check("blocking again is fine", f"SELECT public.block_member('{mohan}')", as_user=kavi, expect="t")
+    check("... and blocks once", f"SELECT count(*) FROM blocks WHERE blocker_id = '{kavi}' AND blocked_id = '{mohan}'",
+          expect="1")
+    check("nobody can block themselves", "SELECT public.block_member(auth.uid())", as_user=kavi,
+          error_has="You can't block yourself.")
+    check("... nor an account that doesn't exist", "SELECT public.block_member(gen_random_uuid())", as_user=kavi,
+          error_has="This member can't be blocked.")
+    check("signed-out visitors can't block", f"SELECT public.block_member('{mohan}')", role="anon",
+          error_has="permission denied")
+    check("leela blocks kavi", f"SELECT public.block_member('{kavi}')", as_user=leela, expect="t")
+    check("... kavi's own block stays", "SELECT string_agg(blocker_id || '>' || blocked_id, ',' ORDER BY blocker_id) "
+          f"FROM blocks WHERE blocked_id IN ('{kavi}', '{mohan}')", expect=f"{kavi}>{mohan},{leela}>{kavi}")
+
+    # --- editing events -------------------------------------------------------------------
+    today = "to_char(CURRENT_DATE, 'YYYY-MM-DD')"
+    ev = "20000000-0000-0000-0000-000000000a01"
+    check("a new event can be today", f"INSERT INTO events (id, title, date, organizer_id) "
+          f"VALUES ('{ev}', 'Chai meetup', {today}, auth.uid()) RETURNING 1", as_user=kavi, expect="1")
+    check("... not on a date that has passed",
+          "INSERT INTO events (title, date, organizer_id) VALUES ('Too late', to_char(CURRENT_DATE - 2, 'YYYY-MM-DD'), auth.uid())",
+          as_user=kavi, error_has="That date has passed.")
+    check("... and the date is one from the date picker",
+          "INSERT INTO events (title, date, organizer_id) VALUES ('When?', 'next Sunday', auth.uid())",
+          as_user=kavi, error_has="Please choose the date of the event.")
+    check("... a real one", "INSERT INTO events (title, date, organizer_id) VALUES ('When?', '2030-02-30', auth.uid())",
+          as_user=kavi, error_has="Please choose the date of the event.")
+    check("the author edits the event: title, description, time, place, city, link",
+          f"UPDATE events SET title = 'Chai and samosa', description = 'Bring a friend', time = '18:30', "
+          f"location = 'Café Kranz', city = 'Berlin', link = 'https://example.org/chai', date = '2030-05-01' "
+          f"WHERE id = '{ev}' RETURNING concat_ws('|', title, date, time, location, city)",
+          as_user=kavi, expect="Chai and samosa|2030-05-01|18:30|Café Kranz|Berlin")
+    check("... not to a date that has passed",
+          f"UPDATE events SET date = to_char(CURRENT_DATE - 2, 'YYYY-MM-DD') WHERE id = '{ev}'",
+          as_user=kavi, error_has="That date has passed.")
+    check("... and not its id, author, 'going' count or creation time", f"""
+          UPDATE events SET id = gen_random_uuid(), organizer_id = '{leela}', attendees_count = 99,
+            created_at = '2001-01-01', title = 'Chai!' WHERE id = '{ev}'
+          RETURNING concat_ws('|', id, organizer_id, attendees_count, created_at > '2020-01-01', title)""",
+          as_user=kavi, expect=f"{ev}|{kavi}|0|t|Chai!")
+    check("another member can't edit it",
+          f"UPDATE events SET title = 'Hijacked' WHERE id = '{ev}' RETURNING 1", as_user=leela, expect="")
+    check("... nor can an admin, through the API",
+          f"UPDATE events SET title = 'Hijacked' WHERE id = '{ev}' RETURNING 1", as_user=ADMIN, expect="")
+    check("an event that has happened can still be edited if its date stays", f"""
+          UPDATE events SET date = 'Mar 25, 2020 • 10:00 AM' WHERE id = '{ev}';
+          SET ROLE authenticated;
+          SELECT set_config('request.jwt.claims', '{{"sub": "{kavi}", "role": "authenticated"}}', false) IS NOT NULL;
+          UPDATE events SET description = 'Thanks for coming!' WHERE id = '{ev}' RETURNING date""",
+          expect="t\nMar 25, 2020 • 10:00 AM")
+    check("a blocked member can't edit their event",
+          f"UPDATE profile_private SET status = 'blocked' WHERE id = '{kavi}'; SET ROLE authenticated; "
+          f"SELECT set_config('request.jwt.claims', '{{\"sub\": \"{kavi}\", \"role\": \"authenticated\"}}', false) IS NOT NULL; "
+          f"UPDATE events SET title = 'Blocked' WHERE id = '{ev}' RETURNING 1; RESET ROLE; "
+          f"UPDATE profile_private SET status = 'active' WHERE id = '{kavi}'", expect="t")
+
+    # --- who sees a member's LinkedIn link ---------------------------------------------------
+    sign_up(ojas, "ojas@example.com", {"full_name": "Ojas O"})
+    check("a new member shows their LinkedIn link to members until they choose otherwise",
+          f"SELECT linkedin_public FROM profiles WHERE id = '{ojas}'", expect="t")
+    psql(f"UPDATE profiles SET linkedin_url = 'https://www.linkedin.com/in/leela-l' WHERE id = '{leela}'")
+    check("leela's link: members see it", f"SELECT linkedin_url FROM public.profile_links(ARRAY['{leela}'::uuid])",
+          as_user=mohan, expect="https://www.linkedin.com/in/leela-l")
+    check("she chooses 'Only the NRIClub team'",
+          "UPDATE profiles SET linkedin_public = false WHERE id = auth.uid() RETURNING linkedin_public", as_user=leela, expect="f")
+    check("... members don't see it any more", f"SELECT count(*) FROM public.profile_links(ARRAY['{leela}'::uuid])",
+          as_user=mohan, expect="0")
+    check("... nor from profiles", f"SELECT linkedin_url FROM profiles WHERE id = '{leela}'", as_user=mohan,
+          error_has="permission denied")
+    check("... she does", "SELECT linkedin_url FROM public.profile_links(ARRAY[auth.uid()])", as_user=leela,
+          expect="https://www.linkedin.com/in/leela-l")
+    check("... and admins do", f"SELECT linkedin_url FROM public.profile_links(ARRAY['{leela}'::uuid])", as_user=ADMIN,
+          expect="https://www.linkedin.com/in/leela-l")
+    check("... nobody can choose for another member",
+          f"UPDATE profiles SET linkedin_public = true WHERE id = '{leela}' RETURNING 1", as_user=mohan, expect="")
+
+    # --- run twice ------------------------------------------------------------------------------
+    ok, _, err = psql(open(MEMBER_FIXES, encoding="utf-8").read())
+    verdict("the migration can be run again", ok, err[:300])
+    check("... and still refuses posts in groups the author isn't in",
+          f"INSERT INTO posts (user_id, content, group_id) VALUES (auth.uid(), 'Wrong group', '{other}')",
+          as_user=kavi, error_has="row-level security")
 
 
 if __name__ == "__main__":
