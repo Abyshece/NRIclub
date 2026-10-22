@@ -1,6 +1,7 @@
 // NRIClub Admin: a minimal, Notion-like admin panel.
 // Sections: Verification, Members, Communities, Ambassadors (applications to
-// be a city ambassador), Reports, Feedback, Overview, Security (two-step
+// be a city ambassador), What's on (events on the public list), Reports,
+// Feedback, Inbox (mail to hello@nriclub.app), Overview, Security (two-step
 // login).
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
@@ -9,6 +10,8 @@ import VerificationView from "./VerificationView";
 import MembersView from "./MembersView";
 import CommunitiesView from "./CommunitiesView";
 import AmbassadorsView from "./AmbassadorsView";
+import WhatsOnView from "./WhatsOnView";
+import InboxView from "./InboxView";
 import OverviewView from "./OverviewView";
 import SecurityView from "./SecurityView";
 import { usePhotoCleanup } from "./PhotoCleanup";
@@ -83,6 +86,9 @@ export default function AdminPanel({ onLogout }) {
   // accepted, declined }); null before the 2026-10-24 database update or
   // when they couldn't be loaded.
   const [ambassadorCounts, setAmbassadorCounts] = useState(null);
+  // Unread mail to hello@nriclub.app; null before the 2026-10-25 database
+  // update or when it couldn't be loaded.
+  const [inboxUnread, setInboxUnread] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [toast, setToast] = useState(null);
@@ -97,6 +103,8 @@ export default function AdminPanel({ onLogout }) {
   // started before one can't bring back what they looked like before it.
   const memberChanges = useRef({});
   const reportChanges = useRef({});
+  // Accounts deleted here, which a reload that started before mustn't bring back.
+  const deletedMembers = useRef(new Set());
 
   const load = useCallback(async () => {
     const req = ++loadSeq.current;
@@ -105,13 +113,14 @@ export default function AdminPanel({ onLogout }) {
     setLoading(true);
     setLoadError("");
     const countsMark = ++countsSeq.current;
-    const [dash, queue, totals, noticeRows, moderation, ambassadors] = await Promise.allSettled([
+    const [dash, queue, totals, noticeRows, moderation, ambassadors, inbox] = await Promise.allSettled([
       api.adminGetDashboardData(),
       api.adminVerificationPage("pending", 0),
       api.adminCountMembers(),
       api.adminNotices(),
       api.adminHasModeration(),
       api.adminAmbassadorApplications({ status: "new", limit: 1 }),
+      api.adminInboxList({ filter: "unread", limit: 1 }),
     ]);
     // A later reload has started: its answers are newer.
     if (req !== loadSeq.current) return;
@@ -125,6 +134,7 @@ export default function AdminPanel({ onLogout }) {
     if (noticeRows.status === "fulfilled") setNotices(noticeRows.value);
     if (moderation.status === "fulfilled") setRecorded(moderation.value);
     if (ambassadors.status === "fulfilled") setAmbassadorCounts(ambassadors.value?.counts || null);
+    if (inbox.status === "fulfilled") setInboxUnread(inbox.value ? Number(inbox.value.unread) || 0 : null);
     if (dash.status === "fulfilled") {
       const data = dash.value;
       // Members and reports changed here since the reload started stay as
@@ -134,7 +144,7 @@ export default function AdminPanel({ onLogout }) {
       const reportChanged = changedSince(reportChanges, reportMarks);
       setUsers((prev) => {
         const now = new Map(prev.filter((u) => memberChanged(u.id)).map((u) => [u.id, u]));
-        return data.users.map((u) => now.get(u.id) || u);
+        return data.users.filter((u) => !deletedMembers.current.has(u.id)).map((u) => now.get(u.id) || u);
       });
       setUsersTotal(data.usersTotal ?? data.users.length);
       setGroups(data.groups);
@@ -227,6 +237,24 @@ export default function AdminPanel({ onLogout }) {
     refreshCounts();
   }, [refreshCounts]);
 
+  // An unfinished sign-up deleted from the Members or Verification page:
+  // before is the member as the page knew them, for the counts.
+  const onMemberDeleted = useCallback((id, before = null) => {
+    deletedMembers.current.add(id);
+    const old = { ...(before || {}), ...(usersRef.current.find((u) => u.id === id) || {}) };
+    if (usersRef.current.some((u) => u.id === id)) {
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+      setUsersTotal((t) => Math.max(0, t - 1));
+    }
+    countsSeq.current += 1;
+    setMemberCounts((c) => {
+      if (!c) return c;
+      const vs = old.verification_status || "incomplete";
+      return { ...c, total: Math.max(0, c.total - 1), byStatus: { ...c.byStatus, [vs]: Math.max(0, (c.byStatus[vs] || 0) - 1) } };
+    });
+    refreshCounts();
+  }, [refreshCounts]);
+
   // The next page of open member reports (or of feedback), oldest first.
   // Their content and the reported member are looked up by the Reports page.
   const loadMoreOpen = useCallback(async (feedback) => {
@@ -286,8 +314,10 @@ export default function AdminPanel({ onLogout }) {
     { key: "members", label: "Members", icon: "users", count: membersTotal },
     { key: "communities", label: "Communities", icon: "globe", count: pendingGroups },
     { key: "ambassadors", label: "Ambassadors", icon: "star", count: ambassadorCounts?.new || 0 },
+    { key: "whatson", label: "What's on", icon: "calendar" },
     { key: "reports", label: "Reports", icon: "flag", count: openReports, hot: safetyOpen },
     { key: "bugs", label: "Feedback", icon: "bug", count: feedbackCount },
+    { key: "inbox", label: "Inbox", icon: "mail", count: inboxUnread || 0 },
     { key: "overview", label: "Overview", icon: "chart" },
     { key: "security", label: "Security", icon: "lock" },
   ];
@@ -314,15 +344,19 @@ export default function AdminPanel({ onLogout }) {
       </>
     );
   } else if (page === "verification") {
-    content = <VerificationView usersById={usersById} counts={counts} countsExact={countsExact} cache={queueCache} onMemberChange={onMemberChange} showToast={showToast} recorded={recorded} />;
+    content = <VerificationView usersById={usersById} counts={counts} countsExact={countsExact} cache={queueCache} onMemberChange={onMemberChange} onMemberDeleted={onMemberDeleted} showToast={showToast} recorded={recorded} />;
   } else if (page === "members") {
-    content = <MembersView users={users} total={membersTotal} blockedTotal={blockedTotal} onMemberChange={onMemberChange} showToast={showToast} recorded={recorded} />;
+    content = <MembersView users={users} total={membersTotal} blockedTotal={blockedTotal} onMemberChange={onMemberChange} onMemberDeleted={onMemberDeleted} showToast={showToast} recorded={recorded} />;
   } else if (page === "communities") {
     content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} recorded={recorded} />;
   } else if (page === "ambassadors") {
     content = <AmbassadorsView showToast={showToast} onCountsChange={setAmbassadorCounts} initialCounts={ambassadorCounts} />;
   } else if (page === "reports") {
     content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} moreOpen={moreOpen.reports.after ? moreOpen.reports.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(false)} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} notices={notices} setNotices={setNotices} recorded={recorded} />;
+  } else if (page === "whatson") {
+    content = <WhatsOnView showToast={showToast} />;
+  } else if (page === "inbox") {
+    content = <InboxView showToast={showToast} onUnread={setInboxUnread} />;
   } else if (page === "security") {
     content = <SecurityView showToast={showToast} />;
   } else if (page === "bugs") {

@@ -2937,6 +2937,113 @@ export async function adminNotify(userId, type, text) {
   return restCall("POST", "/rest/v1/notifications", { user_id: userId, type, text });
 }
 
+// ---- Admin tools of the 2026-10-25 update: decision emails, deleting
+// unfinished sign-ups, What's on, the Inbox (supabase/functions/*,
+// 20261025100000_admin_tools.sql) ----
+
+// One of our Edge Functions, with the admin's session. Throws with the
+// function's own message; unreachable is set when there was no answer at
+// all (no connection, or the function isn't deployed yet: Supabase's "not
+// found" carries no CORS headers, so the browser sees no answer either).
+// keepalive: the request may finish after the page closes.
+async function adminFunction(name, body, { keepalive = false } = {}) {
+  const send = () => fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
+    method: "POST", keepalive, headers: headers(), body: JSON.stringify(body),
+  });
+  let res;
+  try {
+    res = await send();
+    if (res.status === 401 && accessToken && !keepalive && await refreshSession()) res = await send();
+  } catch {
+    const err = new Error("Couldn't reach the server. It may not be set up yet, or the connection dropped.");
+    err.unreachable = true;
+    throw err;
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = new Error(data?.error || data?.message || `The server said no (${res.status}).`);
+    err.status = res.status;
+    err.unreachable = res.status === 404;
+    throw err;
+  }
+  return data;
+}
+
+// The email to a member about our team's decision ("approved",
+// "needs_info", "rejected" or "blocked"); the database decides what it says
+// and sends it once per decision. { sent: true }.
+export function sendMemberEmail(memberId, kind, { keepalive = false } = {}) {
+  return adminFunction("member-email", { member_id: memberId, kind }, { keepalive });
+}
+
+// Deletes an account that never finished signing up (the database checks).
+// { deleted, recorded }.
+export function adminDeleteSignup(memberId) {
+  return adminFunction("admin-delete-signup", { member_id: memberId });
+}
+
+// What's on events our team added in the admin panel, still to come and not
+// hidden, as items of src/content/whatson.js. Anyone can read them. Throws
+// before the 2026-10-25 database update (no such table): the site then
+// shows the list in the code only.
+export async function getWhatsOnEvents() {
+  const rows = await restCall("GET", `/rest/v1/whats_on_events?select=${WHATS_ON_COLUMNS}&order=start_date.asc&limit=500`);
+  return Array.isArray(rows) ? rows : [];
+}
+export const WHATS_ON_COLUMNS = "id,title,category,start_date,end_date,event_time,city,venue,area,organiser,price,language,summary,url";
+
+// Every event in the table for the admin panel: { upcoming, past }, each an
+// item of src/content/whatson.js plus hidden. null before the database update.
+export async function adminWhatsOnEvents() {
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_whats_on_events", {});
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+
+// Adds (isNew) or changes an event: an item of src/content/whatson.js.
+export async function adminSaveWhatsOnEvent(event, isNew) {
+  return restCall("POST", "/rest/v1/rpc/admin_save_whats_on_event", { p_event: event, p_new: !!isNew });
+}
+export async function adminHideWhatsOnEvent(id, hidden) {
+  return restCall("POST", "/rest/v1/rpc/admin_hide_whats_on_event", { p_id: id, p_hidden: !!hidden });
+}
+export async function adminDeleteWhatsOnEvent(id) {
+  return restCall("POST", "/rest/v1/rpc/admin_delete_whats_on_event", { p_id: id });
+}
+
+// The Inbox (mail to hello@nriclub.app): filter "inbox" (not archived,
+// unread first), "unread", "archived" or "all"; query finds part of the
+// sender, subject or text. { messages, total, unread }, or null before the
+// database update.
+export const INBOX_PAGE = 50;
+export async function adminInboxList({ filter = "inbox", query = "", offset = 0, limit = INBOX_PAGE } = {}) {
+  if (knownMissing("admin_inbox_list")) return null;
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_inbox_list", {
+      p_filter: filter, p_limit: limit, p_offset: offset, p_query: String(query || "").slice(0, 200),
+    });
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.admin_inbox_list = Date.now();
+    return null;
+  }
+}
+// One message, with its text and our replies; marks it read.
+export async function adminInboxGet(id) {
+  return restCall("POST", "/rest/v1/rpc/admin_inbox_get", { p_id: id });
+}
+// Archive or bring back (archived), mark read or unread (read); null leaves it.
+export async function adminInboxSet(id, { archived = null, read = null } = {}) {
+  return restCall("POST", "/rest/v1/rpc/admin_inbox_set", { p_id: id, p_archived: archived, p_read: read });
+}
+// Sends our reply from hello@nriclub.app. { sent, reply: { id, body, sent_at, by } | null }.
+export function adminInboxReply(messageId, body) {
+  return adminFunction("admin-inbox-reply", { message_id: messageId, body });
+}
+
 // ---- Public city pages (work without signing in; counts only) ----
 export async function getCitySummary(city) {
   return restCall("POST", "/rest/v1/rpc/city_summary", { p_city: city });

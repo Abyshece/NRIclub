@@ -8,6 +8,7 @@
 // updates the page; throws so the dialog can show why it didn't work.
 import * as api from "../supabaseApi";
 import { shortName } from "./format";
+import { EMAIL_DELAY_MS, emailFailed, queueDecisionEmail } from "./memberEmail";
 
 export async function moderateMember(m, { kind, action, reasons = {}, overview = null }, { showToast, changed }) {
   const res = await api.adminModerate({ kind, id: m.id, action, ...reasons });
@@ -35,10 +36,21 @@ export async function moderateMember(m, { kind, action, reasons = {}, overview =
   // (none of them come back with an unblock).
   const undoable = kind === "member" && action === "block" && !cancelled
     && !(overview?.upcoming_sessions > 0) && !(overview?.free_slots > 0) && !m.ambassador_city;
+  // A block is also emailed (once its Undo has gone); before the 2026-10-21
+  // database update (fallback) it isn't recorded, so it isn't emailed.
+  const email = kind === "member" && action === "block" && !res?.fallback
+    ? queueDecisionEmail(m.id, "blocked", { delay: undoable ? EMAIL_DELAY_MS : 0, onFail: emailFailed(showToast) })
+    : null;
   showToast({
     text: `${text}${tail}`,
     undo: undoable ? async () => {
-      await api.adminModerate({ kind: "member", id: m.id, action: "unblock" });
+      email?.cancel();
+      try {
+        await api.adminModerate({ kind: "member", id: m.id, action: "unblock" });
+      } catch (e) {
+        email?.sendNow();
+        throw e;
+      }
       changed(m.id, { status: "active" }, { status: "blocked" });
       return `Undone. ${who} is unblocked.`;
     } : undefined,

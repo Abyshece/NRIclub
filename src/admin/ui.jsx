@@ -402,6 +402,9 @@ body { margin:0; background:#fff; }
 .adm-dialog-wide { max-width:540px; margin:auto 0; }
 .adm-dialog-wide .adm-dialog-text { color:var(--text); }
 .adm-form { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
+.adm-wo-pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+@media (max-width: 520px) { .adm-wo-pair { grid-template-columns:1fr; } }
+.adm-inbox-row { grid-template-columns:minmax(0, 1fr); }
 .adm-radio-row { display:flex; gap:14px; flex-wrap:wrap; }
 .adm-radio { display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:var(--text); }
 .adm-select { width:100%; border:1px solid rgba(55,53,47,0.16); border-radius:6px; padding:7px 8px; background:#fff; font:inherit; color:var(--text); }
