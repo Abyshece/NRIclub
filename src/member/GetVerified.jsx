@@ -290,7 +290,7 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
 
           {useLinkedin ? (
             <Field id="gv-linkedin" label="LinkedIn profile" helper={user.hasLinkedinChoice
-              ? "Copy the link from your LinkedIn profile page. Our team uses it to check you. Other members see it only if you choose so in Edit profile."
+              ? "Copy the link from your LinkedIn profile page. Our team uses it to check you. Whether other members see it too, you choose in Edit profile."
               : "Copy the link from your LinkedIn profile page. Our team uses it to check you, and other members see it on your profile."} error={errors.linkedin} style={{ marginBottom: 10 }}>
               <input
                 id="gv-linkedin" ref={refs.linkedin} type="text" inputMode="url" autoComplete="url" autoCapitalize="none" spellCheck={false}

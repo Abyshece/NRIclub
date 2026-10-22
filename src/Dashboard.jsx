@@ -15,7 +15,7 @@ import { upcomingFestival } from "./festivals";
 import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
 import ReportDialog from "./member/ReportDialog";
-import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview, countryName } from "./member/profile";
+import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview, countryName, getCountryOptions, MAJOR_INDIAN_CITIES } from "./member/profile";
 import { findCity } from "./content/findCity";
 import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
 import { WHATS_ON, WHATS_ON_NOTE, upcoming, todayInGermany, citySlug, eventCitySlug } from "./content/whatson";
@@ -116,14 +116,39 @@ const downloadIcs = (e) => {
   const esc = (v) => String(v || "").replace(/[\\,;]/g, (c) => "\\" + c).replace(/\n/g, "\\n");
   const end = r.allDay ? new Date(r.start.getTime() + 86400000) : r.end;
   const val = r.allDay ? ";VALUE=DATE" : "";
+  // DTSTAMP is in UTC (the Z), as the calendar format asks.
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
   const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//NRIClub//Events//EN", "BEGIN:VEVENT",
-    `UID:${e.id}@nriclub`, `DTSTAMP:${calStamp(new Date(), false)}`, `DTSTART${val}:${calStamp(r.start, r.allDay)}`, `DTEND${val}:${calStamp(end, r.allDay)}`,
+    `UID:${e.id}@nriclub`, `DTSTAMP:${stamp}`, `DTSTART${val}:${calStamp(r.start, r.allDay)}`, `DTEND${val}:${calStamp(end, r.allDay)}`,
     `SUMMARY:${esc(e.title)}`, `DESCRIPTION:${esc(e.description)}`, `LOCATION:${esc(e.location)}`, "END:VEVENT", "END:VCALENDAR"].join("\r\n");
   const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
   const a = document.createElement("a");
   a.href = url; a.download = `${(e.title || "event").replace(/[^\w -]/g, "").slice(0, 40) || "event"}.ics`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+// A date as the date picker writes it ("2026-11-14"), in the member's own
+// time zone; today's by default. New events and new dates can't be earlier.
+const dateValue = (d = new Date()) => {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+const PAST_DATE_MESSAGE = "That date has passed. Please choose today or a later date.";
+// An event as the Host Event form shows it, for its author to edit: older
+// events' dates ("Mar 25, 2026 • 10:00 AM") become the picker's date and time.
+const eventForm = (e) => {
+  const day = eventDay(e);
+  const t = /(\d{1,2})[:.](\d{2})\s*(am|pm)?/i.exec(eventTime(e) || "");
+  let time = "";
+  if (t) {
+    let h = Number(t[1]);
+    if (t[3]) h = (h % 12) + (/pm/i.test(t[3]) ? 12 : 0);
+    if (h < 24 && Number(t[2]) < 60) time = `${String(h).padStart(2, "0")}:${t[2]}`;
+  }
+  return {
+    title: e.title || "", date: day === null ? "" : dateValue(new Date(day)), time,
+    location: e.location === "TBD" ? "" : e.location || "", city: e.city || "", description: e.description || "", link: e.link || "",
+  };
 };
 const isPastEvent = (e) => {
   const t = eventDay(e);
@@ -227,6 +252,9 @@ const GLOBAL_CITIES = [
   "Saarbrücken", "Stuttgart", "Ulm", "Wiesbaden", "Wolfsburg",
 ];
 
+// Shown first in Edit profile's Country list (as in Get verified).
+const COMMON_COUNTRIES = ["IN", "US", "GB", "CA", "AU", "DE", "AE", "SG"];
+
 const OCCUPATION_TYPES = [
   "Working Professional",
   "Student",
@@ -307,6 +335,36 @@ function timeAgo(ts) {
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d ago`;
   return new Date(ts).toLocaleDateString();
+}
+
+// Messages: how many days ago (by the calendar) a time was.
+const daysAgo = (d) => Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+// When the last message of a conversation came: the time today,
+// "Yesterday", the weekday in the last week, otherwise the date.
+function chatTime(at) {
+  const d = new Date(at);
+  if (!at || Number.isNaN(d.getTime())) return "";
+  const days = daysAgo(d);
+  if (days <= 0) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString("en-GB", { weekday: "long" });
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
+}
+// A conversation as the Messages list shows it, and a message as a chat
+// shows it (me: the member's id).
+const toConvo = (c) => ({
+  id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id, otherHidden: !!c.otherUser?.unlisted,
+  avatar_url: c.otherUser?.avatar_url || "", lastMsg: c.last_message_text || "", lastAt: c.last_message_at || "", unread: false,
+});
+const toChatMessage = (m, me) => ({ id: m.id, text: m.content, sender: m.sender_id === me ? "me" : "them", at: m.created_at });
+// The line above the first message of a day in a chat.
+function chatDay(at) {
+  const d = new Date(at);
+  if (!at || Number.isNaN(d.getTime())) return "";
+  const days = daysAgo(d);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
 }
 
 function generateAvatar(name) {
@@ -671,13 +729,31 @@ const TeamMessageDialog = ({ notification, onClose, font }) => {
   );
 };
 
+// Emergency numbers by country (ISO code), for the member's own country.
+// Our own safety information: check this list once a year.
+const EU_112 = "AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IS IT LI LT LU LV MT NL NO PL PT RO SE SI SK CH TR".split(" ");
+const EMERGENCY_NUMBERS = {
+  ...Object.fromEntries(EU_112.map((c) => [c, "112"])),
+  GB: "999 or 112", US: "911", CA: "911", AU: "000 (or 112 from a mobile)", NZ: "111",
+  AE: "999 (police), 998 (ambulance)", QA: "999", SA: "911", KW: "112", BH: "999", OM: "9999",
+  SG: "999 (police), 995 (ambulance and fire)", MY: "999", HK: "999", IN: "112",
+  JP: "110 (police), 119 (ambulance and fire)", KR: "112 (police), 119 (ambulance and fire)",
+  CN: "110 (police), 120 (ambulance)", ZA: "10111 (police), 10177 (ambulance), 112 from a mobile",
+};
+
 // For urgent questions: who to call first, and the Indian embassy's help.
-const EmergencyHelp = () => (
-  <div role="note" style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, padding: "10px 12px", fontSize: 12, color: "#7F1D1D", lineHeight: 1.6, fontFamily: "'DM Sans', sans-serif" }}>
-    <strong>In an emergency, call the local emergency number first:</strong> 112 in Europe, 911 in the US and Canada, 999 in the UK, 000 in Australia, 111 in New Zealand.
-    <br />Help from India: <a href="https://madad.gov.in" target="_blank" rel="noopener noreferrer" style={{ color: "#7F1D1D", fontWeight: 600 }}>MADAD consular help</a> · <a href="https://www.mea.gov.in/indian-missions-abroad-new.htm" target="_blank" rel="noopener noreferrer" style={{ color: "#7F1D1D", fontWeight: 600 }}>Find your Indian embassy or consulate</a>
-  </div>
-);
+// countryCode: the member's country, for its emergency number.
+const EmergencyHelp = ({ countryCode }) => {
+  const number = EMERGENCY_NUMBERS[(countryCode || "").toUpperCase()];
+  return (
+    <div role="note" style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, padding: "10px 12px", fontSize: 12, color: "#7F1D1D", lineHeight: 1.6, fontFamily: "'DM Sans', sans-serif" }}>
+      {number
+        ? <><strong>In an emergency, call {number} first</strong> (the emergency number in {countryName(countryCode)}). 112 works across the EU and UK.</>
+        : <><strong>In an emergency, call the local emergency number first.</strong> 112 works across the EU and UK, 911 in the US and Canada, 000 in Australia.</>}
+      <br />Help from India: <a href="https://madad.gov.in" target="_blank" rel="noopener noreferrer" style={{ color: "#7F1D1D", fontWeight: 600 }}>MADAD consular help</a> · <a href="https://www.mea.gov.in/indian-missions-abroad-new.htm" target="_blank" rel="noopener noreferrer" style={{ color: "#7F1D1D", fontWeight: 600 }}>Find your Indian embassy or consulate</a>
+    </div>
+  );
+};
 
 const EmptyCard = ({ text, action, onAction }) => (
   <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: "'DM Sans', sans-serif" }}>
@@ -791,9 +867,14 @@ const AlsoOnInGermany = ({ user, cityFilter, search, target, font }) => {
 
 // onReportItem(target) opens the report dialog for one of the comments;
 // reportedIds: what the member already reported (Report doesn't show).
+// initialLiked: whether the member likes the post, as the Dashboard knows
+// it (its likes load after the posts, so it can turn true later); onLike(id,
+// on) tells the Dashboard of a change.
 const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup, onOpenProfile, pinned, onPin, onReportItem, reportedIds }) => {
-  const [liked, setLiked] = useState(initialLiked || false);
+  const [liked, setLiked] = useState(!!initialLiked);
+  useEffect(() => { setLiked(!!initialLiked); }, [initialLiked]);
   const [likeCount, setLikeCount] = useState(post.likes || 0);
+  const likeBusy = useRef(false);
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState(post.comments || []);
   const [commentsLoaded, setCommentsLoaded] = useState(false);
@@ -831,17 +912,29 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
     }
   };
 
+  // The heart shows the new state at once; if saving fails, the heart and
+  // the count go back and the member is told.
   const handleLike = async () => {
-    setLiked(!liked);
-    setLikeCount((p) => (liked ? p - 1 : p + 1));
-    if (onLike) onLike(post.id, !liked);
+    if (likeBusy.current || String(post.id).startsWith("p_")) return;
+    likeBusy.current = true;
+    const on = !liked;
+    const show = (yes) => {
+      setLiked(yes);
+      setLikeCount((p) => Math.max(0, p + (yes ? 1 : -1)));
+      onLike?.(post.id, yes);
+    };
+    show(on);
     try {
-      await api.toggleLike(post.id);
-      if (!liked && post.userId && post.userId !== user?.id) {
+      await api.setLike(post.id, on);
+      if (on && post.userId && post.userId !== user?.id) {
         const actorId = user?.id && !user.id.startsWith("user_") ? user.id : null;
         try { await api.notifyMember(post.userId, "like", `${user?.name || "Someone"} liked your post "${post.content.substring(0, 30)}..."`, actorId, post.id); } catch(ne) {}
       }
-    } catch (e) {}
+    } catch (e) {
+      show(!on);
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : "That didn't work. Please try again.");
+    }
+    likeBusy.current = false;
   };
 
   const addComment = async () => {
@@ -1054,7 +1147,10 @@ const BlockedUsersModal = ({ onClose, onUnblocked, font }) => {
                 <div style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{b.blocked?.profession || ""}</div>
               </div>
               <button onClick={async () => {
-                try { await api.unblockUser(b.blocked_id); } catch(e) {}
+                try { await api.unblockUser(b.blocked_id); } catch (e) {
+                  alert(isNetworkError(e) ? NETWORK_MESSAGE : "Couldn't unblock this member. Please try again.");
+                  return;
+                }
                 setBlockedList(prev => prev.filter(x => x.blocked_id !== b.blocked_id));
                 onUnblocked?.(b.blocked_id);
               }} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Unblock</button>
@@ -1149,9 +1245,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [rsvps, setRsvps] = useState(new Set());
   const [profileTab, setProfileTab] = useState("posts");
-  const [chatTab, setChatTab] = useState("personal"); // 'personal' | 'marketplace'
   const [expandedEvent, setExpandedEvent] = useState(null);
   const [eventModal, setEventModal] = useState(false);
+  // The event its author is editing in the Host Event form (null: a new one).
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [eventError, setEventError] = useState("");
+  const [eventSaving, setEventSaving] = useState(false);
   const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" });
   const [eventPhoto, setEventPhoto] = useState(null); // { url, preview }
   const [helpRequests, setHelpRequests] = useState([]);
@@ -1162,7 +1261,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [profileCardDismissed, dismissProfileCard] = useProfileCardDismissed(user.id);
   const [helpModal, setHelpModal] = useState(false);
   const [selectedHelp, setSelectedHelp] = useState(null);
-  const [helpResponse, setHelpResponse] = useState("");
+  // Answers being written, by question ({ question id: text }), so a draft
+  // stays with its own question.
+  const [helpDrafts, setHelpDrafts] = useState({});
   const [helpResponses, setHelpResponses] = useState({});
   const [helpFilter, setHelpFilter] = useState("all"); // all | open | answered
   const [myHelped, setMyHelped] = useState(0);
@@ -1274,6 +1375,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
     onLogout();
   };
+  // Settings → Account → a new email address: { value (what's typed; unset:
+  // the current address), busy, error, sentTo (the address a link went to) }.
+  const [emailChange, setEmailChange] = useState({ busy: false, error: "" });
+  useEffect(() => { if (settingsModal !== "account") setEmailChange({ busy: false, error: "" }); }, [settingsModal]);
+  const changeMyEmail = async () => {
+    if (emailChange.busy) return;
+    const email = (emailChange.value || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { setEmailChange(c => ({ ...c, error: "That email address doesn't look right. Check it for typos." })); return; }
+    setEmailChange(c => ({ ...c, busy: true, error: "" }));
+    try {
+      await api.changeEmail(email);
+    } catch (e) {
+      setEmailChange(c => ({ ...c, busy: false, error: authErrorMessage(e) || apiErrorMessage(e, "Your email address couldn't be changed. Please try again.") }));
+      return;
+    }
+    setEmailChange({ busy: false, error: "", sentTo: email });
+  };
   const [deleteAccountText, setDeleteAccountText] = useState(null); // null = closed; otherwise what was typed
   const [settingsSaveError, setSettingsSaveError] = useState("");
   const [openFaq, setOpenFaq] = useState(null);
@@ -1308,7 +1426,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [docSearch, setDocSearch] = useState("");
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [docComment, setDocComment] = useState("");
-  const [docLiked, setDocLiked] = useState(false);
   // The report dialog's target: { type (reports.content_type), id, userId, name }.
   const [reportConfirm, setReportConfirm] = useState(null);
   // What the member reported that our team hasn't decided on yet (ids, and
@@ -1347,7 +1464,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const [marketItems, setMarketItems] = useState([]);
   // Host Event, Create Doc and Post Item start at the member's own city (they can still change it).
   const myCity = GLOBAL_CITIES.find(c => c.toLowerCase() === (user.location || "").split(",")[0].trim().toLowerCase()) || "";
-  useEffect(() => { if (eventModal && myCity) setNewEvent(prev => prev.city ? prev : { ...prev, city: myCity }); }, [eventModal, myCity]);
+  useEffect(() => { if (eventModal && myCity && !editingEvent) setNewEvent(prev => prev.city ? prev : { ...prev, city: myCity }); }, [eventModal, myCity]);
   useEffect(() => { if (docModal && myCity) setNewDoc(prev => prev.city ? prev : { ...prev, city: myCity }); }, [docModal, myCity]);
   useEffect(() => { if (marketModal && myCity) setNewMarket(prev => prev.city ? prev : { ...prev, city: myCity }); }, [marketModal, myCity]);
   // Help state with pre-populated data
@@ -1440,16 +1557,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     let connId = null;
     try {
       const result = await api.sendNamaste(userId);
-      connId = result?.[0]?.id || null;
+      // Sent before (also when it was ignored): nothing new to tell them.
+      if (!result?.created) return;
+      connId = result.id;
     } catch (e) {
-      // Too many requests today: say so, and the button is back.
-      const refused = apiErrorMessage(e, null);
-      if (refused && !isNetworkError(e)) {
-        setSentNamaste((prev) => { const s = new Set(prev); s.delete(userId); return s; });
-        alert(refused);
-        return;
-      }
-      console.log("Connection may already exist:", e.message);
+      // Not sent (no connection, too many requests today, or the database
+      // refused it): say so, and the button is back.
+      setSentNamaste((prev) => { const s = new Set(prev); s.delete(userId); return s; });
+      alert(isNetworkError(e) ? NETWORK_MESSAGE
+        : apiErrorMessage(e, /42501/.test(e?.message || "") ? "You can't send a Namaste request to this member right now." : "Your Namaste request couldn't be sent. Please try again."));
+      return;
     }
     if (!connId) return;
     try {
@@ -1506,7 +1623,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       if (!convo) throw new Error("No conversation");
       setConvos(prev => {
         if (prev.find(c => c.id === convo.id)) return prev;
-        return [{ id: convo.id, name: other.name, otherUserId: other.id, avatar_url: other.avatar_url || "", lastMsg: "", time: "", unread: false }, ...prev];
+        return [{ id: convo.id, name: other.name, otherUserId: other.id, avatar_url: other.avatar_url || "", lastMsg: "", lastAt: "", unread: false }, ...prev];
       });
       setSelectedConvo(convo.id);
       setView("messages");
@@ -1562,9 +1679,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       setPosts((dbPosts || []).map(p => toPost(p, loadedGroups)));
       setGroupsLoaded(true);
       const [myLikes, myReports, dbEvents, myR, dbHelp, allResponses, conns, sentData, dbDocs, blocked, dbNotifs, dbMarket] = await rest;
+      // The posts are on screen already: their hearts follow (PostCard).
       if (myLikes && myLikes.length) setLikedPostIds(new Set(myLikes.map(l => l.post_id)));
       if (myReports instanceof Set) setReportedIds(myReports);
-      setEvents((dbEvents || []).map(e => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name || (e.organizer_id === user.id ? user.name : api.UNLISTED_NAME), description: e.description, link: e.link || "", image: e.image_url || "" })));
+      setEvents((dbEvents || []).map(toEvent));
       if (myR) setRsvps(new Set(myR));
       if (dbHelp && dbHelp.length) {
         const counts = {};
@@ -1682,14 +1800,27 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   useEffect(() => {
     if (startRoute.legal) { try { window.history.replaceState(null, "", "/"); } catch (e) {} }
   }, []);
+  // Closing something that was opened from the page under it (a group, an
+  // event, a guide, a listing, a conversation) goes back one step instead
+  // of adding another, so Back doesn't open it again. goingBack: that step
+  // is on its way (the popstate below ends it).
+  const goingBack = useRef(false);
   useEffect(() => {
-    if (pendingRoute || sharedLink) return; // still opening what the address points at
-    if (window.location.pathname !== currentPath) {
-      try { window.history.pushState(null, "", currentPath); } catch (e) {}
-    }
+    if (pendingRoute || sharedLink || goingBack.current) return; // still opening what the address points at
+    const here = window.location.pathname;
+    if (here === currentPath) return;
+    try {
+      if (currentPath !== "/" && window.history.state?.nriFrom === currentPath && here.startsWith(`${currentPath}/`)) {
+        goingBack.current = true;
+        window.history.back();
+        return;
+      }
+      window.history.pushState({ nriFrom: here }, "", currentPath);
+    } catch (e) {}
   }, [currentPath, pendingRoute, sharedLink]);
   useEffect(() => {
     const onPop = () => {
+      goingBack.current = false;
       const r = parsePath(window.location.pathname, user.id);
       setExpandedEvent(null);
       setExpandedMarketItem(null);
@@ -1723,7 +1854,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     // A city address becomes the group's own, so Back doesn't reopen it.
     if (kind === "city") { try { window.history.replaceState(null, "", `/groups/${item.id}`); } catch (e) {} }
     if (kind === "guide") { try { window.history.replaceState(null, "", `/docs/${item.id}`); } catch (e) {} }
-    if (kind === "group" || kind === "city") { setGroupMembers([]); setSelectedGroup(item); }
+    if (kind === "group" || kind === "city") { setSelectedGroup(item); }
     else if (kind === "event") setExpandedEvent(item);
     else if (kind === "doc" || kind === "guide") setSelectedDoc(item);
     else setExpandedMarketItem(item);
@@ -1791,6 +1922,18 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     } catch (e) {}
   };
 
+  // The conversations, the first time Messages opens (the poll below keeps
+  // them up to date).
+  useEffect(() => {
+    if (view !== "messages" || !canBrowse || convosLoaded) return;
+    let gone = false;
+    api.getConversations()
+      .then(rows => { if (!gone && rows && rows.length) setConvos(rows.map(toConvo)); })
+      .catch(() => {})
+      .finally(() => { if (!gone) setConvosLoaded(true); });
+    return () => { gone = true; };
+  }, [view, canBrowse, convosLoaded]);
+
   // Live polling for messages and notifications (every 5 seconds)
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -1800,14 +1943,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         const dbConvos = canBrowse ? await api.getConversations() : [];
         if (canBrowse) api.getUnreadCounts().then(c => setUnreadCounts(view === "messages" && selectedConvoRef.current ? { ...c, [selectedConvoRef.current]: 0 } : c)).catch(() => {});
         if (dbConvos && dbConvos.length) {
-          const newConvos = dbConvos.map(c => ({
-            id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id, otherHidden: !!c.otherUser?.unlisted,
-            avatar_url: c.otherUser?.avatar_url || "",
-            lastMsg: c.last_message_text || "", time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
-            unread: false,
-          }));
+          const newConvos = dbConvos.map(toConvo);
           setConvos(prev => {
-            newConvos.forEach(nc => { nc.isMarketplace = prev.find(p => p.id === nc.id)?.isMarketplace || nc.lastMsg.includes("[MARKETPLACE:"); });
             // Only flag unread if this is NOT the first load and a message actually changed
             if (lastSeenMsgRef.current !== null) {
               const changed = newConvos.some(nc => {
@@ -1878,11 +2015,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     
     // Subscribe to realtime inserts
     api.subscribeToMessages(selectedConvo, (record) => {
-      const newMsg = {
-        id: record.id, text: record.content,
-        sender: record.sender_id === user.id ? "me" : "them",
-        time: new Date(record.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-      };
+      const newMsg = toChatMessage(record, user.id);
       setChatMessages(p => {
         const existing = p[selectedConvo] || [];
         if (existing.find(m => m.id === newMsg.id)) return p;
@@ -1899,11 +2032,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         if (msgs && msgs.length !== lastCount) {
           if (lastCount) markRead(selectedConvo);
           lastCount = msgs.length;
-          setChatMessages(p => ({ ...p, [selectedConvo]: msgs.map(m => ({
-            id: m.id, text: m.content,
-            sender: m.sender_id === user.id ? "me" : "them",
-            time: new Date(m.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-          })) }));
+          setChatMessages(p => ({ ...p, [selectedConvo]: msgs.map(m => toChatMessage(m, user.id)) }));
         }
       } catch (e) {}
     }, 2000);
@@ -1914,15 +2043,31 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     };
   }, [view, selectedConvo]);
 
-  const createPost = async () => {
+  // A like or unlike from a post (PostCard): the heart and the count stay
+  // right when the post shows again elsewhere.
+  const likedRef = useRef(likedPostIds);
+  likedRef.current = likedPostIds;
+  const onPostLiked = (id, on) => {
+    if (likedRef.current.has(id) === on) return;
+    const s = new Set(likedRef.current);
+    if (on) s.add(id); else s.delete(id);
+    likedRef.current = s;
+    setLikedPostIds(s);
+    setPosts(prev => prev.map(p => p.id === id ? { ...p, likes: Math.max(0, (p.likes || 0) + (on ? 1 : -1)) } : p));
+  };
+
+  // group: the group the post goes into, or null for the Home feed. Only
+  // the group's own page passes one (the database also checks that the
+  // member is in the group).
+  const createPost = async (group = null) => {
     if (!newPost.trim() && !postImage) return;
     const cleanContent = validateInput(newPost, 5000);
     // Detect external URLs (TikTok, Instagram, YouTube, etc.)
     const urlMatch = newPost.match(/https?:\/\/[^\s]+/i);
     const externalUrl = urlMatch ? urlMatch[0] : null;
     const tags = postTags(cleanContent, !!externalUrl);
-    const groupName = selectedGroup ? selectedGroup.name : null;
-    const groupId = selectedGroup ? selectedGroup.id : null;
+    const groupName = group ? group.name : null;
+    const groupId = group ? group.id : null;
     const imageUrl = postImage?.url || null;
     const post = {
       id: "p_" + Date.now(), userId: user.id, content: newPost,
@@ -1940,8 +2085,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       // Take the post back out and give the text back to the composer.
       setPosts(prev => prev.filter(p => p.id !== post.id));
       setNewPost(prev => prev || post.content);
-      alert(/42501/.test(e.message || "") ? "Your account can't post right now. If you think this is a mistake, contact hello@nriclub.app."
+      alert(/42501/.test(e.message || "") ? (groupId ? "You can only post in groups you've joined." : "Your account can't post right now. If you think this is a mistake, contact hello@nriclub.app.")
         : apiErrorMessage(e, "Your post couldn't be published. Please try again."));
+    }
+  };
+
+  // Deletes one of the member's own things (an event, a question, a guide, a
+  // listing) from `list`: it leaves the list at once and comes back where it
+  // was, with a message, if deleting fails. Resolves to whether it worked.
+  const removeOwn = async (list, setList, id, call, failText) => {
+    const at = list.findIndex(x => x.id === id);
+    const item = list[at];
+    setList(prev => prev.filter(x => x.id !== id));
+    try { await call(); return true; } catch (e) {
+      if (item) setList(prev => prev.some(x => x.id === id) ? prev : [...prev.slice(0, at), item, ...prev.slice(at)]);
+      alert(isNetworkError(e) ? NETWORK_MESSAGE : failText);
+      return false;
     }
   };
 
@@ -1957,26 +2116,67 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
-  const createEvent = async () => {
-    if (!newEvent.title || !newEvent.date) return;
-    const e = {
-      id: "e_" + Date.now(), organizerId: user.id, title: newEvent.title,
-      date: newEvent.date, time: newEvent.time || "TBD",
-      location: newEvent.location || "TBD", city: newEvent.city || "", attendees: 0,
-      organizer: user.name, description: newEvent.description,
-      link: newEvent.link || "", image: eventPhoto?.url || "",
-    };
-    setEvents([e, ...events]);
-    setNewEvent({ title: "", date: "", time: "", location: "", city: "", description: "", link: "" }); setEventPhoto(null);
-    setEventModal(false);
-    try {
-      const r = await api.createEvent({ title: e.title, date: e.date, time: e.time, location: newEvent.location, city: e.city, description: e.description, organizer_name: user.name, link: e.link, image_url: e.image });
-      // Swap the temporary id for the saved one so RSVP and delete work.
-      if (r?.[0]) setEvents(prev => prev.map(x => x.id === e.id ? { ...x, id: r[0].id, attendees: r[0].attendees_count } : x));
-    } catch (er) {
-      setEvents(prev => prev.filter(x => x.id !== e.id));
-      alert(apiErrorMessage(er, "Your event couldn't be saved. Please try again."));
+  const EMPTY_EVENT = { title: "", date: "", time: "", location: "", city: "", description: "", link: "" };
+  // An events row as the Events page uses it.
+  const toEvent = (e) => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name || (e.organizer_id === user.id ? user.name : api.UNLISTED_NAME), description: e.description, link: e.link || "", image: e.image_url || "" });
+
+  // Host Event, or Save for an event its author is editing. The form stays
+  // open until the event is saved, and says what went wrong if it isn't.
+  // e: the member's own event to edit; none for a new one (a new event's
+  // unsaved form is kept for next time). eventPhoto.saved: the event's
+  // current photo, whose file stays until a change is saved.
+  const openEventForm = (e = null) => {
+    if (e || editingEvent) {
+      setNewEvent(e ? eventForm(e) : EMPTY_EVENT);
+      setEventPhoto(e?.image ? { url: e.image, preview: e.image, saved: true } : null);
     }
+    setEditingEvent(e);
+    setEventError("");
+    setEventModal(true);
+  };
+  const closeEventForm = (saved = false) => {
+    setEventModal(false);
+    setEventError("");
+    if (!saved && !editingEvent) return;
+    // An edit closed unsaved: a photo uploaded for it isn't used.
+    if (!saved && eventPhoto && !eventPhoto.saved) api.discardUpload(eventPhoto.url);
+    setEditingEvent(null);
+    setNewEvent(EMPTY_EVENT);
+    setEventPhoto(null);
+  };
+  const saveEvent = async () => {
+    if (eventSaving) return;
+    const title = newEvent.title.trim();
+    if (!title || !newEvent.date) { setEventError("Please give the event a title and a date."); return; }
+    const was = editingEvent ? eventForm(editingEvent) : null;
+    const dateChanged = !was || newEvent.date !== was.date || newEvent.time !== was.time;
+    if (dateChanged && newEvent.date < dateValue()) { setEventError(PAST_DATE_MESSAGE); return; }
+    const fields = {
+      title, description: newEvent.description, location: newEvent.location, city: newEvent.city || "",
+      link: newEvent.link || "", image_url: eventPhoto?.url || "",
+      // An edit leaves the date (in older events, with its time) as it was unless it changed.
+      ...(dateChanged ? { date: newEvent.date, time: newEvent.time || "TBD" } : {}),
+    };
+    setEventSaving(true);
+    setEventError("");
+    try {
+      if (editingEvent) {
+        const row = await api.updateEvent(editingEvent.id, fields, editingEvent.image || "");
+        const saved = toEvent(row);
+        setEvents(prev => prev.map(x => x.id === saved.id ? saved : x));
+        setExpandedEvent(prev => (prev && prev.id === saved.id ? saved : prev));
+      } else {
+        const r = await api.createEvent({ ...fields, date: newEvent.date, time: newEvent.time || "TBD", organizer_name: user.name });
+        const row = r?.[0];
+        setEvents(prev => [row ? toEvent(row) : { ...toEvent({ ...fields, date: newEvent.date, time: newEvent.time || "TBD", organizer_id: user.id, attendees_count: 0 }), id: "e_" + Date.now() }, ...prev]);
+      }
+    } catch (er) {
+      setEventSaving(false);
+      setEventError(apiErrorMessage(er, "Your event couldn't be saved. Please try again."));
+      return;
+    }
+    setEventSaving(false);
+    closeEventForm(true);
   };
 
   const toggleRsvp = async (id) => {
@@ -2068,16 +2268,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     return `Hi everyone! I'm ${first || "new here"}${bits.length ? ", " + bits.join(", ") : ""}. Happy to connect and help where I can 🙏`;
   });
   const [introBusy, setIntroBusy] = useState(false);
+  // The introduction goes into the city group only while the member is in
+  // it; otherwise onto the Home feed.
+  const introGroup = cityGroup?.joined ? cityGroup : null;
   const postIntro = async () => {
     const text = validateInput(introText, 5000);
     if (!text.trim() || introBusy) return;
     setIntroBusy(true);
     try {
-      const r = await api.createPost(text, postTags(text, false), null, cityGroup?.id || null);
+      const r = await api.createPost(text, postTags(text, false), null, introGroup?.id || null);
       const row = r?.[0];
       setPosts(prev => [{ id: row?.id || "p_" + Date.now(), userId: user.id, content: text,
         author: { name: user.name, profession: user.profession, occupation_status: user.occupationStatus || "", location: user.location, hometown: user.hometown, avatar_url: user.avatar_url || "" },
-        likes: 0, comments: [], tags: [], timestamp: Date.now(), groupName: cityGroup?.name || null, groupId: cityGroup?.id || null, image: null, externalUrl: null }, ...prev]);
+        likes: 0, comments: [], tags: [], timestamp: Date.now(), groupName: introGroup?.name || null, groupId: introGroup?.id || null, image: null, externalUrl: null }, ...prev]);
       setIntroDone(true);
       try { localStorage.setItem(introKey, "1"); } catch (e) {}
     } catch (e) {
@@ -2206,14 +2409,44 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         return add.length ? [...prev, ...add] : prev;
       });
     }).catch(() => {});
+  }, [selectedGroup?.id, canBrowse]);
+  // Its members: loaded once when it opens, and again when the member joins
+  // or leaves it (an empty list is an answer too, so nothing asks again).
+  useEffect(() => {
+    setGroupMembers([]);
+    if (!selectedGroup?.id || !canBrowse) return;
+    const gid = selectedGroup.id;
+    let gone = false;
     api.getGroupMembers(gid).then(members => {
-      if (members && members.length) setGroupMembers(members.map(m => ({
+      if (gone) return;
+      setGroupMembers((members || []).map(m => ({
         id: m.profiles?.id || m.user_id, name: m.profiles?.name || "User",
         profession: m.profiles?.profession || "", location: m.profiles?.location || "",
         avatar_url: m.profiles?.avatar_url || "", yearsAbroad: "", linkedinUrl: "",
       })));
     }).catch(() => {});
-  }, [selectedGroup?.id, canBrowse]);
+    return () => { gone = true; };
+  }, [selectedGroup?.id, selectedGroup?.joined, canBrowse]);
+  // Another group opens on its feed (the Places tab is for city groups only).
+  useEffect(() => { setCommunityTab("feed"); }, [selectedGroup?.id]);
+  // Leaving Groups closes the group that was open, so nothing posted
+  // elsewhere can end up in it.
+  useEffect(() => { if (view !== "groups") setSelectedGroup(null); }, [view]);
+
+  // An opened guide's comments, however it was opened (the list, the NRI
+  // essentials or a link to it).
+  useEffect(() => {
+    const id = selectedDoc?.id;
+    if (!id || !canBrowse || String(id).startsWith("d_")) return;
+    let gone = false;
+    api.getDocComments(id).then(rows => {
+      if (gone || !rows) return;
+      const comments = rows.map(c => ({ id: c.id, userId: c.user_id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).getTime() }));
+      setSelectedDoc(prev => (prev && prev.id === id ? { ...prev, comments } : prev));
+      setDocs(prev => prev.map(d => d.id === id ? { ...d, comments } : d));
+    }).catch(() => {});
+    return () => { gone = true; };
+  }, [selectedDoc?.id, canBrowse]);
 
   // Desi places for the open city group (Places tab).
   const [places, setPlaces] = useState({ city: null, list: [] });
@@ -2350,8 +2583,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // team always sees it). Known once the database has the choice (the
   // 2026-10-20 update): then the editor shows it as editProfile.linkedinPublic.
   const linkedinPublicWas = useRef(undefined);
+  // The city the editor starts with (accounts from before Get verified have
+  // only the free-text location).
+  const editorCity = () => user.city || (user.location || "").split(",")[0].trim();
   const openProfileEditor = (focusField = null) => {
-    setEditProfile({ ...user });
+    setEditProfile({ ...user, city: editorCity() });
     setProfileErrors({});
     setProfileFocus(focusField);
     setProfileModal(true);
@@ -2368,9 +2604,18 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     if (profileSaving) return;
     const trim = (v) => (v || "").trim();
     const updates = {
-      location: trim(editProfile.location), profession: trim(editProfile.profession),
+      profession: trim(editProfile.profession),
       occupation_status: editProfile.occupationStatus || "",
     };
+    // City and country change together (api.updateMyCity), like in Get
+    // verified; the profile then shows "City, Country".
+    const city = trim(editProfile.city).replace(/\s+/g, " ");
+    const country = editProfile.countryCode || "";
+    const placeChanged = city !== editorCity() || country !== (user.countryCode || "");
+    if (placeChanged && (!country || !city)) {
+      setProfileErrors(!country ? { countryCode: "Please choose your country." } : { city: "Please enter the city you live in." });
+      return;
+    }
     // Only check and send the LinkedIn link when it was changed: older
     // accounts can hold links in other formats. An empty link is fine
     // (members verified without LinkedIn).
@@ -2385,24 +2630,28 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
     const topics = topicList(editProfile.askMeAbout).join(", ");
     if (user.hasTopics && topics !== (user.askMeAbout || "")) updates.ask_me_about = topics;
-    if (isUserNRI(user)) {
+    if (isUserNRI(country ? { countryCode: country } : user)) {
       updates.hometown = trim(editProfile.hometown);
       updates.years_abroad = editProfile.yearsAbroad || "";
     }
     setProfileSaving(true);
     setProfileErrors({});
+    let place = null;
     try {
+      if (placeChanged) place = await api.updateMyCity(city, country, `${city}, ${countryName(country)}`);
       await api.updateProfile(updates);
     } catch (e) {
       const msg = apiErrorMessage(e, "Your changes couldn't be saved. Please try again.");
-      setProfileErrors(updates.linkedin_url !== undefined && /LinkedIn/.test(msg) ? { linkedinUrl: msg } : { form: msg });
+      setProfileErrors(updates.linkedin_url !== undefined && /LinkedIn/.test(msg) ? { linkedinUrl: msg }
+        : /country/i.test(msg) ? { countryCode: msg } : /city/i.test(msg) ? { city: msg } : { form: msg });
       setProfileSaving(false);
       return;
     }
     let refreshed = null;
     try { refreshed = mapProfile(await api.getMyProfile()); } catch (e) {}
     onUserUpdate(refreshed || {
-      ...user, location: updates.location, profession: updates.profession, linkedinUrl: updates.linkedin_url ?? user.linkedinUrl,
+      ...user, profession: updates.profession, linkedinUrl: updates.linkedin_url ?? user.linkedinUrl,
+      ...(place ? { city: place.city, countryCode: place.country_code, location: place.location, isNRI: place.country_code !== "IN" } : {}),
       occupationStatus: updates.occupation_status, askMeAbout: updates.ask_me_about ?? user.askMeAbout,
       ...(updates.hometown !== undefined ? { hometown: updates.hometown, yearsAbroad: updates.years_abroad } : {}),
     });
@@ -2475,7 +2724,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <p style={{ fontSize: 12, color: "#6B6A67" }}>Celebrate with Indians near you.</p>
                 </div>
                 <button onClick={() => { setEventSearch(festival.search); setView("events"); }} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 12, fontWeight: 600, color: "#37352F", cursor: "pointer", fontFamily: font }}>Find one</button>
-                <button onClick={() => { setNewEvent(prev => ({ ...prev, title: `${festival.name} celebration`, date: festival.date })); setEventModal(true); }} style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: "#37352F", fontSize: 12, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Host one</button>
+                <button onClick={() => { openEventForm(); setNewEvent(prev => ({ ...prev, title: `${festival.name} celebration`, date: festival.date < dateValue() ? "" : festival.date })); }} style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: "#37352F", fontSize: 12, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Host one</button>
                 <button onClick={hideFestival} aria-label="Hide" style={{ padding: 4, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 14 })}</button>
               </div>
             )}
@@ -2485,7 +2734,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button onClick={dismissWelcome} aria-label="Close" style={{ position: "absolute", top: 10, right: 10, padding: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 16 })}</button>
                 <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font, marginBottom: 4 }}>Welcome to NRIClub, {(user.name || "").split(" ")[0] || "friend"}! 🙏</h3>
                 <p style={{ fontSize: 13, color: "#6B6A67", fontFamily: font, lineHeight: 1.5, marginBottom: 14 }}>
-                  {cityGroup ? <>You're in <button onClick={() => { setGroupMembers([]); setSelectedGroup(cityGroup); setView("groups"); }} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontFamily: font, fontSize: 13 }}>{cityGroup.name}</button>. Say hello to people near you:</> : "Say hello to a few members to get started:"}
+                  {cityGroup ? <>You're in <button onClick={() => { setSelectedGroup(cityGroup); setView("groups"); }} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontFamily: font, fontSize: 13 }}>{cityGroup.name}</button>. Say hello to people near you:</> : "Say hello to a few members to get started:"}
                 </p>
                 {nearbyMembers.length > 0 ? nearbyMembers.map(u => (
                   <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
@@ -2503,7 +2752,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   {introDone ? (
                     <p style={{ fontSize: 13, color: "#138808", fontWeight: 600, fontFamily: font, margin: 0 }}>✓ You've introduced yourself{cityGroup ? ` in ${cityGroup.name}` : ""}.</p>
                   ) : (<>
-                    <label htmlFor="intro-text" style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font, marginBottom: 6 }}>Introduce yourself{cityGroup ? ` in ${cityGroup.name}` : ""}</label>
+                    <label htmlFor="intro-text" style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#37352F", fontFamily: font, marginBottom: 6 }}>Introduce yourself{introGroup ? ` in ${introGroup.name}` : ""}</label>
                     <textarea id="intro-text" value={introText} onChange={(e) => setIntroText(e.target.value)} maxLength={TEXT_LIMIT} rows={3} style={{ ...inputStyle, resize: "vertical", fontSize: 13, lineHeight: 1.5 }} />
                     <button onClick={postIntro} disabled={introBusy || !introText.trim()} style={{ ...btnPrimary, marginTop: 8, fontSize: 13, padding: "9px 16px", opacity: introBusy ? 0.7 : 1 }}>{introBusy ? "Posting..." : "Post"}</button>
                   </>)}
@@ -2628,7 +2877,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {/* Feed List */}
             {feedPosts.length > 0 ? feedPosts.map((p) => (
-              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onOpenProfile={openMember} />
+              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onLike={onPostLiked} onOpenProfile={openMember} />
             )) : (feedFiltered || feedPostType !== "all") ? (
               <EmptyCard text="No posts match these filters." action="Clear filters" onAction={() => { setFeedFilters(noFeedFilters); setFeedPostType("all"); }} />
             ) : listsLoaded && (
@@ -2790,18 +3039,18 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
                       {/* Location pills */}
                       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 6, marginBottom: 6 }}>
-                        <span style={{
+                        {u.location && <span style={{
                           fontSize: 11, color: "#5F5E5B", background: "#F7F7F5", border: "1px solid #EDEDEB",
                           padding: "4px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: font,
                         }}>
                           {Icons.mapPin({ size: 10 })} {u.location.split(",")[0]}
-                        </span>
-                        <span style={{
+                        </span>}
+                        {u.hometown && <span style={{
                           fontSize: 11, color: "#5F5E5B", background: "#F7F7F5", border: "1px solid #EDEDEB",
                           padding: "4px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: font,
                         }}>
                           {Icons.globe({ size: 10 })} From {u.hometown.split(",")[0]}
-                        </span>
+                        </span>}
                       </div>
                       {u.yearsAbroad && (
                         <span style={{
@@ -3034,11 +3283,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         value={newPost} onChange={(e) => setNewPost(e.target.value)}
                         placeholder={`Share something with ${selectedGroup.name}...`}
                         style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, outline: "none", fontFamily: font }}
-                        onKeyDown={(e) => e.key === "Enter" && createPost()}
+                        onKeyDown={(e) => e.key === "Enter" && createPost(selectedGroup)}
                       />
                     </div>
                     <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
-                      <button onClick={createPost} disabled={!newPost.trim()} style={{
+                      <button onClick={() => createPost(selectedGroup)} disabled={!newPost.trim()} style={{
                         padding: "7px 20px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, fontFamily: font,
                         background: newPost.trim() ? "#37352F" : "#fff", color: newPost.trim() ? "#fff" : "#9B9A97", cursor: newPost.trim() ? "pointer" : "default",
                       }}>
@@ -3049,14 +3298,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   )}
 
                   {groupPosts.length > 0 ? (
-                    [...groupPosts].sort((a, b) => (b.id === selectedGroup.pinnedPostId) - (a.id === selectedGroup.pinnedPostId)).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} hideGroup onOpenProfile={openMember} pinned={p.id === selectedGroup.pinnedPostId} onPin={canPinIn(selectedGroup) ? (id) => pinPost(selectedGroup, id) : null} />)
+                    [...groupPosts].sort((a, b) => (b.id === selectedGroup.pinnedPostId) - (a.id === selectedGroup.pinnedPostId)).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onLike={onPostLiked} hideGroup onOpenProfile={openMember} pinned={p.id === selectedGroup.pinnedPostId} onPin={canPinIn(selectedGroup) ? (id) => pinPost(selectedGroup, id) : null} />)
                   ) : (
                     <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                       No posts in this community yet. Be the first to say hello!
                     </div>
                   )}
                 </>
-              ) : communityTab === "places" ? (
+              ) : communityTab === "places" && selectedGroup.category === "City" ? (
                 /* Places: desi groceries, restaurants, temples and shops in the city */
                 (() => {
                   const city = (selectedGroup.name || "").replace(/^Indians in /i, "");
@@ -3117,23 +3366,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 /* Members Tab */
                 (() => {
                   const cityName = (selectedGroup.name || "").replace("Indians in ", "");
-                  // Load group members on first render of members tab
-                  if (groupMembers.length === 0 && selectedGroup.id) {
-                    (async () => {
-                      try {
-                        const members = await api.getGroupMembers(selectedGroup.id);
-                        if (members && members.length) {
-                          setGroupMembers(members.map(m => ({
-                            id: m.profiles?.id || m.user_id, name: m.profiles?.name || "User",
-                            profession: m.profiles?.profession || "", location: m.profiles?.location || "",
-                            avatar_url: m.profiles?.avatar_url || "",
-                            yearsAbroad: "", linkedinUrl: "",
-                          })));
-                        }
-                      } catch(e) {}
-                    })();
-                  }
-                  // Also include current user if they joined
+                  // (The members are loaded when the group opens.) Also include current user if they joined
                   const allMembers = groupMembers.length > 0 ? groupMembers : (selectedGroup.joined ? [{ id: user.id, name: user.name, profession: user.profession, location: user.location, yearsAbroad: user.yearsAbroad }] : []);
                   const localMembers = allMembers.filter(u => (u.location || "").toLowerCase().includes(cityName.toLowerCase()));
                   const outsideMembers = allMembers.filter(u => !(u.location || "").toLowerCase().includes(cityName.toLowerCase()));
@@ -3288,7 +3521,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   onMouseOut={(e) => (e.currentTarget.style.boxShadow = "none")}
                 >
                   {/* Card content - clickable to open */}
-                  <div onClick={() => { setGroupMembers([]); setSelectedGroup(g); }} style={{ padding: "16px 18px", flex: 1 }}>
+                  <div onClick={() => { setSelectedGroup(g); }} style={{ padding: "16px 18px", flex: 1 }}>
                     <div style={{ display: "flex", gap: 14, marginBottom: 8 }}>
                       {/* Thumbnail */}
                       <div style={{
@@ -3320,7 +3553,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   {/* Join button - full width at bottom */}
                   <div style={{ padding: "0 18px 16px" }}>
                     <button
-                      onClick={(e) => { e.stopPropagation(); if (g.joined) { setGroupMembers([]); setSelectedGroup(g); } else toggleGroup(g.id); }}
+                      onClick={(e) => { e.stopPropagation(); if (g.joined) { setSelectedGroup(g); } else toggleGroup(g.id); }}
                       style={{
                         width: "100%", padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: font, cursor: "pointer",
                         border: g.joined ? "1px solid #E0E0DE" : "none",
@@ -3388,7 +3621,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Events</h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Discover festivals, meetups, and networking events.</p>
               </div>
-              <button onClick={() => setEventModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>
+              <button onClick={() => openEventForm()} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>
                 {Icons.plus({ size: 14 })} Host Event
               </button>
             </div>
@@ -3548,7 +3781,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     {/* Report (and Delete for the host) / Share */}
                     <div style={{ display: "flex", alignItems: "center", gap: 4, paddingTop: 8, borderTop: "1px solid #F0EFED", marginTop: 12 }}>
                       {!reportedIds.has(e.id) && e.organizerId !== user.id && <button onClick={() => setReportConfirm({ type: "event", id: e.id, userId: e.organizerId, name: e.title })} aria-label="Report" title="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 8, display: "flex" }}>{Icons.flag({ size: 14 })}</button>}
-                      {e.organizerId === user.id && <button onClick={async () => { if (confirm("Delete this event?")) { try { await api.deleteEvent(e.id); } catch(e2) {} setEvents(prev => prev.filter(x => x.id !== e.id)); } }} aria-label="Delete event" title="Delete event" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 8, display: "flex" }}>{Icons.trash({ size: 14 })}</button>}
+                      {e.organizerId === user.id && !String(e.id).startsWith("e_") && <button onClick={() => openEventForm(e)} aria-label="Edit event" title="Edit event" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 8, display: "flex" }}>{Icons.edit({ size: 14 })}</button>}
+                      {e.organizerId === user.id && <button onClick={() => { if (confirm("Delete this event?")) removeOwn(events, setEvents, e.id, () => api.deleteEvent(e.id), "Couldn't delete the event. Please try again."); }} aria-label="Delete event" title="Delete event" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 8, display: "flex" }}>{Icons.trash({ size: 14 })}</button>}
                       <button onClick={() => {
                         const shareUrl = `${window.location.origin}/events/${e.id}`;
                         const shareText = `${e.title}\n${eventDate(e)} at ${eventTime(e)}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
@@ -3644,6 +3878,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </div>
                   {shown.map((h) => {
                     const isMine = h.userId === user.id;
+                    const draft = helpDrafts[h.id] || "";
                     const answers = [...(helpResponses[h.id] || [])].sort((a, b) => (b.id === h.bestResponseId) - (a.id === h.bestResponseId));
                     return (
               <div key={h.id} data-help-id={h.id} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${h.urgent && !answered(h) ? "#FECACA" : "#E8E7E4"}`, padding: "20px 24px", marginBottom: 14, scrollMarginTop: 80 }}>
@@ -3656,13 +3891,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <span style={{ fontSize: 11, color: "#9B9A97" }}>{h.category}{h.city ? ` · ${h.city}` : ""}</span>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
-                    {isMine && <button aria-label="Delete question" onClick={async () => { if (confirm("Delete this question?")) { try { await api.deleteHelpRequest(h.id); } catch(e) {} setHelpRequests(prev => prev.filter(x => x.id !== h.id)); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 14 })}</button>}
+                    {isMine && <button aria-label="Delete question" onClick={() => { if (confirm("Delete this question?")) removeOwn(helpRequests, setHelpRequests, h.id, () => api.deleteHelpRequest(h.id), "Couldn't delete the question. Please try again."); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 14 })}</button>}
                     {!isMine && !reportedIds.has(h.id) && <button aria-label="Report" title="Report" onClick={() => setReportConfirm({ type: "help", id: h.id, userId: h.userId, name: h.title })} style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 2 }}>{Icons.flag({ size: 14 })}</button>}
                   </div>
                 </div>
                 <h3 onClick={() => openHelp(h)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font, cursor: "pointer" }}>{h.title}</h3>
                 <p onClick={() => openHelp(h)} style={{ fontSize: 13, color: "#5F5E5B", lineHeight: 1.6, marginBottom: 6, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: selectedHelp === h.id ? 999 : 2, WebkitBoxOrient: "vertical", cursor: "pointer", whiteSpace: "pre-wrap" }}>{h.description}</p>
-                {h.urgent && selectedHelp === h.id && <div style={{ margin: "10px 0" }}><EmergencyHelp /></div>}
+                {h.urgent && selectedHelp === h.id && <div style={{ margin: "10px 0" }}><EmergencyHelp countryCode={user.countryCode} /></div>}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid #F0EFED" }}>
                   <button type="button" onClick={() => h.userId && h.userId !== user.id && !h.userHidden ? openMember(h.userId) : null} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: h.userId && !isMine && !h.userHidden ? "pointer" : "default" }}>
                     <Avatar name={h.user} size={24} url={h.avatar} />
@@ -3709,11 +3944,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                       <Avatar name={user.name} size={28} url={user.avatar_url} />
                       <div style={{ flex: 1 }}>
-                        <textarea value={helpResponse} onChange={(e) => setHelpResponse(e.target.value)} placeholder={isMine ? "Add more details..." : "Share what you know..."} maxLength={TEXT_LIMIT} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, resize: "vertical", minHeight: 60, boxSizing: "border-box" }} />
-                        <CharCount value={helpResponse} />
+                        <textarea value={draft} onChange={(e) => setHelpDrafts(p => ({ ...p, [h.id]: e.target.value }))} placeholder={isMine ? "Add more details..." : "Share what you know..."} maxLength={TEXT_LIMIT} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DE", fontSize: 13, background: "#FAFAF8", outline: "none", fontFamily: font, resize: "vertical", minHeight: 60, boxSizing: "border-box" }} />
+                        <CharCount value={draft} />
                         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                          <button disabled={!helpResponse.trim()} onClick={async () => {
-                            const text = helpResponse;
+                          <button disabled={!draft.trim()} onClick={async () => {
+                            const text = draft;
                             let saved = null;
                             try { saved = (await api.addHelpResponse(h.id, text))?.[0] || null; } catch(e) {
                               alert(apiErrorMessage(e, "Your answer couldn't be posted. Please try again."));
@@ -3721,8 +3956,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             }
                             setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, responses: (x.responses || 0) + 1 } : x));
                             setHelpResponses(prev => ({ ...prev, [h.id]: [...(prev[h.id] || []), { id: saved?.id || Date.now(), userId: user.id, text, user: user.name, avatar: user.avatar_url || "", thanks: 0, time: Date.now() }] }));
-                            setHelpResponse("");
-                          }} style={{ ...btnPrimary, padding: "7px 16px", fontSize: 12, opacity: helpResponse.trim() ? 1 : 0.4 }}>{isMine ? "Post" : "Post answer"}</button>
+                            setHelpDrafts(p => ({ ...p, [h.id]: "" }));
+                          }} style={{ ...btnPrimary, padding: "7px 16px", fontSize: 12, opacity: draft.trim() ? 1 : 0.4 }}>{isMine ? "Post" : "Post answer"}</button>
                         </div>
                       </div>
                     </div>
@@ -3765,7 +4000,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <div style={{ fontSize: 15, color: "#37352F", lineHeight: 1.8, whiteSpace: "pre-wrap", fontFamily: font }}>{selectedDoc.content}</div>
                 {/* Actions */}
                 <div style={{ display: "flex", alignItems: "center", gap: 20, padding: "20px 0", margin: "32px 0 24px", borderTop: "1px solid #F0EFED", borderBottom: "1px solid #F0EFED" }}>
-                  <button onClick={() => { if (!docLiked) { setDocLiked(true); setSelectedDoc(prev => ({...prev, likes: (prev.likes || 0) + 1})); } else { setDocLiked(false); setSelectedDoc(prev => ({...prev, likes: Math.max(0, (prev.likes || 0) - 1)})); } }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: docLiked ? "#DC2626" : "#9B9A97", fontSize: 14, fontFamily: font }}>{Icons.heart({ size: 18, fill: docLiked ? "#DC2626" : "none", stroke: docLiked ? "#DC2626" : "currentColor" })} {selectedDoc.likes}</button>
                   <button style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 14, fontFamily: font }}>{Icons.message({ size: 18 })} {(selectedDoc.comments || []).length}</button>
                   <button onClick={() => { if (navigator.share) navigator.share({ title: selectedDoc.title, url: window.location.href }); else { navigator.clipboard.writeText(window.location.href); alert("Link copied!"); } }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 14, fontFamily: font, marginLeft: "auto" }}>{Icons.share({ size: 18 })} Share</button>
                 </div>
@@ -3873,16 +4107,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="docs-grid">
               {filteredDocs.map((d) => (
-                <div key={d.id} onClick={async () => {
-                  setSelectedDoc(d);
-                  try {
-                    const dbComments = await api.getDocComments(d.id);
-                    if (dbComments && dbComments.length) {
-                      const withComments = { ...d, comments: dbComments.map(c => ({ id: c.id, userId: c.user_id, user: c.profiles?.name || "User", text: c.content, time: new Date(c.created_at).getTime() })) };
-                      setSelectedDoc(withComments);
-                    }
-                  } catch(e) {}
-                }} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 22px", cursor: "pointer", transition: "box-shadow 0.15s", display: "flex", flexDirection: "column" }}
+                <div key={d.id} onClick={() => setSelectedDoc(d)} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "20px 22px", cursor: "pointer", transition: "box-shadow 0.15s", display: "flex", flexDirection: "column" }}
                   onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"}
                   onMouseOut={(e) => e.currentTarget.style.boxShadow = "none"}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -3903,8 +4128,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       </div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 12, color: "#9B9A97", display: "flex", alignItems: "center", gap: 4 }}>{Icons.heart({ size: 13 })} {d.likes}</span>
-                      {d.userId === user.id && <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this doc?")) { try { await api.deleteDoc(d.id); } catch(e2) {} setDocs(prev => prev.filter(x => x.id !== d.id)); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 12 })}</button>}
+                      {d.userId === user.id && <button aria-label="Delete guide" onClick={(e) => { e.stopPropagation(); if (confirm("Delete this guide?")) removeOwn(docs, setDocs, d.id, () => api.deleteDoc(d.id), "Couldn't delete the guide. Please try again."); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 12 })}</button>}
                       {d.userId !== user.id && !reportedIds.has(d.id) && <button aria-label="Report" title="Report" onClick={(e) => { e.stopPropagation(); setReportConfirm({ type: "doc", id: d.id, userId: d.userId, name: d.title }); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 2 }}>{Icons.flag({ size: 12 })}</button>}
                     </div>
                   </div>
@@ -3983,7 +4207,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       </div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         {item.user_id === user.id ? (
-                          <button onClick={async (e) => { e.stopPropagation(); if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); } }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>{Icons.trash({ size: 11 })} Delete</button>
+                          <button onClick={(e) => { e.stopPropagation(); if (confirm("Delete this listing?")) removeOwn(marketItems, setMarketItems, item.id, () => api.deleteMarketItem(item.id), "Couldn't delete the listing. Please try again."); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 4 }}>{Icons.trash({ size: 11 })} Delete</button>
                         ) : (
                           <>
                             <button onClick={(e) => { e.stopPropagation(); setSelectedMarketItem(item); setContactMsg(contactGreeting(item)); }} style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", cursor: "pointer", fontFamily: font }}>Contact</button>
@@ -4003,27 +4227,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         );
 
       case "messages":
-        // Load conversations from DB on first visit
-        if (!convosLoaded && canBrowse) {
-          setConvosLoaded(true);
-          (async () => {
-            try {
-              const dbConvos = await api.getConversations();
-              if (dbConvos && dbConvos.length) {
-                setConvos(dbConvos.map(c => ({
-                  id: c.id,
-                  name: c.otherUser?.name || "User",
-                  otherUserId: c.otherUser?.id,
-                  otherHidden: !!c.otherUser?.unlisted,
-                  avatar_url: c.otherUser?.avatar_url || "",
-                  lastMsg: c.last_message_text || "",
-                  time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
-                  unread: false,
-                })));
-              }
-            } catch (e) {}
-          })();
-        }
         const activeConvo = convos.find(c => c.id === selectedConvo);
         const currentMsgs = selectedConvo ? (chatMessages[selectedConvo] || []) : [];
 
@@ -4034,13 +4237,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           if (!chatMessages[convoId]) {
             try {
               const msgs = await api.getMessages(convoId);
-              if (msgs) {
-                setChatMessages(p => ({ ...p, [convoId]: msgs.map(m => ({
-                  id: m.id, text: m.content,
-                  sender: m.sender_id === user.id ? "me" : "them",
-                  time: new Date(m.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-                })) }));
-              }
+              if (msgs) setChatMessages(p => ({ ...p, [convoId]: msgs.map(m => toChatMessage(m, user.id)) }));
             } catch (e) {}
           }
         };
@@ -4054,7 +4251,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             if (reason) { alert(reason); return; }
           }
           const convoId = selectedConvo;
-          const msg = { id: Date.now().toString(), text: chatInput, sender: "me", time: "Just now" };
+          const msg = { id: Date.now().toString(), text: chatInput, sender: "me", at: new Date().toISOString() };
           setChatMessages(p => ({ ...p, [convoId]: [...(p[convoId] || []), msg] }));
           const text = chatInput;
           setChatInput("");
@@ -4068,7 +4265,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             return;
           }
           // Update convo list
-          setConvos(p => p.map(c => c.id === convoId ? { ...c, lastMsg: text, time: "Just now" } : c));
+          setConvos(p => p.map(c => c.id === convoId ? { ...c, lastMsg: text, lastAt: new Date().toISOString() } : c));
         };
 
         return (
@@ -4077,22 +4274,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             {/* Conversation List */}
             <div className="msg-sidebar" style={{ width: 240, borderRight: "1px solid #E8E7E4", background: "#FAFAF8", display: "flex", flexDirection: "column", flexShrink: 0 }}>
               <div style={{ padding: "16px 18px", borderBottom: "1px solid #E8E7E4" }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font, marginBottom: 10 }}>Messages</h3>
-                {/* Personal / Marketplace Tabs */}
-                <div style={{ display: "flex", gap: 4, background: "#F0EFED", padding: 3, borderRadius: 8 }}>
-                  <button onClick={() => setChatTab("personal")} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "none", background: chatTab === "personal" ? "#fff" : "transparent", color: chatTab === "personal" ? "#37352F" : "#9B9A97", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: chatTab === "personal" ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>Personal</button>
-                  <button onClick={() => setChatTab("marketplace")} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "none", background: chatTab === "marketplace" ? "#fff" : "transparent", color: chatTab === "marketplace" ? "#37352F" : "#9B9A97", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, boxShadow: chatTab === "marketplace" ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>Marketplace</button>
-                </div>
+                {/* One list: a conversation that started from a Market
+                    listing shows 🛒 and the listing in its messages. */}
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: "#37352F", fontFamily: font }}>Messages</h3>
               </div>
               <div style={{ flex: 1, overflow: "auto" }}>
                 {(() => {
-                  const filteredConvos = convos.filter(c => {
-                    if (blockedIds.has(c.otherUserId)) return false;
-                    const isMarket = (c.lastMsg || "").includes("[MARKETPLACE:") || (c.isMarketplace === true);
-                    return chatTab === "marketplace" ? isMarket : !isMarket;
-                  });
+                  const filteredConvos = convos.filter(c => !blockedIds.has(c.otherUserId));
                   return filteredConvos.length === 0 ? (
-                    <div style={{ padding: 20, textAlign: "center", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{chatTab === "marketplace" ? "No marketplace messages yet." : "No conversations yet. Connect with someone first!"}</div>
+                    <div style={{ padding: 20, textAlign: "center", color: "#9B9A97", fontSize: 12, fontFamily: font }}>{convosLoaded ? "No conversations yet. Say Namaste to someone, or message a member from their profile." : "Loading conversations…"}</div>
                   ) : filteredConvos.map(c => (
                     <div key={c.id} onClick={() => { loadConvoMessages(c.id); setConvos(prev => prev.map(x => x.id === c.id ? { ...x, unread: false } : x)); }} style={{ padding: "14px 18px", borderBottom: "1px solid #F0EFED", cursor: "pointer", background: selectedConvo === c.id ? "#fff" : c.unread ? "#F5F8FF" : "transparent", borderLeft: selectedConvo === c.id ? "3px solid #37352F" : "3px solid transparent" }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -4105,7 +4295,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
                             <span style={{ fontSize: 13, fontWeight: c.unread ? 700 : 500, color: "#37352F", fontFamily: font }}>{c.name}</span>
-                            <span style={{ fontSize: 10, color: c.unread ? "#DC2626" : "#9B9A97" }}>{c.time}</span>
+                            <span style={{ fontSize: 10, color: c.unread ? "#DC2626" : "#9B9A97", flexShrink: 0, marginLeft: 6 }}>{chatTime(c.lastAt)}</span>
                           </div>
                           <p style={{ fontSize: 12, color: c.unread ? "#37352F" : "#9B9A97", fontWeight: c.unread ? 600 : 400, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{(c.lastMsg || "").replace(/^\[MARKETPLACE: [^\]]+\]\s*/, "🛒 ")}</p>
                         </div>
@@ -4158,8 +4348,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     </div>
                   </div>
                   <div style={{ flex: 1, padding: 18, overflow: "auto", background: "#FAFAF8", display: "flex", flexDirection: "column", gap: 12 }}>
-                    {currentMsgs.map(m => (
-                      <div key={m.id} style={{ maxWidth: "75%", alignSelf: m.sender === "me" ? "flex-end" : "flex-start" }}>
+                    {currentMsgs.map((m, i) => (
+                      <Fragment key={m.id}>
+                      {chatDay(m.at) && chatDay(m.at) !== chatDay(currentMsgs[i - 1]?.at) && (
+                        <div role="separator" style={{ alignSelf: "center", fontSize: 11, fontWeight: 600, color: "#9B9A97", fontFamily: font, padding: "2px 10px", background: "#F0EFED", borderRadius: 10 }}>{chatDay(m.at)}</div>
+                      )}
+                      <div style={{ maxWidth: "75%", alignSelf: m.sender === "me" ? "flex-end" : "flex-start" }}>
                         <div style={{ padding: "10px 14px", borderRadius: m.sender === "me" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.sender === "me" ? "#37352F" : "#fff", color: m.sender === "me" ? "#fff" : "#37352F", border: m.sender === "me" ? "none" : "1px solid #E8E7E4", fontSize: 14, lineHeight: 1.5, fontFamily: font, overflowWrap: "anywhere" }}>
                           {(() => {
                             const tag = (m.text || "").match(/^\[MARKETPLACE: ([^\]]+)\]\s*/);
@@ -4171,13 +4365,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                           })()}
                         </div>
                         <div style={{ fontSize: 10, color: "#9B9A97", marginTop: 4, textAlign: m.sender === "me" ? "right" : "left", display: "flex", alignItems: "center", gap: 6, justifyContent: m.sender === "me" ? "flex-end" : "flex-start" }}>
-                          <span>{m.time}</span>
+                          <span>{m.at ? new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
                           {m.sender === "them" && /^[0-9a-f-]{36}$/i.test(String(m.id)) && !reportedIds.has(m.id) && (
                             <button type="button" onClick={() => setReportConfirm({ type: "message", id: m.id, userId: activeConvo?.otherUserId, name: m.text })} aria-label="Report this message" title="Report this message"
                               style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 6, margin: -4, display: "flex" }}>{Icons.flag({ size: 11 })}</button>
                           )}
                         </div>
                       </div>
+                      </Fragment>
                     ))}
                   </div>
                   <div style={{ padding: "12px 18px", borderTop: "1px solid #E8E7E4" }}>
@@ -4281,14 +4476,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, fontFamily: font }}>Groups you share</h4>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {shared.map(g => (
-                      <button key={g.id} onClick={() => { setGroupMembers([]); setSelectedGroup(g); setView("groups"); }} style={{ ...chip, border: "1px solid #E8E7E4", background: "#fff", cursor: "pointer", fontFamily: font, padding: "6px 12px" }}>{Icons.users({ size: 12 })} {g.name}</button>
+                      <button key={g.id} onClick={() => { setSelectedGroup(g); setView("groups"); }} style={{ ...chip, border: "1px solid #E8E7E4", background: "#fff", cursor: "pointer", fontFamily: font, padding: "6px 12px" }}>{Icons.users({ size: 12 })} {g.name}</button>
                     ))}
                   </div>
                 </div>
               )}
               <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, fontFamily: font }}>Recent posts</h4>
               {mp.posts.length > 0
-                ? mp.posts.filter(p => !blockedIds.has(p.userId)).map(p => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} />)
+                ? mp.posts.filter(p => !blockedIds.has(p.userId)).map(p => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onLike={onPostLiked} />)
                 : <EmptyCard text={`${(m.name || "This member").split(" ")[0]} hasn't posted yet.`} />}
             </>)}
           </div>
@@ -4379,7 +4574,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
             {profileTab === "posts" ? (
               posts.filter((p) => p.userId === user.id).length > 0 ? (
-                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onOpenProfile={openMember} />)
+                posts.filter((p) => p.userId === user.id).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onLike={onPostLiked} onOpenProfile={openMember} />)
               ) : (
                 <div style={{ textAlign: "center", padding: 32, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                   You haven't posted anything yet.
@@ -4414,22 +4609,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   // A notification from the bell (or from its pop-up): go where it points.
   const openNotification = (n) => {
     if (n.type === "like" || n.type === "comment") {
-      setView("home");
       setNotifOpen(false);
-      // Mark as read
-      try { api.markNotificationHandled(n.id); } catch(e) {}
+      Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
       setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
-      // Scroll to the post after a short delay for render
-      if (n.reference_id) {
-        setTimeout(() => {
-          const el = document.querySelector(`[data-post-id="${n.reference_id}"]`);
-          if (el) {
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
-            el.style.boxShadow = "0 0 0 3px #5B9CFF";
-            setTimeout(() => { el.style.boxShadow = ""; }, 2000);
-          }
-        }, 300);
-      }
+      // The post opens on Home as a shared link to it would, also when it's
+      // older than the posts loaded there.
+      if (n.reference_id) setSharedLink({ kind: "post", id: String(n.reference_id) });
+      else setView("home");
     } else if (n.type === "request") {
       // Don't navigate for requests - they have Accept/Ignore buttons
     } else if (["booking", "booking_cancelled", "review"].includes(n.type)) {
@@ -4502,11 +4688,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     setSelectedConvo(cid);
     if (!chatMessages[cid]) {
       api.getMessages(cid).then(msgs => {
-        if (msgs) setChatMessages(p => ({ ...p, [cid]: msgs.map(m => ({
-          id: m.id, text: m.content,
-          sender: m.sender_id === user.id ? "me" : "them",
-          time: new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        })) }));
+        if (msgs) setChatMessages(p => ({ ...p, [cid]: msgs.map(m => toChatMessage(m, user.id)) }));
       }).catch(() => {});
     }
   };
@@ -4517,7 +4699,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
   const openMyCityGroup = () => {
     closeNotice();
     leaveOverlays();
-    if (cityGroup) { setGroupMembers([]); setSelectedGroup(cityGroup); setView("groups"); return; }
+    if (cityGroup) { setSelectedGroup(cityGroup); setView("groups"); return; }
     setSelectedGroup(null);
     setView("groups");
     if (cityMissing) {
@@ -4596,6 +4778,48 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     rememberNotice("catchup", user.id);
     setNotice({ kind: "catchup", items });
   }, [noticesReady, verificationChecked]);
+
+  // Escape closes the window on top (the windows that handle Escape
+  // themselves, such as the report dialog, the notices and the photo
+  // viewer, are left to do so). Closing keeps what was typed, as tapping
+  // outside a window does.
+  const escapeRef = useRef(null);
+  escapeRef.current = () => {
+    if (locked || teamMessage || reportConfirm || verifyOpen || bookingMentor || ambassadorApply || notice || expandedMarketItem) return false;
+    const closers = [
+      [deleteAccountText !== null, () => setDeleteAccountText(null)],
+      [blockModalOpen, () => setBlockModalOpen(false)],
+      [settingsModal === "blocked", () => setSettingsModal("privacy")],
+      [eventModal, () => closeEventForm()],
+      [profileModal, () => setProfileModal(false)],
+      [!!createPostModal, () => setCreatePostModal(null)],
+      [!!selectedMarketItem, () => setSelectedMarketItem(null)],
+      [!!expandedEvent, () => setExpandedEvent(null)],
+      [helpModal, () => setHelpModal(false)],
+      [docModal, () => setDocModal(false)],
+      [marketModal, () => setMarketModal(false)],
+      [groupRequestModal, () => setGroupRequestModal(false)],
+      [filterModalOpen, () => setFilterModalOpen(false)],
+      [!!followModal, () => setFollowModal(null)],
+      [!!settingsModal, () => { setSettingsModal(null); setSettingsSaveError(""); }],
+      [notifOpen, () => setNotifOpen(false)],
+      [settingsOpen, () => setSettingsOpen(false)],
+      [mobileMenu, () => setMobileMenu(false)],
+      [chatSettings, () => setChatSettings(false)],
+    ];
+    const top = closers.find(([open]) => open);
+    if (!top) return false;
+    top[1]();
+    return true;
+  };
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (escapeRef.current?.()) e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // A locked member (blocked or rejected) sees only their card.
   useEffect(() => { if (locked) { setNotice(null); setToasts([]); } }, [locked]);
@@ -4975,7 +5199,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button onClick={() => setPostPhotoOpen(true)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 6, marginRight: "auto" }}>{Icons.image({ size: 16 })} Photo</button>
               )}
               <button onClick={() => { setCreatePostModal(null); setNewPost(""); if (postImage) api.discardUpload(postImage.url); setPostImage(null); setPostPhotoOpen(false); setPostPhotoUploading(false); postPhotoUploadRef.current += 1; }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-              <button onClick={() => { createPost(); setCreatePostModal(null); setPostPhotoOpen(false); }} disabled={(!newPost.trim() && !postImage) || postPhotoUploading} style={{
+              <button onClick={() => { createPost(null); setCreatePostModal(null); setPostPhotoOpen(false); }} disabled={(!newPost.trim() && !postImage) || postPhotoUploading} style={{
                 padding: "10px 24px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600,
                 background: (newPost.trim() || postImage) && !postPhotoUploading ? "#37352F" : "#E8E7E4",
                 color: (newPost.trim() || postImage) && !postPhotoUploading ? "#fff" : "#9B9A97",
@@ -5314,7 +5538,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 ) : (
                   <>
                     <span style={{ fontSize: 13, color: "#9B9A97", fontFamily: font }}>This is your listing</span>
-                    <button onClick={async () => { const item = expandedMarketItem; if (confirm("Delete this listing?")) { try { await api.deleteMarketItem(item.id); } catch(e) {} setMarketItems(prev => prev.filter(m => m.id !== item.id)); setExpandedMarketItem(null); setMarketPhotoIdx(0); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontWeight: 600, padding: "10px 0", fontFamily: font }}>
+                    <button onClick={async () => { const item = expandedMarketItem; if (confirm("Delete this listing?") && await removeOwn(marketItems, setMarketItems, item.id, () => api.deleteMarketItem(item.id), "Couldn't delete the listing. Please try again.")) { setExpandedMarketItem(null); setMarketPhotoIdx(0); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontWeight: 600, padding: "10px 0", fontFamily: font }}>
                       Delete listing
                     </button>
                   </>
@@ -5337,7 +5561,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {Icons.x({ size: 16 })}
               </button>
               <div style={{ position: "absolute", bottom: 16, left: 16, background: "rgba(255,255,255,0.95)", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, color: "#37352F", fontFamily: font }}>{eventDate(expandedEvent)}</div>
-              <div style={{ position: "absolute", top: 16, left: 16, background: "rgba(0,0,0,0.5)", padding: "4px 10px", borderRadius: 12, fontSize: 11, color: "#fff", fontWeight: 600 }}>{expandedEvent.attendees} going</div>
+              <div style={{ position: "absolute", top: 16, left: 16, background: "rgba(0,0,0,0.5)", padding: "4px 10px", borderRadius: 12, fontSize: 11, color: "#fff", fontWeight: 600 }}>{(events.find(x => x.id === expandedEvent.id) || expandedEvent).attendees} going</div>
             </div>
             <div style={{ padding: "24px 28px" }}>
               <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 12, fontFamily: font, lineHeight: 1.3 }}>{expandedEvent.title}</h2>
@@ -5381,7 +5605,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   {Icons.link({ size: 15 })} Get Tickets / More Info
                 </a>
               )}
-              {expandedEvent.organizer && <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED" }}>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></div>}
+              {expandedEvent.organizer && <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <span>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></span>
+                {expandedEvent.organizerId === user.id && !String(expandedEvent.id).startsWith("e_") && (
+                  <button type="button" onClick={() => openEventForm(expandedEvent)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{Icons.edit({ size: 13 })} Edit event</button>
+                )}
+              </div>}
             </div>
           </div>
         </div>
@@ -5429,26 +5658,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                     const cid = convo?.id || convo?.[0]?.id;
                     if (cid) {
                       await api.sendMessage(cid, taggedMsg);
-                      // Refresh convo list so it shows up in Marketplace tab
+                      // Reload the conversations so this one is in the list.
                       try {
                         const dbConvos = await api.getConversations();
-                        if (dbConvos) {
-                          setConvos(prev => {
-                            const oldMarketIds = new Set(prev.filter(c => c.isMarketplace).map(c => c.id));
-                            return dbConvos.map(c => ({
-                              id: c.id, name: c.otherUser?.name || "User", otherUserId: c.otherUser?.id, otherHidden: !!c.otherUser?.unlisted,
-                              avatar_url: c.otherUser?.avatar_url || "",
-                              lastMsg: c.last_message_text || "", 
-                              time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "",
-                              unread: false,
-                              isMarketplace: oldMarketIds.has(c.id) || (c.last_message_text || "").includes("[MARKETPLACE:"),
-                            }));
-                          });
-                        }
+                        if (dbConvos) { setConvos(dbConvos.map(toConvo)); setConvosLoaded(true); }
                       } catch(re) {}
-                      setChatTab("marketplace");
                       setSelectedMarketItem(null);
                       setContactMsg("");
+                      setChatMessages(p => { const n = { ...p }; delete n[cid]; return n; });
+                      setSelectedConvo(cid);
                       setView("messages");
                       return;
                     } else {
@@ -5513,9 +5731,24 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 )}
               </div>
               <div style={{ marginBottom: 6 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Email Address</label>
-                <input style={{ ...inputStyle, background: "#F0EFED", color: "#9B9A97" }} value={user.email || ""} readOnly disabled />
-                <p style={{ fontSize: 11, color: "#9B9A97", marginTop: 4, fontFamily: font }}>Contact support to change email.</p>
+                <label htmlFor="account-email" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Email Address</label>
+                {emailChange.sentTo ? (
+                  <p role="status" style={{ fontSize: 13, color: "#126B45", background: "#E3FCEF", border: "1px solid #ABF5D1", borderRadius: 8, padding: "10px 12px", lineHeight: 1.5, fontFamily: font, overflowWrap: "anywhere" }}>
+                    If <strong>{emailChange.sentTo}</strong> can be used, we've sent a link to it and to {user.email || "your current address"}. Open both to confirm the change. Until then you sign in with {user.email || "your current address"}.
+                  </p>
+                ) : (<>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input id="account-email" type="email" autoComplete="email" inputMode="email" autoCapitalize="none" spellCheck={false} style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+                      value={emailChange.value ?? user.email ?? ""} onChange={(e) => setEmailChange({ value: e.target.value, busy: false, error: "" })}
+                      aria-describedby="account-email-help" aria-invalid={!!emailChange.error} />
+                    {(emailChange.value ?? user.email ?? "").trim().toLowerCase() !== (user.email || "").toLowerCase() && (
+                      <button type="button" onClick={changeMyEmail} aria-disabled={emailChange.busy} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: emailChange.busy ? "default" : "pointer", fontFamily: font, flexShrink: 0 }}>{emailChange.busy ? "Sending..." : "Change"}</button>
+                    )}
+                  </div>
+                  {emailChange.error
+                    ? <p id="account-email-help" role="alert" style={{ fontSize: 12, color: "#B91C1C", marginTop: 4, lineHeight: 1.45, fontFamily: font }}>{emailChange.error}</p>
+                    : <p id="account-email-help" style={{ fontSize: 11, color: "#6B6A67", marginTop: 4, lineHeight: 1.45, fontFamily: font }}>To change it, type the new address and choose Change. We'll send a link to confirm it.</p>}
+                </>)}
               </div>
               <div style={{ borderTop: "1px solid #F0EFED", marginTop: 20, paddingTop: 20 }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16, fontFamily: font }}>Security</h4>
@@ -5702,7 +5935,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 const activities = [];
                 posts.filter(p => p.userId === user.id).forEach(p => activities.push({ action: "Posted", target: p.content.substring(0, 40) + (p.content.length > 40 ? "..." : ""), time: timeAgo(p.timestamp) }));
                 groups.filter(g => g.joined).forEach(g => activities.push({ action: "Joined group", target: g.name, time: "" }));
-                helpRequests.filter(h => h.user === user.name).forEach(h => activities.push({ action: "Asked for help", target: h.title, time: timeAgo(h.timestamp) }));
+                helpRequests.filter(h => h.userId === user.id).forEach(h => activities.push({ action: "Asked for help", target: h.title, time: timeAgo(h.timestamp) }));
                 if (activities.length === 0) activities.push({ action: "No activity yet", target: "Start posting or joining communities!", time: "" });
                 return activities.slice(0, 10).map((log, i) => (
                   <div key={i} style={{ padding: "16px 24px", borderBottom: "1px solid #F0EFED" }}>
@@ -5968,8 +6201,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button onClick={async () => {
                   const userIdToBlock = blockTargetId;
                   if (!userIdToBlock) { setBlockModalOpen(false); return; }
-                  try { await api.blockUser(userIdToBlock); } catch(e) {}
+                  try { await api.blockUser(userIdToBlock); } catch (e) {
+                    alert(isNetworkError(e) ? NETWORK_MESSAGE : apiErrorMessage(e, "This member couldn't be blocked. Please try again."));
+                    return;
+                  }
                   setBlockedIds(prev => { const s = new Set(prev); s.add(userIdToBlock); return s; });
+                  // The connections between the two are gone too.
+                  setSentNamaste(prev => { const s = new Set(prev); s.delete(userIdToBlock); return s; });
+                  setAcceptedConnections(prev => { const s = new Set(prev); s.delete(userIdToBlock); return s; });
+                  setMyFollowing(prev => prev.filter(p => p.id !== userIdToBlock));
+                  setMyFollowers(prev => prev.filter(p => p.id !== userIdToBlock));
                   setBlockModalOpen(false);
                   setSelectedConvo(null);
                   alert("User blocked. You can unblock them in Settings → Privacy & Safety.");
@@ -6209,7 +6450,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {existingGroup ? (
                   <p style={{ fontSize: 13, color: "#5F5E5B", marginTop: 8, fontFamily: font }}>
                     {existingGroup.name} already exists.{" "}
-                    <button onClick={() => { setGroupRequestModal(false); setNewGroupCity(""); setGroupMembers([]); setCommunityTab("feed"); setSelectedGroup(existingGroup); }} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontSize: 13, fontFamily: font }}>
+                    <button onClick={() => { setGroupRequestModal(false); setNewGroupCity(""); setCommunityTab("feed"); setSelectedGroup(existingGroup); }} style={{ background: "none", border: "none", padding: 0, color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontSize: 13, fontFamily: font }}>
                       Open it
                     </button>
                   </p>
@@ -6256,11 +6497,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Event Modal */}
       {eventModal && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => setEventModal(false)}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(2px)" }} onClick={() => closeEventForm()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="event-form-title" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0EFED" }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>Host an Event</h3>
-              <button onClick={() => setEventModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 18 })}</button>
+              <h3 id="event-form-title" style={{ fontSize: 17, fontWeight: 700, color: "#37352F", fontFamily: font }}>{editingEvent ? "Edit your event" : "Host an Event"}</h3>
+              <button onClick={() => closeEventForm()} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 4 }}>{Icons.x({ size: 18 })}</button>
             </div>
             <div style={{ padding: 24 }}>
               <div style={{ marginBottom: 20 }}>
@@ -6270,7 +6511,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Date</label>
-                  <input style={inputStyle} type="date" value={newEvent.date} onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })} />
+                  <input style={inputStyle} type="date" min={editingEvent && newEvent.date && newEvent.date < dateValue() ? undefined : dateValue()} value={newEvent.date} onChange={(e) => { setNewEvent({ ...newEvent, date: e.target.value }); setEventError(""); }} />
                 </div>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Time</label>
@@ -6307,7 +6548,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 {eventPhoto ? (
                   <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: "1px solid #E0E0DE" }}>
                     <img src={eventPhoto.preview} alt="" style={{ width: "100%", height: 140, objectFit: "cover" }} />
-                    <button aria-label="Remove photo" onClick={() => { api.discardUpload(eventPhoto.url); setEventPhoto(null); }} style={{ position: "absolute", top: 8, right: 8, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 12 })}</button>
+                    <button aria-label="Remove photo" onClick={() => { if (!eventPhoto.saved) api.discardUpload(eventPhoto.url); setEventPhoto(null); }} style={{ position: "absolute", top: 8, right: 8, width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>{Icons.x({ size: 12 })}</button>
                   </div>
                 ) : (
                   <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "20px 16px", borderRadius: 10, border: "2px dashed #E0E0DE", cursor: "pointer", color: "#9B9A97", fontSize: 13, fontFamily: font, background: "#FAFAF8" }}>
@@ -6322,9 +6563,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   </label>
                 )}
               </div>
+              {eventError && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "10px 12px", margin: "0 0 16px", lineHeight: 1.5, fontFamily: font }}>{eventError}</p>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
-                <button onClick={() => setEventModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button onClick={createEvent} disabled={!newEvent.title || !newEvent.date} style={{ ...btnPrimary, opacity: newEvent.title && newEvent.date ? 1 : 0.4 }}>Host Event</button>
+                <button onClick={() => closeEventForm()} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
+                <button onClick={saveEvent} disabled={!newEvent.title.trim() || !newEvent.date || eventSaving} style={{ ...btnPrimary, opacity: newEvent.title.trim() && newEvent.date && !eventSaving ? 1 : 0.4 }}>{eventSaving ? "Saving..." : editingEvent ? "Save changes" : "Host Event"}</button>
               </div>
             </div>
           </div>
@@ -6361,7 +6603,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   <span style={{ display: "block", fontSize: 12, color: "#6B6A67" }}>A hospital visit, a lost passport, a death in the family. {user.verificationStatus === "approved" ? `Members in ${user.city || "your city"} and its ambassador get a notification.` : "Once you're verified, urgent questions also alert members in your city."} One urgent question a day.</span>
                 </span>
               </label>
-              {newHelp.urgent && <div style={{ marginBottom: 20 }}><EmergencyHelp /></div>}
+              {newHelp.urgent && <div style={{ marginBottom: 20 }}><EmergencyHelp countryCode={user.countryCode} /></div>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setHelpModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>
                 <button onClick={createHelp} disabled={!newHelp.title || !newHelp.description} style={{ ...btnPrimary, opacity: newHelp.title && newHelp.description ? 1 : 0.4 }}>Post question</button>
@@ -6377,8 +6619,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         <>
           {/* A member waiting for review gets the welcome for members held for
               review: they can't join groups or say hello before approval. */}
-          {notice?.kind === "welcome" && <WelcomeNotice user={waiting ? { ...user, reviewFlag: user.reviewFlag || "held" } : user} verified={!!notice.verified} cityGroup={cityGroup?.name} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
-          {notice?.kind === "verified" && <VerifiedNotice user={user} cityGroup={cityGroup?.name} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
+          {notice?.kind === "welcome" && <WelcomeNotice user={waiting ? { ...user, reviewFlag: user.reviewFlag || "held" } : user} verified={!!notice.verified} cityGroup={cityGroup?.name} cityJoined={!!cityGroup?.joined} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
+          {notice?.kind === "verified" && <VerifiedNotice user={user} cityGroup={cityGroup?.name} cityJoined={!!cityGroup?.joined} cityMissing={cityMissing} onClose={closeNotice} onCityGroup={openMyCityGroup} />}
           {notice?.kind === "info" && <NeedsInfoNotice user={user} onClose={closeNotice} onUpdate={() => { closeNotice(); leaveOverlays(); setVerifyOpen(true); }} />}
           {notice?.kind === "catchup" && <CatchUpNotice user={user} items={notice.items} onClose={closeNotice} />}
           <ToastStack toasts={toasts} onDismiss={dismissToast} />
@@ -6387,7 +6629,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
 
       {/* Edit Profile Modal */}
       {profileModal && (() => {
-        const abroad = isUserNRI(user);
+        const abroad = isUserNRI(editProfile.countryCode ? { countryCode: editProfile.countryCode } : user);
         const editLabel = { display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: font };
         const setField = (key, value) => { setEditProfile({ ...editProfile, [key]: value }); if (profileErrors[key] || profileErrors.form) setProfileErrors({}); };
         const textField = (key, label, placeholder, extra = {}) => (
@@ -6419,7 +6661,29 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <form style={{ padding: 24 }} noValidate onSubmit={(e) => { e.preventDefault(); saveProfileChanges(); }}>
                 {textField("profession", "What do you do?", "e.g. Software Engineer at SAP")}
-                {textField("location", "Location", "City, Country")}
+                {/* Where they live, as in Get verified: urgent questions reach members by city. */}
+                <div style={{ marginBottom: 16 }}>
+                  <label htmlFor="edit-countryCode" style={editLabel}>Country</label>
+                  <select id="edit-countryCode" style={{ ...inputStyle, cursor: "pointer", borderColor: profileErrors.countryCode ? "#DC2626" : "#E0E0DE", color: editProfile.countryCode ? "#37352F" : "#6B6A67" }} value={editProfile.countryCode || ""}
+                    onChange={(e) => setField("countryCode", e.target.value)} autoFocus={profileFocus === "location"} autoComplete="country"
+                    aria-invalid={!!profileErrors.countryCode} aria-describedby={profileErrors.countryCode ? "edit-countryCode-error" : undefined}>
+                    <option value="">Choose your country</option>
+                    <optgroup label="Common">
+                      {COMMON_COUNTRIES.map((code) => <option key={code} value={code}>{countryName(code)}</option>)}
+                    </optgroup>
+                    <optgroup label="All countries">
+                      {getCountryOptions().map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                    </optgroup>
+                  </select>
+                  {profileErrors.countryCode && <p id="edit-countryCode-error" style={{ fontSize: 12, color: "#DC2626", marginTop: 6, fontFamily: font }}>{profileErrors.countryCode}</p>}
+                </div>
+                {textField("city", "City", editProfile.countryCode === "IN" ? "e.g. Bengaluru" : "e.g. Berlin", {
+                  input: { list: "edit-city-options", autoComplete: "address-level2", autoCapitalize: "words", maxLength: 200 },
+                  help: "The city where you live now. Urgent questions from members in your city reach you.",
+                })}
+                <datalist id="edit-city-options">
+                  {(editProfile.countryCode === "IN" ? MAJOR_INDIAN_CITIES : [...new Set(groups.map(g => cityFromGroupName(g.name)).filter(Boolean))].sort()).map(c => <option key={c} value={c} />)}
+                </datalist>
                 {abroad && textField("hometown", "Hometown in India", "e.g. Pune, Maharashtra")}
                 {abroad && selectField("yearsAbroad", "Years abroad", "When did you move abroad?", YEARS_OPTIONS)}
                 {selectField("occupationStatus", "Status", "Choose your status", OCCUPATION_TYPES)}
@@ -6432,10 +6696,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                   help: user.verificationStatus === "approved" ? REVIEW_AGAIN_NOTE("LinkedIn") : null,
                 })}
                 {typeof editProfile.linkedinPublic === "boolean" && (
-                  <label style={{ display: "flex", gap: 10, alignItems: "flex-start", margin: "-4px 0 16px", fontSize: 13, lineHeight: 1.45, color: "#37352F", cursor: "pointer", fontFamily: font }}>
-                    <input type="checkbox" checked={editProfile.linkedinPublic} onChange={(e) => setField("linkedinPublic", e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: "#37352F" }} />
-                    <span>Show my LinkedIn link on my profile to other members<span style={{ display: "block", fontSize: 12, color: "#6B6A67", marginTop: 2 }}>Our team always sees it, to check members. Other members see it only if you tick this.</span></span>
-                  </label>
+                  <fieldset style={{ border: "none", padding: 0, margin: "-4px 0 16px", fontFamily: font }}>
+                    <legend style={{ ...editLabel, padding: 0 }}>Show my LinkedIn link to</legend>
+                    {[[true, "All members"], [false, "Only the NRIClub team"]].map(([value, label]) => (
+                      <label key={label} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0", fontSize: 13, color: "#37352F", cursor: "pointer" }}>
+                        <input type="radio" name="edit-linkedin-public" checked={editProfile.linkedinPublic === value} onChange={() => setField("linkedinPublic", value)} style={{ width: 16, height: 16, margin: 0, flexShrink: 0, accentColor: "#37352F" }} />
+                        {label}
+                      </label>
+                    ))}
+                    <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 2, lineHeight: 1.45 }}>Our team always sees it, to check members.</p>
+                  </fieldset>
                 )}
                 {profileErrors.form && <div role="alert" style={{ padding: "10px 12px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, fontSize: 13, color: "#B91C1C", marginBottom: 12, fontFamily: font }}>{profileErrors.form}</div>}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8 }}>

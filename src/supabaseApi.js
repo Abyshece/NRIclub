@@ -198,12 +198,11 @@ export async function signUp(email, password, metadata = {}) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error_description || data.msg || "Signup failed");
-  // Supabase answers an existing email with empty identities instead of an
-  // error; the user object is top-level when email confirmation is on.
-  const signedUpUser = data.user || data;
-  if (Array.isArray(signedUpUser?.identities) && signedUpUser.identities.length === 0) {
-    throw new Error("An account with this email already exists. Please log in instead.");
-  }
+  // Supabase answers an address that already has an account with a user
+  // that has no identities instead of an error (the user object is
+  // top-level when email confirmation is on). That answer is returned as it
+  // is: the signup page then shows the same next step as for a new address
+  // (profile.js, isExistingAccountResponse), so it never says who is a member.
   return data;
 }
 
@@ -1000,6 +999,41 @@ export async function updateProfile(updates) {
   return restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}&select=${PROFILE_FIELDS}`, publicUpdates, { Prefer: "return=representation" });
 }
 
+// The member's city, country (ISO code) and the place their profile shows
+// ("Berlin, Germany"), changed together, as Get verified sets them: urgent
+// questions go to members by their city. Since the 2026-10-25 database
+// update through public.update_my_city, which checks them; before it,
+// straight into profiles. Returns { city, country_code, location }.
+export async function updateMyCity(city, countryCode, location) {
+  if (!currentUser) throw new Error("Not logged in");
+  if (!knownMissing("update_my_city")) {
+    try {
+      return await restCall("POST", "/rest/v1/rpc/update_my_city", { p_city: city, p_country_code: countryCode, p_location: location });
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.update_my_city = Date.now();
+    }
+  }
+  await restCall("PATCH", `/rest/v1/profiles?id=eq.${currentUser.id}`, { city, country_code: countryCode, location });
+  return { city, country_code: countryCode, location };
+}
+
+// Changes the member's sign-in email address. Supabase Auth emails a link
+// to confirm it (with "Secure email change" on, to the old and the new
+// address); the address changes once it's confirmed. Supabase refuses an
+// address another account has; the page says the same either way, so it
+// can't be used to find out who is a member.
+export async function changeEmail(email) {
+  if (!currentUser) throw new Error("Not logged in");
+  const redirectTo = encodeURIComponent(window.location.origin + "/");
+  try {
+    await authCall("PUT", `/user?redirect_to=${redirectTo}`, { email });
+  } catch (err) {
+    if (err.code === "email_exists" || /already (been )?registered|already exists/i.test(err.message || "")) return;
+    throw err;
+  }
+}
+
 // ============================================================================
 // MEMBER VERIFICATION
 // ============================================================================
@@ -1251,17 +1285,16 @@ export async function addComment(postId, content) {
 // LIKES
 // ============================================================================
 
-export async function toggleLike(postId) {
+// Likes (on true) or unlikes a post. It says what the member wants rather
+// than flipping what the database has, so a heart shown wrongly can't undo
+// a like: liking twice keeps one like, unliking what isn't liked does nothing.
+export async function setLike(postId, on) {
   if (!currentUser) throw new Error("Not logged in");
-  // Check if already liked
-  const existing = await restCall("GET", `/rest/v1/likes?post_id=eq.${postId}&user_id=eq.${currentUser.id}`);
-  if (existing && existing.length > 0) {
-    await restCall("DELETE", `/rest/v1/likes?post_id=eq.${postId}&user_id=eq.${currentUser.id}`);
-    return false; // unliked
-  } else {
-    await restCall("POST", "/rest/v1/likes", { post_id: postId, user_id: currentUser.id });
-    return true; // liked
+  if (on) {
+    return restCall("POST", "/rest/v1/likes?on_conflict=post_id,user_id", { post_id: postId, user_id: currentUser.id },
+      { Prefer: "resolution=ignore-duplicates,return=minimal" });
   }
+  return restCall("DELETE", `/rest/v1/likes?post_id=eq.${encodeURIComponent(postId)}&user_id=eq.${currentUser.id}`);
 }
 
 export async function getUserLikes() {
@@ -1273,16 +1306,19 @@ export async function getUserLikes() {
 // CONNECTIONS (Namaste)
 // ============================================================================
 
+// Sends a Namaste request: { id, created }. created is false when the
+// member had sent one before (whatever came of it), so a request the other
+// member ignored isn't sent again.
 export async function sendNamaste(recipientId) {
   if (!currentUser) throw new Error("Not logged in");
-  // Check if connection already exists
   const existing = await restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&recipient_id=eq.${recipientId}&select=id`);
-  if (existing && existing.length > 0) return existing; // Already sent
-  return restCall("POST", "/rest/v1/connections", {
+  if (existing && existing.length > 0) return { id: existing[0].id, created: false };
+  const rows = await restCall("POST", "/rest/v1/connections", {
     requester_id: currentUser.id,
     recipient_id: recipientId,
     status: "pending",
   }, { Prefer: "return=representation" });
+  return { id: rows?.[0]?.id || null, created: true };
 }
 
 export async function respondToNamaste(connectionId, accept) {
@@ -1307,9 +1343,11 @@ export async function getAllConnections() {
   return restCall("GET", `/rest/v1/connections?status=eq.accepted&select=requester_id,recipient_id`);
 }
 
+// Requests the member sent that weren't accepted (yet). One the other
+// member ignored ("blocked") looks the same to the sender: still sent.
 export async function getSentNamastes() {
   if (!currentUser) return [];
-  return restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&status=eq.pending&select=recipient_id`);
+  return restCall("GET", `/rest/v1/connections?requester_id=eq.${currentUser.id}&status=in.(pending,blocked)&select=recipient_id`);
 }
 
 // ============================================================================
@@ -1400,6 +1438,20 @@ export async function createEvent(eventData) {
     ...eventData,
     organizer_id: currentUser.id,
   }, { Prefer: "return=representation" });
+}
+
+// The author's changes to their event (title, description, date, time,
+// place, city, link, photo). Returns the saved event, or throws: e.g. for a
+// date that has passed (refused by the database since the 2026-10-25
+// update), or when the event is gone. A photo that was replaced or removed
+// is deleted once the change is saved.
+export async function updateEvent(eventId, changes, previousImage = "") {
+  if (!currentUser) throw new Error("Not logged in");
+  const rows = await restCall("PATCH", `/rest/v1/events?id=eq.${encodeURIComponent(eventId)}&organizer_id=eq.${currentUser.id}`,
+    changes, { Prefer: "return=representation" });
+  if (!rows?.[0]) throw Object.assign(new Error("Event not saved"), { userMessage: "This event couldn't be changed. It may have been deleted." });
+  if (previousImage && "image_url" in changes && changes.image_url !== previousImage) deleteOwnImages([previousImage]).catch(() => {});
+  return rows[0];
 }
 
 export async function toggleRsvp(eventId) {
@@ -1907,16 +1959,29 @@ export async function submitAmbassadorApplication({ name, email, city, country, 
   return ref;
 }
 
+// Blocks a member and removes the Namaste connections between the two.
+// Since the 2026-10-25 database update that is one step
+// (public.block_member) that either all happens or not at all; before it,
+// the block is recorded first, then the connections are removed. Throws if
+// the block wasn't recorded.
 export async function blockUser(userId) {
   if (!currentUser) throw new Error("Not logged in");
-  // Remove all connections between the two users
-  try { await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${currentUser.id}&recipient_id=eq.${userId}`); } catch(e) {}
-  try { await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${userId}&recipient_id=eq.${currentUser.id}`); } catch(e) {}
-  // Block the user
-  return restCall("POST", "/rest/v1/blocks", {
-    blocker_id: currentUser.id,
-    blocked_id: userId,
-  });
+  if (!knownMissing("block_member")) {
+    try {
+      return await restCall("POST", "/rest/v1/rpc/block_member", { p_member: userId });
+    } catch (err) {
+      if (!isMissingInDatabase(err)) throw err;
+      missingSince.block_member = Date.now();
+    }
+  }
+  try {
+    await restCall("POST", "/rest/v1/blocks", { blocker_id: currentUser.id, blocked_id: userId });
+  } catch (err) {
+    if (!/23505/.test(err?.message || "")) throw err; // already blocked
+  }
+  await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${currentUser.id}&recipient_id=eq.${userId}`);
+  await restCall("DELETE", `/rest/v1/connections?requester_id=eq.${userId}&recipient_id=eq.${currentUser.id}`);
+  return true;
 }
 
 export async function unblockUser(userId) {

@@ -12,8 +12,8 @@ import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
 
-export const PRIVACY_VERSION = "2026-10-24";
-export const PRIVACY_DATE = "18 October 2026";
+export const PRIVACY_VERSION = "2026-10-25";
+export const PRIVACY_DATE = "22 October 2026";
 
 // How long data is kept: the periods this Policy promises. Until clean-up
 // jobs run on the database (plan C20), our team deletes by hand once a month
@@ -247,10 +247,13 @@ export function privacyDoc() {
             ["Photos", "a photo you upload is stored at a long web address that isn't listed anywhere. New photos get an address with a random code, which can't be guessed. Anyone who has a photo's exact address can open it without signing in, for example if a member copies it."],
           ] },
           { title: "Approved members", fields: [
-            ["What", "your profile (section 2, \"Your profile\"; your LinkedIn link only if you choose to show it in Edit profile); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; the places you add (not which places you recommend: members see only how many members recommend a place); the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
+            ["What", "your profile (section 2, \"Your profile\"; for your LinkedIn link, see below); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; the places you add (not which places you recommend: members see only how many members recommend a place); the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
             ["If your membership ends", VISIBILITY.onlyApprovedListed
               ? "if we decline your sign-up or block your account, or while our team checks your profile again (for example after you change your name), other members don't see your profile. What you posted before stays until you or we delete it, but without your name or photo: it shows as \"NRIClub member\", and your name is taken off events you organised."
               : "if we decline your sign-up or block your account, approved members can still see your profile until the account is deleted (section 2, \"The membership check\")."],
+          ] },
+          { title: "Your LinkedIn link", fields: [
+            ["Who sees it", "our team always does, to check members. Other approved members see it when \"Show my LinkedIn link to\" in Edit profile says \"All members\" (new members start with this), not when it says \"Only the NRIClub team\". You can change it at any time."],
           ] },
           { title: "Members waiting for our check", fields: [
             ["What", `until our team has approved them, new members can't see other members, their profiles or what they post. They only see the list of groups and the guides, and they can't contact anyone. ${VISIBILITY.onlyApprovedListed
@@ -316,7 +319,7 @@ export function privacyDoc() {
 
       { id: "storage", title: "8. Cookies and storage on your device", blocks: [
         { p: "NRIClub sets no cookies and uses no analytics, advertising or tracking tools. The site's own files, including its fonts, come from our server; member photos come from our database provider. Nothing is loaded from other websites." },
-        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for the invite). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device, with two exceptions: the sign-in items are sent to our servers to sign you in, and the invite code to look up who invited you." },
+        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for signing up and the invite). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device, with two exceptions: the sign-in items are sent to our servers to sign you in, and the invite code to look up who invited you." },
         { entries: [
           { title: "nriclub_token, nriclub_refresh", fields: [
             ["Purpose", "your sign-in: a short-lived access key and a key to renew it."],
@@ -325,6 +328,10 @@ export function privacyDoc() {
           { title: "nriclub_reset_requested", fields: [
             ["Purpose", "the email address and time when this browser asked for a password-reset link, so that after the reset only this browser fills in the address on the login form."],
             ["Kept", "until you've set the new password, at most 24 hours (it's deleted the next time you open NRIClub after that)."],
+          ] },
+          { title: "nriclub_signup", fields: [
+            ["Purpose", "while you sign up and we wait for the 6-digit code from your email: the email address and name you typed and where you are in signing up, so the code step is still there if the page reloads. Not your password."],
+            ["Kept", "in session storage, only in that browser tab: until you've signed up, leave the signup page or close the tab, and at most an hour."],
           ] },
           { title: "nriclub_invite", fields: [
             ["Purpose", "if you opened a member's invite link: the invite code from the link (on older links: that member's ID and first name). When you fill in your details for our check, the site sends the code to our servers to look up who invited you, and tells our team when you send the details."],
