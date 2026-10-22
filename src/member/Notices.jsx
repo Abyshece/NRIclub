@@ -94,10 +94,11 @@ const Steps = ({ items }) => (
 );
 
 // The member's city group, for the first step and the main button:
-// `group` its name when it exists; `missing` when the lists say it doesn't
-// (then they can ask for one); neither while the lists are still loading.
-const cityStep = (city, group, missing) => (group
-  ? { step: [`Join ${group}`, "Questions, rooms, referrals and meetups near you."], label: `Go to ${group}` }
+// `group` its name when it exists (`joined`: the member is in it already);
+// `missing` when the lists say it doesn't (then they can ask for one);
+// neither while the lists are still loading.
+const cityStep = (city, group, missing, joined) => (group
+  ? { step: [joined ? `You're in ${group}` : `Join ${group}`, "Questions, rooms, referrals and meetups near you."], label: `Go to ${group}` }
   : missing
     ? { step: [`Ask for a ${city} group`, `There's no ${city} group yet. Ask for one and be its first member.`], label: `Ask for a ${city} group` }
     : { step: ["Join your city's group", "Questions, rooms, referrals and meetups near you."], label: "Go to my city's group" });
@@ -105,8 +106,9 @@ const cityStep = (city, group, missing) => (group
 // The first time a new member opens NRIClub: what it's for, where they stand
 // with verification, and three first steps. `verified`: our team's approval
 // arrived with this visit (also true when their status says approved).
-// onCityGroup opens the city's group (or asks for one when `cityMissing`).
-export function WelcomeNotice({ user, verified, cityGroup, cityMissing, onClose, onCityGroup }) {
+// onCityGroup opens the city's group (or asks for one when `cityMissing`);
+// cityJoined: the member is in it already.
+export function WelcomeNotice({ user, verified, cityGroup, cityJoined, cityMissing, onClose, onCityGroup }) {
   const city = (user.city || "").trim();
   const approved = verified || user.verificationStatus === "approved";
   const needsInfo = !approved && user.verificationStatus === "needs_info";
@@ -120,7 +122,7 @@ export function WelcomeNotice({ user, verified, cityGroup, cityMissing, onClose,
       : held
         ? <p style={box("#EFF6FF", "#BFDBFE", "#1E40AF")}>Our team will check your membership before you can take part. This usually takes a day; you'll see it here.</p>
         : <p style={box("#EFF6FF", "#BFDBFE", "#1E40AF")}>Our team is checking your profile, usually within a day. You can already join groups and say hello.</p>;
-  const first = cityStep(city, cityGroup, cityMissing);
+  const first = cityStep(city, cityGroup, cityMissing, cityJoined);
   const actions = held || !city
     ? [{ label: "Get started", onClick: onClose, primary: true }]
     : [{ label: "Later", onClick: onClose }, { label: first.label, onClick: onCityGroup, primary: true }];
@@ -145,9 +147,9 @@ export function WelcomeNotice({ user, verified, cityGroup, cityMissing, onClose,
 }
 
 // Our team approved the member (after they had already been in).
-export function VerifiedNotice({ user, cityGroup, cityMissing, onClose, onCityGroup }) {
+export function VerifiedNotice({ user, cityGroup, cityJoined, cityMissing, onClose, onCityGroup }) {
   const city = (user.city || "").trim();
-  const first = cityStep(city, cityGroup, cityMissing);
+  const first = cityStep(city, cityGroup, cityMissing, cityJoined);
   return (
     <NoticeModal id="notice-verified" onClose={onClose}
       actions={city ? [{ label: "OK", onClick: onClose }, { label: first.label, onClick: onCityGroup, primary: true }] : [{ label: "OK", onClick: onClose, primary: true }]}>

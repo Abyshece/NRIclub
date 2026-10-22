@@ -20,6 +20,28 @@ const answersFrom = (form) => ({
   name: form.name,
 });
 
+// The code step survives a reload of the tab: the address, the name typed
+// and whether the address already had an account are kept in session
+// storage (this tab only, never the password) for an hour at most, the time
+// a code works. Removed when signup finishes, stops or leaves the code step.
+const CODE_STEP_KEY = "nriclub_signup";
+const CODE_STEP_MS = 60 * 60 * 1000;
+const rememberCodeStep = (state) => {
+  try { sessionStorage.setItem(CODE_STEP_KEY, JSON.stringify({ ...state, at: Date.now() })); } catch {}
+};
+const forgetCodeStep = () => {
+  try { sessionStorage.removeItem(CODE_STEP_KEY); } catch {}
+};
+const restoreCodeStep = () => {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(CODE_STEP_KEY) || "null");
+    const age = Date.now() - Number(s?.at);
+    if (s && typeof s.email === "string" && EMAIL_RE.test(s.email) && age >= 0 && age < CODE_STEP_MS) return s;
+  } catch {}
+  forgetCodeStep();
+  return null;
+};
+
 // Runs step, and once more after a short pause if it fails (the first
 // failure may be a dropped connection or a request that got no answer).
 // Resolves to step's result, or rejects with the second failure.
@@ -41,9 +63,14 @@ const tryTwice = async (step) => {
 // which logs its owner in), so this page never says whether someone is a
 // member: being one can say something about a person's origin.
 export default function SignUpFlow({ onComplete, onLogin, onBack }) {
-  const [step, setStep] = useState("account"); // account | code | stopped
+  // After a reload on the code step: that step again (see restoreCodeStep).
+  // The ticks were given before the code was sent; the password isn't kept.
+  const [restored] = useState(restoreCodeStep);
+  const [step, setStep] = useState(restored ? "code" : "account"); // account | code | stopped
   const [stopMessage, setStopMessage] = useState(""); // why signup stopped (step "stopped")
-  const [form, setForm] = useState({ name: "", email: "", password: "", agree: false, art9: false });
+  const [form, setForm] = useState(restored
+    ? { name: String(restored.name || "").slice(0, 200), email: restored.email, password: "", agree: true, art9: true }
+    : { name: "", email: "", password: "", agree: false, art9: false });
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null); // { text }
   const [submitting, setSubmitting] = useState(false);
@@ -53,7 +80,11 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
   // answers }: the password and answers it was created with), so going back
   // to fix something doesn't create a second account for the same address;
   // or { email, existing: true } for an address that already had one.
-  const [account, setAccount] = useState(null);
+  // A restored one has no password ({ restored: true }): this visit can't
+  // set one, nor sign in with it.
+  const [account, setAccount] = useState(() => (!restored ? null : restored.existing
+    ? { email: restored.email, existing: true }
+    : { email: restored.email, restored: true, resumed: !!restored.resumed, answers: answersFrom({ name: String(restored.name || "").slice(0, 200) }) }));
   const [resendAt, setResendAt] = useState(0);
 
   const fieldRefs = { name: useRef(null), email: useRef(null), password: useRef(null), agree: useRef(null), art9: useRef(null) };
@@ -94,6 +125,16 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
     if (!v.art9) e.art9 = ART9_ERROR;
     return e;
   };
+
+  // The code step, kept for this browser tab (see restoreCodeStep) while it
+  // shows; cleared when signup ends or goes back to the first step.
+  useEffect(() => {
+    if (step === "code" && account) rememberCodeStep({ email: account.email, name: form.name, existing: !!account.existing, resumed: !!account.resumed });
+    else forgetCodeStep();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, account]);
+  // Leaving signup (not a reload, which keeps it) forgets it too.
+  useEffect(() => forgetCodeStep, []);
 
   const handleContinue = async (e) => {
     e.preventDefault();
@@ -138,8 +179,10 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
       }
       if (existing) {
         // Already a member: a code to log in with, and the same code screen
-        // as for a new account. A failure here (e.g. a code was sent a
-        // moment ago) looks the same too; "Resend code" tries again.
+        // as for a new account. Waited for, as the signup of a new address
+        // waits for its email, so both take about as long. A failure (e.g. a
+        // code was sent a moment ago) looks the same too; "Resend code"
+        // tries again.
         await api.sendOtp(v.email).catch(() => {});
         setAccount({ email: v.email, existing: true });
       } else {
@@ -215,6 +258,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
       return;
     }
     await api.adoptSession();
+    forgetCodeStep();
     onComplete(mapProfile(db));
   };
 
@@ -261,7 +305,10 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
       // but before its answer arrives, the account mustn't keep the earlier
       // visit's details.
       if (account.resumed) await tryTwice(setUpAccount).catch(() => {});
-      if (account.resumed || account.password !== form.password) {
+      // After a reload on the code step the password isn't known here: it
+      // stays the one the account was created with, unless one was typed
+      // again since.
+      if (account.resumed || (account.restored ? !!form.password : account.password !== form.password)) {
         if (!(await replacePassword().then(() => true, () => false))) {
           // Still put this visit's answers and the 18+/Terms tick in place,
           // so the account doesn't keep the earlier visit's details after a
