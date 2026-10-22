@@ -3622,11 +3622,11 @@ def member_fixes():
     """Posts only in groups the author has joined (C12), the member's city
     (update_my_city) and blocking (block_member) (C29), editing events, and
     who sees a member's LinkedIn link: migration 20261025000000_member_fixes."""
-    kavi, leela, mohan, nora, ojas = (f"00000000-0000-0000-0000-000000000a{n}" for n in ("01", "02", "03", "04", "05"))
+    kavi, leela, mohan, nora, ojas = (f"00000000-0000-0000-0000-000000000e{n}" for n in ("01", "02", "03", "04", "05"))
     approved_member(kavi, "kavi@example.com", "Kavi K")
     approved_member(leela, "leela@example.com", "Leela L")
     approved_member(mohan, "mohan@example.com", "Mohan M")
-    joined, other = "70000000-0000-0000-0000-000000000a01", "70000000-0000-0000-0000-000000000a02"
+    joined, other = "70000000-0000-0000-0000-000000000e01", "70000000-0000-0000-0000-000000000e02"
     psql(f"INSERT INTO groups (id, name, category, is_approved, created_by) VALUES "
          f"('{joined}', 'Indians in Kavitown', 'City', true, '{kavi}'), "
          f"('{other}', 'Indians in Otherton', 'City', true, '{leela}'); "
@@ -3717,7 +3717,7 @@ def member_fixes():
 
     # --- editing events -------------------------------------------------------------------
     today = "to_char(CURRENT_DATE, 'YYYY-MM-DD')"
-    ev = "20000000-0000-0000-0000-000000000a01"
+    ev = "20000000-0000-0000-0000-000000000e01"
     check("a new event can be today", f"INSERT INTO events (id, title, date, organizer_id) "
           f"VALUES ('{ev}', 'Chai meetup', {today}, auth.uid()) RETURNING 1", as_user=kavi, expect="1")
     check("... not on a date that has passed",

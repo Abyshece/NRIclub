@@ -19,7 +19,7 @@ Everything is in:
 
 | Path | What |
 |------|------|
-| `supabase/migrations/20261025100000_admin_tools.sql` | The database update (one file, one transaction) |
+| `supabase/oneoff/2026-10-25-round3/run_in_sql_editor.sql` | The database update for all of round 3 (one file, one transaction) |
 | `supabase/functions/member-email/index.ts` | Decision emails; `GET ?quota=1` refreshes "Emails this month" |
 | `supabase/functions/admin-delete-signup/index.ts` | Deletes an unfinished sign-up |
 | `supabase/functions/admin-inbox-reply/index.ts` | Sends a reply from the Inbox |
@@ -35,9 +35,10 @@ in the code.
 ## 1. Database
 
 Supabase → **SQL Editor → New query** → paste the whole of
-`supabase/migrations/20261025100000_admin_tools.sql` → **Run**. It runs as
-one transaction, refuses to run before the 2026-10-24 update, and refuses to
-run twice. No existing rows change.
+`supabase/oneoff/2026-10-25-round3/run_in_sql_editor.sql` → **Run**. It holds
+both round 3 migrations (`20261025000000_member_fixes.sql` and
+`20261025100000_admin_tools.sql`), runs as one transaction, refuses to run
+before the 2026-10-24 update, and refuses to run twice.
 
 ## 2. Secrets
 
