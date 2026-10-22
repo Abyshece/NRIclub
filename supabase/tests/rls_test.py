@@ -1326,6 +1326,7 @@ def main():
     storage_images()
     admin_access()
     ambassador_applications()
+    admin_tools()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -3605,6 +3606,191 @@ def ambassador_applications():
                  "place_recommendations,places_added,posts,profile,profile_private,rate_limit_log,readme,"
                  "reports_about_me,reports_filed,sessions,terms_acceptances,urgent_questions_sent,user_settings,"
                  "verification_log")
+
+
+def as_admin(sql):
+    """sql run as the admin, after setup run as the table owner."""
+    claims = json.dumps({"sub": ADMIN, "role": "authenticated"})
+    return f"SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims}', false) IS NULL; {sql}"
+
+
+def admin_tools():
+    """Decision emails, deleting unfinished sign-ups and What's on from the
+    admin panel: migration 20261025100000_admin_tools."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    kiran, lata, mohan, nina, omar, pia, ravi, sita, tara = (f"00000000-0000-0000-0000-000000000a{n}"
+                                                            for n in ("01", "02", "03", "04", "05", "06", "07", "08", "09"))
+    for uid, mail, name in ((kiran, "kiran@example.com", "Kiran Kumar"), (lata, "lata@example.com", "Lata L"),
+                            (mohan, "mohan@example.com", "Mohan M"), (sita, "sita@example.com", "Sita S"),
+                            (tara, "tara.t@example.com", "Tara T")):
+        sign_up(uid, mail, {"full_name": name}, accept_terms=True)
+        psql(f"UPDATE profile_private SET verification_status = 'pending', submitted_at = now() WHERE id = '{uid}'")
+    approved_member(nina, "nina@example.com", "Nina N")
+    # omar never confirmed his address; pia confirmed it but never sent her
+    # details; ravi was declined before he sent any.
+    sign_up(omar, "omar@example.com", {"full_name": "Omar O"}, confirmed=False)
+    sign_up(pia, "pia@example.com", {"full_name": "Pia P"}, accept_terms=True)
+    sign_up(ravi, "ravi@example.com", {"full_name": "Ravi R"}, accept_terms=True)
+    psql(as_admin(f"SELECT public.review_member('{ravi}', 'rejected', 'We could not confirm you live abroad.', '')"))
+    email = lambda uid, kind: f"SELECT public.admin_member_email('{uid}', '{kind}')"
+    field = lambda uid, kind, key: f"SELECT r->>'{key}' FROM (SELECT public.admin_member_email('{uid}', '{kind}')) x(r)"
+    review = lambda uid, decision, message="": f"SELECT public.review_member('{uid}', '{decision}', '{message}', '')"
+
+    # --- decision emails --------------------------------------------------------
+    check("anon can't ask for a decision email", email(kiran, "approved"), role="anon", expect="error")
+    check("our team approves kiran, asks lata for more and declines mohan",
+          f"{review(kiran, 'approved')}; {review(lata, 'needs_info', 'Please add your LinkedIn link.')}; "
+          f"{review(mohan, 'rejected', 'We could not confirm you live abroad.')}", as_user=ADMIN,
+          expect="approved\nneeds_info\nrejected")
+    check("a member can't have a decision email sent", email(kiran, "approved"), as_user=nina, error_has="Admins only")
+    check("the email about kiran's approval: his first name, no message",
+          "SELECT concat_ws('|', r->>'kind', r->>'first_name', r->>'message', r->>'rule', r->>'decided_at' IS NOT NULL) "
+          f"FROM (SELECT public.admin_member_email('{kiran}', 'approved')) x(r)", as_user=ADMIN,
+          expect="approved|Kiran|||t")
+    check("... only once", email(kiran, "approved"), as_user=ADMIN, error_has="already gone out")
+    check("... and not about a decision that isn't his", email(kiran, "rejected"), as_user=ADMIN,
+          error_has="has changed since")
+    check("lata's email has the message she sees in the app", field(lata, "needs_info", "message"), as_user=ADMIN,
+          expect="Please add your LinkedIn link.")
+    check("mohan's too", field(mohan, "rejected", "message"), as_user=ADMIN, expect="We could not confirm you live abroad.")
+    check("lata back in review: no email about the earlier request",
+          f"{review(lata, 'pending')}; {email(lata, 'needs_info')}", as_user=ADMIN, error_has="has changed since")
+    check("... approved now: a new decision, a new email",
+          f"{review(lata, 'approved')}; {field(lata, 'approved', 'kind')}", as_user=ADMIN, expect="approved\napproved")
+    check("an undone decision isn't emailed (sita approved, then back to pending)",
+          f"{review(sita, 'approved')}; SELECT public.review_member('{sita}', 'pending', '', 'Undo', NULL, NULL, 'approved'); "
+          f"{email(sita, 'approved')}", as_user=ADMIN, error_has="has changed since")
+    check("a decision more than an hour old isn't emailed",
+          f"UPDATE profile_private SET verification_status = 'approved', reviewed_at = now() - interval '61 minutes' "
+          f"WHERE id = '{sita}'; " + as_admin(email(sita, "approved")), error_has="too old to email")
+    check("nina is blocked; her email has the reason she sees on the block screen",
+          f"{block(nina)}; SELECT concat_ws('|', r->>'kind', r->>'first_name', r->>'rule', r->>'reason', r->>'message') "
+          f"FROM (SELECT public.admin_member_email('{nina}', 'blocked')) x(r)", as_user=ADMIN,
+          expect="blocked\nblocked|Nina|Terms of Use: Spam, scams or advertising (§ 6)|it sent the same advert to many members|")
+    check("... unblocked: no block email any more", f"{unblock(nina)}; {email(nina, 'blocked')}", as_user=ADMIN,
+          error_has="has changed since")
+    check("unknown kinds are refused", email(kiran, "warned"), as_user=ADMIN, error_has="Unknown kind of email")
+    check("the log has one row per email sent, with the admin",
+          f"SELECT count(*) || '|' || bool_and(actor_id = '{ADMIN}') FROM private.member_email_log", expect="5|true")
+    check("... members can't read it", "SELECT count(*) FROM private.member_email_log", as_user=nina, expect="error")
+    check("... rows older than 30 days go with the next email",
+          f"UPDATE private.member_email_log SET created_at = now() - interval '31 days' WHERE member_id = '{kiran}'; "
+          + as_admin(f"{review(tara, 'approved')}; {field(tara, 'approved', 'kind')}; RESET ROLE; "
+                     f"SELECT count(*) FROM private.member_email_log WHERE member_id = '{kiran}'"),
+          expect="f\napproved\napproved\n0")
+    psql("DELETE FROM private.rate_log WHERE action = 'member_email'")
+    check("an admin can have at most 30 emails a minute sent", f"""
+          DO $$BEGIN FOR i IN 1..30 LOOP PERFORM private.take_rate('member_email', ARRAY['30', '1 minute', '300', '1 day']); END LOOP; END$$;
+          {review(sita, 'approved')}; {email(sita, 'approved')}""", as_user=ADMIN,
+          error_has="doing that too often")
+    check("... (the refused one isn't logged)",
+          f"SELECT count(*) FROM private.member_email_log WHERE member_id = '{sita}'", expect="0")
+
+    # --- deleting unfinished sign-ups -------------------------------------------
+    deletable = lambda uid: f"SELECT r->>'email_confirmed' FROM (SELECT public.admin_check_signup_delete('{uid}')) x(r)"
+    check("anon can't check a sign-up for deletion", f"SELECT public.admin_check_signup_delete('{omar}')", role="anon",
+          expect="error")
+    check("a member can't", f"SELECT public.admin_check_signup_delete('{omar}')", as_user=nina, error_has="Admins only")
+    check("omar (never confirmed his address) can be deleted", deletable(omar), as_user=ADMIN, expect="false")
+    check("pia (confirmed, never sent her details) too", deletable(pia), as_user=ADMIN, expect="true")
+    for who, uid in (("kiran (approved)", kiran), ("sita (waiting for review)", sita), ("ravi (declined)", ravi),
+                     ("the admin's own account", ADMIN)):
+        check(f"... not {who}", deletable(uid), as_user=ADMIN, error_has="never finished signing up")
+    check("... not a blocked unfinished account",
+          f"BEGIN; UPDATE profile_private SET status = 'blocked' WHERE id = '{pia}'; " + as_admin(deletable(pia)) + "; ROLLBACK",
+          error_has="never finished signing up")
+    check("... not someone who sent their details once",
+          f"BEGIN; INSERT INTO verification_log (member_id, decision) VALUES ('{pia}', 'submitted'); "
+          + as_admin(deletable(pia)) + "; ROLLBACK", error_has="never finished signing up")
+    check("... nor an unknown account", "SELECT public.admin_check_signup_delete(gen_random_uuid())", as_user=ADMIN,
+          error_has="Member not found")
+    record = lambda actor, uid: f"SELECT public.admin_record_signup_delete('{actor}', '{uid}', false) IS NOT NULL"
+    check("only the service role records a deletion", record(ADMIN, omar), as_user=ADMIN, expect="error")
+    check("... once the account is gone", record(ADMIN, omar), role="service_role", error_has="hasn't been deleted")
+    check("... done by an admin", f"DELETE FROM auth.users WHERE id = '{omar}'; SET ROLE service_role; {record(nina, omar)}",
+          error_has="Admins only")
+    check("omar's deletion is recorded like our team's other decisions, without his details",
+          f"DELETE FROM auth.users WHERE id = '{omar}'; SET ROLE service_role; {record(ADMIN, omar)}; RESET ROLE; "
+          f"SELECT concat_ws('|', action, target_kind, target_id, target_user IS NULL, source, explanation, actor_id = '{ADMIN}') "
+          f"FROM private.moderation_action WHERE action = 'delete_signup'",
+          expect=f"t\ndelete_signup|member|{omar}|t|own_initiative|Unfinished sign-up deleted (email address never confirmed)|t")
+
+    # --- What's on ----------------------------------------------------------------
+    today = datetime.now(ZoneInfo("Europe/Berlin")).date()
+    day = lambda n: (today + timedelta(days=n)).isoformat()
+    q = lambda v: "'" + v.replace("'", "''") + "'"
+
+    def event(**change):
+        e = {"id": "diwali-test-berlin", "title": "Diwali Test", "category": "festival", "start": day(20),
+             "city": "Berlin", "organiser": "Test e.V.", "summary": "Lights and food.", "url": "https://example.org/diwali"}
+        e.update(change)
+        return q(json.dumps({k: v for k, v in e.items() if v is not None}))
+
+    save = lambda e, new="true": f"SELECT public.admin_save_whats_on_event({e}::jsonb, {new})"
+    cols = "id, title, category, start_date, end_date, event_time, city, venue, area, organiser, price, language, summary, url"
+    public_ids = "SELECT COALESCE(string_agg(id, ',' ORDER BY id), '') FROM public.whats_on_events"
+    insert = ("INSERT INTO public.whats_on_events (id, title, category, start_date, city, organiser, summary, url) "
+              "VALUES ('x', 'X', 'festival', '2099-01-01', 'Berlin', 'O', 'S', 'https://x.org')")
+    check("anon can't write events", insert, role="anon", expect="error")
+    check("... nor members", insert, as_user=nina, expect="error")
+    check("... nor use the admin functions", save(event()), as_user=nina, error_has="Admins only")
+    check("an admin adds one (text trimmed, empty fields left out)",
+          "SELECT concat_ws('|', r->>'id', r->>'hidden', r ? 'end', r ? 'venue', r->>'time') "
+          f"FROM ({save(event(time='  18:00 ', venue=''))}) x(r)", as_user=ADMIN,
+          expect="diwali-test-berlin|false|f|f|18:00")
+    check("... anon reads it", f"SELECT {cols} FROM public.whats_on_events", role="anon",
+          expect=f"diwali-test-berlin|Diwali Test|festival|{day(20)}||18:00|Berlin|||Test e.V.|||Lights and food.|https://example.org/diwali")
+    check("... but not who added it", "SELECT created_by FROM public.whats_on_events", role="anon", expect="error")
+    check("... nor whether it's hidden", "SELECT hidden FROM public.whats_on_events", role="anon", expect="error")
+    check("anon doesn't see ended events (added straight to the table); one on its last day is still on",
+          f"INSERT INTO public.whats_on_events (id, title, category, start_date, end_date, city, organiser, summary, url) "
+          f"VALUES ('old-one', 'Old', 'music', '{day(-10)}', '{day(-1)}', 'Munich', 'O', 'S', 'https://example.org'), "
+          f"('on-now', 'Now', 'culture', '{day(-10)}', '{day(0)}', 'Munich', 'O', 'S', 'https://example.org'); "
+          f"SET ROLE anon; {public_ids}", expect="diwali-test-berlin,on-now")
+    check("an admin hides one", f"SELECT (public.admin_hide_whats_on_event('on-now', true))->>'hidden'; SET ROLE anon; {public_ids}",
+          as_user=ADMIN, expect="true\ndiwali-test-berlin")
+    check("... and shows it again", "SELECT (public.admin_hide_whats_on_event('on-now', false))->>'hidden'", as_user=ADMIN,
+          expect="false")
+    check("... members see what anon sees", public_ids, as_user=nina, expect="diwali-test-berlin,on-now")
+    check("the admin list has every event, upcoming and past",
+          "SELECT concat_ws('|', (SELECT string_agg(e->>'id', ',') FROM jsonb_array_elements(r->'upcoming') e), "
+          "(SELECT string_agg(e->>'id', ',') FROM jsonb_array_elements(r->'past') e)) FROM public.admin_whats_on_events() r",
+          as_user=ADMIN, expect="on-now,diwali-test-berlin|old-one")
+    check("... members can't list them", "SELECT public.admin_whats_on_events()", as_user=nina, error_has="Admins only")
+    check("an admin changes one (its id stays)",
+          "SELECT concat_ws('|', r->>'title', r->>'end', r ? 'time') "
+          f"FROM ({save(event(title='Diwali Mela', end=day(21)), 'false')}) x(r)", as_user=ADMIN,
+          expect=f"Diwali Mela|{day(21)}|f")
+    check("... a new event with an id in use is refused", save(event()), as_user=ADMIN, error_has="already exists")
+    check("... changing an unknown one too", save(event(id="nope"), "false"), as_user=ADMIN, error_has="Event not found")
+    for name, e, err in (
+            ("an id with capitals or spaces", event(id="Diwali Berlin"), "only a-z, 0-9 and single dashes"),
+            ("a missing title", event(title=None), "Fill in the title"),
+            ("an empty summary", event(summary="   "), "Fill in the title"),
+            ("an unknown type", event(category="bhangra"), "Unknown type of event"),
+            ("a day that doesn't exist", event(start="2027-02-30"), "real days"),
+            ("a date in another format", event(start="07.11.2027"), "real days"),
+            ("a last day before the first", event(end=day(19)), "The last day is before the first"),
+            ("an event that has ended", event(start=day(-3), end=day(-1)), "already ended"),
+            ("a summary over 160 characters", event(summary="x" * 161), "Keep the summary to 160 characters"),
+            ("an http:// link", event(url="http://example.org"), "full https:// address"),
+            ("a link with a space", event(url="https:// example.org"), "full https:// address"),
+            ("a javascript: link", event(url="javascript:alert(1)"), "full https:// address"),
+            ("a long time", event(time="x" * 41), "Give the time as"),
+            ("a city without letters", event(city="123"), "Give the city by its name"),
+            ("an unknown field", event(organizer="X"), "Unknown field"),
+            ("a field that isn't text", q('{"id": "a", "title": 5}'), "must be text")):
+        check(f"... refused: {name}", save(e), as_user=ADMIN, error_has=err)
+    check("... a summary of 160 characters is fine",
+          f"SELECT ({save(event(id='long-summary', summary='y' * 160))}) IS NOT NULL", as_user=ADMIN, expect="t")
+    check("an admin deletes one", "SELECT public.admin_delete_whats_on_event('long-summary')", as_user=ADMIN,
+          expect="long-summary")
+    check("... and again: not found", "SELECT public.admin_delete_whats_on_event('long-summary')", as_user=ADMIN,
+          error_has="Event not found")
+    check("members can't hide or delete", "SELECT public.admin_delete_whats_on_event('on-now')", as_user=nina,
+          error_has="Admins only")
+    check("... (still there)", "SELECT count(*) FROM public.whats_on_events WHERE id = 'on-now'", expect="1")
 
 
 if __name__ == "__main__":
