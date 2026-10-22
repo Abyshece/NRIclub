@@ -19,7 +19,7 @@ export const IMPRINT = {
   email: "hello@nriclub.app",
   // A second quick way to reach you, usually a phone number in international
   // format, e.g. "+49 89 1234 5678" (with the country code, no leading 0).
-  phone: "",
+  phone: "+49 176 4733 5005",
   // Companies only: the register entry (e.g. "Amtsgericht München, HRB 123456").
   register: "Not yet registered: registration of the company is in progress.",
   // Your VAT ID (USt-IdNr., e.g. "DE123456789"), if you have one.
