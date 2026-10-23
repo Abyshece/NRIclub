@@ -71,7 +71,7 @@ const h4 = { fontSize: 15, fontWeight: 700, color: "#37352F", margin: "0 0 6px" 
 // rather than comparing with this constant, so deploying a new text before
 // the database knows it never locks members out. Change both together, the
 // database one in a new migration.
-export const TERMS_VERSION = "2026-10-19";
+export const TERMS_VERSION = "2026-10-23";
 
 export { TERMS_CHANGES, PREVIOUS_TERMS_VERSION, TERMS_DATE } from "../content/legal/terms";
 export { ART9_CONSENT_TEXT, ART9_CONSENT_VERSION, ART9_WITHDRAW_TEXT } from "../content/legal/consent";
@@ -201,8 +201,9 @@ export const ImpressumModal = ({ onClose }) => (
 
 // The Terms in a dialog, where members accept them (signup, Get verified,
 // the Terms screen): the version the database will record
-// (api.getCurrentTermsVersion). Until the 2026-10-19 database update that is
-// still 2026-10, so someone who signs up in between reads the version they
+// (api.getCurrentTermsVersion). Until the database knows a new version (the
+// travel board's database update makes 2026-10-23 current), that is still
+// the earlier one, so someone who signs up in between reads the version they
 // accept. If the version can't be fetched, the current text.
 export function TermsModal({ onClose }) {
   const [version, setVersion] = useState(null);

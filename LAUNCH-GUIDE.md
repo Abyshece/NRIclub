@@ -107,13 +107,14 @@ In the Supabase dashboard → **Authentication**:
    Below the code in *Confirm signup*, add the contract confirmation
    (wording from the legal review, `docs/compliance/questions-for-the-lawyer.md`):
    "Enter this code to finish signing up. Your membership is then under
-   our Terms of Use (version 2026-10-19), which you accepted on the sign-up
+   our Terms of Use (version 2026-10-23), which you accepted on the sign-up
    form; you can read and save them at https://nriclub.app/terms.
    Provider: <name, address>, hello@nriclub.app. You can withdraw from the
    contract within 14 days by telling us or by deleting your account."
-   Change the template only after `20261019000000_access_consent.sql` has
-   run on the live database: before that, sign-ups still accept version
-   2026-10. Keep the version in step with the Terms. Once the company is
+   Change the version in the template only once the database update that
+   makes it current has run on the live database (2026-10-23: the travel
+   board update below): before that, sign-ups still accept the earlier
+   version. Keep the version in step with the Terms. Once the company is
    registered, add its details (§ 35a GmbHG) to every template.
 5. **Attack Protection**: turn on *Leaked password protection* (prevent use of
    leaked passwords). It may need a paid plan (Pro); if yours doesn't offer
@@ -234,11 +235,10 @@ key in the frontend or in a `VITE_` variable.
   Enterprise plans, so set `vercel: true` only once the project is on one;
   `mailbox: true` once you have accepted the mailbox provider's), and how
   long Vercel keeps request logs on your plan.
-- **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` says "17 October
-  2026", the day its current wording went live (the Terms 2026-10-19 with
-  the round-2 edits to sections 8 to 10); `PRIVACY_DATE` in
-  `src/content/legal/privacy.js` says "18 October 2026" (the Privacy Policy
-  2026-10-24, which adds applications to be a city ambassador). When you
+- **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` says "23 October
+  2026" (the Terms 2026-10-23, with the travel board's rules in section 7);
+  `PRIVACY_DATE` in `src/content/legal/privacy.js` says "23 October 2026"
+  (the Privacy Policy 2026-10-23, which adds the travel board). When you
   change a text, set its date to the day the change goes live.
 - **Deleting old data:** the Privacy Policy promises retention periods
   that, for now, you keep by hand once a month
@@ -395,15 +395,21 @@ companion or someone to carry documents or a small open item as a favour.
 Listings already in the Market's Travel category stay until they're deleted.
 
 1. **Deploy the site.** Until the SQL below runs, the board says "Coming
-   soon" and the Market works as before.
+   soon", the Market works as before, and members and sign-ups are still
+   asked for the Terms 2026-10-19 (the app shows that text).
 2. **The same day:** run
    `supabase/oneoff/2026-10-26-travel-board/run_in_sql_editor.sql` in the
    SQL editor, the whole file at once (it is the migration
    `20261026000000_travel_board.sql` with a check in front). It refuses to
    run before round 3, and a second time. If the board still says "Coming
    soon" a few minutes later, run `NOTIFY pgrst, 'reload schema';`.
-3. **Check as a member:** open Travel, tick the rules, post a trip, and
-   delete it again.
+   It also makes the Terms 2026-10-23 current: every member is asked once
+   to accept them when they next open NRIClub ("A new version of the
+   Terms" above says what section 14 promises members about notice).
+   Then change the version in the *Confirm signup* email template to
+   2026-10-23.
+3. **Check as a member:** accept the new Terms, open Travel, tick the
+   rules, post a trip, and delete it again.
 4. **Moderation:** reported trips show under **Reports → Travel board**;
    **Remove…** with the rule "Travel board rules (§ 7)" for a post that asks
    for money or carries something the rules don't allow.

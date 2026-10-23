@@ -36,6 +36,10 @@
 --     are kept 30 days.
 --   * "Download my data" also has the member's travel posts and when they
 --     accepted the rules.
+--   * Terms of Use version 2026-10-23 (the travel board's rules in section 7,
+--     travel posts in section 9): private.current_terms_version(). Members
+--     who accepted 2026-10-19 accept the new version on the Terms screen
+--     before they can take part again.
 -- Needs all earlier migrations (up to 20261025100000_admin_tools.sql).
 -- Can be run again: it replaces what it made the first time.
 -- Existing rows: none change. reports.content_type and notifications.type
@@ -48,6 +52,23 @@ BEGIN
     RAISE EXCEPTION 'Run the round 3 update (up to 20261025100000_admin_tools.sql) first.';
   END IF;
 END;
+$$;
+
+-- ============================================================================
+-- TERMS OF USE 2026-10-23
+-- ============================================================================
+
+-- The version of the Terms of Use members accept now (replaces 2026-10-19,
+-- which is at nriclub.app/terms/2026-10-19). The site shows this version's
+-- text (TERMS_VERSION in src/content/legal/terms.js and
+-- src/member/LegalModals.jsx) and asks public.current_terms_version() which
+-- version to accept, so it can go live before this update: until then
+-- members keep accepting 2026-10-19. public.accept_terms records only the
+-- version this function names, and private.is_verified_member doesn't let
+-- members who accepted an earlier version take part until they accept it.
+CREATE OR REPLACE FUNCTION private.current_terms_version()
+RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+  SELECT '2026-10-23'::text;
 $$;
 
 -- ============================================================================

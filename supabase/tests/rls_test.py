@@ -74,7 +74,7 @@ JOSE1 = "00000000-0000-0000-0000-000000000201"
 JOSE2 = "00000000-0000-0000-0000-000000000202"
 JOSE3 = "00000000-0000-0000-0000-000000000203"
 CONVO2 = "30000000-0000-0000-0000-000000000002"
-TERMS_VERSION = "2026-10-19"
+TERMS_VERSION = "2026-10-23"
 ART9_VERSION = "2026-10-19"  # of the Art. 9 consent wording
 WAIT = "00000000-0000-0000-0000-000000000301"
 WAIT2 = "00000000-0000-0000-0000-000000000302"
@@ -4100,6 +4100,27 @@ def travel_board():
         if not ok:
             sys.exit(f"posting a trip failed: {err}")
         return out.splitlines()[-1]
+
+    # --- the Terms of Use 2026-10-23 ---------------------------------------------------
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src", "content", "legal", "terms.js"),
+              encoding="utf-8") as f:
+        site_terms = re.search(r'export const TERMS_VERSION = "([^"]+)"', f.read()).group(1)
+    check("the database asks for the Terms version the site shows (TERMS_VERSION, 2026-10-23)",
+          "SELECT public.current_terms_version()", role="anon", expect=site_terms)
+    pita = "00000000-0000-0000-0000-000000000c0a"
+    approved_member(pita, "pita@example.com", "Pita P")
+    # As if she had accepted 2026-10-19 before this update.
+    psql(f"UPDATE profile_private SET terms_version = '2026-10-19' WHERE id = '{pita}'; "
+         f"UPDATE terms_acceptances SET version = '2026-10-19' WHERE member_id = '{pita}' AND kind = 'terms'")
+    check("a member who accepted 2026-10-19 can't take part until she accepts 2026-10-23",
+          "SELECT private.is_active_member()", as_user=pita, expect="f")
+    check("... accepting 2026-10-19 again is refused", "SELECT public.accept_terms('2026-10-19')", as_user=pita,
+          error_has="The Terms of Use have been updated")
+    check("... she accepts 2026-10-23: recorded, with both acceptances kept",
+          "SELECT public.accept_terms('2026-10-23'); SELECT terms_version FROM profile_private WHERE id = auth.uid(); "
+          "SELECT string_agg(version, ',' ORDER BY version) FROM terms_acceptances WHERE member_id = auth.uid() AND kind = 'terms'",
+          as_user=pita, expect="2026-10-23\n2026-10-23\n2026-10-19,2026-10-23")
+    check("... and takes part again", "SELECT private.is_active_member()", as_user=pita, expect="t")
 
     # --- who can read and post -----------------------------------------------------
     check("signed-out visitors can't read the board", "SELECT count(*) FROM travel_posts", role="anon",

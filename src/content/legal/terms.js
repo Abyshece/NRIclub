@@ -16,24 +16,21 @@ import { CONTACT_EMAIL, SITE, mail, a, strong } from "./doc.js";
 import { IMPRINT, operatorLines } from "../imprint.js";
 import { REPORT_HREF } from "./reporting.js";
 import { termsDoc20261010 } from "./terms-2026-10.js";
+import { termsDoc20261019 } from "./terms-2026-10-19.js";
 import { RETENTION } from "./privacy.js";
 
-export const TERMS_VERSION = "2026-10-19";
-export const TERMS_DATE = "17 October 2026";
+export const TERMS_VERSION = "2026-10-23";
+export const TERMS_DATE = "23 October 2026";
 
 // Earlier versions, by version, for nriclub.app/terms/<version>.
-export const TERMS_ARCHIVE = { "2026-10": termsDoc20261010 };
-export const PREVIOUS_TERMS_VERSION = "2026-10";
+export const TERMS_ARCHIVE = { "2026-10-19": termsDoc20261019, "2026-10": termsDoc20261010 };
+export const PREVIOUS_TERMS_VERSION = "2026-10-19";
 
 // For the Terms screen ("We've updated our Terms"): what changed in this
 // version, in a few lines.
 export const TERMS_CHANGES = [
-  "Who runs NRIClub and how to reach us, including our points of contact under the EU Digital Services Act.",
-  "How you join, how our membership check works, and that origin, nationality or religion never decide it.",
-  "Until our team has approved you, you can't see other members or contact anyone.",
-  "Clear rules for the Market, jobs and referrals, travel, events, mentoring, questions and places.",
-  "How to report illegal content, how we moderate, and how you can challenge our decisions.",
-  "Your rights to your content, changes to NRIClub and to these Terms, ending your membership, your right of withdrawal, liability and the law that applies.",
+  "A section on the new travel board (flying to or from India) replaces \"Travel companions\": favours only, no payment; only documents and small open items, checked in person; you're responsible for your own luggage at customs; and we may remove posts that break these rules (section 7).",
+  "You can report travel posts like other content (section 9).",
 ];
 
 // Who the contract is with: the operator from src/content/imprint.js once it
@@ -277,7 +274,10 @@ export function termsDoc(version = TERMS_VERSION) {
       ] },
 
       { id: "versions", title: "19. Earlier versions", blocks: [
-        { ul: [[a(`Version ${PREVIOUS_TERMS_VERSION}`, `/terms/${PREVIOUS_TERMS_VERSION}`), " (October 2026)"]] },
+        { ul: [
+          [a(`Version ${PREVIOUS_TERMS_VERSION}`, `/terms/${PREVIOUS_TERMS_VERSION}`), " (17 October 2026)"],
+          [a("Version 2026-10", "/terms/2026-10"), " (October 2026)"],
+        ] },
       ] },
     ],
   };
@@ -287,9 +287,9 @@ export const termsPath = (version) => (version && version !== TERMS_VERSION && T
 
 // The Terms a member is about to accept (signup, Get verified, the Terms
 // screen): the version the database will record. Until the database knows
-// the current version (the 2026-10-19 update), that is still the earlier
-// one, shown without the "earlier version" note, so a member never accepts
-// one version while reading another.
+// the current version (for 2026-10-23, the travel board's database update),
+// that is still the earlier one, shown without the "earlier version" note,
+// so a member never accepts one version while reading another.
 export function termsDocToAccept(version) {
   if (!version || version === TERMS_VERSION || !TERMS_ARCHIVE[version]) return termsDoc();
   return { ...TERMS_ARCHIVE[version](), subtitle: `Version ${version}`, intro: [] };

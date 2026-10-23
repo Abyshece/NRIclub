@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
-import { TermsModal, PrivacyModal, TERMS_CHANGES, PREVIOUS_TERMS_VERSION } from "./LegalModals";
+import { TermsModal, PrivacyModal, TERMS_CHANGES, PREVIOUS_TERMS_VERSION, TERMS_VERSION } from "./LegalModals";
 import { AccountFooter } from "./AccountActions";
 import { TermsCheckbox, Art9Checkbox, PrivacyNote, LegalLink, TERMS_ERROR, ART9_ERROR } from "./Consent";
 import { FONT, COLORS, ErrorBox, primaryButtonStyle, ArrowRight } from "./ui";
@@ -69,8 +69,10 @@ export default function TermsGate({ user, termsVersion, onDone, onSignOut }) {
     setSubmitting(false);
   };
 
+  // What changed in the version this site shows (not while the database still asks for an earlier one).
+  const showChanges = termsChanged && termsVersion === TERMS_VERSION && TERMS_CHANGES?.length > 0;
   const intro = termsChanged
-    ? "We've updated our Terms of Use. To keep using NRIClub, please read what changed and accept the new version."
+    ? `We've updated our Terms of Use. To keep using NRIClub, please ${showChanges ? "read what changed and " : ""}accept the new version.`
     : needs.terms
       ? "To keep using NRIClub, please confirm you're 18 or older and accept our Terms of Use."
       : "One more thing: we now ask separately for your consent to what you share being shown to other members.";
@@ -88,7 +90,7 @@ export default function TermsGate({ user, termsVersion, onDone, onSignOut }) {
           <p style={{ color: COLORS.helper, fontSize: 15, lineHeight: 1.55, margin: 0 }}>{intro}</p>
         </div>
 
-        {termsChanged && TERMS_CHANGES?.length > 0 && (
+        {showChanges && (
           <section aria-labelledby="tg-changes-title" style={{ background: "#fff", border: "1px solid #E8E7E4", borderRadius: 12, padding: "16px 18px", marginBottom: 24 }}>
             <h3 id="tg-changes-title" style={{ fontSize: 15, fontWeight: 700, color: COLORS.text, margin: "0 0 8px" }}>What changed</h3>
             <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, lineHeight: 1.55, color: COLORS.text }}>
