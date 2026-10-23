@@ -58,7 +58,8 @@ export function useCanonical(path) {
 
 // The bar along the top of the public pages; it stays in view while the page
 // scrolls (the page around it must not have overflow hidden, or it won't).
-// "What's on" shows where there's room for it (the footer always has it).
+// "Why NRIClub" (the homepage's #why) and "What's on" show where there's
+// room for them (the homepage's hero links to #why too; the footer has What's on).
 export function PublicNav({ onLogin, onJoin, maxWidth = 1100, loginLabel = "Log in" }) {
   const btn = { fontSize: 14, fontWeight: 600, minHeight: 44, padding: "0 16px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
   return (
@@ -70,6 +71,7 @@ export function PublicNav({ onLogin, onJoin, maxWidth = 1100, loginLabel = "Log 
           <span className="pub-logo-text" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>NRI<span style={{ fontStyle: "italic", fontFamily: '"Times New Roman",serif' }}>Club</span></span>
         </a>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <a href={window.location.pathname === "/" ? "#why" : "/#why"} className="pub-nav-link" style={{ display: "inline-flex", alignItems: "center", minHeight: 44, padding: "0 12px", fontSize: 14, fontWeight: 500, color: INK, textDecoration: "none", whiteSpace: "nowrap" }}>Why NRIClub</a>
           <a href="/whats-on" className="pub-nav-link" aria-current={/^\/whats-on\/?$/.test(window.location.pathname) ? "page" : undefined} style={{ display: "inline-flex", alignItems: "center", minHeight: 44, padding: "0 12px", fontSize: 14, fontWeight: 500, color: INK, textDecoration: "none", whiteSpace: "nowrap" }}>What's on</a>
           <button type="button" onClick={onLogin} style={{ ...btn, border: "1px solid #C9C8C5", background: "#fff", color: INK }}>{loginLabel}</button>
           {onJoin && <button type="button" onClick={onJoin} style={{ ...btn, border: "1px solid " + INK, background: INK, color: "#fff" }}>Join free</button>}
