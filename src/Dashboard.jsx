@@ -1644,19 +1644,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
-  // The first message about a post on the travel board (text starts with
-  // its "[TRAVEL: ...]" tag, as the Market's Contact Seller does): sends it
-  // and opens the conversation. Resolves to why it couldn't be sent, or "".
-  const messageAboutTrip = async (post, text) => {
-    const otherId = post?.user_id;
+  // The first message about a Market listing or a trip on the travel board
+  // (text starts with its "[MARKETPLACE: ...]" or "[TRAVEL: ...]" tag, so the
+  // chat shows what it's about): sends it and opens the conversation.
+  // Resolves to why it couldn't be sent, or "".
+  const sendFirstMessage = async (otherId, text) => {
     try {
-      if (!otherId || otherId === user.id) return "You can't message the author of this post.";
       const reason = await messageBlockedReason(otherId);
       if (reason) return reason;
       const convo = await api.getOrCreateConversation(otherId);
       const cid = convo?.id || convo?.[0]?.id;
       if (!cid) return "Your message couldn't be sent. Please try again.";
       await api.sendMessage(cid, text);
+      // Reload the conversations so this one is in the list.
       try {
         const dbConvos = await api.getConversations();
         if (dbConvos) { setConvos(dbConvos.map(toConvo)); setConvosLoaded(true); }
@@ -4443,7 +4443,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         );
 
       case "travel":
-        return <TravelBoard user={user} focusId={travelFocus} onFocus={setTravelFocus} onMessage={messageAboutTrip} onReport={setReportConfirm}
+        return <TravelBoard user={user} focusId={travelFocus} onFocus={setTravelFocus} onReport={setReportConfirm}
+          onMessage={(post, text) => (post?.user_id && post.user_id !== user.id ? sendFirstMessage(post.user_id, text) : "You can't message the author of this post.")}
           reportedIds={reportedIds} blockedIds={blockedIds} openMember={openMember} Avatar={Avatar} />;
 
       case "mentoring":
@@ -5702,39 +5703,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button onClick={async () => {
                   if (!contactMsg.trim()) return;
                   const sellerId = selectedMarketItem.user_id;
-                  try {
-                    if (!sellerId || sellerId === user.id) {
-                      alert("You can't contact the seller of this listing.");
-                      return;
-                    }
-                    const reason = await messageBlockedReason(sellerId);
-                    if (reason) { alert(reason); return; }
-                    // Tag message as marketplace with item title for filtering
-                    const taggedMsg = `[MARKETPLACE: ${selectedMarketItem.title}] ${contactMsg}`;
-                    const convo = await api.getOrCreateConversation(sellerId);
-                    const cid = convo?.id || convo?.[0]?.id;
-                    if (cid) {
-                      await api.sendMessage(cid, taggedMsg);
-                      // Reload the conversations so this one is in the list.
-                      try {
-                        const dbConvos = await api.getConversations();
-                        if (dbConvos) { setConvos(dbConvos.map(toConvo)); setConvosLoaded(true); }
-                      } catch(re) {}
-                      setSelectedMarketItem(null);
-                      setContactMsg("");
-                      setChatMessages(p => { const n = { ...p }; delete n[cid]; return n; });
-                      setSelectedConvo(cid);
-                      setView("messages");
-                      return;
-                    } else {
-                      alert("Your message couldn't be sent. Please try again.");
-                      return;
-                    }
-                  } catch (e) {
-                    // Keep the message so it can be sent again.
-                    alert(await messageErrorText(e, sellerId));
+                  if (!sellerId || sellerId === user.id) {
+                    alert("You can't contact the seller of this listing.");
                     return;
                   }
+                  // Tag message as marketplace with item title for filtering
+                  const problem = await sendFirstMessage(sellerId, `[MARKETPLACE: ${selectedMarketItem.title}] ${contactMsg}`);
+                  // Keep the message so it can be sent again.
+                  if (problem) { alert(problem); return; }
+                  setSelectedMarketItem(null);
+                  setContactMsg("");
                 }} style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6 }}>{Icons.send({ size: 14 })} Send Message</button>
               </div>
             </div>

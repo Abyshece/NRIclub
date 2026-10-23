@@ -105,23 +105,36 @@ export const CITY_ALIASES = {
   zurich: "zuerich",
 };
 
-// A city's name for matching: the part before a comma, without case, extra
-// spaces or a part in brackets, with ä, ö, ü and ß written out, and the
-// other names above made one ("New Delhi, India" and "Delhi" match).
+// A city's name written plainly: the part before a comma, without case,
+// extra spaces or a part in brackets, with ä, ö, ü and ß written out.
+const plainCity = (name) => String(name || "").split(",")[0].toLowerCase()
+  .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+  .replace(/\s*\(.*\)\s*$/, "").replace(/\s+/g, " ").trim();
+
+// A city's name for matching: written plainly, with the other names above
+// made one ("New Delhi, India" and "Delhi" match).
 export function cityKey(name) {
-  const k = String(name || "").split(",")[0].toLowerCase()
-    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
-    .replace(/\s*\(.*\)\s*$/, "").replace(/\s+/g, " ").trim();
+  const k = plainCity(name);
   return CITY_ALIASES[k] || k;
+}
+
+// Whether a city typed into a filter (perhaps only its start) is the city
+// with this key: "Frankfurt am Main", "Münch" and "Bangal" all count.
+export function cityFits(typed, key) {
+  const t = plainCity(typed);
+  if (!t) return true;
+  const names = [key, ...Object.keys(CITY_ALIASES).filter((a) => CITY_ALIASES[a] === key)];
+  return cityKey(typed) === key || names.some((n) => n.startsWith(t));
 }
 
 // A city as the database takes it (private.travel_city_ok): 2 to 60
 // characters, starting with a letter, without digits or symbols other than
-// . , ' ’ ( ) / -.
+// . , ' ’ ( ) / -, and nothing like a web address (a dot followed by two
+// letters).
 export function cityProblem(name) {
   const s = String(name || "").replace(/\s+/g, " ").trim();
   if (!s) return "Please fill in the city.";
-  if (s.length < 2 || s.length > 60 || !/^\p{L}/u.test(s) || /[0-9!"#$%&*+:;<=>?@[\\\]^_`{|}~]/.test(s)) {
+  if (s.length < 2 || s.length > 60 || !/^\p{L}/u.test(s) || /[0-9!"#$%&*+:;<=>?@[\\\]^_`{|}~]/.test(s) || /\.\p{L}{2}/u.test(s)) {
     return "Please write the city's name in letters (2 to 60 characters, no numbers).";
   }
   return "";

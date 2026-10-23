@@ -17,6 +17,7 @@ import { emailFailed, queueDecisionEmail } from "./memberEmail";
 import ModerationDialog from "./ModerationDialog";
 import { Button, ConfirmDialog, EmptyState, ErrorNote, PageHeader, Pill, SectionTitle } from "./ui";
 import { ago, formatDate, friendlyError, firstName } from "./format";
+import { TRAVEL_HELP, TRAVEL_KINDS, tripDates } from "../content/travel";
 import {
   REPORT_KINDS, SAFETY_CHECKLIST, mailtoLink, noticeDecisionEmail, noticeReceiptEmail, reportReasonLabel,
 } from "../content/legal/reporting";
@@ -134,9 +135,10 @@ export function contentPreview(kind, row) {
   if (kind === "place") return { type: "place", content: row.name, excerpt: [row.kind, row.address, row.city].filter(Boolean).join(" · ") + (row.note ? ` — ${row.note}` : ""), authorId: row.created_by };
   if (kind === "message") return { type: "message", content: row.content, date: formatDate(row.created_at, { time: true }), authorId: row.sender_id };
   if (kind === "travel") {
-    const when = row.date_from === row.date_to ? row.date_from : `${row.date_from} to ${row.date_to}`;
-    const what = (row.help || []).join(", ");
-    return { type: "travel", content: `${row.from_city} → ${row.to_city}`, excerpt: [row.kind === "offer" ? `Travelling, can help with: ${what}` : `Needs help with: ${what}`, row.flight, row.note].filter(Boolean).join(" · "), date: when, authorId: row.user_id };
+    // As the member saw it on the travel board.
+    const what = (row.help || []).map((h) => TRAVEL_HELP[h]?.[row.kind] || h).join(", ");
+    return { type: "travel", content: `${row.from_city} → ${row.to_city}`, date: tripDates(row.date_from, row.date_to), authorId: row.user_id,
+      excerpt: [`${TRAVEL_KINDS[row.kind]?.label || row.kind}: ${what}`, row.flight, row.note].filter(Boolean).join(" · ") };
   }
   // Listings keep image_url as a JSON array of URLs; show the first.
   let img = row.image_url;

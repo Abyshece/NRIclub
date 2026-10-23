@@ -1658,17 +1658,31 @@ function travelMissing(err) {
 const TRAVEL_FIELDS = "id,user_id,kind,from_city,to_city,from_key,to_key,date_from,date_to,flight,help,note,created_at,updated_at";
 
 // The posts whose last date is today (in Germany: from) or later, soonest
-// first, with their authors. The database leaves out posts of members who
-// blocked the member or were blocked by them, and of accounts other members
-// don't see. null before the database update.
+// first (the first 500, plus all of the member's own), with their authors.
+// The database leaves out posts of members who blocked the member or were
+// blocked by them, and of accounts other members don't see. null before the
+// database update.
+const TRAVEL_SELECT = `select=${TRAVEL_FIELDS},profiles:user_id(id,name,avatar_url)`;
 export async function getTravelPosts(from) {
+  const current = `&date_to=gte.${encodeURIComponent(from)}`;
   try {
-    return withPerson(await restCall("GET", `/rest/v1/travel_posts?select=${TRAVEL_FIELDS},profiles:user_id(id,name,avatar_url)`
-      + `&date_to=gte.${encodeURIComponent(from)}&order=date_from.asc,created_at.desc&limit=500`));
+    const [board, mine] = await Promise.all([
+      restCall("GET", `/rest/v1/travel_posts?${TRAVEL_SELECT}${current}&order=date_from.asc,created_at.desc&limit=500`),
+      currentUser ? restCall("GET", `/rest/v1/travel_posts?${TRAVEL_SELECT}${current}&user_id=eq.${currentUser.id}`) : [],
+    ]);
+    const ids = new Set((board || []).map((p) => p.id));
+    return withPerson([...(board || []), ...(mine || []).filter((p) => !ids.has(p.id))]);
   } catch (err) {
     if (travelMissing(err)) return null;
     throw err;
   }
+}
+
+// One post (e.g. from a notification), if the member may see it; else null.
+export async function getTravelPost(id) {
+  if (!UUID.test(id || "")) return null;
+  const rows = withPerson(await restCall("GET", `/rest/v1/travel_posts?${TRAVEL_SELECT}&id=eq.${id}`));
+  return rows?.[0] || null;
 }
 
 // Whether the member has ticked the board's current rules: { version,

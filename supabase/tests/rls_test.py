@@ -4161,6 +4161,7 @@ def travel_board():
             ("Delhi to New Delhi is no trip", trip("offer", "Delhi", "New Delhi, India", 10), "The two cities are the same."),
             ("a city needs letters", trip("offer", "Berlin 2", "Delhi", 10), "each city's name in letters"),
             ("... not a web address", trip("offer", "Berlin", "http://example.com", 10), "each city's name in letters"),
+            ("... nor anything like one", trip("offer", "Berlin", "pay-courier.com", 10), "each city's name in letters"),
             ("... and isn't empty", trip("offer", "  ", "Delhi", 10), "which city you fly from"),
             ("the kind of help is needed", trip("offer", "Berlin", "Delhi", 10, help=()), "what you can help with"),
             ("... (for a request too)", trip("request", "Berlin", "Delhi", 10, 20, help=()), "what you need"),
@@ -4307,6 +4308,19 @@ def travel_board():
     check("... 19: it goes up", trip("offer", "Berlin", "Agra", 5).replace("RETURNING id", "RETURNING 1"), as_user=zoe,
           expect="1")
 
+    # --- a first message from the board ----------------------------------------------------------------
+    ola = "00000000-0000-0000-0000-000000000c09"
+    approved_member(ola, "ola@example.com", "Ola O")
+    convo = psql(f"INSERT INTO conversations (participant_1, participant_2) VALUES (auth.uid(), '{uma}') RETURNING id",
+                 "authenticated", ola)[1]
+    tagged = (f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{convo}', auth.uid(), "
+              "'[TRAVEL: Frankfurt → Delhi, 12 Dec] Could my mother sit with you?') RETURNING 1")
+    check("a message about a trip needs the board's rules ticked", tagged, as_user=ola,
+          error_has="Please read and tick the travel board's rules first.")
+    check("... other messages don't", f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{convo}', "
+          "auth.uid(), 'Hello Uma') RETURNING 1", as_user=ola, expect="1")
+    check("... once ticked, it goes", f"{accept}; {tagged}", as_user=ola, expect="true\n1")
+
     # --- reports and our team ------------------------------------------------------------------------
     report = (f"INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith) "
               f"VALUES (auth.uid(), '{tara_trip}', '[TRAVEL] FRANKFURT → Delhi — Illegal: Fraud or a scam', 'travel', 'fraud', "
@@ -4397,6 +4411,19 @@ def travel_board():
             f"{len(samples)} names in all)", ok and len(aliases) >= 20 and out.split("|") == js_keys,
             f"node: {proc.stderr[:200]} db: {err[:200]} differ: "
             f"{[(s, j, d) for s, j, d in zip(samples, js_keys, out.split('|')) if j != d]}")
+    names = cities + ["Frankfurt a.M.", "St. John's", "L'Aquila", "Frankfurt/Main", "São Paulo", "दिल्ली", "Köln",
+                      "pay-courier.com", "wa.me/x", "Berlin 2", "x", "Delhi!", "@home", "Rio de Janeiro (RJ)"]
+    proc = subprocess.run(["node", "--input-type=module", "-e",
+                           "import { cityProblem } from './src/content/travel.js';"
+                           f"console.log(JSON.stringify({json.dumps(names)}.map((n) => !cityProblem(n))))"],
+                          cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
+                          capture_output=True, text=True)
+    js_ok = json.loads(proc.stdout) if proc.returncode == 0 else []
+    ok, out, err = psql("SELECT string_agg(private.travel_city_ok(c)::text, '|' ORDER BY i) FROM unnest(ARRAY["
+                        + ", ".join("'" + c.replace("'", "''") + "'" for c in names) + "]) WITH ORDINALITY AS t(c, i)")
+    db_ok = [v == "true" for v in out.split("|")] if ok else []
+    verdict("... and take the same city names (and refuse the same ones)", db_ok == js_ok and db_ok.count(False) == 6,
+            f"node: {proc.stderr[:200]} db: {err[:200]} differ: {[(n, j, d) for n, j, d in zip(names, js_ok, db_ok) if j != d]}")
 
     # --- deleting an account; running the migration again ------------------------------------------------
     gone = post(wen, trip("offer", "Bonn", "Delhi", 9))

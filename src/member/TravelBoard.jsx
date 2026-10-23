@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import { apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./profile";
 import { todayInGermany } from "../content/whatson";
 import {
   TRAVEL_RULES, TRAVEL_RULES_VERSION, CUSTOMS_LINKS, TRAVEL_KINDS, TRAVEL_HELP, TRAVEL_HELP_KEYS, NOTE_LIMIT,
-  WINDOW_DAYS, AHEAD_DAYS, CITIES_ABROAD, CITIES_INDIA, cityKey, cityProblem, FLIGHT_PATTERN, cleanFlight, addDays,
+  WINDOW_DAYS, AHEAD_DAYS, CITIES_ABROAD, CITIES_INDIA, cityKey, cityFits, cityProblem, FLIGHT_PATTERN, cleanFlight, addDays,
   daysBetween, tripDates, tripTitle, isMatch, nextMonths, inMonth, travelTag,
 } from "../content/travel";
 
@@ -48,12 +48,11 @@ function postedAgo(at) {
   return days <= 0 ? "Posted today" : days === 1 ? "Posted yesterday" : `Posted ${days} days ago`;
 }
 
-// A filter's city against a post's: the same city, or the start of its name
-// while it's being typed.
-const cityFits = (wanted, key) => !wanted || key === wanted || key.startsWith(wanted);
+// A filter's cities against a post's: the same city, or the start of one of
+// its names while it's being typed (cityFits).
 function fitsFilters(p, f) {
-  return cityFits(cityKey(f.from), p.from_key || cityKey(p.from_city))
-    && cityFits(cityKey(f.to), p.to_key || cityKey(p.to_city))
+  return cityFits(f.from, p.from_key || cityKey(p.from_city))
+    && cityFits(f.to, p.to_key || cityKey(p.to_city))
     && (!f.month || inMonth(p, f.month))
     && (f.type === "all" || p.kind === f.type);
 }
@@ -64,18 +63,25 @@ const byDate = (a, b) => (a.date_from < b.date_from ? -1 : a.date_from > b.date_
 // SMALL PARTS
 // ---------------------------------------------------------------------------
 
-// A window over the board: Escape and a tap outside close it (not while it
-// is saving).
+// A window over the board: Escape (the window on top) and a tap outside
+// close it (not while it is saving).
 function Dialog({ id, title, onClose, busy, children, wide }) {
+  const ref = useRef(null);
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape" && !busy) { e.preventDefault(); onClose(); } };
+    const onKey = (e) => {
+      if (e.key !== "Escape" || busy || e.defaultPrevented) return;
+      const open = document.querySelectorAll("[role=dialog]");
+      if (open[open.length - 1] !== ref.current) return;
+      e.preventDefault();
+      onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [busy, onClose]);
   return (
     <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 55, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 16, overflowY: "auto", backdropFilter: "blur(2px)" }}
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
-      <div role="dialog" aria-modal="true" aria-labelledby={id} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: wide ? 520 : 460, padding: "22px 20px", margin: "auto", boxSizing: "border-box", fontFamily: font }}>
+      <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={id} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: wide ? 520 : 460, padding: "22px 20px", margin: "auto", boxSizing: "border-box", fontFamily: font }}>
         <h3 id={id} style={{ fontSize: 17, fontWeight: 700, color: INK, margin: "0 0 12px", fontFamily: font }}>{title}</h3>
         {children}
       </div>
@@ -202,7 +208,7 @@ function RulesChecklist({ onCancel, onAccepted }) {
 // ---------------------------------------------------------------------------
 // A NEW POST, OR EDITING ONE
 // ---------------------------------------------------------------------------
-function TripForm({ initial, today, onCancel, onSaved }) {
+function TripForm({ initial, today, onCancel, onSaved, onRefused }) {
   const editing = !!initial.id;
   const [f, setF] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -248,9 +254,13 @@ function TripForm({ initial, today, onCancel, onSaved }) {
       setBusy(false);
       onSaved(saved, editing);
     } catch (e) {
+      // Refused by the database's rules for who may post: the board's rules
+      // to tick again (they changed), or not an approved member.
+      const refused = /42501|row-level security/i.test(e?.message || "");
+      const again = refused ? await onRefused() : "";
       setBusy(false);
-      setError(/42501|row-level security/i.test(e?.message || "") ? "Only members our team has approved can post on the travel board."
-        : apiErrorMessage(e, "Your post couldn't be saved. Please try again."));
+      setError(again || (refused ? "Only members our team has approved can post on the travel board."
+        : apiErrorMessage(e, "Your post couldn't be saved. Please try again.")));
     }
   };
 
@@ -386,22 +396,32 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
   const [messaging, setMessaging] = useState(null); // the post whose author is being messaged
   const [notice, setNotice] = useState("");
 
-  // Both come with the same database update: either one missing means the
-  // board isn't there yet.
+  // The posts and the rules come with the same database update: the rules'
+  // function missing means the board isn't there yet (and the posts missing
+  // too, if the rules couldn't be asked about).
   const load = async () => {
     setLoadError("");
     const [rows, status] = await Promise.allSettled([api.getTravelPosts(today), api.getTravelRulesStatus()]);
-    if ((rows.status === "fulfilled" && rows.value === null) || (status.status === "fulfilled" && status.value === null)) {
+    const rowsMissing = rows.status === "fulfilled" && rows.value === null;
+    if ((status.status === "fulfilled" && status.value === null) || (rowsMissing && status.status === "rejected")) {
       setState("missing");
       return;
     }
-    const failed = [rows, status].find((r) => r.status === "rejected");
+    const failed = [rows, status].find((r) => r.status === "rejected") || (rowsMissing ? { reason: null } : null);
     if (failed) {
       setLoadError(isNetworkError(failed.reason) ? NETWORK_MESSAGE : "The travel board couldn't be loaded. Please try again.");
       setState("error");
       return;
     }
-    setPosts(rows.value || []);
+    let list = rows.value;
+    // The post a notification points at, if it's beyond the first 500.
+    if (focusId && !list.some((p) => String(p.id) === String(focusId))) {
+      try {
+        const one = await api.getTravelPost(String(focusId));
+        if (one) list = [...list, one];
+      } catch (e) {}
+    }
+    setPosts(list);
     setRules(status.value);
     setState("ready");
   };
@@ -455,10 +475,23 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
       alert(apiErrorMessage(e, "The post couldn't be deleted. Please try again."));
     }
   };
+  // The database wants the current rules ticked (they changed since this
+  // page loaded, or another tab): show them again, and say so.
+  const rulesAgain = async () => {
+    try {
+      const s = await api.getTravelRulesStatus();
+      if (s) setRules(s);
+      if (s && !s.accepted) {
+        setChecklist({ then: () => {} });
+        return "Please read and tick the board's rules first, then try again.";
+      }
+    } catch (e) {}
+    return "";
+  };
   const sendMessage = async (p, body) => {
     const problem = await onMessage(p, body);
     if (!problem) setMessaging(null);
-    return problem;
+    return /rules first/.test(problem || "") ? (await rulesAgain()) || problem : problem;
   };
 
   const cardProps = { onEdit: editPost, onDelete: remove, onMessage: messagePost, onReport: reportPost, openMember, Avatar };
@@ -600,12 +633,13 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
         {[...CITIES_ABROAD, ...CITIES_INDIA].map((c) => <option key={c} value={c} />)}
       </datalist>
 
+      {form && <TripForm initial={form} today={today} onCancel={() => setForm(null)} onSaved={saved} onRefused={rulesAgain} />}
+      {messaging && <MessageDialog post={messaging} onCancel={() => setMessaging(null)} onSend={sendMessage} />}
+      {/* Last, so it shows over the form or message it interrupts. */}
       {checklist && (
         <RulesChecklist onCancel={() => setChecklist(null)}
           onAccepted={(status) => { const then = checklist.then; setRules(status); setChecklist(null); then(); }} />
       )}
-      {form && <TripForm initial={form} today={today} onCancel={() => setForm(null)} onSaved={saved} />}
-      {messaging && <MessageDialog post={messaging} onCancel={() => setMessaging(null)} onSend={sendMessage} />}
     </div>
   );
 }

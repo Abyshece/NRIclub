@@ -42,9 +42,10 @@ $guard$;
 --     kind) and delete it. Dates can't be in the past or more than a year
 --     ahead.
 --   * The board's rules: a member ticks them once, before their first post
---     (public.accept_travel_rules, kept in private.travel_rules_ack with the
---     rules' version). The INSERT policy needs it; the site also asks for it
---     before the first message from the board (public.travel_rules_status).
+--     or message from the board (public.accept_travel_rules, kept in
+--     private.travel_rules_ack with the rules' version; the site asks with
+--     public.travel_rules_status). The INSERT policy needs it, and so does a
+--     message tagged with a trip ("[TRAVEL: ...]", a trigger on messages).
 --   * Approved members see the posts whose last date hasn't passed (in
 --     Germany), except those of members they blocked or who blocked them,
 --     and of accounts other members don't see (blocked, under review).
@@ -89,7 +90,9 @@ $$;
 -- few other names of the same city made one ("New Delhi" is "delhi",
 -- "München" and "Muenchen" are "munich"). The same as cityKey and
 -- CITY_ALIASES in src/content/travel.js: change both together
--- (supabase/tests/rls_test.py compares them).
+-- (supabase/tests/rls_test.py compares them), and in the same migration run
+-- UPDATE public.travel_posts SET from_city = from_city; so the keys stored
+-- with the posts (from_key, to_key) follow.
 CREATE OR REPLACE FUNCTION private.travel_city_key(p_city TEXT)
 RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
   SELECT CASE k
@@ -123,12 +126,15 @@ RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
 $$;
 
 -- A city as members may write it: 2 to 60 characters, starting with a
--- letter, without digits or symbols other than . , ' ’ ( ) / - (names in
--- notifications stay names).
+-- letter, without digits or symbols other than . , ' ’ ( ) / -, and nothing
+-- like a web address ("pay-courier.com": a dot followed by two letters).
+-- Names in notifications stay names. (cityProblem in src/content/travel.js
+-- says the same.)
 CREATE OR REPLACE FUNCTION private.travel_city_ok(p_city TEXT)
 RETURNS BOOLEAN LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
   SELECT p_city IS NOT NULL AND char_length(p_city) BETWEEN 2 AND 60 AND p_city ~ '^[[:alpha:]]'
-    AND translate(p_city, '0123456789!"#$%&*+:;<=>?@[\]^_`{|}~', '') = p_city;
+    AND translate(p_city, '0123456789!"#$%&*+:;<=>?@[\]^_`{|}~', '') = p_city
+    AND p_city !~ '\.[[:alpha:]]{2}';
 $$;
 
 -- "12 Dec 2026", "10–20 Dec 2026", "28 Dec 2026–5 Jan 2027".
@@ -440,6 +446,22 @@ $$;
 DROP TRIGGER IF EXISTS notify_travel_matches ON public.travel_posts;
 CREATE TRIGGER notify_travel_matches AFTER INSERT ON public.travel_posts
   FOR EACH ROW EXECUTE FUNCTION private.notify_travel_matches();
+
+-- A first message from the board starts with the trip it's about
+-- ("[TRAVEL: Frankfurt → Delhi, 12 Dec] ...", travelTag in
+-- src/content/travel.js): it needs the board's rules ticked, as a post does.
+CREATE OR REPLACE FUNCTION private.check_travel_message()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+  IF current_user = 'authenticated' AND NOT private.has_travel_rules() THEN
+    RAISE EXCEPTION 'Please read and tick the travel board''s rules first.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS check_travel_message ON public.messages;
+CREATE TRIGGER check_travel_message BEFORE INSERT ON public.messages
+  FOR EACH ROW WHEN (NEW.content LIKE '[TRAVEL:%') EXECUTE FUNCTION private.check_travel_message();
 
 -- A deleted post: the notifications pointing at it go too.
 CREATE OR REPLACE FUNCTION private.forget_travel_notifications()
@@ -1091,11 +1113,12 @@ $$;
 
 REVOKE ALL ON FUNCTION private.travel_city_key(TEXT), private.travel_city_ok(TEXT), private.travel_dates_text(DATE, DATE),
   private.travel_help_text(TEXT[], TEXT), private.travel_rules_version(), private.has_travel_rules(),
-  private.check_travel_post(), private.notify_travel_matches(), private.forget_travel_notifications() FROM PUBLIC;
--- The table's generated columns, checks, trigger and policies run as the
+  private.check_travel_post(), private.check_travel_message(), private.notify_travel_matches(),
+  private.forget_travel_notifications() FROM PUBLIC;
+-- The table's generated columns, checks, triggers and policies run as the
 -- member who writes or reads.
 GRANT EXECUTE ON FUNCTION private.travel_city_key(TEXT), private.travel_city_ok(TEXT), private.travel_rules_version(),
-  private.has_travel_rules(), private.check_travel_post(), private.notify_travel_matches(),
+  private.has_travel_rules(), private.check_travel_post(), private.check_travel_message(), private.notify_travel_matches(),
   private.forget_travel_notifications() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION private.travel_dates_text(DATE, DATE), private.travel_help_text(TEXT[], TEXT) TO service_role;
 -- Members only (each function checks who is asking).
