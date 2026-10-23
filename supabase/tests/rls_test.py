@@ -4104,23 +4104,13 @@ def travel_board():
     # --- the Terms of Use 2026-10-23 ---------------------------------------------------
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src", "content", "legal", "terms.js"),
               encoding="utf-8") as f:
-        site_terms = re.search(r'export const TERMS_VERSION = "([^"]+)"', f.read()).group(1)
+        terms_js = f.read()
+    site_terms = re.search(r'export const TERMS_VERSION = "([^"]+)"', terms_js).group(1)
     check("the database asks for the Terms version the site shows (TERMS_VERSION, 2026-10-23)",
           "SELECT public.current_terms_version()", role="anon", expect=site_terms)
-    pita = "00000000-0000-0000-0000-000000000c0a"
-    approved_member(pita, "pita@example.com", "Pita P")
-    # As if she had accepted 2026-10-19 before this update.
-    psql(f"UPDATE profile_private SET terms_version = '2026-10-19' WHERE id = '{pita}'; "
-         f"UPDATE terms_acceptances SET version = '2026-10-19' WHERE member_id = '{pita}' AND kind = 'terms'")
-    check("a member who accepted 2026-10-19 can't take part until she accepts 2026-10-23",
-          "SELECT private.is_active_member()", as_user=pita, expect="f")
-    check("... accepting 2026-10-19 again is refused", "SELECT public.accept_terms('2026-10-19')", as_user=pita,
-          error_has="The Terms of Use have been updated")
-    check("... she accepts 2026-10-23: recorded, with both acceptances kept",
-          "SELECT public.accept_terms('2026-10-23'); SELECT terms_version FROM profile_private WHERE id = auth.uid(); "
-          "SELECT string_agg(version, ',' ORDER BY version) FROM terms_acceptances WHERE member_id = auth.uid() AND kind = 'terms'",
-          as_user=pita, expect="2026-10-23\n2026-10-23\n2026-10-19,2026-10-23")
-    check("... and takes part again", "SELECT private.is_active_member()", as_user=pita, expect="t")
+    check("... and the version before it is the site's PREVIOUS_TERMS_VERSION",
+          "SELECT public.previous_terms_version()", role="anon",
+          expect=re.search(r'export const PREVIOUS_TERMS_VERSION = "([^"]+)"', terms_js).group(1))
 
     # --- who can read and post -----------------------------------------------------
     check("signed-out visitors can't read the board", "SELECT count(*) FROM travel_posts", role="anon",
@@ -4341,6 +4331,68 @@ def travel_board():
     check("... other messages don't", f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{convo}', "
           "auth.uid(), 'Hello Uma') RETURNING 1", as_user=ola, expect="1")
     check("... once ticked, it goes", f"{accept}; {tagged}", as_user=ola, expect="true\n1")
+
+    # --- members still on the Terms 2026-10-19 -------------------------------------------------------
+    # Section 14: new Terms apply once accepted; until then the previous ones
+    # do. Only the travel board (its rules are in the new section 7) needs
+    # the new version.
+    pita, quin, ravi = (f"00000000-0000-0000-0000-000000000c{n}" for n in ("0a", "0b", "0c"))
+    for uid, mail, name in ((pita, "pita@example.com", "Pita P"), (quin, "quin@example.com", "Quin Q"),
+                            (ravi, "ravi@example.com", "Ravi R")):
+        approved_member(uid, mail, name)
+    # As if they had accepted these versions before this update.
+    for uid, version in ((pita, "2026-10-19"), (quin, "2026-10"), (ravi, "2026-10-19")):
+        psql(f"UPDATE profile_private SET terms_version = '{version}' WHERE id = '{uid}'; "
+             f"UPDATE terms_acceptances SET version = '{version}' WHERE member_id = '{uid}' AND kind = 'terms'")
+    psql(f"UPDATE profile_private SET art9_consent_at = NULL, art9_consent_version = NULL WHERE id = '{ravi}'; "
+         f"INSERT INTO private.travel_rules_ack (user_id, rules_version) VALUES ('{pita}', '2026-10-26')")
+    takes_part = "SELECT private.is_active_member()::text || '|' || private.can_browse()::text"
+    check("the version before the current one is 2026-10-19 (anyone may ask, as the site does)",
+          "SELECT public.previous_terms_version()", role="anon", expect="2026-10-19")
+    check("a member who accepted 2026-10-19 still takes part", takes_part, as_user=pita, expect="true|true")
+    check("... sees other members", f"SELECT count(*) FROM profiles WHERE id = '{uma}'", as_user=pita, expect="1")
+    check("... and the trips on the board", "SELECT count(*) > 0 FROM travel_posts WHERE user_id <> auth.uid()",
+          as_user=pita, expect="t")
+    check("... posts in the feed", "INSERT INTO posts (user_id, content) VALUES (auth.uid(), 'Hello from Pita') RETURNING 1",
+          as_user=pita, expect="1")
+    pita_convo = psql(f"INSERT INTO conversations (participant_1, participant_2) VALUES (auth.uid(), '{uma}') RETURNING id",
+                      "authenticated", pita)[1]
+    check("... starts a conversation and sends a message", f"INSERT INTO messages (conversation_id, sender_id, content) "
+          f"VALUES ('{pita_convo}', auth.uid(), 'Hello Uma') RETURNING 1", as_user=pita, expect="1")
+    check("... but can't post a trip, even with the board's rules ticked", trip("offer", "Berlin", "Delhi", 12),
+          as_user=pita, error_has="Please accept the updated Terms of Use to use the travel board.")
+    claims = json.dumps({"sub": pita, "role": "authenticated"})
+    check("... (the INSERT policy says no too, without the trigger)", f"""
+          BEGIN; ALTER TABLE public.travel_posts DISABLE TRIGGER check_travel_post;
+          SET LOCAL ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims}', true) IS NOT NULL;
+          {trip("offer", "Berlin", "Delhi", 12)}; ROLLBACK""", error_has="row-level security")
+    check("... trigger back on", "SELECT tgenabled FROM pg_trigger WHERE tgname = 'check_travel_post'", expect="O")
+    pita_tagged = (f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{pita_convo}', auth.uid(), "
+                   "'[TRAVEL: Frankfurt → Delhi, 12 Dec] Could my mother sit with you?') RETURNING 1")
+    check("... nor send a message about a trip", pita_tagged, as_user=pita,
+          error_has="Please accept the updated Terms of Use to use the travel board.")
+    check("a member still on an earlier version (2026-10) can't take part until she accepts the current one",
+          takes_part, as_user=quin, expect="false|false")
+    check("... (nor post in the feed)", "INSERT INTO posts (user_id, content) VALUES (auth.uid(), 'Hello') RETURNING 1",
+          as_user=quin, error_has="row-level security")
+    check("the Art. 9 consent is still required: on 2026-10-19 without it, no taking part", takes_part, as_user=ravi,
+          expect="false|false")
+    psql(f"UPDATE profile_private SET art9_consent_at = NULL, art9_consent_version = NULL WHERE id = '{ola}'")
+    check("... nor on the current version", takes_part, as_user=ola, expect="false|false")
+    psql(f"UPDATE profile_private SET art9_consent_at = now(), art9_consent_version = '2026-10-19' WHERE id = '{ola}'")
+    check("accepting 2026-10-19 again is refused", "SELECT public.accept_terms('2026-10-19')", as_user=pita,
+          error_has="The Terms of Use have been updated")
+    check("pita accepts 2026-10-23: recorded, with both acceptances kept",
+          "SELECT public.accept_terms('2026-10-23'); SELECT terms_version FROM profile_private WHERE id = auth.uid(); "
+          "SELECT string_agg(version, ',' ORDER BY version) FROM terms_acceptances WHERE member_id = auth.uid() AND kind = 'terms'",
+          as_user=pita, expect="2026-10-23\n2026-10-23\n2026-10-19,2026-10-23")
+    check("... now she posts a trip", trip("offer", "Berlin", "Delhi", 12).replace("RETURNING id", "RETURNING 1"),
+          as_user=pita, expect="1")
+    check("... and sends a message about one", pita_tagged, as_user=pita, expect="1")
+    check("ravi gives the Art. 9 consent (with the current Terms): he takes part again",
+          f"SELECT public.accept_terms('2026-10-23', true); {takes_part}", as_user=ravi, expect="2026-10-23\ntrue|true")
+    check("quin accepts the current Terms: she takes part again",
+          f"SELECT public.accept_terms('2026-10-23'); {takes_part}", as_user=quin, expect="2026-10-23\ntrue|true")
 
     # --- reports and our team ------------------------------------------------------------------------
     report = (f"INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith) "

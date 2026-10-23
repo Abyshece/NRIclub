@@ -37,9 +37,13 @@
 --   * "Download my data" also has the member's travel posts and when they
 --     accepted the rules.
 --   * Terms of Use version 2026-10-23 (the travel board's rules in section 7,
---     travel posts in section 9): private.current_terms_version(). Members
---     who accepted 2026-10-19 accept the new version on the Terms screen
---     before they can take part again.
+--     travel posts in section 9): private.current_terms_version(). As
+--     section 14 of the Terms says, members who accepted 2026-10-19 keep
+--     taking part under it until they accept the new version
+--     (private.previous_terms_version, private.is_verified_member); the
+--     site asks them each time they open NRIClub, and they can say "Later".
+--     Posting on the travel board, and a first message from it, need the
+--     new version (private.has_current_terms).
 -- Needs all earlier migrations (up to 20261025100000_admin_tools.sql).
 -- Can be run again: it replaces what it made the first time.
 -- Existing rows: none change. reports.content_type and notifications.type
@@ -64,11 +68,60 @@ $$;
 -- src/member/LegalModals.jsx) and asks public.current_terms_version() which
 -- version to accept, so it can go live before this update: until then
 -- members keep accepting 2026-10-19. public.accept_terms records only the
--- version this function names, and private.is_verified_member doesn't let
--- members who accepted an earlier version take part until they accept it.
+-- version this function names.
 CREATE OR REPLACE FUNCTION private.current_terms_version()
 RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
   SELECT '2026-10-23'::text;
+$$;
+
+-- The version before it. New Terms apply to a member only once they accept
+-- them; until then the Terms they accepted keep applying, and NRIClub asks
+-- each time they open it (Terms section 14). So members who accepted this
+-- version still take part (private.is_verified_member below), and the site
+-- lets them answer "Later". Only the travel board, whose rules are in the
+-- new section 7, needs the current version (private.has_current_terms).
+-- Members on an even earlier version (2026-10, before the Art. 9 consent)
+-- still accept the current one first. Before the next version replaces
+-- 2026-10-19 here, members still on it must have accepted a later one or
+-- had their membership ended with 4 weeks' notice (section 12); otherwise
+-- they would be locked out.
+CREATE OR REPLACE FUNCTION private.previous_terms_version()
+RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+  SELECT '2026-10-19'::text;
+$$;
+
+-- For the site: the version before the current one, which members may still
+-- be on. Anyone may ask, like public.current_terms_version().
+CREATE OR REPLACE FUNCTION public.previous_terms_version()
+RETURNS TEXT LANGUAGE sql STABLE SET search_path = '' AS $$
+  SELECT private.previous_terms_version();
+$$;
+
+-- Whether the signed-in member has accepted the current version.
+CREATE OR REPLACE FUNCTION private.has_current_terms()
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profile_private
+    WHERE id = (SELECT auth.uid()) AND terms_accepted_at IS NOT NULL
+      AND terms_version = private.current_terms_version()
+  );
+$$;
+
+-- Members who may see other members and take part (replaces the 2026-10-19
+-- version): not blocked, approved by an admin, 18 or older, accepted the
+-- current Terms or the previous version, and gave the Art. 9 consent (a
+-- consent the law requires, so there is no "later" for it).
+-- private.is_active_member and private.can_browse, and with them every
+-- policy that lets a member see or do something, go through this.
+CREATE OR REPLACE FUNCTION private.is_verified_member()
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profile_private
+    WHERE id = (SELECT auth.uid()) AND status = 'active' AND verification_status = 'approved'
+      AND age_confirmed_at IS NOT NULL AND terms_accepted_at IS NOT NULL
+      AND terms_version IN (private.current_terms_version(), private.previous_terms_version())
+      AND art9_consent_at IS NOT NULL
+  );
 $$;
 
 -- ============================================================================
@@ -267,6 +320,12 @@ DECLARE
   today DATE := private.today_in_germany();
   member BOOLEAN := current_user = 'authenticated';
 BEGIN
+  -- The board's rules are in the Terms 2026-10-23 (section 7): a member
+  -- still on the previous version accepts them first. (In so many words
+  -- here; the INSERT policy checks it too.)
+  IF TG_OP = 'INSERT' AND member AND private.is_active_member() AND NOT private.has_current_terms() THEN
+    RAISE EXCEPTION 'Please accept the updated Terms of Use to use the travel board.' USING ERRCODE = 'P0001';
+  END IF;
   IF NEW.kind IS NULL OR NEW.kind NOT IN ('offer', 'request') THEN
     RAISE EXCEPTION 'Please choose "I''m travelling" or "I need help".' USING ERRCODE = 'P0001';
   END IF;
@@ -347,9 +406,9 @@ CREATE TRIGGER rate_limit BEFORE INSERT ON public.travel_posts
 -- Who sees what. The author always sees their own posts; admins see all
 -- (to deal with reports). Other members who can take part see the posts
 -- whose last date hasn't passed, of members who are shown, unless one of
--- the two blocked the other. Only members who can take part and have ticked
--- the current rules post; only the author edits (while they can take part)
--- and deletes. Our team removes posts through public.admin_moderate.
+-- the two blocked the other. Only members who can take part, have accepted
+-- the current Terms and have ticked the current rules post; only the author
+-- edits (while they can take part) and deletes. Our team removes posts through public.admin_moderate.
 ALTER TABLE public.travel_posts ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.travel_posts FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.travel_posts TO authenticated;
@@ -368,7 +427,8 @@ CREATE POLICY "Members see current travel posts" ON public.travel_posts
 DROP POLICY IF EXISTS "Members post trips once they ticked the rules" ON public.travel_posts;
 CREATE POLICY "Members post trips once they ticked the rules" ON public.travel_posts
   FOR INSERT TO authenticated
-  WITH CHECK (user_id = (SELECT auth.uid()) AND (SELECT private.is_active_member()) AND (SELECT private.has_travel_rules()));
+  WITH CHECK (user_id = (SELECT auth.uid()) AND (SELECT private.is_active_member()) AND (SELECT private.has_current_terms())
+              AND (SELECT private.has_travel_rules()));
 
 DROP POLICY IF EXISTS "Authors edit their travel posts" ON public.travel_posts;
 CREATE POLICY "Authors edit their travel posts" ON public.travel_posts
@@ -439,10 +499,14 @@ CREATE TRIGGER notify_travel_matches AFTER INSERT ON public.travel_posts
 
 -- A first message from the board starts with the trip it's about
 -- ("[TRAVEL: Frankfurt → Delhi, 12 Dec] ...", travelTag in
--- src/content/travel.js): it needs the board's rules ticked, as a post does.
+-- src/content/travel.js): it needs the current Terms accepted and the
+-- board's rules ticked, as a post does.
 CREATE OR REPLACE FUNCTION private.check_travel_message()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
 BEGIN
+  IF current_user = 'authenticated' AND NOT private.has_current_terms() THEN
+    RAISE EXCEPTION 'Please accept the updated Terms of Use to use the travel board.' USING ERRCODE = 'P0001';
+  END IF;
   IF current_user = 'authenticated' AND NOT private.has_travel_rules() THEN
     RAISE EXCEPTION 'Please read and tick the travel board''s rules first.' USING ERRCODE = 'P0001';
   END IF;
@@ -1100,6 +1164,13 @@ $$;
 -- ============================================================================
 -- PERMISSIONS
 -- ============================================================================
+
+-- The Terms: anyone may ask which versions apply, as with
+-- current_terms_version (20261019000000_access_consent.sql); the policies and
+-- triggers ask whether the member accepted the current one.
+REVOKE ALL ON FUNCTION private.previous_terms_version(), public.previous_terms_version(), private.has_current_terms() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION private.previous_terms_version(), public.previous_terms_version() TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION private.has_current_terms() TO authenticated, service_role;
 
 REVOKE ALL ON FUNCTION private.travel_city_key(TEXT), private.travel_city_ok(TEXT), private.travel_dates_text(DATE, DATE),
   private.travel_help_text(TEXT[], TEXT), private.travel_rules_version(), private.has_travel_rules(),
