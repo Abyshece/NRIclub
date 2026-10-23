@@ -207,7 +207,7 @@ export default function WhyNRIClub({ onJoin }) {
           <p style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-0.01em", margin: "0 0 16px" }}>That's one country. Wherever you move next, your NRIClub comes with you.</p>
           <button type="button" onClick={onJoin} style={primaryBtn}>Join free</button>
           <p style={{ fontSize: 13.5, color: MUTED, margin: "14px 0 0" }}>
-            We will never message you asking for money, your passport or your login code.
+            We will never message you asking for your password, your login code or your passport.
           </p>
         </div>
       </div>
