@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
-import { TermsModal, PrivacyModal, TERMS_CHANGES, PREVIOUS_TERMS_VERSION } from "./LegalModals";
+import { TermsModal, PrivacyModal, TERMS_CHANGES, TERMS_NEEDED_FOR, PREVIOUS_TERMS_VERSION, TERMS_VERSION } from "./LegalModals";
 import { AccountFooter } from "./AccountActions";
 import { TermsCheckbox, Art9Checkbox, PrivacyNote, LegalLink, TERMS_ERROR, ART9_ERROR } from "./Consent";
 import { FONT, COLORS, ErrorBox, primaryButtonStyle, ArrowRight } from "./ui";
@@ -13,8 +13,11 @@ import { mapProfile, apiErrorMessage, stillToAccept } from "./profile";
 // let them take part until they have. Members who accepted an earlier
 // version see what changed. Same look as Get verified; they can also sign
 // out, download their data or delete their account from here.
-// Calls onDone(updatedUser) once the server has recorded it.
-export default function TermsGate({ user, termsVersion, onDone, onSignOut }) {
+// Calls onDone(updatedUser) once the server has recorded it. onLater: for a
+// member on the previous version, whose Terms still apply until they accept
+// the new ones (section 14 of the Terms): they may answer "Later" and go on
+// (App asks again the next time NRIClub is opened).
+export default function TermsGate({ user, termsVersion, onDone, onSignOut, onLater = null }) {
   const needs = stillToAccept(user, termsVersion);
   // Accepted before, but an earlier version: the Terms have changed since.
   const termsChanged = needs.terms && !!user.ageConfirmedAt && !!user.termsAcceptedAt;
@@ -69,11 +72,16 @@ export default function TermsGate({ user, termsVersion, onDone, onSignOut }) {
     setSubmitting(false);
   };
 
-  const intro = termsChanged
-    ? "We've updated our Terms of Use. To keep using NRIClub, please read what changed and accept the new version."
-    : needs.terms
-      ? "To keep using NRIClub, please confirm you're 18 or older and accept our Terms of Use."
-      : "One more thing: we now ask separately for your consent to what you share being shown to other members.";
+  // What changed in the version this site shows (not while the database still asks for an earlier one).
+  const showChanges = termsChanged && termsVersion === TERMS_VERSION && TERMS_CHANGES?.length > 0;
+  const readChanges = showChanges ? "read what changed and " : "";
+  const intro = onLater
+    ? `We've updated our Terms of Use. Please ${readChanges}accept the new version.`
+    : termsChanged
+      ? `We've updated our Terms of Use. To keep using NRIClub, please ${readChanges}accept the new version.`
+      : needs.terms
+        ? "To keep using NRIClub, please confirm you're 18 or older and accept our Terms of Use."
+        : "One more thing: we now ask separately for your consent to what you share being shown to other members.";
 
   return (
     <div style={{ minHeight: "100vh", background: COLORS.page, fontFamily: FONT }}>
@@ -88,7 +96,7 @@ export default function TermsGate({ user, termsVersion, onDone, onSignOut }) {
           <p style={{ color: COLORS.helper, fontSize: 15, lineHeight: 1.55, margin: 0 }}>{intro}</p>
         </div>
 
-        {termsChanged && TERMS_CHANGES?.length > 0 && (
+        {showChanges && (
           <section aria-labelledby="tg-changes-title" style={{ background: "#fff", border: "1px solid #E8E7E4", borderRadius: 12, padding: "16px 18px", marginBottom: 24 }}>
             <h3 id="tg-changes-title" style={{ fontSize: 15, fontWeight: 700, color: COLORS.text, margin: "0 0 8px" }}>What changed</h3>
             <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, lineHeight: 1.55, color: COLORS.text }}>
@@ -114,10 +122,22 @@ export default function TermsGate({ user, termsVersion, onDone, onSignOut }) {
 
           {/* Not disabled while saving: a disabled button loses keyboard focus. */}
           <button type="submit" aria-disabled={submitting} aria-describedby={submitError ? "tg-submit-error" : undefined} style={{ ...primaryButtonStyle(submitting), marginTop: 6 }}>
-            {submitting ? "Saving..." : "Continue"}
+            {submitting ? "Saving..." : onLater ? "Accept" : "Continue"}
             {!submitting && <ArrowRight />}
           </button>
           {submitError && <ErrorBox id="tg-submit-error" boxRef={submitErrorRef} style={{ marginTop: 12 }}>{submitError}</ErrorBox>}
+          {onLater && (
+            <>
+              <button type="button" onClick={() => { if (!submitting) onLater(); }} aria-describedby="tg-later-note"
+                style={{ ...primaryButtonStyle(false), background: "#fff", color: COLORS.text, border: `1px solid ${COLORS.border}`, marginTop: 10 }}>
+                Later
+              </button>
+              <p id="tg-later-note" style={{ fontSize: 13, color: COLORS.helper, lineHeight: 1.5, margin: "10px 0 0" }}>
+                Until you accept, the Terms you accepted before still apply and you can keep using NRIClub
+                {TERMS_NEEDED_FOR ? `, but you need the new version for ${TERMS_NEEDED_FOR}` : ""}. We'll ask again the next time you open NRIClub.
+              </p>
+            </>
+          )}
         </form>
 
         <AccountFooter email={user.email} onSignOut={onSignOut} />

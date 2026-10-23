@@ -75,16 +75,34 @@ export function mapProfile(p) {
 
 export const firstName = (name) => (name || "").trim().split(/\s+/)[0] || "there";
 
-// What the member still has to accept before they can take part:
-// { terms: "18 or older" and the current version of the Terms
-// (currentVersion, from api.getCurrentTermsVersion; unknown counts as
-// accepted, the database checks anyway), art9: the Art. 9 consent, once the
-// database records it }.
-export function stillToAccept(user, currentVersion) {
-  return {
-    terms: !user.ageConfirmedAt || !user.termsAcceptedAt || (!!currentVersion && user.termsVersion !== currentVersion),
-    art9: !!user.hasArt9Consent && !user.art9ConsentAt,
-  };
+// What the member still has to accept: { terms: "18 or older" and the
+// current version of the Terms (currentVersion, from
+// api.getCurrentTermsVersion; unknown counts as accepted, the database checks
+// anyway), art9: the Art. 9 consent, once the database records it, later:
+// only the Terms, and the member is on the previous version
+// (previousVersion, from api.getPreviousTermsVersion), which still applies
+// until they accept the current one (Terms section 14). Then they can take
+// part and may answer "Later"; otherwise they can't until they accept }.
+export function stillToAccept(user, currentVersion, previousVersion = "") {
+  const terms = !user.ageConfirmedAt || !user.termsAcceptedAt || (!!currentVersion && user.termsVersion !== currentVersion);
+  const art9 = !!user.hasArt9Consent && !user.art9ConsentAt;
+  const later = terms && !art9 && !!user.ageConfirmedAt && !!user.termsAcceptedAt
+    && !!previousVersion && user.termsVersion === previousVersion;
+  return { terms, art9, later };
+}
+
+// "Later" on the Terms screen (stillToAccept(...).later only) lasts for this
+// browser session, per member and version: NRIClub asks again the next time
+// it's opened, as section 14 of the Terms says. Signing out forgets it.
+const termsLaterKey = (userId) => `nriclub_terms_later_${userId}`;
+export function termsLaterChosen(userId, version) {
+  try { return !!version && sessionStorage.getItem(termsLaterKey(userId)) === version; } catch (e) { return false; }
+}
+export function chooseTermsLater(userId, version) {
+  try { sessionStorage.setItem(termsLaterKey(userId), version); } catch (e) {}
+}
+export function forgetTermsLater(userId) {
+  try { sessionStorage.removeItem(termsLaterKey(userId)); } catch (e) {}
 }
 
 // Members waiting for review (pending, or asked for more information): until

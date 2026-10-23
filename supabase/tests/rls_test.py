@@ -33,6 +33,8 @@ MEMBER_FIXES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "m
                             "20261025000000_member_fixes.sql")
 ADMIN_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                            "20261025100000_admin_tools.sql")
+TRAVEL_BOARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                            "20261026000000_travel_board.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -72,7 +74,7 @@ JOSE1 = "00000000-0000-0000-0000-000000000201"
 JOSE2 = "00000000-0000-0000-0000-000000000202"
 JOSE3 = "00000000-0000-0000-0000-000000000203"
 CONVO2 = "30000000-0000-0000-0000-000000000002"
-TERMS_VERSION = "2026-10-19"
+TERMS_VERSION = "2026-10-23"
 ART9_VERSION = "2026-10-19"  # of the Art. 9 consent wording
 WAIT = "00000000-0000-0000-0000-000000000301"
 WAIT2 = "00000000-0000-0000-0000-000000000302"
@@ -1274,14 +1276,14 @@ def main():
                  "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,place_recommendations,"
                  "places_added,posts,profile,"
                  "profile_private,rate_limit_log,readme,reports_about_me,reports_filed,sessions,terms_acceptances,"
-                 "urgent_questions_sent,user_settings,verification_log")
+                 "travel_posts,travel_rules_accepted,urgent_questions_sent,user_settings,verification_log")
     check("... with the member's profile, private details, consent and rows of each kind",
           "SELECT concat_ws('|', d->'profile'->>'name', d->'profile_private'->>'email', d->'profile_private'->>'terms_version', "
           "d->'profile_private'->>'art9_consent_version', d->'terms_acceptances'->0->>'kind', "
           "(SELECT bool_and(jsonb_array_length(v) > 0)::text FROM jsonb_each(d) e(k, v) "
           "WHERE jsonb_typeof(v) = 'array' AND k NOT IN ('verification_log', 'conversations_hidden', 'places_added', "
           "'place_recommendations', 'answer_thanks', 'mentor_reviews_written', 'mentor_reviews_received', 'sessions', "
-          "'files', 'urgent_questions_sent', 'reports_about_me', 'ambassador_applications'))) "
+          "'files', 'urgent_questions_sent', 'reports_about_me', 'ambassador_applications', 'travel_posts'))) "
           "FROM (SELECT public.export_my_data() d) x",
           as_user=ALICE, expect=f"Alice Updated|alice@example.com|{TERMS_VERSION}|{ART9_VERSION}|art9|true")
     check("... and only the member's own rows",
@@ -1332,6 +1334,7 @@ def main():
     ambassador_applications()
     member_fixes()
     admin_tools()
+    travel_board()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -2276,7 +2279,7 @@ def notifications_limits_privacy():
                  "doc_comments:guide_comment=60/01:00:00, docs:guide=20/1 day, events:event=20/1 day, groups:group=5/1 day, "
                  "help_requests:question=20/1 day, help_responses:answer=60/01:00:00, marketplace:listing=20/1 day, "
                  "messages:message=30/00:01:00+500/1 day, places:place=20/1 day, posts:post=20/1 day, "
-                 "reports:feedback=5/1 day, reports:report=20/1 day")
+                 "reports:feedback=5/1 day, reports:report=20/1 day, travel_posts:travel_post=5/1 day+20/30 days")
 
     # --- the migration's changes to existing rows (C5, C10, C20) -------------------
     oldie, oldie_post = "00000000-0000-0000-0000-000000000510", "10000000-0000-0000-0000-000000000510"
@@ -3584,13 +3587,13 @@ def ambassador_applications():
           SELECT string_agg(key, ',') FROM private.ambassador_application_log WHERE key LIKE 'amb-%';
           ROLLBACK;""", expect="1,2\nA-C0000002,A-C0000005\namb-new")
     check("... and still says what it deleted of everything else (the 2026-10-21 keys, plus the two new ones, "
-          "and since 2026-10-25 the Inbox)", """
+          "since 2026-10-25 the Inbox and since 2026-10-26 the travel board)", """
           BEGIN;
           SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(private.daily_cleanup()) k;
           ROLLBACK;""",
           expect="closed_notices,closed_reports,decided_ambassador_applications,declined_accounts,inbox_messages,moderation_actions,"
                  "moderation_copies_cleared,moderation_notes_cleared,moderation_records,read_notifications,"
-                 "unconfirmed_signups,undecided_ambassador_applications,unfinished_accounts")
+                 "travel_posts,unconfirmed_signups,undecided_ambassador_applications,unfinished_accounts")
     check("members can't run the clean-up", "SELECT private.daily_cleanup()", as_user=asha, expect="error")
 
     # --- nothing else in the clean-up and "Download my data" changed ----------------------------
@@ -3606,7 +3609,8 @@ def ambassador_applications():
         verdict(f"{header.split()[-1]} is its 2026-10-21 version with lines added only "
                 f"({len(added)} added, {len(removed)} changed)", removed == allowed and added,
                 f"removed: {removed}")
-    check("... and the database runs the migration's versions (the same keys in \"Download my data\" as before, plus one)",
+    check("... and the database runs the migration's versions (the same keys in \"Download my data\" as before, plus one, "
+          "and since 2026-10-26 the travel board's two)",
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=asha,
           expect="account,ambassador_applications,answer_thanks,blocks,comments,connections,conversations,"
                  "conversations_hidden,doc_comments,docs,event_rsvps,events_organised,exported_at,files,"
@@ -3614,7 +3618,8 @@ def ambassador_applications():
                  "marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
                  "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,"
                  "place_recommendations,places_added,posts,profile,profile_private,rate_limit_log,readme,"
-                 "reports_about_me,reports_filed,sessions,terms_acceptances,urgent_questions_sent,user_settings,"
+                 "reports_about_me,reports_filed,sessions,terms_acceptances,travel_posts,travel_rules_accepted,"
+                 "urgent_questions_sent,user_settings,"
                  "verification_log")
 
 
@@ -4059,6 +4064,450 @@ def admin_tools():
     removed = [l[2:] for l in diff if l.startswith("- ")]
     verdict("private.daily_cleanup() is its 2026-10-24 version with lines added only",
             removed == ["    'undecided_ambassador_applications', undecided_applications);"], f"removed: {removed}")
+
+
+def trip(kind, frm, to, start, end=None, help=("documents",), flight="", note="", user="auth.uid()"):
+    """SQL that posts a trip on the travel board and prints its id. start,
+    end: days from today in Germany (end: a request's latest date)."""
+    end = start if end is None else end
+    helps = "ARRAY[" + ", ".join(f"'{h}'" for h in help) + "]::text[]"
+    return (f"INSERT INTO travel_posts (user_id, kind, from_city, to_city, date_from, date_to, flight, help, note) "
+            f"VALUES ({user}, '{kind}', '{frm}', '{to}', private.today_in_germany() + {start}, "
+            f"private.today_in_germany() + {end}, '{flight}', {helps}, '{note}') RETURNING id")
+
+
+def travel_board():
+    """The travel board ("Flying to or from India"): who reads and posts,
+    the rules ticked once, dates and other checks, matching notifications,
+    limits, reports and our team's removals, clean-up and "Download my
+    data": migration 20261026000000_travel_board."""
+    import difflib
+    tara, uma, vik, wen, xia, yash, zoe, rhea = (f"00000000-0000-0000-0000-000000000c{n}"
+                                               for n in ("01", "02", "03", "04", "05", "06", "07", "08"))
+    for uid, mail, name in ((tara, "tara.c@example.com", "Tara C"), (uma, "uma@example.com", "Uma U"),
+                            (vik, "vik@example.com", "Vik V"), (wen, "wen.c@example.com", "Wen W"),
+                            (xia, "xia@example.com", "Xia X"), (zoe, "zoe@example.com", "Zoe Z"),
+                            (rhea, "rhea@example.com", "Rhea R")):
+        approved_member(uid, mail, name)
+    # yash sent his details but our team hasn't approved him yet.
+    sign_up(yash, "yash@example.com", {"full_name": "Yash Y"}, accept_terms=True)
+    psql(f"UPDATE profile_private SET verification_status = 'pending', submitted_at = now() WHERE id = '{yash}'")
+    accept = "SELECT public.accept_travel_rules('2026-10-26') ->> 'accepted'"
+    status = "SELECT concat_ws('|', s->>'version', s->>'accepted') FROM public.travel_rules_status() s"
+
+    def post(uid, sql):
+        ok, out, err = psql(sql, "authenticated", uid)
+        if not ok:
+            sys.exit(f"posting a trip failed: {err}")
+        return out.splitlines()[-1]
+
+    # --- the Terms of Use 2026-10-23 ---------------------------------------------------
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src", "content", "legal", "terms.js"),
+              encoding="utf-8") as f:
+        terms_js = f.read()
+    site_terms = re.search(r'export const TERMS_VERSION = "([^"]+)"', terms_js).group(1)
+    check("the database asks for the Terms version the site shows (TERMS_VERSION, 2026-10-23)",
+          "SELECT public.current_terms_version()", role="anon", expect=site_terms)
+    check("... and the version before it is the site's PREVIOUS_TERMS_VERSION",
+          "SELECT public.previous_terms_version()", role="anon",
+          expect=re.search(r'export const PREVIOUS_TERMS_VERSION = "([^"]+)"', terms_js).group(1))
+
+    # --- who can read and post -----------------------------------------------------
+    check("signed-out visitors can't read the board", "SELECT count(*) FROM travel_posts", role="anon",
+          error_has="permission denied")
+    check("... nor ask for or tick the rules", "SELECT public.travel_rules_status()", role="anon", expect="error")
+    check("... (tick)", "SELECT public.accept_travel_rules('2026-10-26')", role="anon", expect="error")
+    check("a new member hasn't ticked the rules: the current version, not accepted", status, as_user=tara,
+          expect="2026-10-26|false")
+    check("... and can't post before ticking them", trip("offer", "Frankfurt", "Delhi", 30), as_user=tara,
+          error_has="row-level security")
+    check("ticking an older version of the rules is refused", "SELECT public.accept_travel_rules('2026-01-01')",
+          as_user=tara, error_has="rules have changed")
+    check("tara ticks the rules", accept, as_user=tara, expect="true")
+    claims = json.dumps({"sub": tara, "role": "authenticated"})
+    check("... ticking again keeps when she first did", f"""
+          CREATE TEMP TABLE first_tick AS SELECT accepted_at FROM private.travel_rules_ack WHERE user_id = '{tara}';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims}', false) IS NOT NULL;
+          {accept}; RESET ROLE;
+          SELECT (SELECT accepted_at FROM private.travel_rules_ack WHERE user_id = '{tara}') = (SELECT accepted_at FROM first_tick)""",
+          expect="t\ntrue\nt")
+    check("members can't read or write the record of who ticked the rules",
+          "SELECT count(*) FROM private.travel_rules_ack", as_user=tara, error_has="permission denied")
+    check("... (write)", f"INSERT INTO private.travel_rules_ack (user_id, rules_version) VALUES (auth.uid(), '2026-10-26')",
+          as_user=uma, error_has="permission denied")
+    check("a member waiting for our check can't tick the rules", accept, as_user=yash,
+          error_has="Only members our team has approved")
+    psql(f"INSERT INTO private.travel_rules_ack (user_id, rules_version) VALUES ('{yash}', '2026-10-26')")
+    check("... nor post, even with the rules ticked", trip("offer", "Berlin", "Mumbai", 10), as_user=yash,
+          error_has="row-level security")
+    for uid in (uma, vik, wen, xia, zoe, rhea):
+        psql(accept, "authenticated", uid)
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src", "content", "travel.js"),
+              encoding="utf-8") as f:
+        travel_js = f.read()
+    js_version = re.search(r'export const TRAVEL_RULES_VERSION = "([^"]+)"', travel_js).group(1)
+    check("the site shows the version of the rules the database asks for (TRAVEL_RULES_VERSION)",
+          "SELECT private.travel_rules_version()", expect=js_version)
+    check("tara has ticked the current rules", status, as_user=tara, expect="2026-10-26|true")
+    psql(f"UPDATE private.travel_rules_ack SET rules_version = '2026-01-01' WHERE user_id = '{uma}'")
+    check("a member who ticked an earlier version of the rules is asked again", status, as_user=uma,
+          expect="2026-10-26|false")
+    check("... and can't post until they tick them", trip("offer", "Berlin", "Mumbai", 10), as_user=uma,
+          error_has="row-level security")
+    check("... ticking them again", accept, as_user=uma, expect="true")
+
+    # --- a post, and what it must say --------------------------------------------------
+    check("tara is flying FRANKFURT → delhi in 30 days: the route kept as written, matched in lower case, the flight in capitals",
+          "INSERT INTO travel_posts (user_id, kind, from_city, to_city, date_from, date_to, flight, help, note) VALUES "
+          "(auth.uid(), 'offer', '  FRANKFURT ', 'delhi', private.today_in_germany() + 30, private.today_in_germany() + 35, "
+          "'lh   760', ARRAY['items', 'documents', 'items'], ' Happy to help. ') "
+          "RETURNING concat_ws('|', kind, from_city, to_city, from_key, to_key, date_to = date_from, flight, help::text, note)",
+          as_user=tara, expect="offer|FRANKFURT|delhi|frankfurt|delhi|t|LH 760|{documents,items}|Happy to help.")
+    tara_trip = psql(f"SELECT id FROM travel_posts WHERE user_id = '{tara}'")[1]
+    for name, sql, error in (
+            ("a date that has passed is refused", trip("offer", "Berlin", "Delhi", -1), "That date has passed."),
+            ("... and one more than a year ahead", trip("offer", "Berlin", "Delhi", 400), "within the next 12 months"),
+            ("a window of more than 120 days is refused", trip("request", "Berlin", "Delhi", 1, 125), "at most 120 days apart"),
+            ("... and one that ends before it starts", trip("request", "Berlin", "Delhi", 10, 5), "latest date is before the earliest"),
+            ("Delhi to New Delhi is no trip", trip("offer", "Delhi", "New Delhi, India", 10), "The two cities are the same."),
+            ("a city needs letters", trip("offer", "Berlin 2", "Delhi", 10), "each city's name in letters"),
+            ("... not a web address", trip("offer", "Berlin", "http://example.com", 10), "each city's name in letters"),
+            ("... nor anything like one", trip("offer", "Berlin", "pay-courier.com", 10), "each city's name in letters"),
+            ("... and isn't empty", trip("offer", "  ", "Delhi", 10), "which city you fly from"),
+            ("the kind of help is needed", trip("offer", "Berlin", "Delhi", 10, help=()), "what you can help with"),
+            ("... (for a request too)", trip("request", "Berlin", "Delhi", 10, 20, help=()), "what you need"),
+            ("... one of the three", trip("offer", "Berlin", "Delhi", 10, help=("cash",)), "a travel companion, documents or small open items"),
+            ("a flight number like LH 760", trip("offer", "Berlin", "Delhi", 10, flight="Lufthansa"), "flight number like LH 760"),
+            ("a note of at most 500 characters", trip("offer", "Berlin", "Delhi", 10, note="x" * 501), "500 characters"),
+            ("a post is either kind", trip("parcel", "Berlin", "Delhi", 10), "I'm travelling"),
+    ):
+        check(name, sql, as_user=tara, error_has=error)
+    check("a request keeps no flight number, and can start today",
+          trip("request", "Berlin", "Mumbai", 0, 20, flight="AI 120").replace("RETURNING id", "RETURNING flight = '' AND date_from = private.today_in_germany()"),
+          as_user=uma, expect="t")
+    check("nobody posts as another member", trip("offer", "Berlin", "Mumbai", 10, user=f"'{uma}'"), as_user=tara,
+          error_has="row-level security")
+
+    # --- who sees which post ----------------------------------------------------------------
+    check("an approved member sees tara's trip, with its route keys",
+          f"SELECT concat_ws('|', from_key, to_key, flight) FROM travel_posts WHERE id = '{tara_trip}'", as_user=uma,
+          expect="frankfurt|delhi|LH 760")
+    check("a member waiting for our check sees no trips", "SELECT count(*) FROM travel_posts", as_user=yash, expect="0")
+    old_trip = psql(trip("offer", "Hamburg", "Pune", -1, user=f"'{tara}'"))[1]
+    check("a trip whose last date has passed leaves the board", f"SELECT count(*) FROM travel_posts WHERE id = '{old_trip}'",
+          as_user=uma, expect="0")
+    check("... its author still sees it", f"SELECT count(*) FROM travel_posts WHERE id = '{old_trip}'", as_user=tara, expect="1")
+    check("... and so does our team", f"SELECT count(*) FROM travel_posts WHERE id = '{old_trip}'", as_user=ADMIN, expect="1")
+    xia_trip = post(xia, trip("request", "Frankfurt", "Delhi", 20, 40, help=("documents",)))
+    check("xia blocks tara", f"SELECT public.block_member('{tara}')", as_user=xia, expect="t")
+    check("... and no longer sees tara's trips", f"SELECT count(*) FROM travel_posts WHERE user_id = '{tara}'",
+          as_user=xia, expect="0")
+    check("... nor tara xia's", f"SELECT count(*) FROM travel_posts WHERE id = '{xia_trip}'", as_user=tara, expect="0")
+    check("... other members see both", f"SELECT count(*) FROM travel_posts WHERE user_id IN ('{tara}', '{xia}') "
+          "AND date_to >= private.today_in_germany()", as_user=uma, expect="2")
+    rhea_trip = post(rhea, trip("offer", "Munich", "Kochi", 15))
+    psql(f"UPDATE profile_private SET status = 'blocked' WHERE id = '{rhea}'")
+    check("a member our team blocked: other members don't see their trips",
+          f"SELECT count(*) FROM travel_posts WHERE id = '{rhea_trip}'", as_user=uma, expect="0")
+    check("... they can't post", trip("offer", "Munich", "Kochi", 16), as_user=rhea, error_has="row-level security")
+    check("... nor edit, but can still delete their own",
+          f"UPDATE travel_posts SET note = 'x' WHERE id = '{rhea_trip}' RETURNING 1; "
+          f"DELETE FROM travel_posts WHERE id = '{rhea_trip}' RETURNING 1", as_user=rhea, expect="1")
+
+    # --- editing and deleting -----------------------------------------------------------------
+    check("tara edits her trip: route, date, note and help", f"""
+          UPDATE travel_posts SET from_city = 'Frankfurt am Main', date_from = private.today_in_germany() + 31,
+            note = 'Window seat', help = ARRAY['documents'] WHERE id = '{tara_trip}'
+          RETURNING concat_ws('|', from_key, date_from - private.today_in_germany(), date_to = date_from, note, help::text,
+            updated_at > created_at)""", as_user=tara, expect="frankfurt|31|t|Window seat|{documents}|t")
+    check("... not its type", f"UPDATE travel_posts SET kind = 'request' WHERE id = '{tara_trip}'", as_user=tara,
+          error_has="type can't be changed")
+    check("... and not its id, author or creation time",
+          f"UPDATE travel_posts SET id = gen_random_uuid(), user_id = '{uma}', created_at = '2001-01-01' WHERE id = '{tara_trip}' "
+          "RETURNING concat_ws('|', id, user_id, created_at > '2020-01-01')", as_user=tara, expect=f"{tara_trip}|{tara}|t")
+    check("... nor to a date that has passed", f"UPDATE travel_posts SET date_from = private.today_in_germany() - 2 "
+          f"WHERE id = '{tara_trip}'", as_user=tara, error_has="That date has passed.")
+    check("another member can't edit it", f"UPDATE travel_posts SET note = 'Hijacked' WHERE id = '{tara_trip}' RETURNING 1",
+          as_user=uma, expect="")
+    check("... nor delete it", f"DELETE FROM travel_posts WHERE id = '{tara_trip}' RETURNING 1", as_user=uma, expect="")
+    check("... nor can an admin through the API (our team uses admin_moderate)",
+          f"DELETE FROM travel_posts WHERE id = '{tara_trip}' RETURNING 1", as_user=ADMIN, expect="")
+    begun = psql(trip("request", "Pune", "Berlin", -5, 5, user=f"'{uma}'"))[1]
+    check("a request whose window has begun: its note and latest date can still change", f"""
+          UPDATE travel_posts SET note = 'Still looking', date_to = private.today_in_germany() + 10 WHERE id = '{begun}'
+          RETURNING date_to - private.today_in_germany()""", as_user=uma, expect="10")
+    check("... but its earliest date can't move into the past",
+          f"UPDATE travel_posts SET date_from = private.today_in_germany() - 3 WHERE id = '{begun}'", as_user=uma,
+          error_has="That date has passed.")
+    check("the author deletes their post", f"DELETE FROM travel_posts WHERE id = '{begun}' RETURNING 1", as_user=uma, expect="1")
+
+    # --- matches --------------------------------------------------------------------------------
+    psql(f"DELETE FROM travel_posts WHERE user_id IN ('{tara}', '{uma}', '{vik}', '{wen}', '{xia}', '{zoe}'); "
+         "DELETE FROM notifications WHERE type = 'travel_match'; DELETE FROM private.rate_log WHERE action = 'travel_post'")
+    notes = lambda uid: (f"SELECT count(*) || '|' || COALESCE(string_agg(n.actor_id || ':' || n.text, ';'), '') "
+                         f"FROM notifications n WHERE n.user_id = '{uid}' AND n.type = 'travel_match'")
+    uma_req = post(uma, trip("request", "Frankfurt", "Delhi", 25, 40, help=("documents",)))
+    post(wen, trip("request", "Frankfurt (Main)", "New Delhi", 28, 35, help=("companion",)))
+    post(vik, trip("request", "Frankfurt", "Delhi", 60, 70, help=("documents",)))
+    post(zoe, trip("request", "Delhi", "Frankfurt", 25, 40, help=("documents",)))
+    post(xia, trip("request", "Frankfurt", "Delhi", 25, 40, help=("documents",)))
+    tara_trip = post(tara, trip("offer", "FRANKFURT", "Delhi", 30, help=("documents", "items"), flight="LH 760"))
+    date30 = psql("SELECT to_char(private.today_in_germany() + 30, 'FMDD Mon YYYY')")[1]
+    check("tara posts a trip: uma, who needs documents carried on that route then, hears about it",
+          notes(uma), expect=f"1|{tara}:is flying FRANKFURT → Delhi on {date30} and can carry documents. "
+                             "This matches your request on the travel board.")
+    check("... it points at tara's trip",
+          f"SELECT reference_id FROM notifications WHERE user_id = '{uma}' AND type = 'travel_match'", expect=tara_trip)
+    check("... not wen, who needs a companion (Frankfurt (Main) to New Delhi is the same route)", notes(wen), expect="0|")
+    check("... not vik, whose dates don't overlap", notes(vik), expect="0|")
+    check("... not zoe, who flies the other way", notes(zoe), expect="0|")
+    check("... not xia, who blocked tara", notes(xia), expect="0|")
+    check("... nor tara herself", notes(tara), expect="0|")
+    check("the dates and the help in these notifications",
+          "SELECT concat_ws('|', private.travel_dates_text('2026-12-12', '2026-12-12'), "
+          "private.travel_dates_text('2026-12-10', '2026-12-20'), private.travel_dates_text('2026-11-28', '2026-12-05'), "
+          "private.travel_dates_text('2026-12-28', '2027-01-05'), "
+          "private.travel_help_text(ARRAY['companion', 'documents', 'items'], 'offer'), "
+          "private.travel_help_text(ARRAY['companion', 'documents'], 'request'), private.travel_help_text(ARRAY['items'], 'request'))",
+          expect="12 Dec 2026|10–20 Dec 2026|28 Nov–5 Dec 2026|28 Dec 2026–5 Jan 2027|"
+                 "be a travel companion, carry documents and small open items|a travel companion and someone to carry documents|"
+                 "someone to carry a small open item")
+    psql(f"SELECT public.block_member('{zoe}')", "authenticated", tara)
+    post(wen, trip("request", "frankfurt", "delhi", 29, 31, help=("companion", "documents", "items")))
+    window = psql("SELECT private.travel_dates_text(private.today_in_germany() + 29, private.today_in_germany() + 31)")[1]
+    check("a new request that matches: tara hears what it needs that she can do",
+          notes(tara), expect=f"1|{wen}:is looking for someone to carry documents and a small open item on frankfurt → delhi, "
+                              f"{window}. This matches your trip on the travel board.")
+    post(zoe, trip("request", "Frankfurt", "Delhi", 30, 30, help=("items",)))
+    check("... not about a member she blocked", notes(tara), expect=f"1|{wen}:is looking for someone to carry documents "
+          f"and a small open item on frankfurt → delhi, {window}. This matches your trip on the travel board.")
+    check("editing a post notifies nobody", f"UPDATE travel_posts SET note = 'Any day', date_to = date_to + 1 "
+          f"WHERE id = '{uma_req}' RETURNING 1", as_user=uma, expect="1")
+    check("... (still the two notifications)", "SELECT count(*) FROM notifications WHERE type = 'travel_match'", expect="2")
+    crowd = [f"00000000-0000-0000-0000-000000000d{n:02d}" for n in range(1, 23)]
+    for i, uid in enumerate(crowd):
+        approved_member(uid, f"crowd{i}@example.com", f"Crowd Member{i}")
+        psql(trip("request", "Munich", "Chennai", 10, 20, user=f"'{uid}'"))
+    psql(trip("request", "München", "Madras", 12, 14, user=f"'{crowd[0]}'"))
+    vik_trip = post(vik, trip("offer", "Munich", "Chennai", 12))
+    check("22 members match a new trip (one of them twice): 20 hear about it, each once",
+          f"SELECT count(*) || '|' || count(DISTINCT user_id) FROM notifications WHERE type = 'travel_match' "
+          f"AND reference_id = '{vik_trip}'", expect="20|20")
+    check("... the trip's author deletes it: those notifications go too",
+          f"DELETE FROM travel_posts WHERE id = '{vik_trip}'; "
+          f"SELECT count(*) FROM notifications WHERE type = 'travel_match' AND reference_id = '{vik_trip}'",
+          as_user=vik, expect="0")
+    check("members can't write travel_match notifications themselves",
+          f"INSERT INTO notifications (user_id, type, text) VALUES ('{uma}', 'travel_match', 'fake')", as_user=tara,
+          expect="error")
+
+    # --- limits -----------------------------------------------------------------------------------
+    psql(f"DELETE FROM travel_posts WHERE user_id = '{zoe}'; DELETE FROM private.rate_log WHERE member_id = '{zoe}'")
+    check("zoe posts 5 trips in a day", "; ".join(trip("offer", "Berlin", city, 5) for city in
+                                                ("Delhi", "Mumbai", "Pune", "Goa", "Jaipur")), as_user=zoe, expect="ok")
+    check("... a sixth is refused", trip("offer", "Berlin", "Agra", 5), as_user=zoe, error_has="doing that too often")
+    check("... deleting one doesn't give another try",
+          f"DELETE FROM travel_posts WHERE user_id = auth.uid() AND to_city = 'Goa'; {trip('offer', 'Berlin', 'Agra', 5)}",
+          as_user=zoe, error_has="doing that too often")
+    psql(f"UPDATE private.rate_log SET at = now() - interval '2 days' WHERE member_id = '{zoe}' AND action = 'travel_post'; "
+         f"INSERT INTO private.rate_log (member_id, action, at) SELECT '{zoe}', 'travel_post', now() - interval '3 days' "
+         "FROM generate_series(1, 15)")
+    check("20 in 30 days: the next one is refused, days later", trip("offer", "Berlin", "Agra", 5), as_user=zoe,
+          error_has="doing that too often")
+    psql(f"DELETE FROM private.rate_log WHERE ctid IN (SELECT ctid FROM private.rate_log WHERE member_id = '{zoe}' "
+         "AND action = 'travel_post' LIMIT 1)")
+    check("... 19: it goes up", trip("offer", "Berlin", "Agra", 5).replace("RETURNING id", "RETURNING 1"), as_user=zoe,
+          expect="1")
+
+    # --- a first message from the board ----------------------------------------------------------------
+    ola = "00000000-0000-0000-0000-000000000c09"
+    approved_member(ola, "ola@example.com", "Ola O")
+    convo = psql(f"INSERT INTO conversations (participant_1, participant_2) VALUES (auth.uid(), '{uma}') RETURNING id",
+                 "authenticated", ola)[1]
+    tagged = (f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{convo}', auth.uid(), "
+              "'[TRAVEL: Frankfurt → Delhi, 12 Dec] Could my mother sit with you?') RETURNING 1")
+    check("a message about a trip needs the board's rules ticked", tagged, as_user=ola,
+          error_has="Please read and tick the travel board's rules first.")
+    check("... other messages don't", f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{convo}', "
+          "auth.uid(), 'Hello Uma') RETURNING 1", as_user=ola, expect="1")
+    check("... once ticked, it goes", f"{accept}; {tagged}", as_user=ola, expect="true\n1")
+
+    # --- members still on the Terms 2026-10-19 -------------------------------------------------------
+    # Section 14: new Terms apply once accepted; until then the previous ones
+    # do. Only the travel board (its rules are in the new section 7) needs
+    # the new version.
+    pita, quin, ravi = (f"00000000-0000-0000-0000-000000000c{n}" for n in ("0a", "0b", "0c"))
+    for uid, mail, name in ((pita, "pita@example.com", "Pita P"), (quin, "quin@example.com", "Quin Q"),
+                            (ravi, "ravi@example.com", "Ravi R")):
+        approved_member(uid, mail, name)
+    # As if they had accepted these versions before this update.
+    for uid, version in ((pita, "2026-10-19"), (quin, "2026-10"), (ravi, "2026-10-19")):
+        psql(f"UPDATE profile_private SET terms_version = '{version}' WHERE id = '{uid}'; "
+             f"UPDATE terms_acceptances SET version = '{version}' WHERE member_id = '{uid}' AND kind = 'terms'")
+    psql(f"UPDATE profile_private SET art9_consent_at = NULL, art9_consent_version = NULL WHERE id = '{ravi}'; "
+         f"INSERT INTO private.travel_rules_ack (user_id, rules_version) VALUES ('{pita}', '2026-10-26')")
+    takes_part = "SELECT private.is_active_member()::text || '|' || private.can_browse()::text"
+    check("the version before the current one is 2026-10-19 (anyone may ask, as the site does)",
+          "SELECT public.previous_terms_version()", role="anon", expect="2026-10-19")
+    check("a member who accepted 2026-10-19 still takes part", takes_part, as_user=pita, expect="true|true")
+    check("... sees other members", f"SELECT count(*) FROM profiles WHERE id = '{uma}'", as_user=pita, expect="1")
+    check("... and the trips on the board", "SELECT count(*) > 0 FROM travel_posts WHERE user_id <> auth.uid()",
+          as_user=pita, expect="t")
+    check("... posts in the feed", "INSERT INTO posts (user_id, content) VALUES (auth.uid(), 'Hello from Pita') RETURNING 1",
+          as_user=pita, expect="1")
+    pita_convo = psql(f"INSERT INTO conversations (participant_1, participant_2) VALUES (auth.uid(), '{uma}') RETURNING id",
+                      "authenticated", pita)[1]
+    check("... starts a conversation and sends a message", f"INSERT INTO messages (conversation_id, sender_id, content) "
+          f"VALUES ('{pita_convo}', auth.uid(), 'Hello Uma') RETURNING 1", as_user=pita, expect="1")
+    check("... but can't post a trip, even with the board's rules ticked", trip("offer", "Berlin", "Delhi", 12),
+          as_user=pita, error_has="Please accept the updated Terms of Use to use the travel board.")
+    claims = json.dumps({"sub": pita, "role": "authenticated"})
+    check("... (the INSERT policy says no too, without the trigger)", f"""
+          BEGIN; ALTER TABLE public.travel_posts DISABLE TRIGGER check_travel_post;
+          SET LOCAL ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims}', true) IS NOT NULL;
+          {trip("offer", "Berlin", "Delhi", 12)}; ROLLBACK""", error_has="row-level security")
+    check("... trigger back on", "SELECT tgenabled FROM pg_trigger WHERE tgname = 'check_travel_post'", expect="O")
+    pita_tagged = (f"INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{pita_convo}', auth.uid(), "
+                   "'[TRAVEL: Frankfurt → Delhi, 12 Dec] Could my mother sit with you?') RETURNING 1")
+    check("... nor send a message about a trip", pita_tagged, as_user=pita,
+          error_has="Please accept the updated Terms of Use to use the travel board.")
+    check("a member still on an earlier version (2026-10) can't take part until she accepts the current one",
+          takes_part, as_user=quin, expect="false|false")
+    check("... (nor post in the feed)", "INSERT INTO posts (user_id, content) VALUES (auth.uid(), 'Hello') RETURNING 1",
+          as_user=quin, error_has="row-level security")
+    check("the Art. 9 consent is still required: on 2026-10-19 without it, no taking part", takes_part, as_user=ravi,
+          expect="false|false")
+    psql(f"UPDATE profile_private SET art9_consent_at = NULL, art9_consent_version = NULL WHERE id = '{ola}'")
+    check("... nor on the current version", takes_part, as_user=ola, expect="false|false")
+    psql(f"UPDATE profile_private SET art9_consent_at = now(), art9_consent_version = '2026-10-19' WHERE id = '{ola}'")
+    check("accepting 2026-10-19 again is refused", "SELECT public.accept_terms('2026-10-19')", as_user=pita,
+          error_has="The Terms of Use have been updated")
+    check("pita accepts 2026-10-23: recorded, with both acceptances kept",
+          "SELECT public.accept_terms('2026-10-23'); SELECT terms_version FROM profile_private WHERE id = auth.uid(); "
+          "SELECT string_agg(version, ',' ORDER BY version) FROM terms_acceptances WHERE member_id = auth.uid() AND kind = 'terms'",
+          as_user=pita, expect="2026-10-23\n2026-10-23\n2026-10-19,2026-10-23")
+    check("... now she posts a trip", trip("offer", "Berlin", "Delhi", 12).replace("RETURNING id", "RETURNING 1"),
+          as_user=pita, expect="1")
+    check("... and sends a message about one", pita_tagged, as_user=pita, expect="1")
+    check("ravi gives the Art. 9 consent (with the current Terms): he takes part again",
+          f"SELECT public.accept_terms('2026-10-23', true); {takes_part}", as_user=ravi, expect="2026-10-23\ntrue|true")
+    check("quin accepts the current Terms: she takes part again",
+          f"SELECT public.accept_terms('2026-10-23'); {takes_part}", as_user=quin, expect="2026-10-23\ntrue|true")
+
+    # --- reports and our team ------------------------------------------------------------------------
+    report = (f"INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith) "
+              f"VALUES (auth.uid(), '{tara_trip}', '[TRAVEL] FRANKFURT → Delhi — Illegal: Fraud or a scam', 'travel', 'fraud', "
+              "'Asked me for a courier fee of 50 euros.', true) RETURNING reported_user_id")
+    check("uma reports tara's trip: the report knows its author", report, as_user=uma, expect=tara)
+    check("... a report sent the old way (the \"[TRAVEL]\" prefix) is about a travel post too",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES (auth.uid(), '{tara_trip}', "
+          "'[TRAVEL] FRANKFURT → Delhi — Something else') RETURNING content_type", as_user=wen, expect="travel")
+    check("\"Download my data\": tara's trips, when she ticked the rules, and the reports about her trip", """
+          SELECT concat_ws('|', jsonb_array_length(d->'travel_posts'), d->'travel_posts'->0->>'user_id' = auth.uid()::text,
+            d->'travel_rules_accepted'->>'version', d->'travel_rules_accepted' ? 'accepted_at',
+            (SELECT count(*) FROM jsonb_array_elements(d->'reports_about_me') r WHERE r->>'about' = 'travel'))
+          FROM (SELECT public.export_my_data() d) x""", as_user=tara, expect="1|t|2026-10-26|t|2")
+    check("members can't remove other members' posts with admin_moderate",
+          f"SELECT {moderate('travel', tara_trip, 'remove')}", as_user=uma, error_has="Admins only")
+    check("our team removes the trip: it's gone, recorded, and both reports are closed", f"""
+          SELECT r->>'closed_reports' IS NOT NULL FROM (SELECT {moderate('travel', tara_trip, 'remove',
+            rule='Travel board rules (§ 7)', facts='it asked for a courier fee of 50 euros')} r) x;
+          SET ROLE postgres;
+          SELECT concat_ws('|', (SELECT count(*) FROM travel_posts WHERE id = '{tara_trip}'),
+            (SELECT target_kind || ':' || target_user || ':' || (snapshot->'row'->>'to_city') FROM private.moderation_action
+             WHERE target_id = '{tara_trip}' AND action = 'remove'),
+            (SELECT count(*) FROM reports WHERE reported_post_id = '{tara_trip}' AND status = 'resolved'))""",
+          as_user=ADMIN, expect=f"t\n0|travel:{tara}:Delhi|2")
+    check("... tara is told why: her travel post, the rule and the facts",
+          f"SELECT position('your travel post \"FRANKFURT → Delhi\"' IN text) > 0 AND position('Travel board rules' IN text) > 0 "
+          f"FROM notifications WHERE user_id = '{tara}' AND type = 'moderation' ORDER BY created_at DESC LIMIT 1", expect="t")
+    check("... and uma hears the outcome of her report",
+          f"SELECT position('the travel post \"FRANKFURT → Delhi\"' IN text) > 0 FROM notifications "
+          f"WHERE user_id = '{uma}' AND type = 'report' ORDER BY created_at DESC LIMIT 1", expect="t")
+    check("... the notifications pointing at the trip went with it",
+          f"SELECT count(*) FROM notifications WHERE type = 'travel_match' AND reference_id = '{tara_trip}'", expect="0")
+
+    # --- clean-up ---------------------------------------------------------------------------------------
+    check("the clean-up deletes trips 30 days after their last date, and keeps the board's limit counts 30 days", f"""
+          BEGIN;
+          DELETE FROM travel_posts;
+          {trip('offer', 'Bonn', 'Delhi', -31, user=f"'{uma}'").replace(' RETURNING id', '')};
+          {trip('request', 'Bonn', 'Goa', -40, -30, user=f"'{uma}'").replace(' RETURNING id', '')};
+          {trip('offer', 'Bonn', 'Pune', -1, user=f"'{uma}'").replace(' RETURNING id', '')};
+          DELETE FROM private.rate_log;
+          INSERT INTO private.rate_log (member_id, action, at) VALUES ('{uma}', 'travel_post', now() - interval '10 days'),
+            ('{uma}', 'travel_post', now() - interval '31 days'), ('{uma}', 'post', now() - interval '2 days');
+          SELECT (private.daily_cleanup())->>'travel_posts';
+          SELECT string_agg(to_city, ',' ORDER BY to_city) FROM travel_posts;
+          SELECT string_agg(action || ':' || extract(day FROM now() - at), ',') FROM private.rate_log;
+          ROLLBACK;""", expect="1\nGoa,Pune\ntravel_post:10")
+    old = function_source(ADMIN_TOOLS, "CREATE OR REPLACE FUNCTION private.daily_cleanup()").splitlines()
+    new = function_source(TRAVEL_BOARD, "CREATE OR REPLACE FUNCTION private.daily_cleanup()").splitlines()
+    diff = [l for l in difflib.ndiff(old, new) if l[:2] in ("- ", "+ ")]
+    removed = [l[2:] for l in diff if l.startswith("- ")]
+    verdict("private.daily_cleanup() is its 2026-10-25 version with lines added, and the limit counters' line kept "
+            "for every other action", removed == [
+                "  -- The counters behind the limits and the name changes.",
+                "  DELETE FROM private.rate_log r WHERE r.at < NOW() - INTERVAL '1 day';",
+                "    || jsonb_build_object('inbox_messages', inbox);"], f"removed: {removed}")
+    for header in ("CREATE OR REPLACE FUNCTION public.export_my_data()",):
+        old = function_source(AMBASSADORS, header).splitlines()
+        new = function_source(TRAVEL_BOARD, header).splitlines()
+        removed = [l[2:] for l in difflib.ndiff(old, new) if l.startswith("- ")]
+        verdict(f"{header.split()[-1]} is its 2026-10-24 version with lines added only", not removed, f"removed: {removed}")
+    for name in ("private.content_noun(", "private.report_kind_from_reason(", "private.content_author(",
+                 "private.report_item(", "public.admin_moderate("):
+        old = function_source(MODERATION, f"CREATE FUNCTION {name}").replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+        new = function_source(TRAVEL_BOARD, f"CREATE OR REPLACE FUNCTION {name}")
+        removed = [l[2:] for l in difflib.ndiff(old.splitlines(), new.splitlines()) if l.startswith("- ")]
+        # admin_moderate: the list of kinds and the words for the content change.
+        allowed = ([l for l in old.splitlines() if "row_json ->> 'title', row_json ->> 'name'" in l or "row_json ->> 'comment', ''" in l
+                    or "'review', 'place', 'message'," in l] if name == "public.admin_moderate(" else [])
+        verdict(f"{name.rstrip('(')} is its 2026-10-21 version plus travel posts", set(removed) <= set(allowed),
+                f"removed: {removed}")
+
+    # --- the same cities in the site and the database ------------------------------------------------------
+    aliases = dict(re.findall(r'^\s+"?([^":\n]+?)"?: "([^"]+)",$', travel_js[travel_js.index("CITY_ALIASES"):], re.M))
+    cities = re.findall(r'"([^"]+)"', travel_js[travel_js.index("CITIES_ABROAD"):travel_js.index("CITY_ALIASES")])
+    samples = list(aliases) + list(aliases.values()) + cities + [
+        "  New   Delhi , India", "MÜNCHEN", "Frankfurt (Main)", "Köln", "Düsseldorf", "Zürich", "Straße", "Bengaluru  ",
+        "Frankfurt a.M.", "St. John's", "Thiruvananthapuram (Trivandrum)"]
+    proc = subprocess.run(["node", "--input-type=module", "-e",
+                           "import { cityKey } from './src/content/travel.js';"
+                           f"console.log(JSON.stringify({json.dumps(samples)}.map(cityKey)))"],
+                          cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
+                          capture_output=True, text=True)
+    js_keys = json.loads(proc.stdout) if proc.returncode == 0 else []
+    ok, out, err = psql("SELECT string_agg(private.travel_city_key(c), '|' ORDER BY i) FROM unnest(ARRAY["
+                        + ", ".join("'" + c.replace("'", "''") + "'" for c in samples) + "]) WITH ORDINALITY AS t(c, i)")
+    verdict(f"the site and the database match the same names to the same city ({len(aliases)} other names, "
+            f"{len(samples)} names in all)", ok and len(aliases) >= 20 and out.split("|") == js_keys,
+            f"node: {proc.stderr[:200]} db: {err[:200]} differ: "
+            f"{[(s, j, d) for s, j, d in zip(samples, js_keys, out.split('|')) if j != d]}")
+    names = cities + ["Frankfurt a.M.", "St. John's", "L'Aquila", "Frankfurt/Main", "São Paulo", "दिल्ली", "Köln",
+                      "pay-courier.com", "wa.me/x", "Berlin 2", "x", "Delhi!", "@home", "Rio de Janeiro (RJ)"]
+    proc = subprocess.run(["node", "--input-type=module", "-e",
+                           "import { cityProblem } from './src/content/travel.js';"
+                           f"console.log(JSON.stringify({json.dumps(names)}.map((n) => !cityProblem(n))))"],
+                          cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
+                          capture_output=True, text=True)
+    js_ok = json.loads(proc.stdout) if proc.returncode == 0 else []
+    ok, out, err = psql("SELECT string_agg(private.travel_city_ok(c)::text, '|' ORDER BY i) FROM unnest(ARRAY["
+                        + ", ".join("'" + c.replace("'", "''") + "'" for c in names) + "]) WITH ORDINALITY AS t(c, i)")
+    db_ok = [v == "true" for v in out.split("|")] if ok else []
+    verdict("... and take the same city names (and refuse the same ones)", db_ok == js_ok and db_ok.count(False) == 6,
+            f"node: {proc.stderr[:200]} db: {err[:200]} differ: {[(n, j, d) for n, j, d in zip(names, js_ok, db_ok) if j != d]}")
+
+    # --- deleting an account; running the migration again ------------------------------------------------
+    gone = post(wen, trip("offer", "Bonn", "Delhi", 9))
+    check("deleting an account deletes its trips and its record of the rules", f"""
+          DELETE FROM auth.users WHERE id = '{wen}';
+          SELECT (SELECT count(*) FROM travel_posts WHERE id = '{gone}') + (SELECT count(*) FROM private.travel_rules_ack
+            WHERE user_id = '{wen}')""", expect="0")
+    ok, _, err = psql(open(TRAVEL_BOARD, encoding="utf-8").read())
+    verdict("the migration can be run again", ok, err[:300])
+    check("... and still asks for the rules before a post", trip("offer", "Berlin", "Mumbai", 10), as_user=yash,
+          error_has="row-level security")
 
 
 if __name__ == "__main__":

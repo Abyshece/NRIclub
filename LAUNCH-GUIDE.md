@@ -107,13 +107,14 @@ In the Supabase dashboard → **Authentication**:
    Below the code in *Confirm signup*, add the contract confirmation
    (wording from the legal review, `docs/compliance/questions-for-the-lawyer.md`):
    "Enter this code to finish signing up. Your membership is then under
-   our Terms of Use (version 2026-10-19), which you accepted on the sign-up
+   our Terms of Use (version 2026-10-23), which you accepted on the sign-up
    form; you can read and save them at https://nriclub.app/terms.
    Provider: <name, address>, hello@nriclub.app. You can withdraw from the
    contract within 14 days by telling us or by deleting your account."
-   Change the template only after `20261019000000_access_consent.sql` has
-   run on the live database: before that, sign-ups still accept version
-   2026-10. Keep the version in step with the Terms. Once the company is
+   Change the version in the template only once the database update that
+   makes it current has run on the live database (2026-10-23: the travel
+   board update below): before that, sign-ups still accept the earlier
+   version. Keep the version in step with the Terms. Once the company is
    registered, add its details (§ 35a GmbHG) to every template.
 5. **Attack Protection**: turn on *Leaked password protection* (prevent use of
    leaked passwords). It may need a paid plan (Pro); if yours doesn't offer
@@ -234,11 +235,10 @@ key in the frontend or in a `VITE_` variable.
   Enterprise plans, so set `vercel: true` only once the project is on one;
   `mailbox: true` once you have accepted the mailbox provider's), and how
   long Vercel keeps request logs on your plan.
-- **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` says "17 October
-  2026", the day its current wording went live (the Terms 2026-10-19 with
-  the round-2 edits to sections 8 to 10); `PRIVACY_DATE` in
-  `src/content/legal/privacy.js` says "18 October 2026" (the Privacy Policy
-  2026-10-24, which adds applications to be a city ambassador). When you
+- **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` says "23 October
+  2026" (the Terms 2026-10-23, with the travel board's rules in section 7);
+  `PRIVACY_DATE` in `src/content/legal/privacy.js` says "23 October 2026"
+  (the Privacy Policy 2026-10-23, which adds the travel board). When you
   change a text, set its date to the day the change goes live.
 - **Deleting old data:** the Privacy Policy promises retention periods
   that, for now, you keep by hand once a month
@@ -259,17 +259,22 @@ key in the frontend or in a `VITE_` variable.
   `TERMS_ARCHIVE`, so it stays at nriclub.app/terms/<version>; change the
   text, `TERMS_VERSION` and `TERMS_DATE` in `terms.js`, `TERMS_VERSION` in
   `src/member/LegalModals.jsx` (the build stops if the two differ) and
-  `TERMS_CHANGES` (shown on the "Before you continue" screen); and change
-  `private.current_terms_version()` in a new migration. Deploy the site,
-  then apply the migration the same day: members are asked to accept the
-  new version once the database says it is current. The Terms promise at
-  least 2 weeks' notice, in the app and by email, before new Terms apply,
-  and (section 14) that a member who doesn't accept them keeps using
-  NRIClub under the previous Terms until we end the membership with 4
-  weeks' notice. Before the first change that doesn't need a new consent,
-  the Terms screen needs a "Later" button and the database must let such
-  members take part (today any new version locks members out until they
-  accept, which section 14 allows only for a required consent).
+  `TERMS_CHANGES` (shown on the "Before you continue" screen) and
+  `TERMS_NEEDED_FOR` (what members need the new version for); and change
+  `private.current_terms_version()` and `private.previous_terms_version()`
+  in a new migration. Deploy the site, then apply the migration the same
+  day: members are asked to accept the new version once the database says
+  it is current. The Terms promise at least 2 weeks' notice, in the app and
+  by email, before new Terms apply, and (section 14) that a member who
+  doesn't accept them keeps using NRIClub under the previous Terms until we
+  end the membership with 4 weeks' notice. So members on the previous
+  version take part as before and get a "Later" button on the Terms screen
+  (asked again each time they open NRIClub); only a consent the law
+  requires (the Art. 9 consent) locks them out until given. The database
+  lets only members on the current or the previous version take part, so
+  before `previous_terms_version()` moves on, end the membership (4 weeks'
+  notice) of anyone still on the version it names, or keep that version
+  allowed.
 - **A change to the Privacy Policy:** change `privacy.js`, its version and
   date, and the matching entry in `docs/compliance/records-of-processing.md`.
   Members don't accept it, but tell them about important changes in the
@@ -386,6 +391,56 @@ in the admin panel under **Ambassadors**.
    after 12 months: part of the monthly routine
    (`docs/compliance/deletion-routine.md`) until `private.daily_cleanup()`
    is scheduled.
+
+## Travel board: what to do
+
+"Travel" in the app (/travel, "Flying to or from India") replaces the
+Market's "Travel companion" category: members post trips to find a travel
+companion or someone to carry documents or a small open item as a favour.
+Listings already in the Market's Travel category stay until they're deleted.
+
+1. **Deploy the site.** Until the SQL below runs, the board says "Coming
+   soon", the Market works as before, and members and sign-ups are still
+   asked for the Terms 2026-10-19 (the app shows that text).
+2. **The same day:** run
+   `supabase/oneoff/2026-10-26-travel-board/run_in_sql_editor.sql` in the
+   SQL editor, the whole file at once (it is the migration
+   `20261026000000_travel_board.sql` with a check in front). It refuses to
+   run before round 3, and a second time. If the board still says "Coming
+   soon" a few minutes later, run `NOTIFY pgrst, 'reload schema';`.
+   It also makes the Terms 2026-10-23 current. As section 14 promises,
+   members who accepted 2026-10-19 keep using NRIClub under it: the Terms
+   screen ("We've updated our Terms of Use") asks them each time they open
+   NRIClub, and they can answer "Later". Until they accept, they can read
+   the travel board but not post or message from it (the board asks them
+   to accept the new Terms first). New sign-ups accept 2026-10-23. Then
+   change the version in the *Confirm signup* email template to 2026-10-23.
+3. **Email the members** (section 14 promises a summary of what changes and
+   the new text by email, at least 2 weeks before new Terms apply; they
+   apply to a member only once they accept them). By hand, to each member:
+
+   > **Subject:** NRIClub: our Terms of Use have changed (travel board)
+   >
+   > Hi <first name>, we've added a travel board to NRIClub for members
+   > flying to or from India. Its rules are now in our Terms of Use
+   > (section 7, replacing "Travel companions"), and travel posts can be
+   > reported like other content (section 9). The new Terms apply to you
+   > only once you accept them in NRIClub; until then the version you
+   > accepted still applies, and you only need the new one to post or send
+   > messages on the travel board. New Terms: https://nriclub.app/terms ·
+   > the version you accepted: https://nriclub.app/terms/2026-10-19
+   > — NRIClub, hello@nriclub.app
+
+4. **Check as a member who accepted 2026-10-19:** the Terms screen shows
+   what changed; "Later" opens the dashboard. Open Travel: it asks for the
+   new Terms before the rules. Accept them, tick the rules, post a trip,
+   and delete it again.
+5. **Moderation:** reported trips show under **Reports → Travel board**;
+   **Remove…** with the rule "Travel board rules (§ 7)" for a post that asks
+   for money or carries something the rules don't allow.
+6. Trips are deleted 30 days after their last date: part of the monthly
+   routine (`docs/compliance/deletion-routine.md`) until
+   `private.daily_cleanup()` is scheduled.
 
 ## What's on: other organisers' events in Germany
 

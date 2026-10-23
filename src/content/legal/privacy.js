@@ -12,8 +12,8 @@ import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
 
-export const PRIVACY_VERSION = "2026-10-22.2";
-export const PRIVACY_DATE = "22 October 2026";
+export const PRIVACY_VERSION = "2026-10-23";
+export const PRIVACY_DATE = "23 October 2026";
 
 // How long data is kept: the periods this Policy promises. Until clean-up
 // jobs run on the database (plan C20), our team deletes by hand once a month
@@ -39,6 +39,8 @@ export const RETENTION = {
   requestEmailYears: 3, // emails about rights and reports of illegal content, after the matter is closed
   otherEmailMonths: 12, // all other emails, after the matter is closed
   inboxMonths: 12, // emails to hello@ in the admin panel's inbox, after they arrived (private.daily_cleanup)
+  travelPostDays: 30, // travel board posts, after their last date (private.daily_cleanup)
+  travelLimitDays: 30, // when a member posted on the travel board, for its limits (private.rate_log)
   // Photo files: true since the site deletes them with their post, listing,
   // event or profile photo and with the account (plan C1), and the photo
   // clean-up in the admin panel (src/admin/PhotoCleanup.jsx) deletes what is
@@ -190,6 +192,13 @@ export function privacyDoc() {
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
             ["How long", `until you delete it or your account, with the exceptions in section 9. In-app notices you've read are deleted after ${months(R.readNoticesMonths)}.`],
           ] },
+          { id: "travel", title: "The travel board (flying to or from India)", fields: [
+            ["What", `if you use the travel board: your posts, each with the city you fly from and the city you fly to, the date of your flight or the earliest and latest dates that suit you, your flight number if you give one, what you can help with or what you need (a travel companion, documents or a small open item) and your note; when you agreed to the board's rules, and which version of them; and, so we can limit how many trips each member posts, when you posted (kept ${R.travelLimitDays} days). A message you send from the board is an ordinary message ("Messages" in section 4) that starts with the trip it's about.`],
+            ["Why", "so members flying the same way can find each other and help each other, and to tell you about matching trips. When a member posts a trip on the same route as one of yours, with dates that overlap and help in common, up to 20 members with a matching post get an in-app notice with that member's name, the route, the dates and the help. Members who blocked each other aren't told about each other's trips."],
+            ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3). The record that you agreed to the rules, and the limit: legitimate interests (keeping the board safe and free of misuse)."],
+            ["Who sees it", "approved members, until the post's last date has passed, but not members you blocked or who blocked you; and our team. Your dates and flight number show where you'll be and when, so share only what you're comfortable with."],
+            ["How long", `until you delete the post. A post leaves the board after its last date and is deleted automatically ${R.travelPostDays} days after that date, with the notices about it. The record that you agreed to the rules is kept until you delete your account.`],
+          ] },
           { title: "Reports, notices of illegal content and moderation", fields: [
             ["What", "reports members send in the app (what was reported, the reason, their explanation, who reported it); reports sent with the form at nriclub.app/report (where the content is, the reason and explanation, the sender's name and email address, and the reference code we give the report) or by email; to limit how many reports can be sent, a coded form of the email address and the internet address (IP address) a report on the form came from, made with a secret key; where we need it as evidence, a copy of the reported content (for example a screenshot) with the account and the time; our decisions and the reasons for them (the rule or law, the facts, whether a report led to them, who on our team decided), a copy of what we removed (its text; of a photo, only the file's name), and the messages we send about them; when you use \"Report a problem\", your description plus your browser type and screen size (the form tells you this)."],
             ["Why", "to deal with reports and illegal content, to tell the people concerned what we decided and why, to be able to show what we did, and to fix problems."],
@@ -249,7 +258,7 @@ export function privacyDoc() {
             ["Photos", "a photo you upload is stored at a long web address that isn't listed anywhere. New photos get an address with a random code, which can't be guessed. Anyone who has a photo's exact address can open it without signing in, for example if a member copies it."],
           ] },
           { title: "Approved members", fields: [
-            ["What", "your profile (section 2, \"Your profile\"; for your LinkedIn link, see below); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; the places you add (not which places you recommend: members see only how many members recommend a place); the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
+            ["What", "your profile (section 2, \"Your profile\"; for your LinkedIn link, see below); your posts, comments and likes; your questions and answers; the events you create and whether you're going; your Market listings; your travel board posts until their last date (not members you blocked or who blocked you; section 2, \"The travel board\"); the places you add (not which places you recommend: members see only how many members recommend a place); the groups you're in; your Namaste connections; your mentoring offer and open times; the ratings and reviews you write, with your name, and those you receive; and whether you accept messages and Namaste requests."],
             ["If your membership ends", VISIBILITY.onlyApprovedListed
               ? "if we decline your sign-up or block your account, or while our team checks your profile again (for example after you change your name), other members don't see your profile. What you posted before stays until you or we delete it, but without your name or photo: it shows as \"NRIClub member\", and your name is taken off events you organised."
               : "if we decline your sign-up or block your account, approved members can still see your profile until the account is deleted (section 2, \"The membership check\")."],
@@ -354,7 +363,7 @@ export function privacyDoc() {
         { p: "We keep data only as long as we need it for the purposes in section 2, and for the periods given there." },
         { ul: [
           [strong("Your account, profile and content"), " stay until you delete them or your account, or until we delete an account as section 2 says (a sign-up never confirmed, an account that never sent its check details, or one we declined or whose membership we ended)."],
-          [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
+          [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, travel board posts and your agreement to the board's rules, the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
           photoFilesText(),
           [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports you sent about content or members, and reports other members made about you, no longer linked to your account (their text can still contain your name); the record of our decisions about your content and account, no longer linked to it; copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; an application to be a city ambassador, no longer linked to your account, until it is deleted (section 2); emails you sent us (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
           ...(R.byHand ? [`Until these deletions run automatically, our team carries them out by hand${R.photoFilesDeleted ? " once a month" : ": photo files every week, everything else once a month"}, so data can stay up to a month longer than the period given.`] : []),

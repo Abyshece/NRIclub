@@ -14,6 +14,7 @@ import { rateLimiter } from "./rateLimiter";
 import { upcomingFestival } from "./festivals";
 import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
+import TravelBoard from "./member/TravelBoard";
 import ReportDialog from "./member/ReportDialog";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview, countryName, getCountryOptions, MAJOR_INDIAN_CITIES } from "./member/profile";
 import { findCity } from "./content/findCity";
@@ -209,13 +210,15 @@ const AmbassadorBadge = ({ city }) => city ? (
 ) : null;
 
 // Market categories as members see them, and what each one asks for.
+// "Travel" isn't posted here any more (trips go on the travel board,
+// /travel); listings already in it keep their label until they're deleted.
 const MARKET_LABELS = { Housing: "Housing & roommates", Referrals: "Job referrals", Travel: "Travel companion" };
+const MARKET_CATEGORIES = ["Housing", "Referrals", "Jobs", "Items", "Vehicles", "Services"];
 const marketLabel = (c) => MARKET_LABELS[c] || c;
 const MARKET_FORM = {
   Housing: { title: "e.g. Room in a 2-bedroom flat, Kreuzberg", price: "Rent / month", pricePh: "e.g. €650", desc: "Area, move-in date, who you're looking for..." },
   Jobs: { title: "e.g. Hiring: Java developer", price: "Salary (optional)", pricePh: "e.g. €60k", desc: "Role, company, how to apply..." },
   Referrals: { title: "e.g. I can refer at Siemens (software roles)", price: null, desc: "Which company and roles, or which referral you're looking for..." },
-  Travel: { title: "e.g. Delhi → Frankfurt, 12 Dec (LH 761)", price: null, desc: "Who is travelling (e.g. my parents), and what help they'd like..." },
 };
 const marketForm = (c) => MARKET_FORM[c] || { title: "What are you selling?", price: "Price", pricePh: "e.g. €50", desc: "Describe your item..." };
 
@@ -311,6 +314,7 @@ const Icons = {
   star: (p) => <Icon {...p} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />,
   user: (p) => <Icon {...p} d={["M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2", "M12 3a4 4 0 100 8 4 4 0 000-8z"]} />,
   shop: (p) => <Icon {...p} d={["M6 2L3 8v12a2 2 0 002 2h14a2 2 0 002-2V8l-3-6z", "M3 8h18", "M16 12a4 4 0 01-8 0"]} />,
+  plane: (p) => <Icon {...p} d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />,
   help: (p) => <Icon {...p} d={["M12 22a10 10 0 100-20 10 10 0 000 20z", "M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3", "M12 17h.01"]} />,
   file: (p) => <Icon {...p} d={["M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z", "M14 2v6h6", "M16 13H8", "M16 17H8", "M10 9H8"]} />,
   link: (p) => <Icon {...p} d={["M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71", "M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"]} />,
@@ -696,7 +700,7 @@ const toHelp = (h, responses) => ({
 });
 
 // The small sign on a notification's avatar, by type.
-const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐", moderation: "🛡️", report: "🚩", alert: "⚠️" };
+const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐", moderation: "🛡️", report: "🚩", alert: "⚠️", travel_match: "✈️" };
 
 // Messages from our team (the database writes them): why we removed
 // something of the member's or acted on their account (a statement of
@@ -777,6 +781,7 @@ const EmptyCard = ({ text, action, onAction }) => (
 //   /whats-on[#<id>] (the public list of other organisers' events; members
 //     get Events, with the same list under "Also on in Germany")
 //   /mentoring (your sessions and settings)  /mentors (Find → Mentors)
+//   /travel[/<post id>] (the travel board, at that post)
 const parsePath = (path, selfId) => {
   const [, a = "", b = ""] = (path || "/").split("/");
   let id = "";
@@ -797,6 +802,7 @@ const parsePath = (path, selfId) => {
     case "whats-on": return { view: "events" };
     case "mentoring": return { view: "mentoring" };
     case "mentors": return { view: "network", findTab: "mentors" };
+    case "travel": return { view: "travel", travel: id || null };
     case "impressum": return { view: "home", legal: hasImprint() ? "impressum" : null };
     default: return { view: "home" };
   }
@@ -1218,11 +1224,16 @@ const REVIEW_AGAIN_NOTE = (what) =>
 // do: the ones api.refreshMyStatus reads.
 const STATUS_FIELDS = ["verificationStatus", "status", "reviewFlag", "termsVersion", "ageConfirmedAt", "termsAcceptedAt"];
 
-const Dashboard = ({ user, onLogout, onUserUpdate }) => {
+// termsVersion: the current version of the Terms (from the database). For a
+// member who answered "Later" to it, onReviewTerms shows the Terms screen
+// again (the travel board needs the current version).
+const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReviewTerms = null }) => {
   const [startRoute] = useState(() => parsePath(window.location.pathname, user?.id));
   const [whatsOnStart] = useState(whatsOnTarget); // /whats-on#<id>: that event, under Events
   const [findTab, setFindTab] = useState(startRoute.findTab || "people"); // Find: people | mentors
   const [view, setView] = useState(startRoute.view);
+  // The travel board's post an address or a notification points at.
+  const [travelFocus, setTravelFocus] = useState(startRoute.travel || null);
   // A group, event, doc or listing the address points at, opened once the
   // lists have loaded.
   const [pendingRoute, setPendingRoute] = useState(startRoute.pending || null);
@@ -1636,6 +1647,32 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  // The first message about a Market listing or a trip on the travel board
+  // (text starts with its "[MARKETPLACE: ...]" or "[TRAVEL: ...]" tag, so the
+  // chat shows what it's about): sends it and opens the conversation.
+  // Resolves to why it couldn't be sent, or "".
+  const sendFirstMessage = async (otherId, text) => {
+    try {
+      const reason = await messageBlockedReason(otherId);
+      if (reason) return reason;
+      const convo = await api.getOrCreateConversation(otherId);
+      const cid = convo?.id || convo?.[0]?.id;
+      if (!cid) return "Your message couldn't be sent. Please try again.";
+      await api.sendMessage(cid, text);
+      // Reload the conversations so this one is in the list.
+      try {
+        const dbConvos = await api.getConversations();
+        if (dbConvos) { setConvos(dbConvos.map(toConvo)); setConvosLoaded(true); }
+      } catch (re) {}
+      setChatMessages(p => { const n = { ...p }; delete n[cid]; return n; });
+      setSelectedConvo(cid);
+      setView("messages");
+      return "";
+    } catch (e) {
+      return messageErrorText(e, otherId);
+    }
+  };
+
   // A posts row (with its author's profile) as the feed shows it.
   const toPost = (p, groupList) => {
     const urlMatch = (p.content || "").match(/https?:\/\/[^\s]+/i);
@@ -1786,6 +1823,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
     switch (view) {
       case "network": return findTab === "mentors" ? "/mentors" : "/find";
       case "mentoring": return "/mentoring";
+      case "travel": return travelFocus ? `/travel/${travelFocus}` : "/travel";
       case "groups": return selectedGroup ? `/groups/${selectedGroup.id}` : "/groups";
       case "events": return "/events";
       case "help": return "/help";
@@ -1831,6 +1869,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       setSelectedConvo(r.convo || null);
       if (r.member) setMemberId(r.member);
       setFindTab(r.findTab || "people");
+      setTravelFocus(r.travel || null);
       setPendingRoute(r.pending || null);
       if (r.post) setSharedLink({ kind: "post", id: r.post });
       if (r.legal) { setLegalTab(r.legal); setSettingsModal("terms"); }
@@ -4159,6 +4198,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               <button onClick={() => setMarketModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Post Item</button>
             </div>
+            {/* Travel companions and documents: the travel board. */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "12px 14px", marginBottom: 16, background: "#F5F8FF", border: "1px solid #DCE6FA", borderRadius: 12, fontFamily: font }}>
+              <p style={{ fontSize: 13, color: "#37352F", lineHeight: 1.5, margin: 0, flex: "1 1 260px" }}>✈️ Flying to or from India, or looking for a travel companion? Trips are on the travel board now.</p>
+              <button onClick={() => { setTravelFocus(null); setView("travel"); }} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, whiteSpace: "nowrap" }}>Open the travel board</button>
+            </div>
             {/* Search + city */}
             <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
               <div style={{ position: "relative", flex: 1 }}>
@@ -4173,9 +4217,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 </select>
               </div>
             </div>
-            {/* Category pills */}
+            {/* Category pills ("Travel" while listings from before the travel board are left) */}
             <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-              {["All", "Housing", "Referrals", "Travel", "Jobs", "Items", "Vehicles", "Services"].map(c => (
+              {["All", ...MARKET_CATEGORIES, ...(marketCategory === "Travel" || marketItems.some(i => i.category === "Travel") ? ["Travel"] : [])].map(c => (
                 <button key={c} onClick={() => setMarketCategory(c)} style={{ padding: "7px 16px", borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: font, border: marketCategory === c ? "none" : "1px solid #E0E0DE", background: marketCategory === c ? "#37352F" : "#fff", color: marketCategory === c ? "#fff" : "#5F5E5B", transition: "all 0.1s" }}>
                   {marketLabel(c)}
                 </button>
@@ -4299,7 +4343,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                             <span style={{ fontSize: 13, fontWeight: c.unread ? 700 : 500, color: "#37352F", fontFamily: font }}>{c.name}</span>
                             <span style={{ fontSize: 10, color: c.unread ? "#DC2626" : "#9B9A97", flexShrink: 0, marginLeft: 6 }}>{chatTime(c.lastAt)}</span>
                           </div>
-                          <p style={{ fontSize: 12, color: c.unread ? "#37352F" : "#9B9A97", fontWeight: c.unread ? 600 : 400, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{(c.lastMsg || "").replace(/^\[MARKETPLACE: [^\]]+\]\s*/, "🛒 ")}</p>
+                          <p style={{ fontSize: 12, color: c.unread ? "#37352F" : "#9B9A97", fontWeight: c.unread ? 600 : 400, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{(c.lastMsg || "").replace(/^\[MARKETPLACE: [^\]]+\]\s*/, "🛒 ").replace(/^\[TRAVEL: [^\]]+\]\s*/, "✈️ ")}</p>
                         </div>
                       </div>
                   </div>
@@ -4358,10 +4402,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                       <div style={{ maxWidth: "75%", alignSelf: m.sender === "me" ? "flex-end" : "flex-start" }}>
                         <div style={{ padding: "10px 14px", borderRadius: m.sender === "me" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.sender === "me" ? "#37352F" : "#fff", color: m.sender === "me" ? "#fff" : "#37352F", border: m.sender === "me" ? "none" : "1px solid #E8E7E4", fontSize: 14, lineHeight: 1.5, fontFamily: font, overflowWrap: "anywhere" }}>
                           {(() => {
-                            const tag = (m.text || "").match(/^\[MARKETPLACE: ([^\]]+)\]\s*/);
+                            // A first message about a listing or a trip on the travel board.
+                            const tag = (m.text || "").match(/^\[(MARKETPLACE|TRAVEL): ([^\]]+)\]\s*/);
                             if (!tag) return m.text;
                             return (<>
-                              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🛒 {tag[1]}</div>
+                              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tag[1] === "TRAVEL" ? "✈️" : "🛒"} {tag[2]}</div>
                               {m.text.slice(tag[0].length)}
                             </>);
                           })()}
@@ -4399,6 +4444,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
           </div>
           </div>
         );
+
+      case "travel":
+        return <TravelBoard user={user} focusId={travelFocus} onFocus={setTravelFocus} onReport={setReportConfirm}
+          onMessage={(post, text) => (post?.user_id && post.user_id !== user.id ? sendFirstMessage(post.user_id, text) : "You can't message the author of this post.")}
+          termsVersion={termsVersion} onReviewTerms={onReviewTerms}
+          reportedIds={reportedIds} blockedIds={blockedIds} openMember={openMember} Avatar={Avatar} />;
 
       case "mentoring":
         return <MentoringPage key={mentoringKey} user={user} onUserUpdate={onUserUpdate} seekers={seekersList.filter(u => !blockedIds.has(u.id))} ratings={mentorRatings} onRated={refreshRatings} onBook={bookMentor} onMessage={messageMember} openMember={openMember} Avatar={Avatar} />;
@@ -4640,6 +4691,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       } else if (n.reference_id) {
         openQuestion(n.reference_id);
       }
+    } else if (n.type === "travel_match") {
+      // A new post on the travel board that matches one of the member's.
+      setNotifOpen(false);
+      Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+      setTravelFocus(n.reference_id ? String(n.reference_id) : null);
+      setView("travel");
     } else if (n.type === "event") {
       setView("events");
       setNotifOpen(false);
@@ -4904,6 +4962,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button style={navBtn("events")} onClick={() => setView("events")}>Events</button>
                 <button style={navBtn(view === "docs" ? "docs" : "help")} onClick={() => setView("help")}>Ask & Guides</button>
                 <button style={navBtn("market")} onClick={() => setView("market")}>Market</button>
+                <button style={navBtn("travel")} onClick={() => { setTravelFocus(null); setView("travel"); }}>Travel</button>
               </>
             )}
           </div>
@@ -5105,12 +5164,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
               { v: "events", icon: Icons.calendar, label: "Events" },
               { v: "help", icon: Icons.help, label: "Ask & Guides" },
               { v: "market", icon: Icons.shop, label: "Market" },
+              { v: "travel", icon: Icons.plane, label: "Travel board" },
               { v: "messages", icon: Icons.message, label: "Messages" },
               { v: "profile", icon: Icons.user, label: "Profile" },
             ]).map((item) => (
               <button
                 key={item.v}
-                onClick={() => { setView(item.v); setMobileMenu(false); if (item.v === "groups") setSelectedGroup(null); }}
+                onClick={() => { setView(item.v); setMobileMenu(false); if (item.v === "groups") setSelectedGroup(null); if (item.v === "travel") setTravelFocus(null); }}
                 style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", background: shownView === item.v ? "#EFEFED" : "transparent", color: shownView === item.v ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 14, fontFamily: font, marginBottom: 4 }}
               >
                 {item.icon({ size: 18 })} {item.label}
@@ -5647,39 +5707,16 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <button onClick={async () => {
                   if (!contactMsg.trim()) return;
                   const sellerId = selectedMarketItem.user_id;
-                  try {
-                    if (!sellerId || sellerId === user.id) {
-                      alert("You can't contact the seller of this listing.");
-                      return;
-                    }
-                    const reason = await messageBlockedReason(sellerId);
-                    if (reason) { alert(reason); return; }
-                    // Tag message as marketplace with item title for filtering
-                    const taggedMsg = `[MARKETPLACE: ${selectedMarketItem.title}] ${contactMsg}`;
-                    const convo = await api.getOrCreateConversation(sellerId);
-                    const cid = convo?.id || convo?.[0]?.id;
-                    if (cid) {
-                      await api.sendMessage(cid, taggedMsg);
-                      // Reload the conversations so this one is in the list.
-                      try {
-                        const dbConvos = await api.getConversations();
-                        if (dbConvos) { setConvos(dbConvos.map(toConvo)); setConvosLoaded(true); }
-                      } catch(re) {}
-                      setSelectedMarketItem(null);
-                      setContactMsg("");
-                      setChatMessages(p => { const n = { ...p }; delete n[cid]; return n; });
-                      setSelectedConvo(cid);
-                      setView("messages");
-                      return;
-                    } else {
-                      alert("Your message couldn't be sent. Please try again.");
-                      return;
-                    }
-                  } catch (e) {
-                    // Keep the message so it can be sent again.
-                    alert(await messageErrorText(e, sellerId));
+                  if (!sellerId || sellerId === user.id) {
+                    alert("You can't contact the seller of this listing.");
                     return;
                   }
+                  // Tag message as marketplace with item title for filtering
+                  const problem = await sendFirstMessage(sellerId, `[MARKETPLACE: ${selectedMarketItem.title}] ${contactMsg}`);
+                  // Keep the message so it can be sent again.
+                  if (problem) { alert(problem); return; }
+                  setSelectedMarketItem(null);
+                  setContactMsg("");
                 }} style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6 }}>{Icons.send({ size: 14 })} Send Message</button>
               </div>
             </div>
@@ -6330,10 +6367,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
                   <select style={{ ...inputStyle, appearance: "none", cursor: "pointer" }} value={newMarket.category} onChange={(e) => setNewMarket({...newMarket, category: e.target.value})}>
-                    {["Housing", "Referrals", "Travel", "Jobs", "Items", "Vehicles", "Services"].map(c => <option key={c} value={c}>{marketLabel(c)}</option>)}
+                    {MARKET_CATEGORIES.map(c => <option key={c} value={c}>{marketLabel(c)}</option>)}
                   </select>
                 </div>
               </div>
+              <p style={{ fontSize: 12, color: "#6B6A67", lineHeight: 1.5, margin: "-8px 0 20px", fontFamily: font }}>
+                Looking for a travel companion, or someone to carry documents? <button type="button" onClick={() => { setMarketModal(false); setTravelFocus(null); setView("travel"); }} style={{ background: "none", border: "none", padding: "4px 0", color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontSize: 12, fontFamily: font }}>Use the travel board</button>.
+              </p>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>City</label>
                 <select style={{ ...inputStyle, cursor: "pointer" }} value={newMarket.city} onChange={(e) => setNewMarket({...newMarket, city: e.target.value})}>
@@ -6731,6 +6771,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
         .desktop-nav { display: flex !important; }
         .mobile-menu-btn { display: none !important; }
         .mobile-nav { display: none !important; }
+
+        /* Narrow desktops: the menu takes the room it needs, so the page doesn't scroll sideways. */
+        @media (min-width: 901px) and (max-width: 1100px) {
+          .nav-grid { grid-template-columns: auto minmax(0, 1fr) auto !important; gap: 16px !important; }
+        }
 
         @media (max-width: 900px) {
           .nav-grid { display: flex !important; justify-content: space-between !important; }

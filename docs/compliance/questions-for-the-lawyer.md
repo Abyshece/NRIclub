@@ -147,13 +147,17 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
 7. **Terms gate.** Section 14 now promises that, for a future change that
    needs no new consent, members who don't accept keep using NRIClub under
    the previous Terms until we end the membership with 4 weeks' notice.
-   The code today locks members out until they accept any new version (the
-   database checks the version). That is covered for this version, which
-   comes with the required Art. 9 consent, but the Terms screen needs a
-   "Later" button, and the database a softer check, before the next
-   Terms-only change. Also confirm: members still under version 2026-10
-   (which has no change clause) must accept the new Terms and give the
-   consent together on one screen before they can go on.
+   Done for version 2026-10-23 (the travel board update): members on
+   2026-10-19 keep taking part under it, the Terms screen asks them each
+   time they open NRIClub and has a "Later" button, and only the travel
+   board (whose rules are in the new section 7) needs the new version
+   (`private.previous_terms_version`, `private.has_current_terms`). The
+   Art. 9 consent still has no "Later". Confirm that the travel board may
+   need the new version, and that emailing members the summary when the
+   update goes live is enough notice, since new Terms apply to a member
+   only once they accept them. Also confirm: members still under version
+   2026-10 (which has no change clause) must accept the new Terms and give
+   the consent together on one screen before they can go on.
 8. **The breach awareness date.** Commit bef7d91 (24 April 2026) took the
    password out of the source code but moved it into build settings
    (`VITE_ADMIN_PASS`), which still put it into the site's JavaScript until

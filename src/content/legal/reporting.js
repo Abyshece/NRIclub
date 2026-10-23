@@ -141,6 +141,7 @@ export const REPORT_KINDS = {
   event: "event",
   help: "question",
   market: "Market listing",
+  travel: "travel post",
   review: "mentoring review",
   place: "place",
   message: "message",
@@ -230,6 +231,7 @@ export const TERMS_RULES = [
   { key: "false_claims", label: "False claims, fake reviews or recommendations (§ 6, § 7)" },
   { key: "accounts", label: "Fake, extra or shared accounts; collecting members' data (§ 6)" },
   { key: "market", label: "Market rules (§ 7)" },
+  { key: "travel", label: "Travel board rules (§ 7)" },
   { key: "mentoring", label: "Mentoring rules (§ 7)" },
   { key: "real_name", label: "Real name and true details (§ 5)" },
 ];

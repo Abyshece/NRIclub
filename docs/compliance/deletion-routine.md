@@ -23,6 +23,7 @@ the monthly part of this routine.
 | Coded addresses behind the report limits (`private.notice_log`) | 24 hours | once a month |
 | Applications to be a city ambassador (`private.ambassador_applications`) | 6 months after our decision (accepted or declined); undecided ones 12 months after they were sent | once a month |
 | Coded addresses behind the application limits (`private.ambassador_application_log`) | 24 hours | once a month |
+| Travel board posts (`public.travel_posts`) | 30 days after their last date | once a month |
 | Record of our decisions (`private.moderation_action`) | 24 months; the copy of removed content in it after 6 months | once a month |
 | Record of declined and blocked accounts | 24 months after the decision; its note after 12 months | once a month |
 | Emails about rights and reports of illegal content, with our answers | 3 years after the matter is closed | once a month (mailbox) |
@@ -161,12 +162,16 @@ SELECT 'ambassador applications undecided after 12 months', count(*) FROM privat
   WHERE status IN ('new', 'contacted') AND created_at < now() - interval '12 months'
 UNION ALL
 SELECT 'application-limit counters, 1 day', count(*) FROM private.ambassador_application_log
-  WHERE at < now() - interval '1 day';
+  WHERE at < now() - interval '1 day'
+UNION ALL
+SELECT 'travel board posts, 30 days after their last date', count(*) FROM public.travel_posts
+  WHERE date_to < (now() AT TIME ZONE 'Europe/Berlin')::date - 30;
 ```
 
 (The four before the ambassador lines exist once the database update of 21
-October 2026 is in, the last three once that of 24 October 2026 is in;
-before them, leave them out.)
+October 2026 is in, the three ambassador lines once that of 24 October 2026
+is in, the travel board line once that of 26 October 2026 is in; before
+them, leave them out.)
 
 The first time, older accounts that never finished signing up go at once.
 If you'd like to warn them first, email them two weeks before.
@@ -221,6 +226,8 @@ DELETE FROM private.ambassador_applications
 DELETE FROM private.ambassador_applications
   WHERE status IN ('new', 'contacted') AND created_at < now() - interval '12 months';
 DELETE FROM private.ambassador_application_log WHERE at < now() - interval '1 day';
+-- Since the database update of 26 October 2026:
+DELETE FROM public.travel_posts WHERE date_to < (now() AT TIME ZONE 'Europe/Berlin')::date - 30;
 COMMIT;
 ```
 
