@@ -259,17 +259,22 @@ key in the frontend or in a `VITE_` variable.
   `TERMS_ARCHIVE`, so it stays at nriclub.app/terms/<version>; change the
   text, `TERMS_VERSION` and `TERMS_DATE` in `terms.js`, `TERMS_VERSION` in
   `src/member/LegalModals.jsx` (the build stops if the two differ) and
-  `TERMS_CHANGES` (shown on the "Before you continue" screen); and change
-  `private.current_terms_version()` in a new migration. Deploy the site,
-  then apply the migration the same day: members are asked to accept the
-  new version once the database says it is current. The Terms promise at
-  least 2 weeks' notice, in the app and by email, before new Terms apply,
-  and (section 14) that a member who doesn't accept them keeps using
-  NRIClub under the previous Terms until we end the membership with 4
-  weeks' notice. Before the first change that doesn't need a new consent,
-  the Terms screen needs a "Later" button and the database must let such
-  members take part (today any new version locks members out until they
-  accept, which section 14 allows only for a required consent).
+  `TERMS_CHANGES` (shown on the "Before you continue" screen) and
+  `TERMS_NEEDED_FOR` (what members need the new version for); and change
+  `private.current_terms_version()` and `private.previous_terms_version()`
+  in a new migration. Deploy the site, then apply the migration the same
+  day: members are asked to accept the new version once the database says
+  it is current. The Terms promise at least 2 weeks' notice, in the app and
+  by email, before new Terms apply, and (section 14) that a member who
+  doesn't accept them keeps using NRIClub under the previous Terms until we
+  end the membership with 4 weeks' notice. So members on the previous
+  version take part as before and get a "Later" button on the Terms screen
+  (asked again each time they open NRIClub); only a consent the law
+  requires (the Art. 9 consent) locks them out until given. The database
+  lets only members on the current or the previous version take part, so
+  before `previous_terms_version()` moves on, end the membership (4 weeks'
+  notice) of anyone still on the version it names, or keep that version
+  allowed.
 - **A change to the Privacy Policy:** change `privacy.js`, its version and
   date, and the matching entry in `docs/compliance/records-of-processing.md`.
   Members don't accept it, but tell them about important changes in the
@@ -403,17 +408,37 @@ Listings already in the Market's Travel category stay until they're deleted.
    `20261026000000_travel_board.sql` with a check in front). It refuses to
    run before round 3, and a second time. If the board still says "Coming
    soon" a few minutes later, run `NOTIFY pgrst, 'reload schema';`.
-   It also makes the Terms 2026-10-23 current: every member is asked once
-   to accept them when they next open NRIClub ("A new version of the
-   Terms" above says what section 14 promises members about notice).
-   Then change the version in the *Confirm signup* email template to
-   2026-10-23.
-3. **Check as a member:** accept the new Terms, open Travel, tick the
-   rules, post a trip, and delete it again.
-4. **Moderation:** reported trips show under **Reports → Travel board**;
+   It also makes the Terms 2026-10-23 current. As section 14 promises,
+   members who accepted 2026-10-19 keep using NRIClub under it: the Terms
+   screen ("We've updated our Terms of Use") asks them each time they open
+   NRIClub, and they can answer "Later". Until they accept, they can read
+   the travel board but not post or message from it (the board asks them
+   to accept the new Terms first). New sign-ups accept 2026-10-23. Then
+   change the version in the *Confirm signup* email template to 2026-10-23.
+3. **Email the members** (section 14 promises a summary of what changes and
+   the new text by email, at least 2 weeks before new Terms apply; they
+   apply to a member only once they accept them). By hand, to each member:
+
+   > **Subject:** NRIClub: our Terms of Use have changed (travel board)
+   >
+   > Hi <first name>, we've added a travel board to NRIClub for members
+   > flying to or from India. Its rules are now in our Terms of Use
+   > (section 7, replacing "Travel companions"), and travel posts can be
+   > reported like other content (section 9). The new Terms apply to you
+   > only once you accept them in NRIClub; until then the version you
+   > accepted still applies, and you only need the new one to post or send
+   > messages on the travel board. New Terms: https://nriclub.app/terms ·
+   > the version you accepted: https://nriclub.app/terms/2026-10-19
+   > — NRIClub, hello@nriclub.app
+
+4. **Check as a member who accepted 2026-10-19:** the Terms screen shows
+   what changed; "Later" opens the dashboard. Open Travel: it asks for the
+   new Terms before the rules. Accept them, tick the rules, post a trip,
+   and delete it again.
+5. **Moderation:** reported trips show under **Reports → Travel board**;
    **Remove…** with the rule "Travel board rules (§ 7)" for a post that asks
    for money or carries something the rules don't allow.
-5. Trips are deleted 30 days after their last date: part of the monthly
+6. Trips are deleted 30 days after their last date: part of the monthly
    routine (`docs/compliance/deletion-routine.md`) until
    `private.daily_cleanup()` is scheduled.
 

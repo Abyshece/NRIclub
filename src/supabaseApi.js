@@ -1118,6 +1118,28 @@ export function getCurrentTermsVersion({ refresh = false } = {}) {
   return termsVersionRequest;
 }
 
+// The version before the current one (public.previous_terms_version): it
+// still applies to members who accepted it until they accept the current
+// one (Terms section 14), so they can take part and may answer "Later".
+// "" if there is none: before the travel board's database update, or if it
+// can't be asked (then the Terms screen just has no "Later"). Remembered and
+// refreshed like the current version.
+let previousTermsRequest = null;
+let previousTermsAskedAt = 0;
+export function getPreviousTermsVersion({ refresh = false } = {}) {
+  if (refresh && Date.now() - previousTermsAskedAt > 60000) previousTermsRequest = null;
+  if (!previousTermsRequest) {
+    previousTermsAskedAt = Date.now();
+    previousTermsRequest = restCall("POST", "/rest/v1/rpc/previous_terms_version", {})
+      .then((version) => (typeof version === "string" ? version : ""))
+      .catch((err) => {
+        if (!isMissingInDatabase(err)) previousTermsRequest = null;
+        return "";
+      });
+  }
+  return previousTermsRequest;
+}
+
 // Records "18 or older" and the Terms: at signup once the email code is
 // confirmed, and for members who haven't accepted the current version.
 // version must be the current one (getCurrentTermsVersion); returns it.

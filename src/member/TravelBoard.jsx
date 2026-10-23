@@ -20,7 +20,9 @@ import {
 // link); onFocus(id | null) changes it. onMessage(post, text) sends the
 // first message to the post's author and opens Messages, or resolves to
 // why it couldn't. Avatar comes from the dashboard, so it looks the same
-// everywhere.
+// everywhere. The board's rules are in the Terms of Use 2026-10-23
+// (section 7): a member still on the previous version (termsVersion is the
+// current one) accepts them first; onReviewTerms opens the Terms screen.
 // ============================================================================
 
 const font = "'DM Sans', sans-serif";
@@ -56,6 +58,11 @@ function fitsFilters(p, f) {
     && (!f.month || inMonth(p, f.month))
     && (f.type === "all" || p.kind === f.type);
 }
+
+// The database's answer when a member still on the previous Terms posts or
+// messages from the board, and what the board says about it.
+const TERMS_NEEDED = /accept the updated Terms of Use/;
+const TERMS_NOTICE = "The travel board's rules are part of our updated Terms of Use (section 7). Please accept the updated Terms to post a trip or message a member from the board.";
 
 const byDate = (a, b) => (a.date_from < b.date_from ? -1 : a.date_from > b.date_from ? 1 : String(b.created_at).localeCompare(String(a.created_at)));
 
@@ -208,7 +215,7 @@ function RulesChecklist({ onCancel, onAccepted }) {
 // ---------------------------------------------------------------------------
 // A NEW POST, OR EDITING ONE
 // ---------------------------------------------------------------------------
-function TripForm({ initial, today, onCancel, onSaved, onRefused }) {
+function TripForm({ initial, today, onCancel, onSaved, onRefused, onTerms }) {
   const editing = !!initial.id;
   const [f, setF] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -259,8 +266,10 @@ function TripForm({ initial, today, onCancel, onSaved, onRefused }) {
       const refused = /42501|row-level security/i.test(e?.message || "");
       const again = refused ? await onRefused() : "";
       setBusy(false);
-      setError(again || (refused ? "Only members our team has approved can post on the travel board."
-        : apiErrorMessage(e, "Your post couldn't be saved. Please try again.")));
+      const said = apiErrorMessage(e, "Your post couldn't be saved. Please try again.");
+      // Still on the previous Terms: say so, and offer them.
+      if (TERMS_NEEDED.test(said)) onTerms();
+      setError(again || (refused ? "Only members our team has approved can post on the travel board." : said));
     }
   };
 
@@ -384,7 +393,7 @@ function MessageDialog({ post, onCancel, onSend }) {
 // ---------------------------------------------------------------------------
 // THE BOARD
 // ---------------------------------------------------------------------------
-export default function TravelBoard({ user, focusId = null, onFocus, onMessage, onReport, reportedIds, blockedIds, openMember, Avatar }) {
+export default function TravelBoard({ user, focusId = null, onFocus, onMessage, onReport, reportedIds, blockedIds, openMember, Avatar, termsVersion = null, onReviewTerms = null }) {
   const today = todayInGermany();
   const [state, setState] = useState("loading"); // loading | ready | missing | error
   const [loadError, setLoadError] = useState("");
@@ -395,6 +404,14 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
   const [checklist, setChecklist] = useState(null); // { then }: the rules to tick before going on
   const [messaging, setMessaging] = useState(null); // the post whose author is being messaged
   const [notice, setNotice] = useState("");
+  const [termsPrompt, setTermsPrompt] = useState(false); // "accept the updated Terms first", over what it interrupts
+  // Still on the previous version of the Terms (they answered "Later"): the
+  // board's rules are in the new one, so it comes before them.
+  const needsTerms = !!termsVersion && !!user.termsVersion && user.termsVersion !== termsVersion;
+  const reviewTerms = () => {
+    setTermsPrompt(false);
+    if (onReviewTerms) onReviewTerms(); else window.location.reload();
+  };
 
   // The posts and the rules come with the same database update: the rules'
   // function missing means the board isn't there yet (and the posts missing
@@ -444,8 +461,12 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
   const filtering = filters.from.trim() || filters.to.trim() || filters.month || filters.type !== "all";
   const months = nextMonths(today);
 
-  // The rules come first: once ticked, straight on.
-  const withRules = (then) => { if (rules?.accepted) then(); else setChecklist({ then }); };
+  // The updated Terms first, then the rules: once both are done, straight on.
+  const withRules = (then) => {
+    if (needsTerms) setTermsPrompt(true);
+    else if (rules?.accepted) then();
+    else setChecklist({ then });
+  };
   const startPost = (kind) => withRules(() => setForm({
     kind, from_city: kind === "offer" ? (user.city || "") : "", to_city: "", date_from: "", date_to: "", flight: "", help: [], note: "",
   }));
@@ -491,6 +512,7 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
   const sendMessage = async (p, body) => {
     const problem = await onMessage(p, body);
     if (!problem) setMessaging(null);
+    if (TERMS_NEEDED.test(problem || "")) setTermsPrompt(true);
     return /rules first/.test(problem || "") ? (await rulesAgain()) || problem : problem;
   };
 
@@ -551,6 +573,14 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
         <button type="button" onClick={() => startPost("offer")} style={btn}>✈️ {TRAVEL_KINDS.offer.label}</button>
         <button type="button" onClick={() => startPost("request")} style={btnLight}>🤝 {TRAVEL_KINDS.request.label}</button>
       </div>
+
+      {needsTerms && (
+        <section aria-labelledby="travel-terms-title" style={{ ...card, background: "#F5F8FF", border: "1px solid #D5DFF3" }}>
+          <h3 id="travel-terms-title" style={{ fontSize: 14, fontWeight: 700, color: INK, margin: "0 0 4px", fontFamily: font }}>Updated Terms of Use</h3>
+          <p style={text}>{TERMS_NOTICE} You can still read the board.</p>
+          <button type="button" onClick={reviewTerms} style={{ ...btn, marginTop: 10 }}>Read and accept the Terms</button>
+        </section>
+      )}
 
       {/* The rules, open until the member has ticked them. */}
       <details open={!rules?.accepted} style={{ ...card, background: "#FFFDF8", border: "1px solid #F3E3C3" }}>
@@ -633,12 +663,21 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
         {[...CITIES_ABROAD, ...CITIES_INDIA].map((c) => <option key={c} value={c} />)}
       </datalist>
 
-      {form && <TripForm initial={form} today={today} onCancel={() => setForm(null)} onSaved={saved} onRefused={rulesAgain} />}
+      {form && <TripForm initial={form} today={today} onCancel={() => setForm(null)} onSaved={saved} onRefused={rulesAgain} onTerms={() => setTermsPrompt(true)} />}
       {messaging && <MessageDialog post={messaging} onCancel={() => setMessaging(null)} onSend={sendMessage} />}
       {/* Last, so it shows over the form or message it interrupts. */}
       {checklist && (
         <RulesChecklist onCancel={() => setChecklist(null)}
           onAccepted={(status) => { const then = checklist.then; setRules(status); setChecklist(null); then(); }} />
+      )}
+      {termsPrompt && (
+        <Dialog id="travel-terms-dialog" title="Please accept the updated Terms of Use" onClose={() => setTermsPrompt(false)}>
+          <p style={{ ...text, marginBottom: 16 }}>{TERMS_NOTICE}</p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <button type="button" onClick={() => setTermsPrompt(false)} style={btnLight}>Cancel</button>
+            <button type="button" onClick={reviewTerms} style={btn}>Read and accept the Terms</button>
+          </div>
+        </Dialog>
       )}
     </div>
   );

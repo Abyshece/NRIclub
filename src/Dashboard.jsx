@@ -1224,7 +1224,10 @@ const REVIEW_AGAIN_NOTE = (what) =>
 // do: the ones api.refreshMyStatus reads.
 const STATUS_FIELDS = ["verificationStatus", "status", "reviewFlag", "termsVersion", "ageConfirmedAt", "termsAcceptedAt"];
 
-const Dashboard = ({ user, onLogout, onUserUpdate }) => {
+// termsVersion: the current version of the Terms (from the database). For a
+// member who answered "Later" to it, onReviewTerms shows the Terms screen
+// again (the travel board needs the current version).
+const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReviewTerms = null }) => {
   const [startRoute] = useState(() => parsePath(window.location.pathname, user?.id));
   const [whatsOnStart] = useState(whatsOnTarget); // /whats-on#<id>: that event, under Events
   const [findTab, setFindTab] = useState(startRoute.findTab || "people"); // Find: people | mentors
@@ -4445,6 +4448,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate }) => {
       case "travel":
         return <TravelBoard user={user} focusId={travelFocus} onFocus={setTravelFocus} onReport={setReportConfirm}
           onMessage={(post, text) => (post?.user_id && post.user_id !== user.id ? sendFirstMessage(post.user_id, text) : "You can't message the author of this post.")}
+          termsVersion={termsVersion} onReviewTerms={onReviewTerms}
           reportedIds={reportedIds} blockedIds={blockedIds} openMember={openMember} Avatar={Avatar} />;
 
       case "mentoring":

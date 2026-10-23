@@ -32,6 +32,10 @@ export const TERMS_CHANGES = [
   "A section on the new travel board (flying to or from India) replaces \"Travel companions\": favours only, no payment; only documents and small open items, checked in person; you're responsible for your own luggage at customs; and we may remove posts that break these rules (section 7).",
   "You can report travel posts like other content (section 9).",
 ];
+// For members on the previous version, who may answer "Later" (section 14:
+// the Terms they accepted still apply): what they need this version for
+// (the database checks it: private.has_current_terms).
+export const TERMS_NEEDED_FOR = "posting or messaging on the travel board";
 
 // Who the contract is with: the operator from src/content/imprint.js once it
 // is filled in.
