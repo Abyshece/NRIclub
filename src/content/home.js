@@ -34,3 +34,23 @@ export const FEATURED_GUIDES = [
 export const FOUNDER = null;
 
 export const SHARE_TEXT = "NRIClub: a free community for Indians abroad, with city groups around the world and free guides on passports, OCI, NRE/NRO accounts and taxes. Our team checks every new member. https://nriclub.app";
+
+// "Our mission" on the homepage (MissionSection.jsx, #mission). The 35
+// million: India's Ministry of External Affairs counts about 35 million
+// NRIs and people of Indian origin.
+export const MISSION = {
+  title: "Every Indian abroad, one community.",
+  lead: "More than 35 million Indians and people of Indian origin live outside India. Today we're split across thousands of chat groups: many go quiet, links stop working, and last year's best answer is lost in the scroll. Our goal is one place where every Indian abroad can find their city, get help from people who've been there, and pass it on.",
+  goals: [
+    { title: "Connect every NRI", text: "One account for every city where Indians live. When you move, your community moves with you." },
+    { title: "Real people, a safe space", text: "A person on our team checks every new member, and your phone number stays private." },
+    { title: "Help that lasts", text: "Answers, guides and mentors stay for the next person, instead of scrolling away in a chat." },
+    { title: "Run with the community", text: "City ambassadors, local meetups and members helping members. Independent: not an agency, a political group or a government office." },
+  ],
+  // Where we're going: a plan, so it says what we're doing now and next.
+  path: [
+    { when: "Now", text: "Germany first: city groups, What's on and our first city ambassadors." },
+    { when: "Next", text: "Cities across Europe." },
+    { when: "Our goal", text: "Every city in the world where Indians live." },
+  ],
+};
