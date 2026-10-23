@@ -387,6 +387,30 @@ in the admin panel under **Ambassadors**.
    (`docs/compliance/deletion-routine.md`) until `private.daily_cleanup()`
    is scheduled.
 
+## Travel board: what to do
+
+"Travel" in the app (/travel, "Flying to or from India") replaces the
+Market's "Travel companion" category: members post trips to find a travel
+companion or someone to carry documents or a small open item as a favour.
+Listings already in the Market's Travel category stay until they're deleted.
+
+1. **Deploy the site.** Until the SQL below runs, the board says "Coming
+   soon" and the Market works as before.
+2. **The same day:** run
+   `supabase/oneoff/2026-10-26-travel-board/run_in_sql_editor.sql` in the
+   SQL editor, the whole file at once (it is the migration
+   `20261026000000_travel_board.sql` with a check in front). It refuses to
+   run before round 3, and a second time. If the board still says "Coming
+   soon" a few minutes later, run `NOTIFY pgrst, 'reload schema';`.
+3. **Check as a member:** open Travel, tick the rules, post a trip, and
+   delete it again.
+4. **Moderation:** reported trips show under **Reports → Travel board**;
+   **Remove…** with the rule "Travel board rules (§ 7)" for a post that asks
+   for money or carries something the rules don't allow.
+5. Trips are deleted 30 days after their last date: part of the monthly
+   routine (`docs/compliance/deletion-routine.md`) until
+   `private.daily_cleanup()` is scheduled.
+
 ## What's on: other organisers' events in Germany
 
 nriclub.app/whats-on lists Indian events in Germany that other organisers run

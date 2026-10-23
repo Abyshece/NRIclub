@@ -126,8 +126,15 @@ export function termsDoc(version = TERMS_VERSION) {
         ] },
         { h: "Jobs and referrals" },
         { p: "Offer referrals only at your own employer, and never ask for or pay a fee for a referral." },
-        { h: "Travel companions" },
-        { p: "Travel posts are for help along the way. Never carry luggage, parcels or anything else for someone you don't know, or anything you haven't packed and checked yourself." },
+        { h: "Travel board (flying to or from India)" },
+        { ul: [
+          "The travel board helps members find a travel companion, or a member who can carry documents or a small open item, as a favour. Only approved members can post or reply there, and you agree to the board's rules once before your first post or message.",
+          "Favours only: no payment of any kind, including \"courier fees\". Offering or asking for money isn't allowed.",
+          "Only documents and small open items that the traveller sees and checks in person before the trip. No sealed parcels, cash, gold or jewellery, medicines, food, or anything customs restricts.",
+          "You are responsible for everything in your own luggage at customs, in every country on the way. Check the customs rules before you agree, and if in doubt, say no.",
+          "Meet in a public place to hand things over. Never share passport copies, OTPs or bank details.",
+          `We may remove posts that break these rules (section 10). A post leaves the board after its last date and is deleted ${RETENTION.travelPostDays} days after that date.`,
+        ] },
         { h: "Events and meetups" },
         { p: "Events are organised by members, not by NRIClub, and the organiser is responsible for them. Take the usual care when you meet people you don't know." },
         { h: "Mentoring" },
@@ -168,7 +175,7 @@ export function termsDoc(version = TERMS_VERSION) {
       { id: "reporting", title: "9. Reporting content", blocks: [
         { p: "Anyone, member or not, can tell us about content on NRIClub they believe is illegal or against these Terms:" },
         { ul: [
-          "Members: use Report on the item itself: a post, comment, answer, question, guide or comment on a guide, event, Market listing, place, mentoring review, profile, or a message you received.",
+          "Members: use Report on the item itself: a post, comment, answer, question, guide or comment on a guide, event, Market listing, travel post, place, mentoring review, profile, or a message you received.",
           ["Everyone: use the form at ", a("nriclub.app/report", REPORT_HREF), ", or write to ", mail("Report illegal content"), "."],
         ] },
         { p: "Please tell us: where the content is (a link, or the group, member, title and date); why you believe it is illegal or against our rules; your name and email address (not needed if your report is about the sexual abuse of a child); and that your report is accurate and complete to the best of your knowledge." },
