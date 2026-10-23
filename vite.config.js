@@ -76,6 +76,7 @@ function homeStatic() {
 .hs-links{list-style:none;padding:0;margin:0 auto;max-width:760px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .hs-links a{display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;padding:0 16px;border:1px solid #C9C8C5;border-radius:999px;font-size:14px;text-decoration:none}
 .hs-wot{font-size:15px;color:#6B6A67;margin:20px 0 0}
+.hs-whyl{display:inline-flex;align-items:center;min-height:48px;padding:0 6px;margin-left:14px;font-size:15px;font-weight:600;vertical-align:middle}
 .hs-wot a{display:inline-block;padding:10px 4px;font-weight:600}
 @media (max-width:860px){.hs-hero{grid-template-columns:1fr;text-align:center}.hs-lead{margin-left:auto;margin-right:auto}}
 @media (max-width:600px){.hs-map{display:none}}
@@ -84,11 +85,11 @@ function homeStatic() {
   return `<div id="home-static"><style>${css}</style>`
     + `<div class="hs-line"></div>`
     + `<header class="hs-nav"><nav class="hs-w"><a class="hs-logo" href="/" aria-label="NRIClub home">${logoMarkSvg(28)}<span>NRI<i>Club</i></span></a>`
-    + `<span class="hs-navb"><a class="hs-wo" href="${WHATS_ON_PATH}">What's on</a><a href="/" data-start="login">Log in</a><a href="/" data-start="signup">Join free</a></span></nav></header>`
+    + `<span class="hs-navb"><a class="hs-wo" href="#why">Why NRIClub</a><a class="hs-wo" href="${WHATS_ON_PATH}">What's on</a><a href="/" data-start="login">Log in</a><a href="/" data-start="signup">Join free</a></span></nav></header>`
     + `<main><section class="hs-top"><div class="hs-w hs-hero"><div>`
     + `<div class="hs-pill">${logoMarkSvg(18)} ${esc(HOME_PILL)}</div>`
     + `<h1>One home for<br>Indians abroad.</h1><p class="hs-lead">${esc(HOME_LEAD)}</p>`
-    + `<a class="hs-btn" href="/" data-start="signup">Join free ${arrow}</a><p class="hs-trust">${TRUST_LINE.split(' · ').map((t, i, all) => `<span style="white-space:nowrap">${esc(t)}${i < all.length - 1 ? ' ·' : ''}</span>`).join(' ')}</p>`
+    + `<a class="hs-btn" href="/" data-start="signup">Join free ${arrow}</a><a class="hs-whyl" href="#why">Why NRIClub?</a><p class="hs-trust">${TRUST_LINE.split(' · ').map((t, i, all) => `<span style="white-space:nowrap">${esc(t)}${i < all.length - 1 ? ' ·' : ''}</span>`).join(' ')}</p>`
     + `</div><div class="hs-map"></div></div><div class="hs-skyw"><div class="hs-sky"></div></div></section>`
     + `<section class="hs-w hs-sec"><div class="hs-eye">Find your city</div><h2>Find your city's group</h2>`
     + `<p class="hs-sub">Groups for ${CITIES.length} cities. Many are brand new: join early and help shape yours.</p>`

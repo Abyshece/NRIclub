@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import * as api from "./supabaseApi";
 import LogoMark from "./LogoMark";
+import WhyNRIClub from "./WhyNRIClub";
 import { slug } from "./content/slug";
 import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
@@ -107,14 +108,6 @@ const FEATURES = [
     icon: icon(["M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2", "M9 11a4 4 0 100-8 4 4 0 000 8z", "M23 21v-2a4 4 0 00-3-3.87", "M16 3.13a4 4 0 010 7.75"]) },
 ];
 
-// Why NRIClub and not one more chat group: only things NRIClub really does.
-const REASONS = [
-  ["Real people", "A person on our team checks every new member."],
-  ["Your number stays private", "Message members inside NRIClub. We never ask for your phone number."],
-  ["Answers don't get lost", "The person who asked can mark the best answer, so the next person finds it."],
-  ["Everything in one place", "Rooms, referrals, questions, desi places, events and guides for your city."],
-];
-
 const STEPS = [
   { title: "Join free", text: "Your name, email and a password. No phone number and no app store: NRIClub works in your browser and can sit on your home screen." },
   { title: "Get checked", text: "Paste your LinkedIn. No LinkedIn? Write a sentence on how you're connected to the community, like your university or employer. If a member knows you, you can name them too. A person on our team checks it, usually within a day; meanwhile you can join groups and say hello." },
@@ -124,12 +117,6 @@ const STEPS = [
 const ArrowRight = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
-  </svg>
-);
-
-const Check = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={GREEN} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }}>
-    <circle cx="12" cy="12" r="10" /><path d="M8 12.5l2.5 2.5L16 9.5" />
   </svg>
 );
 
@@ -158,6 +145,11 @@ export default function LandingPage({ onJoin, onLogin }) {
   const [cityQuery, setCityQuery] = useState("");
   const [guides, setGuides] = useState(null); // all guides, loaded after the page (they're long)
   const [applying, setApplying] = useState(false); // the ambassador application form is open
+  // A link to /#why (the nav's "Why NRIClub" from another page): the section
+  // only exists once the page has drawn, so scroll to it then.
+  useEffect(() => {
+    if (window.location.hash === "#why") document.getElementById("why")?.scrollIntoView();
+  }, []);
   useEffect(() => {
     api.getPublicCities().then((rows) => { if (Array.isArray(rows)) setGroups(rows); }).catch(() => {});
     import("./content/essentials").then((m) => setGuides(m.ESSENTIALS)).catch(() => {});
@@ -237,6 +229,7 @@ export default function LandingPage({ onJoin, onLogin }) {
               </p>
               <div className="lp-hero-actions" style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
                 <button type="button" onClick={onJoin} style={primaryBtn}>Join free <ArrowRight /></button>
+                <a href="#why" style={{ display: "inline-flex", alignItems: "center", minHeight: 48, padding: "0 6px", fontSize: 15, fontWeight: 600, color: INK }}>Why NRIClub?</a>
               </div>
               <p style={trust}><Phrases text={TRUST_LINE} /></p>
             </div>
@@ -244,6 +237,9 @@ export default function LandingPage({ onJoin, onLogin }) {
           </div>
           <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 12px" }}><Skyline /></div>
         </section>
+
+        {/* WHY NRICLUB: scattered groups vs one home (WhyNRIClub.jsx) */}
+        <WhyNRIClub onJoin={onJoin} />
 
         {/* FIND YOUR CITY */}
         <section aria-labelledby="lp-city" style={{ ...section, paddingTop: 56, paddingBottom: 56, textAlign: "center" }}>
@@ -266,31 +262,6 @@ export default function LandingPage({ onJoin, onLogin }) {
           <p style={{ fontSize: 15, color: MUTED, margin: "20px 0 0" }}>
             {WHATS_ON_TEASER[0]} <a href="/whats-on" style={{ display: "inline-block", padding: "10px 4px", color: INK, fontWeight: 600 }}>{WHATS_ON_TEASER[1]}</a>
           </p>
-        </section>
-
-        {/* WHY NRICLUB */}
-        <section aria-labelledby="lp-why" style={{ ...section, paddingTop: 40, paddingBottom: 56 }}>
-          <div style={{ maxWidth: 720, margin: "0 auto" }}>
-            <div style={{ textAlign: "center" }}>
-              <div style={eyebrow}>Why NRIClub</div>
-              <h2 id="lp-why" style={h2}>Not another WhatsApp group.</h2>
-              <p style={lead}>More than 35 million Indians and people of Indian origin live outside India, spread across countless WhatsApp, Facebook and Telegram groups.</p>
-            </div>
-            <ul style={{ listStyle: "none", padding: 0, margin: "28px auto 0", display: "grid", gap: 14, maxWidth: 600 }}>
-              {REASONS.map(([title, text]) => (
-                <li key={title} style={{ display: "flex", gap: 12, alignItems: "flex-start", fontSize: 16, lineHeight: 1.55 }}>
-                  <Check />
-                  <span><strong style={{ fontWeight: 650 }}>{title}:</strong> <span style={{ color: MUTED }}>{text}</span></span>
-                </li>
-              ))}
-            </ul>
-            <p style={{ textAlign: "center", fontSize: 15, fontWeight: 600, margin: "28px 0 6px" }}>
-              {cityCount} city groups · language groups · free NRI guides
-            </p>
-            <p style={{ textAlign: "center", fontSize: 14, color: MUTED, margin: 0 }}>
-              We will never message you asking for money, your passport or your login code.
-            </p>
-          </div>
         </section>
 
         {/* WHAT YOU CAN DO */}
