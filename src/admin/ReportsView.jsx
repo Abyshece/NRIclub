@@ -75,13 +75,14 @@ const NOTICE_DECISIONS = { removed: "Removed", blocked: "Blocked", warned: "Warn
 const PREFIX_KINDS = {
   MARKETPLACE: "market", MARKET: "market", DOC_COMMENT: "doc_comment", DOC: "doc", EVENT: "event", HELP: "help",
   REVIEW: "review", COMMENT: "comment", ANSWER: "answer", PLACE: "place", MESSAGE: "message", POST: "post",
+  TRAVEL: "travel",
 };
 
 const isProfileReport = (r) => (r.content_type ? r.content_type === "profile"
   : !r.reported_post_id && !!r.reported_user_id) || /^\[(USER|PROFILE)\]/i.test(r.reason || "");
 
 // Which kind of content was reported (post, comment, answer, doc,
-// doc_comment, event, help, market, review, place or message).
+// doc_comment, event, help, market, review, place, travel or message).
 function kindOf(r) {
   if (r.content_type && r.content_type !== "profile" && r.content_type !== "feedback") return r.content_type;
   const m = /^\[([A-Z_]+)\]/.exec((r.reason || "").toUpperCase());
@@ -97,6 +98,7 @@ const SECTIONS = [
   ["Guides", (r) => kindOf(r) === "doc" || kindOf(r) === "doc_comment"],
   ["Events", (r) => kindOf(r) === "event"],
   ["Marketplace", (r) => kindOf(r) === "market"],
+  ["Travel board", (r) => kindOf(r) === "travel"],
   ["Places", (r) => kindOf(r) === "place"],
   ["Messages", (r) => kindOf(r) === "message"],
   ["Mentor reviews", (r) => kindOf(r) === "review"],
@@ -131,6 +133,11 @@ export function contentPreview(kind, row) {
   if (kind === "review") return { type: "review", content: `${"★".repeat(row.rating)}${"☆".repeat(5 - row.rating)} mentoring review`, excerpt: row.comment, authorId: row.mentee_id };
   if (kind === "place") return { type: "place", content: row.name, excerpt: [row.kind, row.address, row.city].filter(Boolean).join(" · ") + (row.note ? ` — ${row.note}` : ""), authorId: row.created_by };
   if (kind === "message") return { type: "message", content: row.content, date: formatDate(row.created_at, { time: true }), authorId: row.sender_id };
+  if (kind === "travel") {
+    const when = row.date_from === row.date_to ? row.date_from : `${row.date_from} to ${row.date_to}`;
+    const what = (row.help || []).join(", ");
+    return { type: "travel", content: `${row.from_city} → ${row.to_city}`, excerpt: [row.kind === "offer" ? `Travelling, can help with: ${what}` : `Needs help with: ${what}`, row.flight, row.note].filter(Boolean).join(" · "), date: when, authorId: row.user_id };
+  }
   // Listings keep image_url as a JSON array of URLs; show the first.
   let img = row.image_url;
   try { const a = JSON.parse(img); img = Array.isArray(a) ? a[0] : img; } catch { img = row.image_url; }

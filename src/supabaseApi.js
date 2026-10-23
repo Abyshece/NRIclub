@@ -1638,6 +1638,85 @@ export async function createMarketItem(item) {
 }
 
 // ============================================================================
+// TRAVEL BOARD ("Flying to or from India", src/member/TravelBoard.jsx)
+// ============================================================================
+
+// Since the 2026-10-26 database update. Before it the board isn't there:
+// the reads below return null and the board says it's coming soon, on
+// whatever PostgREST or Postgres answer for something that doesn't exist
+// (for travel_posts with its authors, PostgREST 12 says it can't find the
+// relationship, PGRST200).
+function travelMissing(err) {
+  if (isMissingInDatabase(err) || /\(404\)$/.test(err?.message || "")) return true;
+  try {
+    return ["PGRST200", "PGRST205", "42P01"].includes(JSON.parse(err?.message || "")?.code);
+  } catch {
+    return false;
+  }
+}
+
+const TRAVEL_FIELDS = "id,user_id,kind,from_city,to_city,from_key,to_key,date_from,date_to,flight,help,note,created_at,updated_at";
+
+// The posts whose last date is today (in Germany: from) or later, soonest
+// first, with their authors. The database leaves out posts of members who
+// blocked the member or were blocked by them, and of accounts other members
+// don't see. null before the database update.
+export async function getTravelPosts(from) {
+  try {
+    return withPerson(await restCall("GET", `/rest/v1/travel_posts?select=${TRAVEL_FIELDS},profiles:user_id(id,name,avatar_url)`
+      + `&date_to=gte.${encodeURIComponent(from)}&order=date_from.asc,created_at.desc&limit=500`));
+  } catch (err) {
+    if (travelMissing(err)) return null;
+    throw err;
+  }
+}
+
+// Whether the member has ticked the board's current rules: { version,
+// accepted, accepted_version, accepted_at }. null before the database update.
+export async function getTravelRulesStatus() {
+  try {
+    return await restCall("POST", "/rest/v1/rpc/travel_rules_status", {});
+  } catch (err) {
+    if (travelMissing(err)) return null;
+    throw err;
+  }
+}
+
+// The member ticked the rules (version: TRAVEL_RULES_VERSION, the ones they
+// read). Returns the new status.
+export async function acceptTravelRules(version) {
+  return restCall("POST", "/rest/v1/rpc/accept_travel_rules", { p_version: version });
+}
+
+const travelBody = (p) => ({
+  from_city: p.from_city, to_city: p.to_city, date_from: p.date_from, date_to: p.date_to,
+  flight: p.flight || "", help: p.help, note: p.note || "",
+});
+
+// A new post (kind "offer" or "request"); returns it as saved.
+export async function createTravelPost(post) {
+  if (!currentUser) throw new Error("Not logged in");
+  const rows = await restCall("POST", `/rest/v1/travel_posts?select=${TRAVEL_FIELDS}`,
+    { ...travelBody(post), kind: post.kind, user_id: currentUser.id }, { Prefer: "return=representation" });
+  if (!rows?.[0]) throw userError("Your post couldn't be saved. Please try again.");
+  return rows[0];
+}
+
+// The author's changes to their post (not its kind); returns it as saved.
+export async function updateTravelPost(id, post) {
+  if (!UUID.test(id || "")) throw new Error("Unknown post");
+  const rows = await restCall("PATCH", `/rest/v1/travel_posts?id=eq.${id}&select=${TRAVEL_FIELDS}`, travelBody(post),
+    { Prefer: "return=representation" });
+  if (!rows?.[0]) throw userError("This post couldn't be saved. It may have been deleted.");
+  return rows[0];
+}
+
+export async function deleteTravelPost(id) {
+  if (!UUID.test(id || "")) throw new Error("Unknown post");
+  return restCall("DELETE", `/rest/v1/travel_posts?id=eq.${id}`);
+}
+
+// ============================================================================
 // DOCS
 // ============================================================================
 
@@ -2540,7 +2619,8 @@ export async function adminCountMembers() {
 // Reported content by kind, with the same fields as the previews in
 // adminGetDashboardData ("marketplace" is accepted for "market"). Comments,
 // answers, guide comments and places can be reported since the 2026-10-21
-// database update; messages are read through adminGetReportedMessage.
+// database update, travel posts since the 2026-10-26 one; messages are read
+// through adminGetReportedMessage.
 const REPORTED_ITEMS = {
   post: ["posts", "id,content,image_url,user_id,created_at"],
   comment: ["comments", "id,content,post_id,user_id,created_at"],
@@ -2552,6 +2632,7 @@ const REPORTED_ITEMS = {
   market: ["marketplace", "id,title,description,price,user_id,image_url"],
   review: ["mentor_reviews", "id,rating,comment,mentee_id,mentor_id,created_at"],
   place: ["places", "id,name,kind,city,address,note,created_by,created_at"],
+  travel: ["travel_posts", "id,kind,from_city,to_city,date_from,date_to,flight,help,note,user_id,created_at"],
 };
 REPORTED_ITEMS.marketplace = REPORTED_ITEMS.market;
 
@@ -2659,12 +2740,13 @@ export async function adminMemberOverview(memberId) {
 const MODERATED_TABLES = {
   post: "posts", comment: "comments", answer: "help_responses", doc: "docs", doc_comment: "doc_comments",
   event: "events", help: "help_requests", market: "marketplace", review: "mentor_reviews", place: "places",
+  travel: "travel_posts",
 };
 
 // One decision of our team on a member's content or account
 // (public.admin_moderate): kind ("post", "comment", "answer", "doc",
-// "doc_comment", "event", "help", "market", "review", "place", "message",
-// "place_recommendation" with member, "profile_photo", "profile_bio" or
+// "doc_comment", "event", "help", "market", "review", "place", "travel",
+// "message", "place_recommendation" with member, "profile_photo", "profile_bio" or
 // "member"), id, action ("remove", "warn", "block", "unblock"), ground
 // ("terms" or "illegal"), rule (the rule in the Terms, or the law), facts
 // (finishing "because ..."), reportIds (the reports it answers; every other
