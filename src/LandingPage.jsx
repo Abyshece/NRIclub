@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import * as api from "./supabaseApi";
 import LogoMark from "./LogoMark";
 import WhyNRIClub from "./WhyNRIClub";
+import MissionSection from "./MissionSection";
 import { slug } from "./content/slug";
 import { CITIES } from "./content/cities";
 import { findCity } from "./content/findCity";
@@ -145,10 +146,12 @@ export default function LandingPage({ onJoin, onLogin }) {
   const [cityQuery, setCityQuery] = useState("");
   const [guides, setGuides] = useState(null); // all guides, loaded after the page (they're long)
   const [applying, setApplying] = useState(false); // the ambassador application form is open
-  // A link to /#why (the nav's "Why NRIClub" from another page): the section
-  // only exists once the page has drawn, so scroll to it then.
+  // A link to /#why or /#mission (the nav's "Why NRIClub", the footers' "Our
+  // mission"): the section only exists once the page has drawn, so scroll to
+  // it then.
   useEffect(() => {
-    if (window.location.hash === "#why") document.getElementById("why")?.scrollIntoView();
+    const id = { "#why": "why", "#mission": "mission" }[window.location.hash];
+    if (id) document.getElementById(id)?.scrollIntoView();
   }, []);
   useEffect(() => {
     api.getPublicCities().then((rows) => { if (Array.isArray(rows)) setGroups(rows); }).catch(() => {});
@@ -240,6 +243,9 @@ export default function LandingPage({ onJoin, onLogin }) {
 
         {/* WHY NRICLUB: scattered groups vs one home (WhyNRIClub.jsx) */}
         <WhyNRIClub onJoin={onJoin} />
+
+        {/* OUR MISSION: the goals and where we're going (MissionSection.jsx) */}
+        <MissionSection onJoin={onJoin} onAmbassador={() => setApplying(true)} />
 
         {/* FIND YOUR CITY */}
         <section aria-labelledby="lp-city" style={{ ...section, paddingTop: 56, paddingBottom: 56, textAlign: "center" }}>
@@ -357,6 +363,7 @@ export default function LandingPage({ onJoin, onLogin }) {
       <footer style={{ ...section, borderTop: "1px solid #F0EFED", marginTop: 32, paddingTop: 14, paddingBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 13, color: MUTED }}>
         <Logo />
         <div style={{ display: "flex", flexWrap: "wrap" }}>
+          <a href="#mission" style={footerLink}>Our mission</a>
           <a href="/guides" style={footerLink}>NRI guides</a>
           <a href="/whats-on" style={footerLink}>What's on in Germany</a>
           <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>

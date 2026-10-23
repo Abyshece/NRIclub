@@ -97,6 +97,7 @@ export default function PublicShell({ onLogin, onJoin, loginLabel, hero, childre
       <footer style={{ ...section, maxWidth: 1100, borderTop: "1px solid #F0EFED", marginTop: 32, paddingTop: 14, paddingBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 13, color: MUTED }}>
         <div style={{ display: "flex", flexWrap: "wrap" }}>
           <a href="/" style={footerLink}>NRIClub home</a>
+          <a href="/#mission" style={footerLink}>Our mission</a>
           <a href="/guides" style={footerLink}>NRI guides</a>
           <a href="/whats-on" style={footerLink}>What's on in Germany</a>
           <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>
