@@ -3,7 +3,7 @@ import * as api from "./supabaseApi";
 import LandingPage from "./LandingPage";
 import LogoMark from "./LogoMark";
 import "./member/base.css";
-import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToAccept } from "./member/profile";
+import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToAccept, termsLaterChosen, chooseTermsLater, forgetTermsLater } from "./member/profile";
 import { hasImprint } from "./content/imprint";
 import { moveOldInvite, rememberInvite } from "./member/invite";
 import { isAppPath } from "./content/routes";
@@ -251,8 +251,15 @@ export default function App() {
   const [authState, setAuthState] = useState(() => (startsSignedOut() ? "landing" : "loading"));
   const [user, setUser] = useState(null);
   // The version of the Terms members must have accepted, as the database
-  // says (api.getCurrentTermsVersion); null until known.
+  // says (api.getCurrentTermsVersion); null until known. And the version
+  // before it, which still applies to members who accepted it until they
+  // accept the current one (api.getPreviousTermsVersion; "" if none).
   const [termsVersion, setTermsVersion] = useState(null);
+  const [previousTermsVersion, setPreviousTermsVersion] = useState("");
+  // { key: "<member id>:<version>" } once the member answered "Later" on the
+  // Terms screen (also kept for the browser session: termsLaterChosen). A new
+  // object each time, so the screen updates even when the key doesn't.
+  const [termsLater, setTermsLater] = useState({ key: "" });
   const [loginEmail, setLoginEmail] = useState(""); // prefilled after "Log in instead" or a reset this browser asked for
   const [loginNotice, setLoginNotice] = useState(""); // e.g. after a new password
   const [isAdmin, setIsAdmin] = useState(false);
@@ -347,8 +354,9 @@ export default function App() {
       try {
         // With the current Terms version, so a tab opened before the Terms
         // changed asks for them again once reloaded.
-        const [dbProfile, version] = await Promise.all([api.getMyProfile(), api.getCurrentTermsVersion()]);
+        const [dbProfile, version, previous] = await Promise.all([api.getMyProfile(), api.getCurrentTermsVersion(), api.getPreviousTermsVersion()]);
         if (dbProfile) {
+          setPreviousTermsVersion(previous);
           setTermsVersion(version);
           setUser(mapProfile(dbProfile));
           setAuthState("authenticated");
@@ -400,8 +408,8 @@ export default function App() {
   useEffect(() => {
     if (authState !== "authenticated" || termsVersion) return;
     let active = true;
-    api.getCurrentTermsVersion()
-      .then((version) => { if (active) setTermsVersion(version); })
+    Promise.all([api.getCurrentTermsVersion(), api.getPreviousTermsVersion()])
+      .then(([version, previous]) => { if (active) { setPreviousTermsVersion(previous); setTermsVersion(version); } })
       .catch(() => { if (active) setAuthState("profile-error"); });
     return () => { active = false; };
   }, [authState, termsVersion]);
@@ -418,14 +426,14 @@ export default function App() {
     let active = true;
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      api.getCurrentTermsVersion({ refresh: true }).then(async (version) => {
+      Promise.all([api.getCurrentTermsVersion({ refresh: true }), api.getPreviousTermsVersion({ refresh: true })]).then(async ([version, previous]) => {
         if (termsVersionRef.current && version !== termsVersionRef.current) {
           try {
             const dbProfile = await api.getMyProfile();
             if (active && dbProfile) setUser(mapProfile(dbProfile));
           } catch {}
         }
-        if (active) setTermsVersion(version);
+        if (active) { setPreviousTermsVersion(previous); setTermsVersion(version); }
       }).catch(() => {});
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -462,6 +470,8 @@ export default function App() {
 
   // Shows the signed-out screen at once; the server is told in the background.
   const handleLogout = () => {
+    if (user?.id) forgetTermsLater(user.id);
+    setTermsLater({ key: "" });
     api.signOut().catch(() => {});
     try { localStorage.removeItem("nriclub_profile_cache"); } catch (e) {}
     // The address of the page the member was on (e.g. /u/<member id>) goes
@@ -567,13 +577,21 @@ export default function App() {
       if (user.status === "blocked") return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
       if (!termsVersion) return <LoadingScreen />;
       if (user.verificationStatus === "incomplete") return <GetVerified user={user} termsVersion={termsVersion} onDone={setUser} onSignOut={handleLogout} />;
-      const toAccept = stillToAccept(user, termsVersion);
-      if (user.verificationStatus !== "rejected" && (toAccept.terms || toAccept.art9)) {
+      const toAccept = stillToAccept(user, termsVersion, previousTermsVersion);
+      // A member on the previous version may answer "Later" (the Terms they
+      // accepted still apply, section 14): asked again next time NRIClub is
+      // opened, and from the travel board, which needs the current version.
+      const laterKey = `${user.id}:${termsVersion}`;
+      const later = toAccept.later && (termsLater.key === laterKey || termsLaterChosen(user.id, termsVersion));
+      if (user.verificationStatus !== "rejected" && (toAccept.terms || toAccept.art9) && !later) {
         // A fresh screen whenever what's asked for changes (e.g. the consent
         // after the Terms, when the database was updated in between).
-        return <TermsGate key={`${termsVersion}:${toAccept.terms}:${toAccept.art9}`} user={user} termsVersion={termsVersion} onDone={setUser} onSignOut={handleLogout} />;
+        return <TermsGate key={`${termsVersion}:${toAccept.terms}:${toAccept.art9}:${toAccept.later}`} user={user} termsVersion={termsVersion}
+          onDone={setUser} onSignOut={handleLogout}
+          onLater={toAccept.later ? () => { chooseTermsLater(user.id, termsVersion); setTermsLater({ key: laterKey }); } : null} />;
       }
-      return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
+      return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} termsVersion={termsVersion}
+        onReviewTerms={later ? () => { forgetTermsLater(user.id); setTermsLater({ key: "" }); } : null} />;
     }
     return landing();
   })();

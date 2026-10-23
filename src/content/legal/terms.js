@@ -16,25 +16,26 @@ import { CONTACT_EMAIL, SITE, mail, a, strong } from "./doc.js";
 import { IMPRINT, operatorLines } from "../imprint.js";
 import { REPORT_HREF } from "./reporting.js";
 import { termsDoc20261010 } from "./terms-2026-10.js";
+import { termsDoc20261019 } from "./terms-2026-10-19.js";
 import { RETENTION } from "./privacy.js";
 
-export const TERMS_VERSION = "2026-10-19";
-export const TERMS_DATE = "17 October 2026";
+export const TERMS_VERSION = "2026-10-23";
+export const TERMS_DATE = "23 October 2026";
 
 // Earlier versions, by version, for nriclub.app/terms/<version>.
-export const TERMS_ARCHIVE = { "2026-10": termsDoc20261010 };
-export const PREVIOUS_TERMS_VERSION = "2026-10";
+export const TERMS_ARCHIVE = { "2026-10-19": termsDoc20261019, "2026-10": termsDoc20261010 };
+export const PREVIOUS_TERMS_VERSION = "2026-10-19";
 
 // For the Terms screen ("We've updated our Terms"): what changed in this
 // version, in a few lines.
 export const TERMS_CHANGES = [
-  "Who runs NRIClub and how to reach us, including our points of contact under the EU Digital Services Act.",
-  "How you join, how our membership check works, and that origin, nationality or religion never decide it.",
-  "Until our team has approved you, you can't see other members or contact anyone.",
-  "Clear rules for the Market, jobs and referrals, travel, events, mentoring, questions and places.",
-  "How to report illegal content, how we moderate, and how you can challenge our decisions.",
-  "Your rights to your content, changes to NRIClub and to these Terms, ending your membership, your right of withdrawal, liability and the law that applies.",
+  "A section on the new travel board (flying to or from India) replaces \"Travel companions\": favours only, no payment; only documents and small open items, checked in person; you're responsible for your own luggage at customs; and we may remove posts that break these rules (section 7).",
+  "You can report travel posts like other content (section 9).",
 ];
+// For members on the previous version, who may answer "Later" (section 14:
+// the Terms they accepted still apply): what they need this version for
+// (the database checks it: private.has_current_terms).
+export const TERMS_NEEDED_FOR = "posting or messaging on the travel board";
 
 // Who the contract is with: the operator from src/content/imprint.js once it
 // is filled in.
@@ -126,8 +127,15 @@ export function termsDoc(version = TERMS_VERSION) {
         ] },
         { h: "Jobs and referrals" },
         { p: "Offer referrals only at your own employer, and never ask for or pay a fee for a referral." },
-        { h: "Travel companions" },
-        { p: "Travel posts are for help along the way. Never carry luggage, parcels or anything else for someone you don't know, or anything you haven't packed and checked yourself." },
+        { h: "Travel board (flying to or from India)" },
+        { ul: [
+          "The travel board helps members find a travel companion, or a member who can carry documents or a small open item, as a favour. Only approved members can post or reply there, and you agree to the board's rules once before your first post or message.",
+          "Favours only: no payment of any kind, including \"courier fees\". Offering or asking for money isn't allowed.",
+          "Only documents and small open items that the traveller sees and checks in person before the trip. No sealed parcels, cash, gold or jewellery, medicines, food, or anything customs restricts.",
+          "You are responsible for everything in your own luggage at customs, in every country on the way. Check the customs rules before you agree, and if in doubt, say no.",
+          "Meet in a public place to hand things over. Never share passport copies, OTPs or bank details.",
+          `We may remove posts that break these rules (section 10). A post leaves the board after its last date and is deleted ${RETENTION.travelPostDays} days after that date.`,
+        ] },
         { h: "Events and meetups" },
         { p: "Events are organised by members, not by NRIClub, and the organiser is responsible for them. Take the usual care when you meet people you don't know." },
         { h: "Mentoring" },
@@ -168,7 +176,7 @@ export function termsDoc(version = TERMS_VERSION) {
       { id: "reporting", title: "9. Reporting content", blocks: [
         { p: "Anyone, member or not, can tell us about content on NRIClub they believe is illegal or against these Terms:" },
         { ul: [
-          "Members: use Report on the item itself: a post, comment, answer, question, guide or comment on a guide, event, Market listing, place, mentoring review, profile, or a message you received.",
+          "Members: use Report on the item itself: a post, comment, answer, question, guide or comment on a guide, event, Market listing, travel post, place, mentoring review, profile, or a message you received.",
           ["Everyone: use the form at ", a("nriclub.app/report", REPORT_HREF), ", or write to ", mail("Report illegal content"), "."],
         ] },
         { p: "Please tell us: where the content is (a link, or the group, member, title and date); why you believe it is illegal or against our rules; your name and email address (not needed if your report is about the sexual abuse of a child); and that your report is accurate and complete to the best of your knowledge." },
@@ -270,7 +278,10 @@ export function termsDoc(version = TERMS_VERSION) {
       ] },
 
       { id: "versions", title: "19. Earlier versions", blocks: [
-        { ul: [[a(`Version ${PREVIOUS_TERMS_VERSION}`, `/terms/${PREVIOUS_TERMS_VERSION}`), " (October 2026)"]] },
+        { ul: [
+          [a(`Version ${PREVIOUS_TERMS_VERSION}`, `/terms/${PREVIOUS_TERMS_VERSION}`), " (17 October 2026)"],
+          [a("Version 2026-10", "/terms/2026-10"), " (October 2026)"],
+        ] },
       ] },
     ],
   };
@@ -280,9 +291,9 @@ export const termsPath = (version) => (version && version !== TERMS_VERSION && T
 
 // The Terms a member is about to accept (signup, Get verified, the Terms
 // screen): the version the database will record. Until the database knows
-// the current version (the 2026-10-19 update), that is still the earlier
-// one, shown without the "earlier version" note, so a member never accepts
-// one version while reading another.
+// the current version (for 2026-10-23, the travel board's database update),
+// that is still the earlier one, shown without the "earlier version" note,
+// so a member never accepts one version while reading another.
 export function termsDocToAccept(version) {
   if (!version || version === TERMS_VERSION || !TERMS_ARCHIVE[version]) return termsDoc();
   return { ...TERMS_ARCHIVE[version](), subtitle: `Version ${version}`, intro: [] };

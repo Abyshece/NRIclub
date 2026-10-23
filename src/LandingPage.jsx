@@ -283,7 +283,7 @@ export default function LandingPage({ onJoin, onLogin }) {
             ))}
           </div>
           <p style={{ textAlign: "center", fontSize: 15, color: MUTED, margin: "22px 0 0" }}>
-            Plus your city's group, language groups, a group for Indian students abroad and the parents' corner.
+            Plus your city's group, language groups, a group for Indian students abroad, the parents' corner and a travel board for flights to and from India.
           </p>
         </section>
 

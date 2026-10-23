@@ -1,7 +1,7 @@
 {
   "rewrites": [
     { "source": "/(.*)", "has": [{ "type": "host", "value": "admin.nriclub.app" }], "destination": "/app.html" },
-    { "source": "/(find|groups|events|help|docs|market|messages|profile|u|post|mentoring|mentors|city|guides|whats-on|impressum|terms|privacy|report)(/.*)?", "destination": "/app.html" }
+    { "source": "/(find|groups|events|help|docs|market|messages|profile|u|post|mentoring|mentors|city|guides|whats-on|travel|impressum|terms|privacy|report)(/.*)?", "destination": "/app.html" }
   ],
   "headers": [
     {
