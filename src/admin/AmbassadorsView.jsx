@@ -7,13 +7,16 @@
 // every change of ambassador); someone without an account, or whose account
 // isn't approved yet, is only marked accepted: our team asks them to join
 // and makes them ambassador once they are approved.
-// Above the applications: the city ambassadors, with the ambassador
+// Above the applications: how many of Germany's university cities have an
+// ambassador, and which still need one, with their open applications
+// (AmbassadorCoverage.jsx); then the city ambassadors, with the ambassador
 // agreement they accepted and what they did in the ambassador panel
 // (AmbassadorTeam.jsx).
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import { NoteEditor } from "./ReportsView";
 import AmbassadorTeam, { useAmbassadorTeam } from "./AmbassadorTeam";
+import AmbassadorCoverage, { applicationCity, useOpenApplications } from "./AmbassadorCoverage";
 import { Button, ConfirmDialog, EmptyState, ErrorNote, PageHeader, Pill, SectionTitle, SkeletonRows } from "./ui";
 import { ago, firstName, formatDate, friendlyError, shortName } from "./format";
 import { APPLICATION_STATUS, ambassadorReplyEmail, hoursLabel, mailtoLink } from "../content/ambassadors";
@@ -131,6 +134,9 @@ function DecisionDialog({ app, kind, onCancel, onDone }) {
 // onOpenMember({ id, name }): opens a member under Members.
 export default function AmbassadorsView({ showToast, onCountsChange, initialCounts = null, onOpenMember }) {
   const team = useAmbassadorTeam();
+  const openApps = useOpenApplications();
+  const [cityApps, setCityApps] = useState(null); // a city from the coverage: its open applications only
+  const appsTop = useRef(null);
   const [filter, setFilter] = useState(initialCounts && !initialCounts.new ? "all" : "new");
   const [apps, setApps] = useState([]);
   const [total, setTotal] = useState(0);
@@ -162,6 +168,9 @@ export default function AmbassadorsView({ showToast, onCountsChange, initialCoun
   }, []);
 
   useEffect(() => { load(filter); }, [filter, load]);
+  useEffect(() => {
+    if (cityApps) appsTop.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [cityApps]);
 
   const loadMore = async () => {
     setLoadingMore(true);
@@ -182,6 +191,7 @@ export default function AmbassadorsView({ showToast, onCountsChange, initialCoun
   // the list until the next reload, with its new status.
   const replace = (updated, before) => {
     setApps((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)));
+    openApps.patch(updated);
     if (before.status !== updated.status) {
       setCounts((c) => (c ? { ...c, [before.status]: Math.max(0, (c[before.status] || 0) - 1), [updated.status]: (c[updated.status] || 0) + 1 } : c));
     }
@@ -247,7 +257,12 @@ export default function AmbassadorsView({ showToast, onCountsChange, initialCoun
   const countOf = (key) => (counts ? (key === "all" ? Object.values(counts).reduce((n, v) => n + (v || 0), 0) : counts[key] || 0) : null);
 
   let body;
-  if (missing) {
+  const forCity = cityApps ? (openApps.apps || []).filter((a) => applicationCity(a) === cityApps) : null;
+  if (forCity) {
+    body = forCity.length
+      ? <section className="adm-list">{forCity.map(renderApp)}</section>
+      : <EmptyState icon="star" title={`No open applications for ${cityApps.city}`}>New ones show up here, and under Show all applications.</EmptyState>;
+  } else if (missing) {
     body = <EmptyState icon="star" title="Not available yet">Applications arrive by email at hello@nriclub.app until the database update of 24 October 2026 (20261024000000_ambassador_applications.sql) is in.</EmptyState>;
   } else if (loading && !apps.length) {
     body = <SkeletonRows rows={3} />;
@@ -274,10 +289,19 @@ export default function AmbassadorsView({ showToast, onCountsChange, initialCoun
 
   return (
     <>
-      <PageHeader title="Ambassadors" description="The city ambassadors, the agreement they accepted and what they do in the ambassador panel; and applications to be one, from the website and the app. Reply by email, then mark each one: Contacted, Accept or Decline. Accepting an approved member makes them the city's ambassador." />
+      <PageHeader title="Ambassadors" description="Which university cities in Germany have an ambassador and which still need one; the city ambassadors, the agreement they accepted and what they do in the ambassador panel; and applications to be one, from the website and the app. Reply by email, then mark each one: Contacted, Accept or Decline. Accepting an approved member makes them the city's ambassador." />
+      <AmbassadorCoverage team={team} open={openApps} onOpenMember={onOpenMember} onShowApplications={setCityApps} />
       <AmbassadorTeam team={team} onOpenMember={onOpenMember} />
-      <SectionTitle count={countOf("all")}>Applications</SectionTitle>
-      {!missing && (
+      <div ref={appsTop} style={{ scrollMarginTop: 72 }}>
+        <SectionTitle count={forCity ? forCity.length : countOf("all")}>{forCity ? `Open applications for ${cityApps.city}` : "Applications"}</SectionTitle>
+      </div>
+      {forCity && (
+        <div className="adm-cov-apps">
+          <span style={{ flex: 1, minWidth: 0 }}>Only the open applications (new and contacted) for {cityApps.city}.</span>
+          <button type="button" className="adm-link" onClick={() => setCityApps(null)}>Show all applications</button>
+        </div>
+      )}
+      {!missing && !forCity && (
         <div className="adm-filters" role="group" aria-label="Show applications">
           {FILTERS.map((x) => (
             <button key={x.key} type="button" className="adm-filter" aria-pressed={filter === x.key} onClick={() => setFilter(x.key)}>
@@ -294,6 +318,7 @@ export default function AmbassadorsView({ showToast, onCountsChange, initialCoun
             const app = dialog.app;
             setDialog(null);
             replace(res, app);
+            if (res.outcome === "ambassador_set") team.reload();
             showToast({ text: dialog.kind === "accept" ? acceptedMessage(app, res.outcome, city) : `Declined: ${shortName(app.name)}`, duration: dialog.kind === "accept" ? 9000 : undefined });
           }} />
       )}

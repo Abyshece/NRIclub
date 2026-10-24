@@ -54,15 +54,20 @@ export function useAmbassadorTeam() {
   return { ...state, reload: load };
 }
 
+// A member's name that opens them under Members: onOpenMember({ id, name }).
+export function MemberName({ member, onOpenMember }) {
+  return (
+    <button type="button" className="adm-link" style={{ fontWeight: 600, textDecoration: "none", color: "var(--text)" }}
+      onClick={() => onOpenMember?.({ id: member.id, name: member.name })} title="Open under Members">{member.name || "Unnamed member"}</button>
+  );
+}
+
 // onOpenMember({ id, name }): opens the member under Members.
 export default function AmbassadorTeam({ team, onOpenMember }) {
   const [shown, setShown] = useState(LOG_PAGE);
   const [open, setOpen] = useState({}); // log entry id -> details shown
   const { activity, profiles, loading, error, reload } = team;
-  const name = (m) => (
-    <button type="button" className="adm-link" style={{ fontWeight: 600, textDecoration: "none", color: "var(--text)" }}
-      onClick={() => onOpenMember?.({ id: m.id, name: m.name })} title="Open under Members">{m.name || "Unnamed member"}</button>
-  );
+  const name = (m) => <MemberName member={m} onOpenMember={onOpenMember} />;
 
   if (loading && !activity && !profiles) return <section><SectionTitle>City ambassadors</SectionTitle><SkeletonRows rows={2} /></section>;
   if (error) return <section><SectionTitle>City ambassadors</SectionTitle><ErrorNote onRetry={reload}>{error}</ErrorNote></section>;

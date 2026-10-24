@@ -4818,6 +4818,25 @@ def ambassador_panel():
     # --- our team's view ------------------------------------------------------------------------
     check("members can't see the ambassadors' activity", "SELECT public.admin_ambassador_activity()", as_user=sam,
           error_has="Admins only")
+    check("... nor can an ambassador", "SELECT public.admin_ambassador_activity()", as_user=amy, error_has="Admins only")
+    two_step = ("BEGIN; UPDATE private.app_settings SET value = 'true' WHERE key = 'admin_mfa_required'; SET ROLE authenticated; "
+                "SELECT set_config('request.jwt.claims', '{\"sub\": \"" + ADMIN + "\", \"role\": \"authenticated\", \"aal\": \"%s\"}', false) IS NULL; ")
+    check("with two-step login required, an admin signed in with the password only can't see it either "
+          "(nor the coverage overview, which is built from it)",
+          (two_step % "aal1") + "SELECT public.admin_ambassador_activity()", error_has="Admins only")
+    check("... signed in with the code, they can",
+          (two_step % "aal2") + "SELECT jsonb_array_length(public.admin_ambassador_activity()->'ambassadors') > 0", expect="f\nt")
+    check("since when: from our team's latest record for their current city (not an earlier city)", f"""
+          BEGIN;
+          INSERT INTO private.moderation_action (action, target_kind, target_id, target_user, explanation, source, created_at) VALUES
+            ('ambassador', 'member', '{kai}', '{kai}', 'Ambassador for Kiel', 'own_initiative', '2026-03-01 10:00+00'),
+            ('ambassador', 'member', '{kai}', '{kai}', 'Ambassador for Lübeck', 'own_initiative', NOW() + interval '1 day');
+          UPDATE private.moderation_action SET created_at = '2026-05-01 10:00+00'
+          WHERE action = 'ambassador' AND target_user = '{kai}' AND explanation = 'Ambassador for Kiel' AND created_at > '2026-04-01';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(ADMIN)}', true) IS NOT NULL;
+          SELECT a->>'city', (a->>'since')::timestamptz = '2026-05-01 10:00+00'
+          FROM jsonb_array_elements(public.admin_ambassador_activity()->'ambassadors') a WHERE a->>'id' = '{kai}';
+          ROLLBACK;""", expect="t\nKiel|t")
     check("admins see each ambassador with the agreement they accepted, and what they did", f"""
           SELECT concat_ws('|',
             (SELECT string_agg(a->>'name' || '=' || (a->>'city') || '/' || (a->>'agreement_version') || '/' || (a->>'current')
