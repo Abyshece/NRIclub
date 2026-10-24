@@ -43,6 +43,8 @@ CITY_GROUPS_ONLY = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
                                 "20261028100000_city_groups_only.sql")
 ANALYTICS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                          "20261029000000_analytics.sql")
+HOUSING_SEARCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                              "20261030000000_housing_search.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1281,7 +1283,8 @@ def main():
                  "answer_thanks,blocks,comments,connections,conversations,"
                  "conversations_hidden,doc_comments,docs,"
                  "event_rsvps,events_organised,exported_at,files,group_memberships,groups_requested,help_requests,"
-                 "help_responses,invite_code,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
+                 "help_responses,housing_listings,housing_looking_posts,housing_post_log,"
+                 "invite_code,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
                  "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,place_recommendations,"
                  "places_added,posts,profile,"
                  "profile_private,rate_limit_log,readme,reports_about_me,reports_filed,sessions,terms_acceptances,"
@@ -1294,7 +1297,8 @@ def main():
           "WHERE jsonb_typeof(v) = 'array' AND k NOT IN ('verification_log', 'conversations_hidden', 'places_added', "
           "'place_recommendations', 'answer_thanks', 'mentor_reviews_written', 'mentor_reviews_received', 'sessions', "
           "'files', 'urgent_questions_sent', 'reports_about_me', 'ambassador_applications', 'travel_posts', "
-          "'ambassador_agreement', 'ambassador_welcomes_given', 'welcomed_by_your_city_ambassador', 'ambassador_log'))) "
+          "'ambassador_agreement', 'ambassador_welcomes_given', 'welcomed_by_your_city_ambassador', 'ambassador_log', "
+          "'housing_listings', 'housing_looking_posts', 'housing_post_log'))) "
           "FROM (SELECT public.export_my_data() d) x",
           as_user=ALICE, expect=f"Alice Updated|alice@example.com|{TERMS_VERSION}|{ART9_VERSION}|art9|true")
     check("... and only the member's own rows",
@@ -1350,6 +1354,7 @@ def main():
     profile_completeness()
     city_groups_only()
     analytics()
+    housing_search()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -2292,7 +2297,9 @@ def notifications_limits_privacy():
           "'\\000') AS a) x WHERE t.tgname LIKE 'rate_limit%' AND NOT t.tgisinternal",
           expect="comments:comment=60/01:00:00, connections:namaste=50/1 day, conversations:conversation=20/1 day, "
                  "doc_comments:guide_comment=60/01:00:00, docs:guide=20/1 day, events:event=20/1 day, groups:group=5/1 day, "
-                 "help_requests:question=20/1 day, help_responses:answer=60/01:00:00, marketplace:listing=20/1 day, "
+                 "help_requests:question=20/1 day, help_responses:answer=60/01:00:00, "
+                 "housing_listings:change=10/1 day, housing_listings:listing=5/1 day+10/30 days, "
+                 "housing_wanted:looking=3/1 day+5/30 days, marketplace:listing=20/1 day, "
                  "messages:message=30/00:01:00+500/1 day, places:place=20/1 day, posts:post=20/1 day, "
                  "reports:feedback=5/1 day, reports:report=20/1 day, travel_posts:travel_post=5/1 day+20/30 days")
 
@@ -3626,11 +3633,13 @@ def ambassador_applications():
                 f"({len(added)} added, {len(removed)} changed)", removed == allowed and added,
                 f"removed: {removed}")
     check("... and the database runs the migration's versions (the same keys in \"Download my data\" as before, plus one, "
-          "since 2026-10-26 the travel board's two and since 2026-10-27 the ambassador panel's four)",
+          "since 2026-10-26 the travel board's two, since 2026-10-27 the ambassador panel's four and since 2026-10-30 the "
+          "housing search's three)",
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=asha,
           expect="account,ambassador_agreement,ambassador_applications,ambassador_log,ambassador_welcomes_given,answer_thanks,blocks,comments,connections,conversations,"
                  "conversations_hidden,doc_comments,docs,event_rsvps,events_organised,exported_at,files,"
-                 "group_memberships,groups_requested,help_requests,help_responses,invite_code,likes,"
+                 "group_memberships,groups_requested,help_requests,help_responses,housing_listings,"
+                 "housing_looking_posts,housing_post_log,invite_code,likes,"
                  "marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
                  "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,"
                  "place_recommendations,places_added,posts,profile,profile_private,rate_limit_log,readme,"
@@ -5543,6 +5552,550 @@ def analytics():
     check("... and keeps the data", "SELECT (SELECT count(*) FROM private.analytics_events) || '|' || "
           "(SELECT count(*) FROM private.analytics_consent_counts)", expect=before)
     check("... and the permissions", ingest(sample), role="anon", error_has="permission denied")
+
+
+
+def hs_listing(uid, title, kind, city, start, end=None, rent=600, deposit=1200, size="NULL", furnished="false",
+               anmeldung="false", status="active"):
+    """SQL, run as the table owner, that puts up a Market listing with
+    housing details and prints its id (the database's triggers run, its
+    members' rules don't). start, end: days from today in Germany (end None:
+    open-ended)."""
+    until = "NULL" if end is None else f"private.today_in_germany() + {end}"
+    return (f"WITH m AS (INSERT INTO marketplace (user_id, title, price, category, location, status) "
+            f"VALUES ('{uid}', {sq(title)}, '€{rent}/month warm', 'Housing', {sq(city)}, '{status}') RETURNING id) "
+            f"INSERT INTO housing_listings (listing_id, user_id, kind, city, available_from, available_until, warm_rent, "
+            f"deposit, size_m2, furnished, anmeldung) SELECT m.id, '{uid}', '{kind}', {sq(city)}, "
+            f"private.today_in_germany() + {start}, {until}, {rent}, {deposit}, {size}, {furnished}, {anmeldung} FROM m "
+            f"RETURNING listing_id")
+
+
+def hs_post(title, kind, city, start, end=None, rent=600, deposit=1200, size="NULL", furnished="false", anmeldung="false"):
+    """SQL with which a member posts a housing listing, as the site does
+    (public.post_housing_listing), and prints its id."""
+    until = "NULL" if end is None else f"private.today_in_germany() + {end}"
+    return (f"SELECT public.post_housing_listing({sq(title)}, 'Bright, quiet, near the U-Bahn.', '', '{kind}', {sq(city)}, "
+            f"private.today_in_germany() + {start}, {until}, {rent}, {deposit}, {size}, {furnished}, {anmeldung}) ->> 'listing_id'")
+
+
+def hs_looking(kinds, city, start, end=None, max_rent="NULL", furnished="false", anmeldung="false", note="",
+               user="auth.uid()", active="true"):
+    """SQL that posts "Looking for a place" and prints its id."""
+    until = "NULL" if end is None else f"private.today_in_germany() + {end}"
+    return (f"INSERT INTO housing_wanted (user_id, kinds, city, date_from, date_to, max_rent, furnished, anmeldung, note, "
+            f"active) VALUES ({user}, ARRAY[{', '.join(sq(k) for k in kinds)}]::text[], {sq(city)}, "
+            f"private.today_in_germany() + {start}, {until}, {max_rent}, {furnished}, {anmeldung}, {sq(note)}, {active}) "
+            f"RETURNING id")
+
+
+def hs_search(kinds=None, city=None, start=None, end=None, flexible=False, max_rent=None, furnished=False,
+              anmeldung=False):
+    """A call of public.search_housing as the site makes it (days from today
+    in Germany)."""
+    args = []
+    if kinds is not None:
+        args.append("p_kinds => ARRAY[" + ", ".join(sq(k) for k in kinds) + "]::text[]")
+    if city is not None:
+        args.append(f"p_city => {sq(city)}")
+    if start is not None:
+        args.append(f"p_from => private.today_in_germany() + {start}")
+    if end is not None:
+        args.append(f"p_to => private.today_in_germany() + {end}")
+    if flexible:
+        args.append("p_flexible => true")
+    if max_rent is not None:
+        args.append(f"p_max_rent => {max_rent}")
+    if furnished:
+        args.append("p_furnished => true")
+    if anmeldung:
+        args.append("p_anmeldung => true")
+    return f"public.search_housing({', '.join(args)})"
+
+
+def hs_results(call):
+    """The results of a search in order, as "title:fit:free_days"."""
+    return (f"SELECT COALESCE(string_agg(concat_ws(':', r->>'title', r->>'fit', r->>'free_days'), ',' ORDER BY n), '') "
+            f"FROM jsonb_array_elements(({call})->'results') WITH ORDINALITY x(r, n)")
+
+
+def housing_search():
+    """Find a place: housing details on Market listings, the search by city
+    and dates, "Looking for a place" posts and their matching notifications,
+    who may read and post, limits, expiry and clean-up, "Download my data"
+    and deleting an account: migration 20261030000000_housing_search."""
+    import difflib
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    with open(HOUSING_SEARCH, encoding="utf-8") as f:
+        migration = f.read()
+    # The sections above ran older updates again (the travel board's sets its
+    # own list of kinds of notification, the ambassador panel's its "Download
+    # my data"): this update runs after them.
+    ok, _, err = psql(migration)
+    verdict("the update runs after the ones the sections above ran again", ok, err[:300])
+    ana, ben, cai, dia, eli, fay, gus, ida, jon, kim = (f"00000000-0000-0000-0000-000000000e5{n}" for n in "123456789a")
+    for uid, name, city in ((ana, "Ana", "Munich"), (ben, "Ben", "Munich"), (cai, "Cai", "Munich"), (dia, "Dia", "Munich"),
+                            (fay, "Fay", "Leipzig"), (gus, "Gus", "Munich"), (ida, "Ida", "Leipzig"), (jon, "Jon", "Leipzig"),
+                            (kim, "Kim", "Leipzig")):
+        approved_member(uid, f"{name.lower()}.hs@example.com", f"{name} H", city)
+    # eli sent their details but our team hasn't approved them yet.
+    sign_up(eli, "eli.hs@example.com", {"full_name": "Eli H"}, accept_terms=True)
+    psql(f"UPDATE profile_private SET verification_status = 'pending', submitted_at = now() WHERE id = '{eli}'")
+    today = psql("SELECT private.today_in_germany()")[1]
+
+    def post(uid, sql):
+        ok, out, err = psql(sql, "authenticated", uid)
+        if not ok:
+            sys.exit(f"posting failed: {err}")
+        return out.splitlines()[-1]
+
+    def owner(sql):
+        ok, out, err = psql(sql)
+        if not ok:
+            sys.exit(f"setting up failed: {err}")
+        return out.splitlines()[-1] if out else ""
+
+    # --- who can read and post -----------------------------------------------------------------
+    check("signed-out visitors can't read housing details", "SELECT count(*) FROM housing_listings", role="anon",
+          error_has="permission denied")
+    check("... nor looking posts", "SELECT count(*) FROM housing_wanted", role="anon", error_has="permission denied")
+    for call in ("public.housing_status()", "public.search_housing()", f"public.housing_matches('{BOB_POST}')",
+                 f"public.renew_housing_listing('{BOB_POST}')"):
+        check(f"... nor call {call.split('(')[0]}", f"SELECT {call}", role="anon", error_has="permission denied")
+    check("... nor post a listing", hs_post("Room", "wg_room", "Munich", 10, 20), role="anon", error_has="permission denied")
+    check("an approved member can take part: 10 listings and 5 looking posts in 30 days",
+          "SELECT concat_ws('|', s->>'version', s->>'can_take_part', s->>'listing_limit', s->>'listings_left', "
+          "s->>'looking_limit', s->>'looking_left') FROM public.housing_status() s", as_user=ana, expect="2026-10-30|true|10|10|5|5")
+    check("a member waiting for our check: the search is there, but they can't take part",
+          "SELECT concat_ws('|', s->>'version', s->>'can_take_part') FROM public.housing_status() s", as_user=eli,
+          expect="2026-10-30|false")
+    check("... can't search", f"SELECT {hs_search(city='Munich')}", as_user=eli, error_has="Only members our team has approved")
+    check("... nor post a listing", hs_post("Room", "wg_room", "Munich", 10, 20), as_user=eli,
+          error_has="Only members our team has approved")
+    check("... nor a looking post", hs_looking(["wg_room"], "Munich", 10, 20), as_user=eli, error_has="row-level security")
+
+    # --- a listing and its details --------------------------------------------------------------------
+    first = post(ana, hs_post("Sunny WG room in Schwabing", "wg_room", "  München ", 30, 120, rent=650, deposit=1300,
+                              size=14, furnished="true", anmeldung="true"))
+    check("ana posts a WG room in München: a Market listing in Housing, the warm rent as its price, and its details", f"""
+          SELECT concat_ws('|', m.category, m.price, m.location, m.title, h.kind, h.city, h.city_key,
+            h.available_from - private.today_in_germany(), h.available_until - h.available_from, h.warm_rent, h.deposit,
+            h.size_m2, h.furnished, h.anmeldung, h.expires_on = h.available_until, h.user_id = m.user_id)
+          FROM marketplace m JOIN housing_listings h ON h.listing_id = m.id WHERE m.id = '{first}'""",
+          expect="Housing|€650/month warm|München|Sunny WG room in Schwabing|wg_room|München|munich|30|90|650|1300|14|t|t|t|t")
+    open_one = post(ana, hs_post("Flat in Pasing", "flat", "Munich", 5, None, rent=1400, deposit=4200))
+    check("an open-ended place is shown 60 days after it was posted",
+          f"SELECT expires_on - private.today_in_germany() FROM housing_listings WHERE listing_id = '{open_one}'", expect="60")
+    for name, sql, error in (
+            ("a day that has passed is refused", hs_post("Room", "wg_room", "Munich", -1, 20), "That date has passed."),
+            ("... and an until date before the from date", hs_post("Room", "wg_room", "Munich", 20, 10), "\"until\" date is before"),
+            ("... and dates more than a year ahead", hs_post("Room", "wg_room", "Munich", 100, 400), "within the next 12 months"),
+            ("a kind of place is needed", hs_post("Room", "castle", "Munich", 10, 20), "what kind of place"),
+            ("the city is written in letters", hs_post("Room", "wg_room", "Munich 80331", 10, 20), "city's name in letters"),
+            ("... and given", hs_post("Room", "wg_room", "  ", 10, 20), "which city"),
+            ("the warm rent is a whole number of euros, at least 1", hs_post("Room", "wg_room", "Munich", 10, 20, rent=0),
+             "warm rent per month"),
+            ("... and at most 20,000", hs_post("Room", "wg_room", "Munich", 10, 20, rent=25000), "warm rent per month"),
+            ("the deposit isn't negative", hs_post("Room", "wg_room", "Munich", 10, 20, deposit=-5), "the deposit in euros"),
+            ("the size is 1 to 2,000 m²", hs_post("Room", "wg_room", "Munich", 10, 20, size=0), "size in m²"),
+            ("a listing needs a title", hs_post("  ", "wg_room", "Munich", 10, 20), "a title"),
+    ):
+        check(name, sql, as_user=ana, error_has=error)
+    check("... none of those was posted or counted", "SELECT (SELECT count(*) FROM marketplace WHERE user_id = auth.uid()) "
+          "|| '|' || (s->>'listings_left') FROM public.housing_status() s", as_user=ana, expect="2|8")
+    bike = owner(f"INSERT INTO marketplace (user_id, title, price, category) VALUES ('{ben}', 'Bike', '€50', 'Items') RETURNING id")
+    old_room = owner(f"INSERT INTO marketplace (user_id, title, price, category, location) VALUES ('{ben}', 'Old style room', "
+                     "'€500', 'Housing', 'Leipzig') RETURNING id")
+    details = (lambda lid: f"INSERT INTO housing_listings (listing_id, user_id, kind, city, available_from, warm_rent) "
+               f"VALUES ('{lid}', auth.uid(), 'wg_room', 'Munich', private.today_in_germany() + 3, 500) RETURNING 1")
+    check("nobody adds details to another member's listing", details(old_room), as_user=ana, error_has="row-level security")
+    check("... nor gives a listing that isn't in Housing details", details(bike), as_user=ben, error_has="row-level security")
+    check("... nor puts details on someone else's name",
+          f"INSERT INTO housing_listings (listing_id, user_id, kind, city, available_from, warm_rent) VALUES ('{old_room}', "
+          f"'{ben}', 'wg_room', 'Munich', private.today_in_germany() + 3, 500)", as_user=ana, error_has="row-level security")
+    check("the author changes the dates: the expiry follows them; they can't set it, renew or change who posted it", f"""
+          UPDATE housing_listings SET available_until = available_from + 40, expires_on = '2099-01-01',
+            renewed_at = now() + interval '1 year', user_id = '{ben}', created_at = '2001-01-01' WHERE listing_id = '{first}'
+          RETURNING concat_ws('|', expires_on = available_until, renewed_at IS NULL, user_id = auth.uid(), created_at > '2020-01-01')""",
+          as_user=ana, expect="t|t|t|t")
+    check("another member can't change them", f"UPDATE housing_listings SET warm_rent = 1 WHERE listing_id = '{first}' RETURNING 1",
+          as_user=ben, expect="")
+    check("... and nobody deletes them on their own (they go with the listing)",
+          f"DELETE FROM housing_listings WHERE listing_id = '{first}'", as_user=ana, error_has="permission denied")
+    check("update_housing_listing changes the details, and the listing's price and city follow", f"""
+          SELECT public.update_housing_listing('{first}', 'sublet', 'Munich', private.today_in_germany() + 30,
+            private.today_in_germany() + 120, 1250, 2500, 16, true, false) ->> 'kind';
+          SELECT price || '|' || location FROM marketplace WHERE id = '{first}'""", as_user=ana,
+          expect="sublet\n€1,250/month warm|Munich")
+    check("... only for its author", f"SELECT public.update_housing_listing('{first}', 'flat', 'Munich', "
+          "private.today_in_germany() + 30, NULL, 1, 0)", as_user=ben, error_has="couldn't be changed")
+    owner(f"SET session_replication_role = replica; UPDATE housing_listings SET created_at = now() - interval '70 days', "
+          f"expires_on = private.today_in_germany() - 10 WHERE listing_id = '{open_one}'; "
+          f"UPDATE marketplace SET status = 'expired' WHERE id = '{open_one}'; RESET session_replication_role; SELECT 1")
+    check("ana renews an open-ended listing that had expired: shown 60 more days from today, and back in the Market",
+          f"SELECT (public.renew_housing_listing('{open_one}') ->> 'expires_on')::date - private.today_in_germany(); "
+          f"SELECT status FROM marketplace WHERE id = '{open_one}'", as_user=ana, expect="60\nactive")
+    check("... a listing with an until date is renewed by changing its dates",
+          f"SELECT public.renew_housing_listing('{first}')", as_user=ana, error_has="change its dates")
+    check("... only its author renews it", f"SELECT public.renew_housing_listing('{open_one}')", as_user=ben,
+          error_has="couldn't be found")
+    check("... and only while they can take part", f"SELECT public.renew_housing_listing('{open_one}')", as_user=eli,
+          error_has="Only members our team has approved")
+    check("a member waiting for our check reads no housing details", "SELECT count(*) FROM housing_listings", as_user=eli,
+          expect="0")
+    check("... nor the Market's housing listings", "SELECT count(*) FROM marketplace WHERE category = 'Housing'", as_user=eli,
+          expect="0")
+    check("an approved member reads the details of others' listings",
+          f"SELECT count(*) FROM housing_listings WHERE listing_id IN ('{first}', '{open_one}')", as_user=kim, expect="2")
+
+    # --- the search ---------------------------------------------------------------------------------------
+    # kim looks in Leipzig for days 30 to 49 (20 days).
+    for title, kind, start, end, extra in (
+            ("Full open", "wg_room", 20, None, {"rent": 600}),
+            ("Full exact", "sublet", 30, 49, {"rent": 700, "furnished": "true"}),
+            ("Twelve days", "wg_room", 38, 60, {"rent": 500}),
+            ("Five days", "flat", 25, 34, {"rent": 1500}),
+            ("Late start", "wg_room", 35, 80, {"rent": 550, "anmeldung": "true"}),
+            ("Early end", "short_stay", 28, 44, {"rent": 900}),
+            ("Too late", "house", 60, None, {"rent": 2500}),
+            ("Expired", "wg_room", -40, -1, {}),
+            ("Sold", "wg_room", 30, None, {"status": "sold"})):
+        owner(hs_listing(jon, title, kind, "Leipzig", start, end, **extra))
+    owner(hs_listing(dia, "Blocked", "wg_room", "Leipzig", 30, None))
+    owner(hs_listing(ida, "Unlisted", "wg_room", "Leipzig", 30, None))
+    owner(hs_listing(jon, "Berlin full", "wg_room", "Berlin", 10, None))
+    psql(f"SELECT public.block_member('{kim}')", "authenticated", dia)
+    psql(f"UPDATE profile_private SET status = 'blocked' WHERE id = '{ida}'")
+    check("kim searches Leipzig, days 30 to 49: free for all of them first, then the most days free, the newest first",
+          hs_results(hs_search(city="leipzig", start=30, end=49)), as_user=kim,
+          expect="Full exact:full:20,Full open:full:20,Early end:partial:15,Late start:partial:15,Twelve days:partial:12,"
+                 "Five days:partial:5")
+    check("... flexible ±1 week: places free within a week of the dates come after the full fits",
+          hs_results(hs_search(city="Leipzig", start=30, end=49, flexible=True)), as_user=kim,
+          expect="Full exact:full:20,Full open:full:20,Early end:flexible:15,Late start:flexible:15,Twelve days:partial:12,"
+                 "Five days:partial:5")
+    check("... the part of the dates a place is free, and the length of the dates", f"""
+          SELECT concat_ws('|', s->>'wanted_days', r->>'free_from' = (private.today_in_germany() + 38)::text,
+            r->>'free_until' = (private.today_in_germany() + 49)::text, r->>'kind', r->>'warm_rent', r->>'name', r->>'mine')
+          FROM (SELECT {hs_search(city='Leipzig', start=30, end=49)} s) x, jsonb_array_elements(s->'results') r
+          WHERE r->>'title' = 'Twelve days'""", as_user=kim, expect="20|t|t|wg_room|500|Jon H|false")
+    check("... no listing that has expired, is sold, from a member kim blocked or who blocked kim, or whom other members don't "
+          "see, nor one from before without details",
+          f"SELECT count(*) FROM jsonb_array_elements(({hs_search(city='Leipzig')})->'results') r "
+          "WHERE r->>'title' IN ('Expired', 'Sold', 'Blocked', 'Unlisted', 'Old style room')", as_user=kim, expect="0")
+    check("... (jon, whom nobody blocked, sees dia's)",
+          f"SELECT count(*) FROM jsonb_array_elements(({hs_search(city='Leipzig')})->'results') r WHERE r->>'title' = 'Blocked'",
+          as_user=jon, expect="1")
+    check("the city alone: every current listing there, the newest first",
+          hs_results(hs_search(city="Leipzig")), as_user=kim,
+          expect="Too late,Early end,Late start,Five days,Twelve days,Full exact,Full open")
+    check("the dates alone: every city", f"""
+          SELECT bool_or(r->>'title' = 'Berlin full') AND bool_or(r->>'title' = 'Full exact') AND NOT bool_or(r->>'title' = 'Too late')
+          FROM jsonb_array_elements(({hs_search(start=30, end=49)})->'results') r""", as_user=kim, expect="t")
+    check("only a from date (no end): open-ended places first, then those free soonest after it",
+          hs_results(hs_search(city="Leipzig", start=30)), as_user=kim,
+          expect="Full open:full,Early end:partial,Five days:partial,Full exact:partial,Late start:partial,Twelve days:partial,"
+                 "Too late:partial")
+    check("only a to date: from today", f"SELECT concat_ws('|', s->>'wanted_days', (s->>'from')::date = private.today_in_germany()) "
+          f"FROM (SELECT {hs_search(city='Leipzig', end=49)} s) x", as_user=kim, expect="50|t")
+    check("kinds of place", hs_results(hs_search(kinds=["wg_room"], city="Leipzig", start=30, end=49)), as_user=kim,
+          expect="Full open:full:20,Late start:partial:15,Twelve days:partial:12")
+    check("... several", hs_results(hs_search(kinds=["flat", "short_stay"], city="Leipzig", start=30, end=49)), as_user=kim,
+          expect="Early end:partial:15,Five days:partial:5")
+    check("the highest warm rent", hs_results(hs_search(city="Leipzig", start=30, end=49, max_rent=700)), as_user=kim,
+          expect="Full exact:full:20,Full open:full:20,Late start:partial:15,Twelve days:partial:12")
+    check("furnished", hs_results(hs_search(city="Leipzig", start=30, end=49, furnished=True)), as_user=kim,
+          expect="Full exact:full:20")
+    check("Anmeldung possible", hs_results(hs_search(city="Leipzig", start=30, end=49, anmeldung=True)), as_user=kim,
+          expect="Late start:partial:15")
+    check("a member sees their own listings in the results, marked as theirs", f"""
+          SELECT string_agg(r->>'title' || ':' || (r->>'mine'), ',' ORDER BY r->>'title')
+          FROM jsonb_array_elements(({hs_search(city='Munich')})->'results') r""", as_user=ana,
+          expect="Flat in Pasing:true,Sunny WG room in Schwabing:true")
+    check("dates the wrong way round are refused", f"SELECT {hs_search(start=40, end=30)}", as_user=kim,
+          error_has="\"to\" date is before")
+    check("... and an unknown kind of place", f"SELECT {hs_search(kinds=['castle'])}", as_user=kim,
+          error_has="Please choose a WG room")
+    ok, out, err = psql("SELECT string_agg(x, ',') FROM (SELECT column_name::text AS x FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name IN ('housing_listings', 'housing_wanted') "
+                        "UNION ALL SELECT pg_get_function_arguments('public.search_housing'::regproc)) y")
+    verdict("there is no search, filter or field for gender, religion, caste, origin, nationality, language or diet",
+            ok and "p_city" in out and not re.search(r"gender|sex|relig|caste|ethnic|origin|nation|language|diet|veg", out, re.I),
+            out + err[:200])
+
+    # --- looking posts ---------------------------------------------------------------------------------------------
+    for name, sql, error in (
+            ("a looking post needs a kind of place", hs_looking([], "Munich", 30, 49), "at least one kind"),
+            ("... one of the five", hs_looking(["castle"], "Munich", 30, 49), "Please choose a WG room"),
+            ("... a city in letters", hs_looking(["flat"], "Munich 1", 30, 49), "city's name in letters"),
+            ("... dates that haven't passed", hs_looking(["flat"], "Munich", -2, 49), "That date has passed."),
+            ("... the right way round", hs_looking(["flat"], "Munich", 30, 20), "\"until\" date is before"),
+            ("... within a year", hs_looking(["flat"], "Munich", 30, 400), "within the next 12 months"),
+            ("... a highest rent of at least 1 euro", hs_looking(["flat"], "Munich", 30, 49, max_rent=0), "highest warm rent"),
+            ("... and a note of at most 500 characters", hs_looking(["flat"], "Munich", 30, 49, note="x" * 501), "500 characters"),
+    ):
+        check(name, sql, as_user=ben, error_has=error)
+    ben_post = post(ben, hs_looking(["sublet", "wg_room", "sublet"], " Munich ", 30, 49, max_rent=700,
+                                    note=" Starting a job in Garching. "))
+    check("ben is looking for a WG room or a sublet in Munich: the kinds each once, in the site's order; ends after the last day",
+          f"SELECT concat_ws('|', kinds::text, city, city_key, note, active, expires_on - private.today_in_germany()) "
+          f"FROM housing_wanted WHERE id = '{ben_post}'", as_user=ben,
+          expect="{wg_room,sublet}|Munich|munich|Starting a job in Garching.|t|49")
+    cai_post = post(cai, hs_looking(["flat"], "Munich", 30))
+    check("a looking post without an end date ends 60 days after it was posted",
+          f"SELECT expires_on - private.today_in_germany() FROM housing_wanted WHERE id = '{cai_post}'", as_user=cai, expect="60")
+    post(dia, hs_looking(["wg_room"], "Munich", 30, 49))
+    psql(f"SELECT public.block_member('{ana}')", "authenticated", dia)
+    gus_post = post(gus, hs_looking(["wg_room"], "Munich", 30, 49, active="false"))
+    post(fay, hs_looking(["wg_room"], "Munich", 30, 49, furnished="true"))
+    post(jon, hs_looking(["wg_room"], "Munich", 30, 49, max_rent=500))
+    kim_old = owner(hs_looking(["wg_room"], "Munich", -40, -1, user=f"'{kim}'"))
+    check("only its author reads a looking post", "SELECT count(*) FROM housing_wanted WHERE user_id <> auth.uid()",
+          as_user=ben, expect="0")
+    check("... and our team", f"SELECT count(*) FROM housing_wanted WHERE id IN ('{ben_post}', '{cai_post}')", as_user=ADMIN,
+          expect="2")
+    check("... not a member waiting for our check", "SELECT count(*) FROM housing_wanted", as_user=eli, expect="0")
+    check("another member can't change it", f"UPDATE housing_wanted SET note = 'x' WHERE id = '{ben_post}' RETURNING 1",
+          as_user=cai, expect="")
+    check("... nor delete it", f"DELETE FROM housing_wanted WHERE id = '{ben_post}' RETURNING 1", as_user=cai, expect="")
+    check("... nor its id, author or creation time be changed",
+          f"UPDATE housing_wanted SET id = gen_random_uuid(), user_id = '{cai}', created_at = '2001-01-01' WHERE id = '{ben_post}' "
+          "RETURNING concat_ws('|', id, user_id, created_at > '2020-01-01')", as_user=ben, expect=f"{ben_post}|{ben}|t")
+    check("an ended looking post can't be turned on again",
+          f"UPDATE housing_wanted SET active = false WHERE id = '{kim_old}'; "
+          f"UPDATE housing_wanted SET active = true WHERE id = '{kim_old}'", as_user=kim, error_has="has expired")
+
+    # --- matches --------------------------------------------------------------------------------------------------------
+    notes = lambda uid: (f"SELECT count(*) || '|' || COALESCE(string_agg(n.actor_id || ':' || n.text, ';'), '') "
+                         f"FROM notifications n WHERE n.user_id = '{uid}' AND n.type = 'housing_match'")
+    room = post(ana, hs_post("Room near Ostbahnhof", "wg_room", "München", 28, 50, rent=650, deposit=1300, anmeldung="true"))
+    dates = psql("SELECT private.housing_dates_text(private.today_in_germany() + 28, private.today_in_germany() + 50)")[1]
+    check("ana posts a WG room in München free around ben's dates, within ben's rent: ben hears about it",
+          notes(ben), expect=f"1|{ana}:posted a WG room in München, free {dates}, €650 a month warm. "
+                             "It matches what you're looking for.")
+    check("... it points at ana's listing",
+          f"SELECT reference_id FROM notifications WHERE user_id = '{ben}' AND type = 'housing_match'", expect=room)
+    check("... not cai, who wants a whole flat", notes(cai), expect="0|")
+    check("... not dia, who blocked ana", notes(dia), expect="0|")
+    check("... not gus, whose post is turned off", notes(gus), expect="0|")
+    check("... not fay, who needs it furnished", notes(fay), expect="0|")
+    check("... not jon, whose rent is lower", notes(jon), expect="0|")
+    check("... not kim, whose post has ended", notes(kim), expect="0|")
+    check("... nor ana herself", notes(ana), expect="0|")
+    check("ana sees who is looking for a place like it: ben, with the note", f"""
+          SELECT string_agg(concat_ws('|', m->>'user_id', m->>'name', m->>'note', m->'kinds'), ';')
+          FROM jsonb_array_elements(public.housing_matches('{room}')) m""", as_user=ana,
+          expect=f"{ben}|Ben H|Starting a job in Garching.|[\"wg_room\", \"sublet\"]")
+    check("... only ana does", f"SELECT public.housing_matches('{room}')", as_user=ben,
+          error_has="Only the member who posted this listing")
+    check("... not a member waiting for our check", f"SELECT public.housing_matches('{room}')", as_user=eli,
+          error_has="Only members our team has approved")
+    check("the dates and words in these notifications",
+          "SELECT concat_ws('|', private.housing_dates_text('2027-03-01', NULL), private.housing_dates_text('2027-03-01', '2027-05-31'), "
+          "private.housing_kind_text('short_stay'), private.housing_price_text(12500))",
+          expect="from 1 Mar 2027|1 Mar–31 May 2027|a short stay|€12,500/month warm")
+    owner(hs_listing(jon, "Flat open", "flat", "Munich", 32, None, rent=1600))
+    owner(hs_listing(jon, "Flat short", "flat", "Munich", 32, 45, rent=1600))
+    owner(hs_listing(jon, "Flat long", "flat", "Munich", 32, 70, rent=1600))
+    check("cai, looking for a flat from day 30 with no end: an open-ended flat and one free for at least 4 weeks fit, "
+          "a shorter one doesn't", f"SELECT string_agg(m.title, ',' ORDER BY m.title) FROM notifications n "
+          f"JOIN marketplace m ON m.id = n.reference_id WHERE n.user_id = '{cai}' AND n.type = 'housing_match'",
+          expect="Flat long,Flat open")
+    check("changing a listing notifies nobody", f"""
+          SELECT public.update_housing_listing('{room}', 'wg_room', 'Munich', private.today_in_germany() + 29,
+            private.today_in_germany() + 50, 600, 1200, NULL, false, true) IS NOT NULL;
+          SET ROLE postgres;
+          SELECT count(*) FROM notifications WHERE type = 'housing_match'""", as_user=ana, expect="t\n3")
+    crowd = [f"00000000-0000-0000-0000-000000000e{n:02x}" for n in range(0x60, 0x76)]
+    for i, uid in enumerate(crowd):
+        approved_member(uid, f"hs.crowd{i}@example.com", f"Crowd Housing{i}")
+        owner(hs_looking(["wg_room"], "Bonn", 10, 40, user=f"'{uid}'"))
+    owner(hs_looking(["wg_room", "flat"], "Bonn", 12, 35, user=f"'{crowd[0]}'"))
+    bonn = post(jon, hs_post("Room in Bonn", "wg_room", "Bonn", 10, 40))
+    check("22 members are looking for a place a new listing fits (one of them twice): 20 hear about it, each once",
+          f"SELECT count(*) || '|' || count(DISTINCT user_id) FROM notifications WHERE type = 'housing_match' "
+          f"AND reference_id = '{bonn}'", expect="20|20")
+    check("... the listing is deleted: those notifications go too",
+          f"DELETE FROM marketplace WHERE id = '{bonn}'; "
+          f"SELECT count(*) FROM notifications WHERE type = 'housing_match' AND reference_id = '{bonn}'", as_user=jon, expect="0")
+    check("members can't write housing_match notifications themselves",
+          f"INSERT INTO notifications (user_id, type, text) VALUES ('{ben}', 'housing_match', 'fake')", as_user=ana,
+          expect="error")
+    check("ben turns the post off, and on again",
+          f"UPDATE housing_wanted SET active = false WHERE id = '{ben_post}' RETURNING active; "
+          f"UPDATE housing_wanted SET active = true WHERE id = '{ben_post}' RETURNING active", as_user=ben, expect="f\nt")
+
+    # --- limits -----------------------------------------------------------------------------------------------------------
+    check("fay posts 5 listings in a day", "; ".join(hs_post(f"Room {i}", "wg_room", "Leipzig", 10, 40) for i in range(5)),
+          as_user=fay, expect="ok")
+    check("... a sixth is refused", hs_post("Room 6", "wg_room", "Leipzig", 10, 40), as_user=fay,
+          error_has="doing that too often")
+    check("... deleting one doesn't give another try",
+          f"DELETE FROM marketplace WHERE user_id = auth.uid() AND title = 'Room 0'; {hs_post('Room 6', 'wg_room', 'Leipzig', 10, 40)}",
+          as_user=fay, error_has="doing that too often")
+    owner(f"UPDATE private.housing_post_log SET at = now() - interval '2 days' WHERE member_id = '{fay}' AND kind = 'listing'; "
+          f"INSERT INTO private.housing_post_log (member_id, kind, at) SELECT '{fay}', 'listing', now() - interval '20 days' "
+          "FROM generate_series(1, 5); SELECT 1")
+    check("10 in 30 days: the next one is refused, days later, and says so",
+          hs_post("Room 6", "wg_room", "Leipzig", 10, 40), as_user=fay,
+          error_has="You can post at most 10 housing listings in 30 days.")
+    check("... housing_status says none are left", "SELECT public.housing_status() ->> 'listings_left'", as_user=fay, expect="0")
+    owner(f"DELETE FROM private.housing_post_log WHERE ctid IN (SELECT ctid FROM private.housing_post_log "
+          f"WHERE member_id = '{fay}' AND kind = 'listing' ORDER BY at LIMIT 1); SELECT 1")
+    check("... 9: it goes up", hs_post("Room 6", "wg_room", "Leipzig", 10, 40).replace("->> 'listing_id'", "IS NOT NULL"),
+          as_user=fay, expect="t")
+    check("fay posts 2 more looking posts in a day (3)", "; ".join(hs_looking(["flat"], "Leipzig", 10, 40) for _ in range(2)),
+          as_user=fay, expect="ok")
+    check("... a fourth is refused", hs_looking(["flat"], "Leipzig", 10, 40), as_user=fay, error_has="doing that too often")
+    owner(f"UPDATE private.housing_post_log SET at = now() - interval '2 days' WHERE member_id = '{fay}' AND kind = 'looking'; "
+          f"INSERT INTO private.housing_post_log (member_id, kind, at) VALUES ('{fay}', 'looking', now() - interval '29 days'), "
+          f"('{fay}', 'looking', now() - interval '29 days'); SELECT 1")
+    check("... 5 in 30 days: the next is refused and says so", hs_looking(["flat"], "Leipzig", 10, 40), as_user=fay,
+          error_has="You can post at most 5 \"looking for a place\" posts in 30 days.")
+    ana_claims = json.dumps({"sub": ana, "role": "authenticated"})
+    as_ana = f"SET LOCAL ROLE authenticated; SELECT set_config('request.jwt.claims', '{ana_claims}', true) IS NOT NULL;"
+    ten = f"INSERT INTO private.housing_post_log (member_id, kind) SELECT '{ana}', 'change' FROM generate_series(1, 10);"
+    check("10 changes a day to what a listing fits (kind, city, dates, rent...): the next is refused", f"""
+          BEGIN; {ten} {as_ana}
+          UPDATE housing_listings SET warm_rent = warm_rent + 1 WHERE listing_id = '{first}'; ROLLBACK;""",
+          error_has="doing that too often")
+    check("... renewing isn't a change, nor is the size", f"""
+          BEGIN; {ten} {as_ana}
+          SELECT (public.renew_housing_listing('{open_one}') ->> 'expires_on') IS NOT NULL;
+          UPDATE housing_listings SET size_m2 = 15 WHERE listing_id = '{first}' RETURNING size_m2; ROLLBACK;""",
+          expect="t\nt\n15")
+    check("members can't read or write the counts behind the limits", "SELECT count(*) FROM private.housing_post_log",
+          as_user=fay, error_has="permission denied")
+    check("... (write)", "INSERT INTO private.housing_post_log (member_id, kind) VALUES (auth.uid(), 'listing')",
+          as_user=fay, error_has="permission denied")
+
+    # --- "Download my data" ---------------------------------------------------------------------------------------------
+    post(ana, hs_looking(["flat"], "Munich", 60))
+    check("\"Download my data\": ana's housing details, looking posts and when they were posted", """
+          SELECT concat_ws('|', (SELECT string_agg(h->>'kind', ',' ORDER BY h->>'kind') FROM jsonb_array_elements(d->'housing_listings') h),
+            d->'housing_listings'->0 ? 'warm_rent', jsonb_array_length(d->'housing_looking_posts'),
+            d->'housing_looking_posts'->0->>'kinds', jsonb_array_length(d->'housing_post_log'),
+            (SELECT count(*) FROM jsonb_array_elements(d->'marketplace_listings') m WHERE m->>'category' = 'Housing'))
+          FROM (SELECT public.export_my_data() d) x""", as_user=ana, expect="flat,sublet,wg_room|t|1|[\"flat\"]|7|3")
+    old = function_source(AMBASSADOR_PANEL, "CREATE OR REPLACE FUNCTION public.export_my_data()").splitlines()
+    new = function_source(HOUSING_SEARCH, "CREATE OR REPLACE FUNCTION public.export_my_data()").splitlines()
+    removed = [l[2:] for l in difflib.ndiff(old, new) if l.startswith("- ")]
+    verdict("public.export_my_data() is its 2026-10-27 version with lines added only", not removed, f"removed: {removed}")
+
+    # --- expiry and clean-up ------------------------------------------------------------------------------------------
+    check("the clean-up: expired listings leave the Market, and go 30 days after they expired with their Market listing; "
+          "looking posts 30 days after they ended; the limit counts after 30 days; listings from before stay", f"""
+          BEGIN;
+          DELETE FROM marketplace WHERE id IN (SELECT listing_id FROM housing_listings);
+          DELETE FROM housing_wanted;
+          DELETE FROM private.housing_post_log;
+          {hs_listing(jon, 'Cleanup ended yesterday', 'wg_room', 'Bonn', -50, -1).replace(' RETURNING listing_id', '')};
+          {hs_listing(jon, 'Cleanup ended 31 days ago', 'wg_room', 'Bonn', -90, -31).replace(' RETURNING listing_id', '')};
+          {hs_listing(jon, 'Cleanup ends in 10 days', 'wg_room', 'Bonn', -5, 10).replace(' RETURNING listing_id', '')};
+          {hs_looking(['flat'], 'Bonn', -60, -31, user=f"'{jon}'").replace(' RETURNING id', '')};
+          {hs_looking(['flat'], 'Bonn', -60, -5, user=f"'{jon}'").replace(' RETURNING id', '')};
+          INSERT INTO private.housing_post_log (member_id, kind, at) VALUES ('{jon}', 'listing', now() - interval '31 days'),
+            ('{jon}', 'looking', now() - interval '10 days');
+          SELECT concat_ws('|', r->>'housing_listings_expired', r->>'housing_listings_deleted', r->>'housing_looking_posts_deleted',
+            r->>'housing_post_log') FROM private.housing_cleanup() r;
+          SELECT string_agg(concat_ws(':', m.title, m.status, CASE WHEN h.listing_id IS NULL THEN 'no details' END), ','
+            ORDER BY m.title)
+            FROM marketplace m LEFT JOIN housing_listings h ON h.listing_id = m.id WHERE m.title LIKE 'Cleanup%' OR m.id = '{old_room}';
+          SELECT string_agg((expires_on - private.today_in_germany())::text, ',') FROM housing_wanted;
+          SELECT string_agg(kind, ',') FROM private.housing_post_log;
+          ROLLBACK;""",
+          expect="2|1|1|1\nCleanup ended yesterday:expired,Cleanup ends in 10 days:active,Old style room:active:no details\n-5\n"
+                 "looking")
+    check("... members can't run it", "SELECT private.housing_cleanup()", as_user=ana, expect="error")
+    check("... nor can signed-out visitors", "SELECT private.housing_cleanup()", role="anon", expect="error")
+    check("... every night, with its own pg_cron job", """
+          BEGIN;
+          CREATE SCHEMA cron;
+          CREATE TABLE cron.jobs (name text, schedule text, command text);
+          CREATE FUNCTION cron.schedule(a text, b text, c text) RETURNS bigint LANGUAGE sql
+            AS $f$ INSERT INTO cron.jobs VALUES (a, b, c) RETURNING 1::bigint $f$;
+          SELECT left(private.schedule_housing_cleanup(), 10);
+          SELECT concat_ws('|', name, schedule, command) FROM cron.jobs;
+          ROLLBACK;""", expect="scheduled:\nnriclub-housing-cleanup|53 3 * * *|SELECT private.housing_cleanup()")
+    check("... and says so where there's no pg_cron", "SELECT left(private.schedule_housing_cleanup(), 14)",
+          expect="not scheduled:")
+    verdict("the migration leaves private.daily_cleanup as it is (another update changes it)",
+            "daily_cleanup" not in re.sub(r"--[^\n]*", "", migration), "it mentions private.daily_cleanup")
+
+    # --- reports and our team ------------------------------------------------------------------------------------------
+    check("a housing listing is reported like any Market listing", f"""
+          INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith)
+          VALUES (auth.uid(), '{room}', '[MARKETPLACE] Room near Ostbahnhof — Illegal: Fraud or a scam', 'market', 'fraud',
+            'Asked for the deposit by Western Union before any viewing.', true) RETURNING reported_user_id""",
+          as_user=ben, expect=ana)
+    check("our team removes it: the listing, its details and the notifications about it go", f"""
+          SELECT r->>'closed_reports' IS NOT NULL FROM (SELECT {moderate('market', room, 'remove',
+            facts='it asked for a deposit by Western Union before any viewing')} r) x;
+          SET ROLE postgres;
+          SELECT concat_ws('|', (SELECT count(*) FROM marketplace WHERE id = '{room}'),
+            (SELECT count(*) FROM housing_listings WHERE listing_id = '{room}'),
+            (SELECT count(*) FROM notifications WHERE type = 'housing_match' AND reference_id = '{room}'),
+            (SELECT count(*) FROM reports WHERE reported_post_id = '{room}' AND status = 'resolved'))""",
+          as_user=ADMIN, expect="t\n0|0|0|1")
+
+    # --- the site and the database ---------------------------------------------------------------------------------------
+    proc = subprocess.run(["node", "--input-type=module", "-e",
+                           "import { HOUSING_KIND_KEYS, LIMITS, FLEX_DAYS, OPEN_ENDED_DAYS, KEEP_EXPIRED_DAYS } "
+                           "from './src/content/housing.js';"
+                           "console.log(JSON.stringify({ kinds: HOUSING_KIND_KEYS, limits: LIMITS, flex: FLEX_DAYS, "
+                           "open: OPEN_ENDED_DAYS, keep: KEEP_EXPIRED_DAYS }))"],
+                          cwd=root, capture_output=True, text=True)
+    js = json.loads(proc.stdout) if proc.returncode == 0 else {}
+    ok, out, err = psql("SELECT array_to_string(private.housing_kinds(), ',')")
+    verdict("the site and the database have the same kinds of place, in the same order",
+            ok and js.get("kinds") and out.split(",") == js["kinds"], f"node: {proc.stderr[:200]} db: {out} {err[:200]}")
+    ok, out, err = psql("SELECT string_agg(pg_get_triggerdef(t.oid), ';' ORDER BY c.relname, t.tgname) FROM pg_trigger t "
+                        "JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgname LIKE 'rate_limit%' "
+                        "AND c.relname IN ('housing_listings', 'housing_wanted')")
+    lim = js.get("limits") or {}
+    verdict("... and the same limits", ok and lim and
+            f"housing_rate_limit('listing', '{lim['listing']['day']}', '1 day', '{lim['listing']['month']}', '30 days')" in out
+            and f"housing_rate_limit('looking', '{lim['looking']['day']}', '1 day', '{lim['looking']['month']}', '30 days')" in out
+            and f"housing_rate_limit('change', '{lim['change']['day']}', '1 day')" in out
+            and f"'listing_limit', {lim['listing']['month']}" in migration and f"'looking_limit', {lim['looking']['month']}" in migration,
+            f"{out} {err[:200]} {lim}")
+    verdict("... and the same days (a week either way, 60 days without an end, deleted 30 days after)",
+            js.get("flex") == 7 and js.get("open") == 60 and js.get("keep") == 30
+            and "w.date_from + 7" in migration and "+ 60);" in migration and "today - 30" in migration, str(js))
+
+    # --- deleting an account --------------------------------------------------------------------------------------------
+    gus_listing = post(gus, hs_post("Gus's room", "wg_room", "Munich", 10, 40))
+    check("deleting an account deletes its housing listings and their details, its looking posts and its limit counts", f"""
+          DELETE FROM auth.users WHERE id = '{gus}';
+          SELECT concat_ws('|', (SELECT count(*) FROM marketplace WHERE id = '{gus_listing}'),
+            (SELECT count(*) FROM housing_listings WHERE user_id = '{gus}'),
+            (SELECT count(*) FROM housing_wanted WHERE id = '{gus_post}' OR user_id = '{gus}'),
+            (SELECT count(*) FROM private.housing_post_log WHERE member_id = '{gus}'))""", expect="0|0|0|0")
+
+    # --- the kinds of notification; running the migration again ---------------------------------------------------------
+    kinds_sql = ("SELECT string_agg(m[1], ',' ORDER BY n) FROM pg_constraint c, "
+                 "regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''', 'g') WITH ORDINALITY x(m, n) "
+                 "WHERE c.conname = 'notifications_type_check'")
+    travel_kinds = re.search(r"notifications_type_check CHECK \(type IN \((.*?)\)\);", open(TRAVEL_BOARD, encoding="utf-8").read(),
+                             re.S).group(1)
+    before = re.findall(r"'([^']+)'", travel_kinds) + ["profile"]
+    check("notifications accept every kind they did, plus 'housing_match'", kinds_sql, expect=",".join(before + ["housing_match"]))
+    check("the new list is built from the one the database has (kinds another update added stay)", f"""
+          BEGIN;
+          DELETE FROM notifications WHERE type = 'housing_match';
+          ALTER TABLE notifications DROP CONSTRAINT notifications_type_check,
+            ADD CONSTRAINT notifications_type_check CHECK (type IN ({', '.join(sq(k) for k in before)}, 'other_update'));
+          {migration}
+          {kinds_sql};
+          ROLLBACK;""", expect=",".join(before + ["other_update", "housing_match"]))
+    counts = ("SELECT (SELECT count(*) FROM housing_listings) || '|' || (SELECT count(*) FROM housing_wanted) || '|' || "
+              "(SELECT count(*) FROM private.housing_post_log) || '|' || (SELECT count(*) FROM notifications WHERE type = 'housing_match')")
+    kept = psql(counts)[1]
+    ok, _, err = psql(migration)
+    verdict("the migration can be run again", ok, err[:300])
+    check("... 'housing_match' is in the list once", kinds_sql, expect=",".join(before + ["housing_match"]))
+    check("... and the listings, looking posts, counts and notifications stay", counts, expect=kept)
+    check("... and the rules for who may post", hs_looking(["wg_room"], "Munich", 10, 20), as_user=eli,
+          error_has="row-level security")
 
 
 if __name__ == "__main__":
