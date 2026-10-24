@@ -2569,6 +2569,34 @@ export async function isAdmin() {
   return (await adminAccess()).isAdmin;
 }
 
+// The "Admin panel" button on the members' site: a one-time code for this
+// admin account (supabase/functions/admin-handoff) that admin.nriclub.app
+// trades for a session of its own (signInWithHandoff). null when there's
+// none (not an admin, the function isn't deployed, no connection): the
+// admin site then asks for the password as before.
+export async function adminHandoffCode() {
+  try {
+    const res = await adminFunction("admin-handoff", {});
+    return typeof res?.code === "string" && /^[A-Za-z0-9_-]{10,200}$/.test(res.code) ? res.code : null;
+  } catch {
+    return null;
+  }
+}
+
+// On admin.nriclub.app: signs in with a code from adminHandoffCode. Throws
+// when it's used up or expired.
+export async function signInWithHandoff(code) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+    body: JSON.stringify({ type: "magiclink", token_hash: code }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.access_token) throw new Error(data?.msg || data?.error_description || "The sign-in code didn't work.");
+  saveSession(data);
+  return data;
+}
+
 // Turns "Require two-step login for admin rights" on or off. Works only from
 // a session signed in with the 6-digit code (the database refuses it
 // otherwise, with a message to show).

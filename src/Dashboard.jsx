@@ -2540,6 +2540,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   const [placeKind, setPlaceKind] = useState("All"); // filter in the Places tab
   const [cityAmbassadors, setCityAmbassadors] = useState({ city: "", list: [] });
   const [isAdminUser, setIsAdminUser] = useState(false);
+  // An account of our team (in public.admins, not blocked): it gets the
+  // "Admin panel" button, which opens admin.nriclub.app signed in.
+  const [adminAccount, setAdminAccount] = useState(false);
+  const [openingAdmin, setOpeningAdmin] = useState(false);
   const [bookingMentor, setBookingMentor] = useState(null);
   const [mentorRatings, setMentorRatings] = useState({});
   const [mentorsList, setMentorsList] = useState([]); // verified mentors
@@ -2548,7 +2552,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   const [mentoringKey, setMentoringKey] = useState(0); // reloads the Mentoring page
   const placesCity = selectedGroup?.category === "City" ? (selectedGroup.name || "").replace(/^Indians in /i, "") : null;
   useEffect(() => { setPlaceKind("All"); }, [placesCity]);
-  useEffect(() => { api.isAdmin().then(setIsAdminUser).catch(() => {}); }, []);
+  useEffect(() => {
+    api.adminAccess().then((a) => { setIsAdminUser(a.isAdmin); setAdminAccount(a.listed && a.active); }).catch(() => {});
+  }, []);
+  // The admin panel lives on admin.nriclub.app with its own session: it gets
+  // a one-time code for this account and signs in with it (without one it
+  // asks for the password as before). On this computer, #admin.
+  const openAdminPanel = async () => {
+    if (openingAdmin) return;
+    const host = window.location.hostname;
+    if (host !== "nriclub.app" && host !== "www.nriclub.app") {
+      if (/(^|\.)localhost$|^127\.0\.0\.1$/.test(host)) { window.location.hash = "admin"; window.location.reload(); }
+      else window.location.assign("https://admin.nriclub.app/");
+      return;
+    }
+    setOpeningAdmin(true);
+    const code = await api.adminHandoffCode();
+    window.location.assign(code ? `https://admin.nriclub.app/#handoff=${code}` : "https://admin.nriclub.app/");
+    // Back here with the browser's back button: the button works again.
+    setTimeout(() => setOpeningAdmin(false), 4000);
+  };
   useEffect(() => { document.title = HOME_TITLE; }, []);
   const refreshRatings = () => api.getMentorRatings().then(setMentorRatings).catch(() => {});
   const asMentoringPerson = (p) => ({
@@ -2939,6 +2962,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 <button type="button" onClick={() => setView("ambassador")}
                   style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 16, padding: "10px 14px", minHeight: 44, borderRadius: 12, border: "1px solid #C7D2FE", background: "#EEF2FF", color: "#000080", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: font }}>
                   {Icons.shield({ size: 16 })} Ambassador panel · {user.ambassadorCity}
+                </button>
+              </div>
+            )}
+            {/* Our team's admin panel (mobile; the left column has it on desktop) */}
+            {adminAccount && (
+              <div className="nc-mobile-only">
+                <button type="button" onClick={openAdminPanel} disabled={openingAdmin} aria-busy={openingAdmin}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 16, padding: "10px 14px", minHeight: 44, borderRadius: 12, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 700, cursor: openingAdmin ? "default" : "pointer", fontFamily: font }}>
+                  {Icons.settings({ size: 16 })} {openingAdmin ? "Opening the admin panel…" : "Admin panel"}
                 </button>
               </div>
             )}
@@ -5292,10 +5324,11 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               { v: "messages", icon: Icons.message, label: "Messages" },
               { v: "profile", icon: Icons.user, label: "Profile" },
               user.ambassadorCity ? { v: "ambassador", icon: Icons.shield, label: "Ambassador panel" } : null,
+              adminAccount ? { v: "admin", icon: Icons.settings, label: "Admin panel" } : null,
             ].filter(Boolean)).map((item) => (
               <button
                 key={item.v}
-                onClick={() => { setView(item.v); setMobileMenu(false); if (item.v === "groups") setSelectedGroup(null); if (item.v === "travel") setTravelFocus(null); }}
+                onClick={() => { if (item.v === "admin") { setMobileMenu(false); openAdminPanel(); return; } setView(item.v); setMobileMenu(false); if (item.v === "groups") setSelectedGroup(null); if (item.v === "travel") setTravelFocus(null); }}
                 style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", background: shownView === item.v ? "#EFEFED" : "transparent", color: shownView === item.v ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 14, fontFamily: font, marginBottom: 4 }}
               >
                 {item.icon({ size: 18 })} {item.label}
@@ -5518,6 +5551,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               <button type="button" onClick={() => setView("ambassador")} aria-current={view === "ambassador" ? "page" : undefined}
                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginTop: 12, padding: "10px 14px", minHeight: 42, borderRadius: 12, border: "1px solid #C7D2FE", background: view === "ambassador" ? "#E0E7FF" : "#EEF2FF", color: "#000080", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: font }}>
                 {Icons.shield({ size: 15 })} Ambassador panel
+              </button>
+            )}
+
+            {/* Our team's admin panel (on mobile: at the top of Home) */}
+            {adminAccount && (
+              <button type="button" onClick={openAdminPanel} disabled={openingAdmin} aria-busy={openingAdmin}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginTop: 12, padding: "10px 14px", minHeight: 42, borderRadius: 12, border: "none", background: "#37352F", color: "#fff", fontSize: 13, fontWeight: 700, cursor: openingAdmin ? "default" : "pointer", fontFamily: font }}>
+                {Icons.settings({ size: 15 })} {openingAdmin ? "Opening…" : "Admin panel"}
               </button>
             )}
 

@@ -24,6 +24,7 @@ Everything is in:
 | `supabase/functions/admin-delete-signup/index.ts` | Deletes an unfinished sign-up |
 | `supabase/functions/admin-inbox-reply/index.ts` | Sends a reply from the Inbox |
 | `supabase/functions/forward-email/index.ts` | Stores mail to hello@ in the Inbox; the Gmail copy is now optional |
+| `supabase/functions/admin-handoff/index.ts` | (Added 24 October 2026.) The "Admin panel" button on nriclub.app: a one-time sign-in code for admin accounts, so admin.nriclub.app opens signed in. Deploy with verify JWT off; without it the button opens the admin login as before |
 | `vercel.json` | Only the app's own addresses go to the app; the rest get `404.html` (status 404) |
 
 The order below is safe: the site works before the database update and
