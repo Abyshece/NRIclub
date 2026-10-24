@@ -77,6 +77,8 @@ const TONES = {
   green: ["#DDEDEA", "#0F7B6C"],
   red: ["#FBE4E4", "#E03E3E"],
   blue: ["#DDEBF1", "#0B6E99"],
+  // City ambassadors (as their badge in the app).
+  indigo: ["#EEF2FF", "#3730A3"],
 };
 
 export function Pill({ tone = "gray", dot = true, children, title }) {

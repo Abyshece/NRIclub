@@ -7,10 +7,14 @@
 // every change of ambassador); someone without an account, or whose account
 // isn't approved yet, is only marked accepted: our team asks them to join
 // and makes them ambassador once they are approved.
+// Above the applications: the city ambassadors, with the ambassador
+// agreement they accepted and what they did in the ambassador panel
+// (AmbassadorTeam.jsx).
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import { NoteEditor } from "./ReportsView";
-import { Button, ConfirmDialog, EmptyState, ErrorNote, PageHeader, Pill, SkeletonRows } from "./ui";
+import AmbassadorTeam, { useAmbassadorTeam } from "./AmbassadorTeam";
+import { Button, ConfirmDialog, EmptyState, ErrorNote, PageHeader, Pill, SectionTitle, SkeletonRows } from "./ui";
 import { ago, firstName, formatDate, friendlyError, shortName } from "./format";
 import { APPLICATION_STATUS, ambassadorReplyEmail, hoursLabel, mailtoLink } from "../content/ambassadors";
 
@@ -124,7 +128,9 @@ function DecisionDialog({ app, kind, onCancel, onDone }) {
 }
 
 // onCountsChange(counts): the counts by status, for the panel's navigation.
-export default function AmbassadorsView({ showToast, onCountsChange, initialCounts = null }) {
+// onOpenMember({ id, name }): opens a member under Members.
+export default function AmbassadorsView({ showToast, onCountsChange, initialCounts = null, onOpenMember }) {
+  const team = useAmbassadorTeam();
   const [filter, setFilter] = useState(initialCounts && !initialCounts.new ? "all" : "new");
   const [apps, setApps] = useState([]);
   const [total, setTotal] = useState(0);
@@ -268,7 +274,9 @@ export default function AmbassadorsView({ showToast, onCountsChange, initialCoun
 
   return (
     <>
-      <PageHeader title="Ambassadors" description="Applications to be a city ambassador, from the website and the app. Reply by email, then mark each one: Contacted, Accept or Decline. Accepting an approved member makes them the city's ambassador." />
+      <PageHeader title="Ambassadors" description="The city ambassadors, the agreement they accepted and what they do in the ambassador panel; and applications to be one, from the website and the app. Reply by email, then mark each one: Contacted, Accept or Decline. Accepting an approved member makes them the city's ambassador." />
+      <AmbassadorTeam team={team} onOpenMember={onOpenMember} />
+      <SectionTitle count={countOf("all")}>Applications</SectionTitle>
       {!missing && (
         <div className="adm-filters" role="group" aria-label="Show applications">
           {FILTERS.map((x) => (

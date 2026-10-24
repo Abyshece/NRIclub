@@ -7,8 +7,10 @@
 // (api.adminModerate, api.adminCloseReports), which records it and tells the
 // member concerned why and whoever reported it what was decided (Art. 16(5)
 // and 17 DSA). Reports about a threat to someone's life or safety come first
-// (Art. 18 DSA). Handling a report changes its status ("reviewed" when
-// dismissed, "resolved" when acted on), so it stays on record under Handled.
+// (Art. 18 DSA), then what a city's ambassador flagged to our team from the
+// ambassador panel ("From the ambassador of <city>"). Handling a report
+// changes its status ("reviewed" when dismissed, "resolved" when acted on),
+// so it stays on record under Handled.
 // The panel loads the oldest open reports, a page at a time ("Load more"),
 // and only the newest handled ones.
 import { useEffect, useRef, useState } from "react";
@@ -32,6 +34,11 @@ export const isOpenBug = (r) => isBugReport(r) && isPending(r);
 export const isOpenIdea = (r) => isIdea(r) && isPending(r);
 // A report about a threat to someone's life or safety (Art. 18 DSA).
 export const isSafetyReport = (r) => r.category === "safety";
+// A report a city's ambassador flagged to our team from the ambassador panel
+// (reports.ambassador_city, since the 2026-10-27 database update): shown
+// first after safety reports.
+export const isAmbassadorFlag = (r) => !!r.ambassador_city;
+const AMBASSADOR_SECTION = "From city ambassadors";
 
 const HANDLED_PAGE = 20;
 
@@ -104,9 +111,9 @@ const SECTIONS = [
   ["Messages", (r) => kindOf(r) === "message"],
   ["Mentor reviews", (r) => kindOf(r) === "review"],
 ];
-const sectionOf = (r) => (isSafetyReport(r) ? "Safety" : isProfileReport(r) ? "Profiles"
-  : (SECTIONS.find(([, test]) => test(r)) || ["Feed posts"])[0]);
-const SECTION_ORDER = ["Safety", ...SECTIONS.slice(1).map(([name]) => name), "Profiles"];
+const sectionOf = (r) => (isSafetyReport(r) ? "Safety" : isAmbassadorFlag(r) ? AMBASSADOR_SECTION
+  : isProfileReport(r) ? "Profiles" : (SECTIONS.find(([, test]) => test(r)) || ["Feed posts"])[0]);
+const SECTION_ORDER = ["Safety", AMBASSADOR_SECTION, ...SECTIONS.slice(1).map(([name]) => name), "Profiles"];
 
 // The reported item ("post:<id>", "profile:<id>"), for fetching it and for
 // finding other reports about it.
@@ -417,6 +424,7 @@ export function ReportsView({ reports, setReports, handledTotal = 0, moreOpen = 
         <div className="adm-item-main">
           <div className="adm-item-title">
             {isSafetyReport(r) && <Pill tone="red">Safety</Pill>}
+            {isAmbassadorFlag(r) && <Pill tone="indigo">From the ambassador of {r.ambassador_city}</Pill>}
             <span>{title}</span>
             {!actionable && <Pill tone={r.status === "resolved" ? "red" : "gray"}>{r.status === "resolved" ? "Acted on" : "Dismissed"}</Pill>}
           </div>
@@ -652,13 +660,19 @@ export function ReportsView({ reports, setReports, handledTotal = 0, moreOpen = 
               {grouped.Safety.map((r) => renderReport(r, true))}
             </section>
           )}
+          {grouped[AMBASSADOR_SECTION]?.length > 0 && (
+            <section>
+              <SectionTitle count={grouped[AMBASSADOR_SECTION].length} tone="orange">{AMBASSADOR_SECTION}</SectionTitle>
+              {grouped[AMBASSADOR_SECTION].map((r) => renderReport(r, true))}
+            </section>
+          )}
           {openNotices.length > 0 && (
             <section>
               <SectionTitle count={openNotices.length} tone="orange">From the public report page</SectionTitle>
               {[...openNotices].sort((a, b) => (b.category === "safety") - (a.category === "safety")).map(renderNotice)}
             </section>
           )}
-          {SECTION_ORDER.filter((c) => c !== "Safety" && grouped[c]?.length).map((c) => (
+          {SECTION_ORDER.filter((c) => c !== "Safety" && c !== AMBASSADOR_SECTION && grouped[c]?.length).map((c) => (
             <section key={c}>
               <SectionTitle count={grouped[c].length}>{c}</SectionTitle>
               {grouped[c].map((r) => renderReport(r, true))}

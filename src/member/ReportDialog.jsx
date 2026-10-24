@@ -10,12 +10,16 @@ import { REPORT_FIELDS, REPORT_KINDS, REPORT_REASONS, REPORT_RECEIVED, REPORT_PA
 // The member picks a reason from the two groups (illegal, against our
 // rules), says why in their own words and confirms good faith.
 // target: { type (reports.content_type), id, userId (who wrote it, if
-// known), name (a few words to recognise it by) }. onReported(target) once
-// it's sent.
+// known), name (a few words to recognise it by), flag }. onReported(target)
+// once it's sent.
+// With target.flag, a city's ambassador flags something in their city
+// (flagCity) to our team from the ambassador panel: the same report, which
+// our team sees first, marked as from the ambassador (api.ambassadorFlag).
 
 const DEFAULT_FONT = "'DM Sans', sans-serif";
 
-export default function ReportDialog({ target, onClose, onReported, font = DEFAULT_FONT }) {
+export default function ReportDialog({ target, onClose, onReported, flagCity = "", font = DEFAULT_FONT }) {
+  const flag = !!target.flag && !!flagCity;
   const [category, setCategory] = useState("");
   const [explanation, setExplanation] = useState("");
   const [goodFaith, setGoodFaith] = useState(false);
@@ -45,12 +49,16 @@ export default function ReportDialog({ target, onClose, onReported, font = DEFAU
     setBusy(true);
     setError("");
     try {
-      await api.reportContent({
-        type: target.type, id: target.id, userId: target.userId || null, name: target.name || "",
-        category, categoryLabel: reportReasonLabel(category), explanation: explanation.trim(),
-      });
+      if (flag) {
+        await api.ambassadorFlag({ type: target.type, id: target.id, category, explanation: explanation.trim() });
+      } else {
+        await api.reportContent({
+          type: target.type, id: target.id, userId: target.userId || null, name: target.name || "",
+          category, categoryLabel: reportReasonLabel(category), explanation: explanation.trim(),
+        });
+      }
     } catch (e) {
-      setError(apiErrorMessage(e, "Your report couldn't be sent. Please try again."));
+      setError(apiErrorMessage(e, flag ? "It couldn't be sent to our team. Please try again." : "Your report couldn't be sent. Please try again."));
       setBusy(false);
       return;
     }
@@ -70,18 +78,24 @@ export default function ReportDialog({ target, onClose, onReported, font = DEFAU
       <div role="dialog" aria-modal="true" aria-labelledby="report-title" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, padding: "24px 22px", margin: "auto", boxSizing: "border-box" }}>
         {sent ? (
           <div role="status" style={{ textAlign: "center" }}>
-            <h3 id="report-title" style={{ fontSize: 17, fontWeight: 700, color: "#37352F", margin: "0 0 10px", fontFamily: font }}>Report sent</h3>
-            <p style={{ ...text, marginBottom: 20 }}>{REPORT_RECEIVED}</p>
+            <h3 id="report-title" style={{ fontSize: 17, fontWeight: 700, color: "#37352F", margin: "0 0 10px", fontFamily: font }}>{flag ? "Sent to our team" : "Report sent"}</h3>
+            <p style={{ ...text, marginBottom: 20 }}>{flag ? "Thank you. A person on our team will look at it soon and decide. You don't need to do anything else." : REPORT_RECEIVED}</p>
             <button ref={doneRef} type="button" onClick={onClose} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#37352F", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: font }}>Done</button>
           </div>
         ) : (
           <>
-            <h3 id="report-title" style={{ fontSize: 17, fontWeight: 700, color: "#37352F", margin: "0 0 4px", fontFamily: font }}>Report this {noun}</h3>
+            <h3 id="report-title" style={{ fontSize: 17, fontWeight: 700, color: "#37352F", margin: "0 0 4px", fontFamily: font }}>{flag ? "Flag to the team" : `Report this ${noun}`}</h3>
             {target.name && <p style={{ ...text, fontSize: 12, marginBottom: 8, overflowWrap: "anywhere" }}>"{String(target.name).slice(0, 120)}"</p>}
-            <p style={{ ...text, marginBottom: 14 }}>
-              A person on our team looks at every report and tells you what we decided. We don't tell the member you report who you are, unless the law requires it.
-              {target.type === "message" && " Our team sees only this message, not the rest of your conversation."}
-            </p>
+            {flag ? (
+              <p style={{ ...text, marginBottom: 14 }}>
+                Our team sees this first, marked as from the ambassador of {flagCity}. A person on our team decides what happens and tells you. You can't remove or hide anything yourself, and we don't tell the member who flagged it.
+              </p>
+            ) : (
+              <p style={{ ...text, marginBottom: 14 }}>
+                A person on our team looks at every report and tells you what we decided. We don't tell the member you report who you are, unless the law requires it.
+                {target.type === "message" && " Our team sees only this message, not the rest of your conversation."}
+              </p>
+            )}
             {category === "safety" && (
               <p role="note" style={{ ...text, color: "#B91C1C", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>{REPORT_PAGE.emergency}</p>
             )}
@@ -115,7 +129,7 @@ export default function ReportDialog({ target, onClose, onReported, font = DEFAU
               <button type="button" onClick={onClose} disabled={busy} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", fontSize: 13, color: "#5F5E5B", cursor: "pointer", fontFamily: font }}>Cancel</button>
               <button type="button" onClick={send} disabled={busy} aria-disabled={!ready}
                 style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: ready ? "#DC2626" : "#F3A6A6", fontSize: 13, fontWeight: 600, color: "#fff", cursor: busy ? "default" : "pointer", fontFamily: font }}>
-                {busy ? "Sending…" : REPORT_FIELDS.submit}
+                {busy ? "Sending…" : flag ? "Send to our team" : REPORT_FIELDS.submit}
               </button>
             </div>
           </>

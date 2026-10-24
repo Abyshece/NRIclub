@@ -21,10 +21,11 @@ const fmt = (n) => n.toLocaleString("en-GB");
 // to the server (api.adminSearchMembers) and cover every member; before the
 // database could search (its 2026-10-23 update) they cover the loaded ones.
 // recorded: whether the database records our team's decisions and tells the
-// member (the 2026-10-21 update).
+// member (the 2026-10-21 update). focus: { id, name, key } of a member
+// another page links to: searched for by name, with their details open.
 const SEARCH_DELAY_MS = 300;
 
-export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, onMemberDeleted, showToast, recorded = true }) {
+export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, onMemberDeleted, showToast, recorded = true, focus = null }) {
   const [query, setQuery] = useState("");
   const [show, setShow] = useState("all"); // all | blocked
   const [limit, setLimit] = useState(PAGE);
@@ -109,6 +110,14 @@ export default function MembersView({ users, total = users.length, blockedTotal 
   const remoteMore = useRemote ? Math.max(0, remoteTotal - filtered.length) : 0;
 
   useEffect(() => { setLimit(PAGE); }, [query, show]);
+
+  // A member another page linked to.
+  useEffect(() => {
+    if (!focus?.id) return;
+    setShow("all");
+    setQuery(focus.name || "");
+    setOpenId(focus.id);
+  }, [focus?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The next page of the server's answer, after the members listed here that
   // are still in it.

@@ -16,6 +16,8 @@ import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
 import TravelBoard from "./member/TravelBoard";
 import ReportDialog from "./member/ReportDialog";
+import { HostedBadge, sameCity } from "./member/ambassadorBits";
+import { MEETUP_TITLE } from "./content/ambassador";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview, countryName, getCountryOptions, MAJOR_INDIAN_CITIES } from "./member/profile";
 import { findCity } from "./content/findCity";
 import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
@@ -25,6 +27,8 @@ import { useWhatsOn } from "./whatsOnLive";
 
 // The application to be a city ambassador, loaded when it is opened.
 const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
+// A city ambassador's panel (/ambassador), loaded when it is opened.
+const AmbassadorPanel = lazy(() => import("./member/AmbassadorPanel"));
 
 
 // ============================================================================
@@ -782,6 +786,7 @@ const EmptyCard = ({ text, action, onAction }) => (
 //     get Events, with the same list under "Also on in Germany")
 //   /mentoring (your sessions and settings)  /mentors (Find → Mentors)
 //   /travel[/<post id>] (the travel board, at that post)
+//   /ambassador (a city ambassador's panel)
 const parsePath = (path, selfId) => {
   const [, a = "", b = ""] = (path || "/").split("/");
   let id = "";
@@ -803,6 +808,7 @@ const parsePath = (path, selfId) => {
     case "mentoring": return { view: "mentoring" };
     case "mentors": return { view: "network", findTab: "mentors" };
     case "travel": return { view: "travel", travel: id || null };
+    case "ambassador": return { view: "ambassador" };
     case "impressum": return { view: "home", legal: hasImprint() ? "impressum" : null };
     default: return { view: "home" };
   }
@@ -878,7 +884,8 @@ const AlsoOnInGermany = ({ user, cityFilter, search, target, font }) => {
 // initialLiked: whether the member likes the post, as the Dashboard knows
 // it (its likes load after the posts, so it can turn true later); onLike(id,
 // on) tells the Dashboard of a change.
-const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup, onOpenProfile, pinned, onPin, onReportItem, reportedIds }) => {
+// onFlag: for a city's ambassador, "Flag to the team" (a post in their city group).
+const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialLiked, hideGroup, onOpenProfile, pinned, onPin, onReportItem, reportedIds, onFlag }) => {
   const [liked, setLiked] = useState(!!initialLiked);
   useEffect(() => { setLiked(!!initialLiked); }, [initialLiked]);
   const [likeCount, setLikeCount] = useState(post.likes || 0);
@@ -1011,6 +1018,11 @@ const PostCard = ({ post, user, onDelete, onLike, onReport, isReported, initialL
                 {onPin && !String(post.id).startsWith("p_") && (
                   <button onClick={() => { setShowMenu(false); onPin(pinned ? null : post.id); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#37352F", fontSize: 13, textAlign: "left" }}>
                     📌 {pinned ? "Unpin" : "Pin to top"}
+                  </button>
+                )}
+                {onFlag && !isOwner && (
+                  <button onClick={() => { setShowMenu(false); onFlag(post); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", color: "#000080", fontSize: 13, whiteSpace: "nowrap" }}>
+                    {Icons.flag({ size: 14 })} Flag to the team
                   </button>
                 )}
                 {isOwner && onDelete ? (
@@ -1448,6 +1460,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   const [teamMessage, setTeamMessage] = useState(null);
   // The ambassador application form, while open: { city } (the city to fill in).
   const [ambassadorApply, setAmbassadorApply] = useState(null);
+  // A city ambassador's status (api.getAmbassadorStatus): once they accepted
+  // the ambassador agreement, they can "Flag to the team" in their city and
+  // mark their meetups. null until known, or before the database update.
+  const [ambassadorStatus, setAmbassadorStatus] = useState(null);
   const [selectedMarketItem, setSelectedMarketItem] = useState(null);
   const [expandedMarketItem, setExpandedMarketItem] = useState(null);
   const [marketPhotoIdx, setMarketPhotoIdx] = useState(0);
@@ -1824,6 +1840,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       case "network": return findTab === "mentors" ? "/mentors" : "/find";
       case "mentoring": return "/mentoring";
       case "travel": return travelFocus ? `/travel/${travelFocus}` : "/travel";
+      case "ambassador": return "/ambassador";
       case "groups": return selectedGroup ? `/groups/${selectedGroup.id}` : "/groups";
       case "events": return "/events";
       case "help": return "/help";
@@ -2158,8 +2175,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   };
 
   const EMPTY_EVENT = { title: "", date: "", time: "", location: "", city: "", description: "", link: "" };
-  // An events row as the Events page uses it.
-  const toEvent = (e) => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name || (e.organizer_id === user.id ? user.name : api.UNLISTED_NAME), description: e.description, link: e.link || "", image: e.image_url || "" });
+  // An events row as the Events page uses it. ambassadorHosted: marked
+  // "Hosted by the city ambassador" (since the 2026-10-27 database update).
+  const toEvent = (e) => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name || (e.organizer_id === user.id ? user.name : api.UNLISTED_NAME), description: e.description, link: e.link || "", image: e.image_url || "", ambassadorHosted: !!e.ambassador_hosted });
 
   // Host Event, or Save for an event its author is editing. The form stays
   // open until the event is saved, and says what went wrong if it isn't.
@@ -2168,7 +2186,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   // current photo, whose file stays until a change is saved.
   const openEventForm = (e = null) => {
     if (e || editingEvent) {
-      setNewEvent(e ? eventForm(e) : EMPTY_EVENT);
+      setNewEvent(e ? { ...eventForm(e), ambassadorHosted: !!e.ambassadorHosted } : EMPTY_EVENT);
       setEventPhoto(e?.image ? { url: e.image, preview: e.image, saved: true } : null);
     }
     setEditingEvent(e);
@@ -2200,24 +2218,49 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     };
     setEventSaving(true);
     setEventError("");
+    let saved = null;
     try {
       if (editingEvent) {
         const row = await api.updateEvent(editingEvent.id, fields, editingEvent.image || "");
-        const saved = toEvent(row);
+        saved = toEvent(row);
         setEvents(prev => prev.map(x => x.id === saved.id ? saved : x));
         setExpandedEvent(prev => (prev && prev.id === saved.id ? saved : prev));
       } else {
         const r = await api.createEvent({ ...fields, date: newEvent.date, time: newEvent.time || "TBD", organizer_name: user.name });
         const row = r?.[0];
-        setEvents(prev => [row ? toEvent(row) : { ...toEvent({ ...fields, date: newEvent.date, time: newEvent.time || "TBD", organizer_id: user.id, attendees_count: 0 }), id: "e_" + Date.now() }, ...prev]);
+        saved = row ? toEvent(row) : null;
+        setEvents(prev => [saved || { ...toEvent({ ...fields, date: newEvent.date, time: newEvent.time || "TBD", organizer_id: user.id, attendees_count: 0 }), id: "e_" + Date.now() }, ...prev]);
       }
     } catch (er) {
       setEventSaving(false);
       setEventError(apiErrorMessage(er, "Your event couldn't be saved. Please try again."));
       return;
     }
+    // A city ambassador's meetup: the mark "Hosted by the city ambassador"
+    // as ticked in the form (the database checks the event is theirs and in
+    // their city). The event is saved either way.
+    const hostedWanted = !!flagCity && !!newEvent.ambassadorHosted;
+    if (saved && flagCity && hostedWanted !== saved.ambassadorHosted) {
+      try {
+        const on = !!(await api.setEventAmbassadorHosted(saved.id, hostedWanted));
+        setHostedMark(saved.id, on);
+      } catch (er) {
+        setTimeout(() => alert(`Your event is saved, but its mark couldn't be changed: ${apiErrorMessage(er, "please try again in the ambassador panel.")}`), 0);
+      }
+    }
     setEventSaving(false);
     closeEventForm(true);
+  };
+  // An event's mark "Hosted by the city ambassador" changed.
+  const setHostedMark = (id, on) => {
+    setEvents(prev => prev.map(x => x.id === id ? { ...x, ambassadorHosted: on } : x));
+    setExpandedEvent(prev => (prev && prev.id === id ? { ...prev, ambassadorHosted: on } : prev));
+  };
+  // "Create a meetup" from the ambassador panel: Host Event for their city,
+  // with a title to start from and the mark on.
+  const createMeetup = () => {
+    openEventForm();
+    setNewEvent(prev => ({ ...prev, title: prev.title || MEETUP_TITLE, city: ambassadorStatus?.city || user.ambassadorCity || prev.city, ambassadorHosted: true }));
   };
 
   const toggleRsvp = async (id) => {
@@ -2554,9 +2597,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       setGroups(prev => prev.map(x => x.id === g.id ? { ...x, pinnedPostId: postId } : x));
       setSelectedGroup(prev => prev && prev.id === g.id ? { ...prev, pinnedPostId: postId } : prev);
     } catch (e) {
-      alert(isNetworkError(e) ? NETWORK_MESSAGE : "That post couldn't be pinned. Please try again.");
+      // e.g. an ambassador who hasn't accepted the ambassador agreement yet.
+      alert(apiErrorMessage(e, "That post couldn't be pinned. Please try again."));
     }
   };
+  // A city ambassador's status, once they can browse (and again when the
+  // role changes): it decides "Flag to the team" and the meetup mark.
+  useEffect(() => {
+    if (!canBrowse || !user.ambassadorCity) { setAmbassadorStatus(null); return; }
+    let gone = false;
+    api.getAmbassadorStatus().then(s => { if (!gone) setAmbassadorStatus(s); }).catch(() => {});
+    return () => { gone = true; };
+  }, [canBrowse, user.ambassadorCity]);
+  // The city an ambassador may flag things in, and mark meetups for: only
+  // with the agreement accepted ("" otherwise).
+  const flagCity = ambassadorStatus?.city && ambassadorStatus.accepted && ambassadorStatus.can_take_part ? ambassadorStatus.city : "";
+  const canFlagPost = (p) => !!flagCity && !!p.groupId && p.groupId === ambassadorStatus.group_id && p.userId !== user.id && !String(p.id).startsWith("p_");
+  const flagItem = (target) => setReportConfirm({ ...target, flag: true });
   useEffect(() => {
     if (!placesCity || communityTab !== "places" || !canBrowse) return;
     api.getPlaces(placesCity).then(list => setPlaces({ city: placesCity, list })).catch(() => setPlaces({ city: placesCity, list: [] }));
@@ -2857,6 +2914,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               );
             })()}
 
+            {/* A city ambassador's panel (mobile; the left column has it on desktop) */}
+            {user.ambassadorCity && (
+              <div className="nc-mobile-only">
+                <button type="button" onClick={() => setView("ambassador")}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 16, padding: "10px 14px", minHeight: 44, borderRadius: 12, border: "1px solid #C7D2FE", background: "#EEF2FF", color: "#000080", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: font }}>
+                  {Icons.shield({ size: 16 })} Ambassador panel · {user.ambassadorCity}
+                </button>
+              </div>
+            )}
             {/* Complete your profile (mobile; the left column has it on desktop) */}
             <div className="nc-mobile-only">
               <ProfileChecklist className="profile-checklist-feed" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} collapseAfter={2} style={{ marginBottom: 20 }} />
@@ -2918,7 +2984,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
 
             {/* Feed List */}
             {feedPosts.length > 0 ? feedPosts.map((p) => (
-              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onLike={onPostLiked} onOpenProfile={openMember} />
+              <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onLike={onPostLiked} onOpenProfile={openMember} onFlag={canFlagPost(p) ? () => flagItem({ type: "post", id: p.id, userId: p.userId, name: p.content }) : null} />
             )) : (feedFiltered || feedPostType !== "all") ? (
               <EmptyCard text="No posts match these filters." action="Clear filters" onAction={() => { setFeedFilters(noFeedFilters); setFeedPostType("all"); }} />
             ) : listsLoaded && (
@@ -3308,6 +3374,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
 
               {communityTab === "feed" ? (
                 <>
+                  {/* Upcoming meetups the city's ambassador hosts */}
+                  {(() => {
+                    const meetups = placesCity ? orderEvents(events.filter(e => e.ambassadorHosted && sameCity(e.city, placesCity) && !isPastEvent(e))).slice(0, 3) : [];
+                    if (!meetups.length) return null;
+                    return (
+                      <div style={{ background: "#F5F8FF", border: "1px solid #D5DFF3", borderRadius: 12, padding: "12px 14px", marginBottom: 16, fontFamily: font }}>
+                        <h4 style={{ fontSize: 11, fontWeight: 700, color: "#000080", textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 6px" }}>Meetups with the city ambassador</h4>
+                        {meetups.map(e => (
+                          <button key={e.id} type="button" onClick={() => setExpandedEvent(e)} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", width: "100%", padding: "8px 0", background: "none", border: "none", borderTop: "1px solid #E3E9F7", cursor: "pointer", textAlign: "left", fontFamily: font }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: "#37352F", minWidth: 0, overflowWrap: "anywhere" }}>{e.title}</span>
+                            <span style={{ fontSize: 12, color: "#6B6A67" }}>{eventDate(e)}</span>
+                            <HostedBadge />
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {/* Community post box (members only) */}
                   {!selectedGroup.joined ? (
                     <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E7E4", padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
@@ -3339,7 +3422,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   )}
 
                   {groupPosts.length > 0 ? (
-                    [...groupPosts].sort((a, b) => (b.id === selectedGroup.pinnedPostId) - (a.id === selectedGroup.pinnedPostId)).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onLike={onPostLiked} hideGroup onOpenProfile={openMember} pinned={p.id === selectedGroup.pinnedPostId} onPin={canPinIn(selectedGroup) ? (id) => pinPost(selectedGroup, id) : null} />)
+                    [...groupPosts].sort((a, b) => (b.id === selectedGroup.pinnedPostId) - (a.id === selectedGroup.pinnedPostId)).map((p) => <PostCard key={p.id} post={p} user={user} onDelete={deletePost} onReport={(id) => setReportConfirm({ type: "post", id, userId: p.userId, name: p.content })} onReportItem={setReportConfirm} reportedIds={reportedIds} isReported={reportedIds.has(p.id)} initialLiked={likedPostIds.has(p.id)} onLike={onPostLiked} hideGroup onOpenProfile={openMember} pinned={p.id === selectedGroup.pinnedPostId} onPin={canPinIn(selectedGroup) ? (id) => pinPost(selectedGroup, id) : null} onFlag={canFlagPost(p) ? () => flagItem({ type: "post", id: p.id, userId: p.userId, name: p.content }) : null} />)
                   ) : (
                     <div style={{ textAlign: "center", padding: 40, color: "#9B9A97", fontSize: 14, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", fontFamily: font }}>
                       No posts in this community yet. Be the first to say hello!
@@ -3764,6 +3847,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   {/* Right Content */}
                   <div style={{ flex: 1, padding: "20px 24px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
                     <div>
+                      {e.ambassadorHosted && <div style={{ marginBottom: 8 }}><HostedBadge /></div>}
                       {/* Title + attendees */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                         <h3 onClick={() => setExpandedEvent(e)} style={{ fontSize: 20, fontWeight: 700, color: "#37352F", fontFamily: font, lineHeight: 1.25, flex: 1, cursor: "pointer" }}>{e.title}</h3>
@@ -3934,6 +4018,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   <div style={{ display: "flex", gap: 6 }}>
                     {isMine && <button aria-label="Delete question" onClick={() => { if (confirm("Delete this question?")) removeOwn(helpRequests, setHelpRequests, h.id, () => api.deleteHelpRequest(h.id), "Couldn't delete the question. Please try again."); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2 }}>{Icons.trash({ size: 14 })}</button>}
                     {!isMine && !reportedIds.has(h.id) && <button aria-label="Report" title="Report" onClick={() => setReportConfirm({ type: "help", id: h.id, userId: h.userId, name: h.title })} style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 2 }}>{Icons.flag({ size: 14 })}</button>}
+                    {!isMine && flagCity && sameCity(h.city, flagCity) && !String(h.id).startsWith("h_") && (
+                      <button type="button" onClick={() => flagItem({ type: "help", id: h.id, userId: h.userId, name: h.title })} title="Flag to the team"
+                        style={{ background: "none", border: "1px solid #C7D2FE", borderRadius: 12, cursor: "pointer", color: "#000080", padding: "2px 8px", fontSize: 11, fontWeight: 600, fontFamily: font, whiteSpace: "nowrap" }}>Flag to the team</button>
+                    )}
                   </div>
                 </div>
                 <h3 onClick={() => openHelp(h)} style={{ fontSize: 17, fontWeight: 700, color: "#37352F", marginBottom: 6, fontFamily: font, cursor: "pointer" }}>{h.title}</h3>
@@ -4450,6 +4538,29 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
           onMessage={(post, text) => (post?.user_id && post.user_id !== user.id ? sendFirstMessage(post.user_id, text) : "You can't message the author of this post.")}
           termsVersion={termsVersion} onReviewTerms={onReviewTerms}
           reportedIds={reportedIds} blockedIds={blockedIds} openMember={openMember} Avatar={Avatar} />;
+
+      case "ambassador":
+        return (
+          <Suspense fallback={<p role="status" style={{ maxWidth: 700, margin: "0 auto", textAlign: "center", padding: 32, color: "#6B6A67", fontSize: 13, fontFamily: font }}>Loading the ambassador panel…</p>}>
+            <AmbassadorPanel user={user} events={events} reportedIds={reportedIds} Avatar={Avatar}
+              onMessage={(id, text) => (id && id !== user.id ? sendFirstMessage(id, text) : "You can't message this member.")}
+              openQuestion={openQuestion} openMember={openMember} onFlag={setReportConfirm} onCreateMeetup={createMeetup}
+              openGroup={(id) => { const g = groups.find(x => x.id === id); if (g) { setSelectedGroup(g); setCommunityTab("feed"); setView("groups"); } else setView("groups"); }}
+              onHosted={setHostedMark} onStatus={setAmbassadorStatus} onHome={() => setView("home")}
+              onPinned={(groupId, postId) => {
+                setGroups(prev => prev.map(x => x.id === groupId ? { ...x, pinnedPostId: postId } : x));
+                setSelectedGroup(prev => prev && prev.id === groupId ? { ...prev, pinnedPostId: postId } : prev);
+              }}
+              onApply={() => setAmbassadorApply({ city: user.city || "" })}
+              onSteppedDown={(city) => {
+                setAmbassadorStatus(null);
+                setEvents(prev => prev.map(x => x.organizerId === user.id ? { ...x, ambassadorHosted: false } : x));
+                refreshMyProfile();
+                setView("home");
+                setTimeout(() => alert(`You've stepped down as the ambassador for ${city}. Thank you for everything you did for the city's members.`), 0);
+              }} />
+          </Suspense>
+        );
 
       case "mentoring":
         return <MentoringPage key={mentoringKey} user={user} onUserUpdate={onUserUpdate} seekers={seekersList.filter(u => !blockedIds.has(u.id))} ratings={mentorRatings} onRated={refreshRatings} onBook={bookMentor} onMessage={messageMember} openMember={openMember} Avatar={Avatar} />;
@@ -5167,7 +5278,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               { v: "travel", icon: Icons.plane, label: "Travel board" },
               { v: "messages", icon: Icons.message, label: "Messages" },
               { v: "profile", icon: Icons.user, label: "Profile" },
-            ]).map((item) => (
+              user.ambassadorCity ? { v: "ambassador", icon: Icons.shield, label: "Ambassador panel" } : null,
+            ].filter(Boolean)).map((item) => (
               <button
                 key={item.v}
                 onClick={() => { setView(item.v); setMobileMenu(false); if (item.v === "groups") setSelectedGroup(null); if (item.v === "travel") setTravelFocus(null); }}
@@ -5387,6 +5499,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 ))}
               </div>
             </div>
+
+            {/* A city ambassador's panel (on mobile: at the top of Home) */}
+            {user.ambassadorCity && !waiting && (
+              <button type="button" onClick={() => setView("ambassador")} aria-current={view === "ambassador" ? "page" : undefined}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginTop: 12, padding: "10px 14px", minHeight: 42, borderRadius: 12, border: "1px solid #C7D2FE", background: view === "ambassador" ? "#E0E7FF" : "#EEF2FF", color: "#000080", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: font }}>
+                {Icons.shield({ size: 15 })} Ambassador panel
+              </button>
+            )}
 
             {/* Complete your profile (desktop; on mobile it sits at the top of the feed) */}
             <ProfileChecklist className="profile-checklist-side" items={profileItems} onItem={handleProfileItem} onDismiss={dismissProfileCard} style={{ marginTop: 16 }} />
@@ -5627,6 +5747,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
             </div>
             <div style={{ padding: "24px 28px" }}>
               <h2 style={{ fontSize: 24, fontWeight: 700, color: "#37352F", marginBottom: 12, fontFamily: font, lineHeight: 1.3 }}>{expandedEvent.title}</h2>
+              {expandedEvent.ambassadorHosted && <div style={{ margin: "-4px 0 12px" }}><HostedBadge /></div>}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
                 <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.clock({ size: 14 })} {eventTime(expandedEvent)}</span>
                 <span style={{ fontSize: 13, color: "#5F5E5B", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", background: "#F0EFED", borderRadius: 6 }}>{Icons.mapPin({ size: 14 })} {expandedEvent.location}</span>
@@ -6210,7 +6331,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
 
       {/* Report: the same dialog for everything that can be reported */}
       {reportConfirm && (
-        <ReportDialog target={reportConfirm} font={font} onClose={() => setReportConfirm(null)}
+        <ReportDialog target={reportConfirm} font={font} flagCity={flagCity} onClose={() => setReportConfirm(null)}
           onReported={(t) => setReportedIds(prev => { const s = new Set(prev); s.add(t.id); s.add(`${t.type}:${t.id}`); return s; })} />
       )}
 
@@ -6572,8 +6693,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 <select style={inputStyle} value={newEvent.city || ""} onChange={(e) => setNewEvent({ ...newEvent, city: e.target.value })}>
                   <option value="">Select a city...</option>
                   {GLOBAL_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  {newEvent.city && !GLOBAL_CITIES.includes(newEvent.city) && <option value={newEvent.city}>{newEvent.city}</option>}
                 </select>
               </div>
+              {flagCity && (
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 13, color: "#37352F", lineHeight: 1.45, cursor: "pointer", fontFamily: font }}>
+                    <input type="checkbox" checked={!!newEvent.ambassadorHosted} onChange={(e) => setNewEvent({ ...newEvent, ambassadorHosted: e.target.checked })} style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }} />
+                    <span>Hosted by the city ambassador <span style={{ color: "#6B6A67" }}>(you, for {flagCity}: choose {flagCity} as the city)</span></span>
+                  </label>
+                </div>
+              )}
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
                 <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newEvent.description} onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })} placeholder="Tell people what your event is about..." />

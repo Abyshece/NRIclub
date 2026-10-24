@@ -1447,6 +1447,87 @@ export async function getCityAmbassadors(city) {
 }
 
 // ============================================================================
+// THE AMBASSADOR PANEL (src/member/AmbassadorPanel.jsx)
+// ============================================================================
+
+// Since the 2026-10-27 database update, for the member who is a city's
+// ambassador. Before it the database has none of these functions: the
+// status is null and the panel says it's coming soon (whatever PostgREST or
+// Postgres answer for something that doesn't exist, as for the travel board).
+export const panelMissing = (err) => travelMissing(err);
+
+// { city (null for a member who isn't an ambassador), group_id (the city's
+// group), version (of the agreement), accepted, accepted_at,
+// accepted_version, can_take_part }, or null before the database update.
+export async function getAmbassadorStatus() {
+  if (knownMissing("ambassador_status")) return null;
+  try {
+    return await restCall("POST", "/rest/v1/rpc/ambassador_status", {});
+  } catch (err) {
+    if (!panelMissing(err)) throw err;
+    missingSince.ambassador_status = Date.now();
+    return null;
+  }
+}
+
+// The ambassador accepts the agreement (version: the one they read).
+// Returns the new status.
+export async function acceptAmbassadorAgreement(version) {
+  return restCall("POST", "/rest/v1/rpc/accept_ambassador_agreement", { p_version: version });
+}
+
+// The city at a glance: { city, group: { id, name, description, members,
+// pinned_post } | null, new_7d, new_30d, welcomed_30d, events_upcoming,
+// events (the next 5), open_questions, unanswered }.
+export async function getAmbassadorOverview() {
+  return restCall("POST", "/rest/v1/rpc/ambassador_overview", {});
+}
+
+// Who joined the city group in the last `days` days (at most 30), newest
+// first: [{ id, name, avatar_url, joined_at, welcomed }].
+export async function getAmbassadorNewMembers(days = 30) {
+  return (await restCall("POST", "/rest/v1/rpc/ambassador_new_members", { p_days: days })) || [];
+}
+
+// Marks a newcomer as welcomed by the ambassador (on false: takes it back).
+export async function markAmbassadorWelcomed(memberId, on = true) {
+  return restCall("POST", "/rest/v1/rpc/ambassador_mark_welcomed", { p_member: memberId, p_on: on });
+}
+
+// Questions from the city still waiting for a best answer, newest first:
+// [{ id, title, category, urgent, created_at, answers, asker }].
+export async function getAmbassadorOpenQuestions() {
+  return (await restCall("POST", "/rest/v1/rpc/ambassador_open_questions", {})) || [];
+}
+
+// The city group's new description. Returns { id, description }.
+export async function ambassadorUpdateGroup(description) {
+  return restCall("POST", "/rest/v1/rpc/ambassador_update_group", { p_description: description });
+}
+
+// Marks the ambassador's own event in their city as hosted by the city
+// ambassador, or takes the mark off. Returns the mark.
+export async function setEventAmbassadorHosted(eventId, on) {
+  return restCall("POST", "/rest/v1/rpc/set_event_ambassador_hosted", { p_event: eventId, p_on: on });
+}
+
+// "Flag to the team": a report from the city's ambassador, which our team
+// sees first. type: "post", "comment", "help", "answer", "event" or
+// "profile"; id: its id (the member's for "profile"); category: a
+// REPORT_REASONS key; explanation: the ambassador's words. Returns the
+// report's id.
+export async function ambassadorFlag({ type, id, category, explanation }) {
+  return restCall("POST", "/rest/v1/rpc/ambassador_flag", {
+    p_kind: type, p_id: id, p_category: category, p_explanation: explanation,
+  });
+}
+
+// The ambassador steps down. Returns the city they were ambassador for.
+export async function ambassadorStepDown() {
+  return restCall("POST", "/rest/v1/rpc/ambassador_step_down", {});
+}
+
+// ============================================================================
 // EVENTS
 // ============================================================================
 
@@ -2582,6 +2663,21 @@ export const HANDLED_REPORTS_SHOWN = 200;
 const BUG_REASON = encodeURIComponent("[BUG]*");
 const IDEA_REASON = encodeURIComponent("[IDEA]*");
 
+// Open reports a city's ambassador flagged to our team (reports.ambassador_city,
+// since the 2026-10-27 database update), oldest first, so the panel shows
+// them first even when they're newer than the first page of open reports.
+// [] before that update.
+async function adminFlaggedReports() {
+  if (knownMissing("report_ambassador_city")) return [];
+  try {
+    return (await restCall("GET", `/rest/v1/reports?select=*&status=eq.pending&ambassador_city=neq.&order=created_at.asc,id.asc&limit=${OPEN_REPORTS_PAGE}`)) || [];
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.report_ambassador_city = Date.now();
+    return [];
+  }
+}
+
 // users holds the newest 1,000 members; usersTotal is how many there are.
 // reports holds the oldest 200 open member reports (openReportsTotal is how
 // many are open) and the oldest 200 open bug reports and ideas
@@ -2592,7 +2688,7 @@ const IDEA_REASON = encodeURIComponent("[IDEA]*");
 export async function adminGetDashboardData() {
   const get = (path) => restCall("GET", path);
   const handled = `/rest/v1/reports?select=*&status=neq.pending&order=created_at.desc&limit=${HANDLED_REPORTS_SHOWN}`;
-  const [members, groups, openReports, openFeedback, handledReports, handledBugs, posts, docs, events, helpRequests, marketItems] = await Promise.all([
+  const [members, groups, openReports, openFeedback, handledReports, handledBugs, posts, docs, events, helpRequests, marketItems, flagged] = await Promise.all([
     adminMemberRows("order=created_at.desc&limit=1000", { counted: true }),
     get("/rest/v1/groups?select=*&order=members_count.desc"),
     adminGetOpenReports(false),
@@ -2604,13 +2700,15 @@ export async function adminGetDashboardData() {
     get("/rest/v1/events?select=id,title,description,date,organizer_id&order=created_at.desc&limit=100"),
     get("/rest/v1/help_requests?select=id,title,description,user_id&order=created_at.desc&limit=100"),
     get("/rest/v1/marketplace?select=id,title,description,price,user_id,image_url&order=created_at.desc&limit=100"),
+    adminFlaggedReports(),
   ]);
   const users = members.rows || [];
   // One list, newest first, each report once (one may have been handled
-  // between the requests).
+  // between the requests, and a flag from an ambassador can be in both
+  // lists).
   const reports = [];
   const seen = new Set();
-  [...handledReports.rows, ...handledBugs.rows, ...openReports.rows, ...openFeedback.rows].forEach((r) => {
+  [...handledReports.rows, ...handledBugs.rows, ...openReports.rows, ...flagged, ...openFeedback.rows].forEach((r) => {
     if (!seen.has(r.id)) { seen.add(r.id); reports.push(r); }
   });
   reports.sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
@@ -2831,6 +2929,29 @@ export async function adminModerate({ kind, id, action, ground = null, rule = ""
 export async function adminSetAmbassador(userId, city) {
   return adminRpc("admin_set_ambassador", { p_member: userId, p_city: city },
     () => adminWrite("PATCH", `/rest/v1/profiles?id=eq.${userId}&select=id,ambassador_city`, { ambassador_city: city }));
+}
+
+// The city ambassadors and what they did, for Ambassadors: { version,
+// ambassadors: [{ id, name, city, since, agreement_version,
+// agreement_accepted_at, current, welcomed_30d, last_activity_at }], log:
+// [{ id, ambassador_id, name, city, action, detail, at }] }. null before the
+// 2026-10-27 database update.
+export async function adminAmbassadorActivity(limit = 200) {
+  if (knownMissing("admin_ambassador_activity")) return null;
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_ambassador_activity", { p_limit: limit });
+  } catch (err) {
+    if (!panelMissing(err)) throw err;
+    missingSince.admin_ambassador_activity = Date.now();
+    return null;
+  }
+}
+
+// The city ambassadors as the profiles say (admins read every profile):
+// [{ id, name, ambassador_city }], for when adminAmbassadorActivity isn't
+// there yet.
+export async function adminAmbassadorProfiles() {
+  return (await restCall("GET", "/rest/v1/profiles?ambassador_city=neq.&select=id,name,ambassador_city&order=ambassador_city.asc&limit=1000")) || [];
 }
 
 // Members waiting for a decision (or any other verification statuses), with
