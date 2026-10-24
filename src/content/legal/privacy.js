@@ -12,8 +12,8 @@ import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
 
-export const PRIVACY_VERSION = "2026-10-23";
-export const PRIVACY_DATE = "23 October 2026";
+export const PRIVACY_VERSION = "2026-10-24";
+export const PRIVACY_DATE = "24 October 2026";
 
 // How long data is kept: the periods this Policy promises. Until clean-up
 // jobs run on the database (plan C20), our team deletes by hand once a month
@@ -41,6 +41,7 @@ export const RETENTION = {
   inboxMonths: 12, // emails to hello@ in the admin panel's inbox, after they arrived (private.daily_cleanup)
   travelPostDays: 30, // travel board posts, after their last date (private.daily_cleanup)
   travelLimitDays: 30, // when a member posted on the travel board, for its limits (private.rate_log)
+  analyticsMonths: 6, // website analytics, from when they were recorded (private.analytics_cleanup; KEEP_MONTHS in src/content/analytics.js)
   // Photo files: true since the site deletes them with their post, listing,
   // event or profile photo and with the account (plan C1), and the photo
   // clean-up in the admin panel (src/admin/PhotoCleanup.jsx) deletes what is
@@ -143,7 +144,9 @@ export function privacyDoc() {
     intro: [
       { box: { title: "In short", blocks: [{ ul: [
         "NRIClub is a members-only community for Indians abroad. We use your data to run it for you, and for nothing else.",
-        "No advertising, no tracking, no analytics and no cookies. We never sell or rent your data.",
+        "No advertising, no cookies and no other companies' trackers. We never sell or rent your data.",
+        ["Website analytics only if you choose Accept on our privacy banner, never linked to your account; change your mind at any time with \"Privacy settings\" (",
+          a("section 2", "#analytics"), ")."],
         "Our database, with your profile, content and messages, is in the EU (Ireland).",
         "Only members our team has approved can see your profile and what you post (a photo also opens for anyone who has its exact web address, see section 4). Our admin tools don't show your messages.",
         "You can download your data or delete your account at any time in Settings.",
@@ -160,6 +163,7 @@ export function privacyDoc() {
           [strong("Legal obligation"), " (Art. 6(1)(c) GDPR): what a law requires of us, in particular the EU Digital Services Act (DSA) for reports of illegal content, and the GDPR itself, for example to show which consents you gave."],
           [strong("Legitimate interests"), " (berechtigte Interessen, Art. 6(1)(f) GDPR): where we name the interest each time. You can object to this processing (section 11)."],
           [strong("Explicit consent"), " (ausdrückliche Einwilligung, Art. 9(2)(a) GDPR): for information that can show your ethnic origin, religion or health (section 3)."],
+          [strong("Consent"), " (Einwilligung, Art. 6(1)(a) GDPR, and § 25(1) TDDDG for what is stored in your browser): for website analytics, only if you choose Accept (\"Website analytics\" below). You can withdraw it at any time."],
         ] },
         { entries: [
           { title: "Your account", fields: [
@@ -223,6 +227,15 @@ export function privacyDoc() {
             ["Why", "to deliver the site, find faults, and detect and stop attacks and misuse."],
             ["Legal basis", "legitimate interests (a secure, working service)."],
             ["How long", `Supabase keeps these logs for about 7 days, Vercel for ${vercelLogs}.`],
+          ] },
+          { id: "analytics", title: "Website analytics (only if you agree)", fields: [
+            ["What", "only if you choose Accept on our privacy banner, and only in that browser: which pages of NRIClub you open (the address, with ids such as a member's or a post's left out, and the page's title); which buttons and links you click (their visible text, at most 80 characters, and where a link goes; in the members' area only the names of the site's own menus, otherwise just \"button\" or \"link\"); which steps of signing up and logging in you reach (for example \"code sent\", never what you typed); the page you were on when you left; for the first page of a visit, the website you came from (only its domain) and the campaign details in the link you followed (utm_source, utm_medium, utm_campaign and utm_content); your IP address, shortened (IPv4: the last of its four parts set to 0; IPv6: only its first 48 bits); your approximate location, which our host Vercel looks up from your IP address (country, region and city); and whether you use a phone, a tablet or a computer, with your browser's and system's family (for example Chrome on Android). Your browser gets a random visitor ID, and each visit a random visit ID (section 8). Never what you type into forms, never your posts or messages, never your name or email address."],
+            ["Why", "to see which pages and features help people, where visitors come from (for example which link shared in a WhatsApp group worked) and where signing up is too hard, so we can improve NRIClub."],
+            ["Legal basis", "your consent (Art. 6(1)(a) GDPR; for storing the visitor ID in your browser and reading it, § 25(1) TDDDG). Without it nothing is recorded or stored. We also count how many people choose Accept and Decline each day, with nothing about who chose."],
+            ["Not linked to you", "we don't link it to your account: it holds no member ID, name or email address, and we don't combine it with your membership data. Our team sees it in the admin panel as totals, and as single visits (the pages, clicks and steps in order, with the time, approximate location, shortened IP address, device and where the visit came from)."],
+            ["Who receives it", "Vercel, whose servers receive it, shorten the IP address and look up the location (the full IP address is never stored), and Supabase, which stores it (section 7)."],
+            ["How long", `what was recorded is deleted automatically ${months(R.analyticsMonths)} after it was recorded. The visitor ID stays in your browser until you choose Decline or clear the site's data; 12 months after your Accept we ask again.`],
+            ["Your choice", ["change it at any time with \"Privacy settings\" at the foot of our pages, or in the app under Settings → Privacy & Safety (or here: ", a("Privacy settings", "#privacy-settings"), "). Decline stops it straight away and deletes the visitor ID from your browser; what was recorded before stays lawful (Art. 7(3) GDPR). After a Decline we ask again in 6 months. As we can't tell which visits are yours, we can only find or delete them if you send us your visitor ID, which Privacy settings shows while analytics are on."]],
           ] },
           { title: "Emails we send you", fields: [
             // Resend keeps each email for 30 days on all its plans
@@ -307,12 +320,12 @@ export function privacyDoc() {
         { entries: [
           provider("supabase", "Supabase", [
             ["Company", "Supabase Pte. Ltd., Singapore."],
-            ["What for", "our database, sign-in, photo storage and live updates in the app, and the small server programs (\"Edge Functions\") that send our team's emails and keep the emails to hello@nriclub.app in our admin panel. These programs run on the server nearest to whoever uses them, which can be outside the EU; they keep nothing themselves."],
+            ["What for", "our database (including the website analytics, section 2), sign-in, photo storage and live updates in the app, and the small server programs (\"Edge Functions\") that send our team's emails and keep the emails to hello@nriclub.app in our admin panel. These programs run on the server nearest to whoever uses them, which can be outside the EU; they keep nothing themselves."],
             ["Where", "Amazon Web Services data centres in Ireland (EU)."],
           ]),
           provider("vercel", "Vercel", [
             ["Company", "Vercel Inc., USA."],
-            ["What for", "hosting the website and delivering its files through a worldwide network of servers, so a request can be answered by a server outside the EU, including in the USA. It logs requests (section 2, \"Server and security logs\")."],
+            ["What for", "hosting the website and delivering its files through a worldwide network of servers, so a request can be answered by a server outside the EU, including in the USA. It logs requests (section 2, \"Server and security logs\"). If you agree to website analytics, its servers receive them, shorten your IP address and look up your approximate location (section 2, \"Website analytics\")."],
           ]),
           provider("resend", "Resend", [
             ["Company", "Plus Five Five, Inc. (Resend), USA."],
@@ -331,8 +344,8 @@ export function privacyDoc() {
       ] },
 
       { id: "storage", title: "8. Cookies and storage on your device", blocks: [
-        { p: "NRIClub sets no cookies and uses no analytics, advertising or tracking tools. The site's own files, including its fonts, come from our server; member photos come from our database provider. Nothing is loaded from other websites." },
-        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for signing up and the invite). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device, with two exceptions: the sign-in items are sent to our servers to sign you in, and the invite code to look up who invited you." },
+        { p: "NRIClub sets no cookies, and uses no advertising tools and no other companies' trackers. Website analytics run only if you choose Accept on our privacy banner (section 2, \"Website analytics\"). The site's own files, including its fonts, come from our server; member photos come from our database provider. Nothing is loaded from other websites." },
+        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for signing up and the invite). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device, with two exceptions: the sign-in items are sent to our servers to sign you in, and the invite code to look up who invited you. The visitor and visit IDs for website analytics are different: they are stored only after you choose Accept (§ 25(1) TDDDG), and sent with the analytics." },
         { entries: [
           { title: "nriclub_token, nriclub_refresh", fields: [
             ["Purpose", "your sign-in: a short-lived access key and a key to renew it."],
@@ -341,6 +354,14 @@ export function privacyDoc() {
           { title: "nriclub_reset_requested", fields: [
             ["Purpose", "the email address and time when this browser asked for a password-reset link, so that after the reset only this browser fills in the address on the login form."],
             ["Kept", "until you've set the new password, at most 24 hours (it's deleted the next time you open NRIClub after that)."],
+          ] },
+          { title: "nriclub_analytics_consent", fields: [
+            ["Purpose", "your choice on the privacy banner (Accept or Decline) and its date, so the banner doesn't ask on every page and your choice is respected. It holds nothing else."],
+            ["Kept", "until you clear the site's data. We ask again 12 months after an Accept, 6 months after a Decline."],
+          ] },
+          { title: "nriclub_visitor_id, nriclub_analytics_session", fields: [
+            ["Purpose", "only after you choose Accept: a random visitor ID (local storage), and a random visit ID with when it was last used (session storage, so a visit ends after 30 minutes without activity). Both are sent with the website analytics (section 2)."],
+            ["Kept", "the visitor ID until you choose Decline (which deletes both at once) or clear the site's data; the visit ID until you close the tab."],
           ] },
           { title: "nriclub_signup", fields: [
             ["Purpose", "while you sign up and we wait for the 6-digit code from your email: the email address and name you typed and where you are in signing up, so the code step is still there if the page reloads. Not your password."],
@@ -365,7 +386,7 @@ export function privacyDoc() {
           [strong("Your account, profile and content"), " stay until you delete them or your account, or until we delete an account as section 2 says (a sign-up never confirmed, an account that never sent its check details, or one we declined or whose membership we ended)."],
           [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, travel board posts and your agreement to the board's rules, the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
           photoFilesText(),
-          [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports you sent about content or members, and reports other members made about you, no longer linked to your account (their text can still contain your name); the record of our decisions about your content and account, no longer linked to it; copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; an application to be a city ambassador, no longer linked to your account, until it is deleted (section 2); emails you sent us (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
+          [strong("What stays after you delete your account:"), ` places you added to a city's list and groups you created, without your name, because other members use them; reports you sent about content or members, and reports other members made about you, no longer linked to your account (their text can still contain your name); the record of our decisions about your content and account, no longer linked to it; copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; an application to be a city ambassador, no longer linked to your account, until it is deleted (section 2); emails you sent us (section 2); website analytics, which aren't linked to your account, until they are deleted after ${months(R.analyticsMonths)} (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2).`],
           ...(R.byHand ? [`Until these deletions run automatically, our team carries them out by hand${R.photoFilesDeleted ? " once a month" : ": photo files every week, everything else once a month"}, so data can stay up to a month longer than the period given.`] : []),
         ] },
       ] },
@@ -377,7 +398,7 @@ export function privacyDoc() {
           [strong("Erasure"), " (Art. 17): delete content in the app, or your whole account in Settings, or ask us."],
           [strong("Restriction"), " (Art. 18): ask us to limit how we use your data while, for example, we check whether it is correct."],
           [strong("Data portability"), " (Art. 20): the download is a machine-readable file (JSON)."],
-          [strong("Withdrawing consent"), " (Art. 7(3)): section 3."],
+          [strong("Withdrawing consent"), " (Art. 7(3)): section 3; for website analytics, \"Privacy settings\" (section 2, \"Website analytics\")."],
           [strong("Objection"), " (Art. 21): section 11."],
           [strong("Complaint"), " to a supervisory authority (Art. 77): section 12."],
         ] },
