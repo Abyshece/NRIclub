@@ -5,6 +5,7 @@ import { TermsModal, PrivacyModal } from "./LegalModals";
 import { TermsCheckbox, Art9Checkbox, PrivacyNote, TERMS_ERROR, ART9_ERROR } from "./Consent";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy, GlobeTile, ArrowRight, helperStyle } from "./ui";
 import { mapProfile, authErrorMessage, isExistingAccountResponse, isExistingAccountError, isReservedName, RESERVED_NAME_MESSAGE } from "./profile";
+import { trackStep } from "../analytics";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const RESEND_MS = 60 * 1000;
@@ -96,6 +97,16 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
     window.scrollTo(0, 0);
     if (step === "stopped") stopTitleRef.current?.focus();
   }, [step]);
+  // Website analytics (only with the visitor's consent): the steps of signing
+  // up, never what was typed. Opened (not when a reload comes back to the
+  // code step), and an email address that looks complete typed in, once.
+  const emailCounted = useRef(false);
+  useEffect(() => { if (!restored) trackStep("signup_open"); }, [restored]);
+  const emailEntered = (value) => {
+    if (emailCounted.current || !EMAIL_RE.test(value.trim())) return;
+    emailCounted.current = true;
+    trackStep("signup_email");
+  };
   useEffect(() => {
     if (submitError) submitErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [submitError]);
@@ -156,7 +167,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
     // already, so send a fresh code instead of signing up again.
     if (account && account.email === v.email) {
       if (Date.now() >= resendAt) {
-        try { await api.sendOtp(v.email); setResendAt(Date.now() + RESEND_MS); } catch {}
+        try { await api.sendOtp(v.email); setResendAt(Date.now() + RESEND_MS); trackStep("signup_code_sent"); } catch {}
       }
       setStep("code");
       return;
@@ -194,6 +205,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
         setAccount({ email: v.email, password: v.password, resumed, answers: answersFrom(v) });
       }
       setResendAt(Date.now() + RESEND_MS);
+      trackStep("signup_code_sent");
       setStep("code");
     } catch (err) {
       setSubmitError({ text: authErrorMessage(err) || "We couldn't create your account. Please try again." });
@@ -259,6 +271,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
     }
     await api.adoptSession();
     forgetCodeStep();
+    if (!account.existing) trackStep("signup_password");
     onComplete(mapProfile(db));
   };
 
@@ -270,6 +283,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
     // signed in to an account that may still have an earlier visit's
     // password or details.
     let session = await api.verifyOtp(email, code, { persist: false });
+    trackStep("signup_code_ok");
     // The code is used up now, so every way out below ends signed out, on
     // the "please log in" screen, unless all the steps work.
     const giveUp = async (message) => {
@@ -404,7 +418,7 @@ export default function SignUpFlow({ onComplete, onLogin, onBack }) {
         <Field id="signup-email" label="Email" helper="We'll send a 6-digit code to confirm it." error={errors.email}>
           <input
             id="signup-email" ref={fieldRefs.email} type="email" autoComplete="email" inputMode="email" autoCapitalize="none" spellCheck={false}
-            value={form.email} onChange={(e) => update("email", e.target.value)} placeholder="you@email.com"
+            value={form.email} onChange={(e) => update("email", e.target.value)} onBlur={(e) => emailEntered(e.target.value)} placeholder="you@email.com"
             aria-invalid={!!errors.email} aria-describedby={describedBy("signup-email", errors.email, true)}
             style={inputStyle(!!errors.email)} maxLength={254}
           />

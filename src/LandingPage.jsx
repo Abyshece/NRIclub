@@ -9,6 +9,7 @@ import { findCity } from "./content/findCity";
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT, WHATS_ON_TEASER } from "./content/home";
 import { hasImprint } from "./content/imprint";
 import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
+import { PrivacySettingsLink } from "./ConsentBanner";
 import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, TRICOLOUR_LINE, HERO_GLOW, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
 
 // The ambassador application form, loaded when it is opened.
@@ -369,6 +370,7 @@ export default function LandingPage({ onJoin, onLogin }) {
           <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>
           <a href="/terms" style={footerLink}>Terms of Use</a>
           <a href="/privacy" style={footerLink}>Privacy Policy</a>
+          <PrivacySettingsLink style={footerLink} />
           {hasImprint() && <a href="/impressum" style={footerLink}>Impressum</a>}
           <a href={REPORT_HREF} style={footerLink}>{REPORT_LINK_TEXT}</a>
         </div>

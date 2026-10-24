@@ -22,6 +22,7 @@ import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
 import { WHATS_ON_NOTE, upcoming, todayInGermany, citySlug, eventCitySlug } from "./content/whatson";
 import { CompactEvent } from "./WhatsOnItems";
 import { useWhatsOn } from "./whatsOnLive";
+import { PrivacySettingsLink } from "./ConsentBanner";
 
 // The application to be a city ambassador, loaded when it is opened.
 const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
@@ -4947,7 +4948,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
           </div>
 
           {/* Desktop Nav - aligned with center content column */}
-          <div style={{ display: "flex", alignItems: "center", background: "#F5F5F3", borderRadius: 24, padding: "3px 4px", gap: 2, justifyContent: "center" }} className="desktop-nav">
+          <div style={{ display: "flex", alignItems: "center", background: "#F5F5F3", borderRadius: 24, padding: "3px 4px", gap: 2, justifyContent: "center" }} className="desktop-nav" data-track-ui>
             {waiting ? (
               <>
                 <button style={navBtn("home")} onClick={() => setView("home")}>Home</button>
@@ -5087,7 +5088,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               {settingsOpen && (
                 <>
                   <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setSettingsOpen(false)} />
-                  <div className="settings-dropdown" style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 220, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "6px 0" }}>
+                  <div className="settings-dropdown" data-track-ui style={{ position: "absolute", right: 0, top: "100%", marginTop: 8, width: 220, background: "#fff", border: "1px solid #E8E7E4", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 50, overflow: "hidden", padding: "6px 0" }}>
                     {[
                       // (Members waiting for review invite and mentor once approved.)
                       ...(waiting ? [] : [{ key: "invite", icon: Icons.share, label: "Invite a friend" }]),
@@ -5478,7 +5479,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       </main>
 
       {/* Mobile Bottom Nav */}
-      <div className="mobile-nav" style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #E8E7E4", padding: "6px 8px", display: "none", justifyContent: "space-around", zIndex: 30 }}>
+      <div className="mobile-nav" data-track-ui style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #E8E7E4", padding: "6px 8px", display: "none", justifyContent: "space-around", zIndex: 30 }}>
         {(waiting ? [
           { v: "home", icon: Icons.home, label: "Home" },
           { v: "help", icon: Icons.file, label: "Guides" },
@@ -5903,6 +5904,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "16px 0 0", borderTop: "1px solid #F0EFED" }}>
                 <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>Blocked members ({blockedIds.size})</h4>
                 <button onClick={() => setSettingsModal("blocked")} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, flexShrink: 0 }}>Manage</button>
+              </div>
+              {/* Website analytics: the privacy banner's choice, for this browser (src/analytics.js). */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "16px 0 0", marginTop: 16, borderTop: "1px solid #F0EFED" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>Website analytics</h4>
+                  <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 2, lineHeight: 1.5, fontFamily: font }}>Whether this browser lets us record which pages you visit and which buttons you click. Never linked to your account.</p>
+                </div>
+                <PrivacySettingsLink style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, flexShrink: 0 }} />
               </div>
               {/* The separate consent (Art. 9 GDPR) and how to withdraw it. */}
               {user.art9ConsentAt && (

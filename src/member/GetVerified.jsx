@@ -6,6 +6,7 @@ import { VERIFICATION_BANNER_ID } from "./VerificationBanner";
 import { TermsCheckbox, Art9Checkbox, PrivacyNote, TERMS_ERROR, ART9_ERROR } from "./Consent";
 import { readInvite, forgetInvite, invitedByText, isInvitedByText } from "./invite";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy } from "./ui";
+import { trackStep } from "../analytics";
 import {
   mapProfile, countryName, getCountryOptions, MAJOR_INDIAN_CITIES,
   cityFromGroupName, linkedinProblem, apiErrorMessage, stillToAccept,
@@ -34,6 +35,9 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
   // with "Forgot password?"), or that accepted an earlier version of the
   // Terms, confirm them here; and give the Art. 9 consent if they haven't.
   const [currentTerms, setCurrentTerms] = useState(termsVersion || null);
+  // Website analytics (only with the visitor's consent): the check details
+  // step of signing up opened.
+  useEffect(() => { if (!isUpdate) trackStep("details_open"); }, [isUpdate]);
   useEffect(() => {
     if (currentTerms) return;
     api.getCurrentTermsVersion().then(setCurrentTerms).catch(() => {});
@@ -190,6 +194,7 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
         version = (await api.acceptTerms(version, needs.art9)) || version;
       }
       await api.submitVerification(details);
+      if (!isUpdate) trackStep("details_sent");
     } catch (err) {
       setSubmitError(apiErrorMessage(err, "We couldn't send your details. Please try again."));
       setSubmitting(false);

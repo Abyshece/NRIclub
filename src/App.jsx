@@ -7,10 +7,12 @@ import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToA
 import { hasImprint } from "./content/imprint";
 import { moveOldInvite, rememberInvite } from "./member/invite";
 import { isAppPath } from "./content/routes";
+import { startAnalytics, setTrackingArea, trackStep } from "./analytics";
 
-// NRIClub sets no cookies and loads no analytics, so there is no consent
-// banner (the Privacy Policy lists what the site keeps in the browser).
-// Browsers that saw the old banner still hold its choice, and older versions
+// NRIClub sets no cookies. Website analytics run only for visitors who
+// accept them on the privacy banner (src/analytics.js, ConsentBanner.jsx;
+// the Privacy Policy lists what the site keeps in the browser). Browsers
+// that saw the old cookie banner still hold its choice, and older versions
 // kept a copy of the member's profile that nothing read: remove both.
 try { ["nriclub_cookie_consent", "nriclub_profile_cache"].forEach((key) => localStorage.removeItem(key)); } catch (e) {}
 moveOldInvite();
@@ -229,6 +231,8 @@ try {
     window.location.replace(`https://${ADMIN_HOST}/`);
   }
 } catch (e) {}
+// Website analytics (with the visitor's consent): never on the admin site.
+try { if (!isAdminRoute()) startAnalytics(); } catch (e) {}
 
 // Nobody is signed in in this browser and the page wasn't opened from one of
 // our emails: show the landing page at once (index.html already has its
@@ -300,6 +304,15 @@ export default function App() {
   // Leave the signed-in screens if the session ends by itself (revoked,
   // expired, or another tab signed out or signed in as someone else).
   useEffect(() => { api.onSessionEnded(() => window.location.reload()); }, []);
+
+  // Website analytics: what clicks may record depends on where the visitor
+  // is (src/analytics.js): signed out, signed in (or about to be), or the
+  // admin panel (nothing). Opening the login page is a step of logging in.
+  useEffect(() => {
+    setTrackingArea(authState === "admin" || authState === "admin-login" ? "off"
+      : authState === "landing" || authState === "signup" || authState === "login" || authState === "link-expired" ? "public" : "member");
+    if (authState === "login") trackStep("login_start");
+  }, [authState]);
 
   // Signup and login get a browser history entry of their own (one for
   // both), so the browser's or phone's Back button goes back to the page
@@ -562,7 +575,7 @@ export default function App() {
     };
     if (authState === "landing") return landing();
     if (authState === "signup") return <SignUpFlow onComplete={handleAuthComplete} onBack={leaveAuthPage} onLogin={(email) => { setLoginEmail(email || ""); setLoginNotice(""); setAuthState("login"); }} />;
-    if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={handleAuthComplete} onBack={leaveAuthPage} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
+    if (authState === "login") return <LoginPage initialEmail={loginEmail} notice={loginNotice} onComplete={(u) => { trackStep("login_ok"); handleAuthComplete(u); }} onBack={leaveAuthPage} onSignUp={() => { setLoginNotice(""); setAuthState("signup"); }} />;
     if (authState === "authenticated" && user) {
       if (unknownPath()) return <NotFoundPage signedIn onLogin={() => window.location.assign("/")} />;
       // In this order: blocked members only see the blocked card (whatever

@@ -4,6 +4,7 @@ import { hasImprint } from "../content/imprint";
 import * as api from "../supabaseApi";
 import { apiErrorMessage } from "./profile";
 import { FONT, COLORS, linkButtonStyle, ErrorBox } from "./ui";
+import { PrivacySettingsLink } from "../ConsentBanner";
 
 // Saves data as a JSON file in the browser's downloads.
 export function saveJsonFile(data, fileName) {
@@ -67,7 +68,8 @@ export function useAccountActions(onSignOut) {
 }
 
 // The footer of the full-page member screens (Get verified, the Terms
-// screen): who is signed in, Sign out, and the account actions.
+// screen): who is signed in, Sign out, the account actions, and Privacy
+// settings (the website analytics banner).
 export function AccountFooter({ email, onSignOut }) {
   const { busy, error, download, deleteAccount } = useAccountActions(onSignOut);
   const [impressum, setImpressum] = useState(() => hasImprint() && /^\/impressum\/?$/.test(window.location.pathname));
@@ -87,11 +89,15 @@ export function AccountFooter({ email, onSignOut }) {
           {busy === "delete" ? "Deleting..." : "Delete my account"}
         </button>
       </p>
-      {hasImprint() && (
-        <p style={{ margin: "8px 0 0" }}>
-          <button type="button" onClick={() => setImpressum(true)} style={link}>Impressum</button>
-        </p>
-      )}
+      <p style={{ margin: "8px 0 0" }}>
+        <PrivacySettingsLink style={link} />
+        {hasImprint() && (
+          <>
+            <span aria-hidden="true"> · </span>
+            <button type="button" onClick={() => setImpressum(true)} style={link}>Impressum</button>
+          </>
+        )}
+      </p>
       {error && <ErrorBox style={{ marginTop: 12, textAlign: "left" }}>{error}</ErrorBox>}
       {impressum && <ImpressumModal onClose={() => setImpressum(false)} />}
     </div>
