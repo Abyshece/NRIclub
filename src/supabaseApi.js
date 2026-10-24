@@ -1376,8 +1376,10 @@ export async function getSentNamastes() {
 // GROUPS
 // ============================================================================
 
+// City groups only ("Indians in Munich"): NRIClub has one group per city,
+// for everyone who lives there.
 export async function getGroups() {
-  return restCall("GET", "/rest/v1/groups?is_approved=eq.true&select=*&order=members_count.desc");
+  return restCall("GET", "/rest/v1/groups?is_approved=eq.true&category=eq.City&select=*&order=members_count.desc");
 }
 
 export async function joinGroup(groupId) {
@@ -1405,15 +1407,13 @@ export async function getGroupMembers(groupId) {
   return (rows || []).filter((m) => m.profiles);
 }
 
-// A new city group ("Indians in Paris") or university group ("Indians at
-// TU Munich"), which an admin approves.
-export async function requestNewGroup(name, kind = "City") {
+// A new city group ("Indians in Paris"), which an admin approves.
+export async function requestNewGroup(name) {
   if (!currentUser) throw new Error("Not logged in");
-  const uni = kind === "University";
   return restCall("POST", "/rest/v1/groups", {
-    name: uni ? `Indians at ${name}` : `Indians in ${name}`,
-    description: uni ? `For Indian students and alumni of ${name}.` : `Community for Indians living in ${name}.`,
-    category: uni ? "University" : "City",
+    name: `Indians in ${name}`,
+    description: `Community for Indians living in ${name}.`,
+    category: "City",
     created_by: currentUser.id,
     is_approved: false,
   }, { Prefer: "return=representation" });

@@ -39,6 +39,8 @@ AMBASSADOR_PANEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
                                 "20261027000000_ambassador_panel.sql")
 PROFILE_COMPLETENESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                                     "20261028000000_profile_completeness.sql")
+CITY_GROUPS_ONLY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                                "20261028100000_city_groups_only.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1344,6 +1346,7 @@ def main():
     travel_board()
     ambassador_panel()
     profile_completeness()
+    city_groups_only()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -5298,6 +5301,43 @@ def profile_completeness():
           RESET ROLE;
           DELETE FROM auth.users WHERE id = '{gone}';
           SELECT count(*) FROM private.profile_reminders WHERE member_id = '{gone}'""", expect="f\n1|0|0|0\n0")
+
+
+def city_groups_only():
+    """One group per city and no others: the language groups, "Indian
+    students abroad" and "Parents' corner" are gone, and nobody can make a
+    group that isn't a city group: migration 20261028100000_city_groups_only."""
+    ina, jai = (f"00000000-0000-0000-0000-0000000009f{n}" for n in ("1", "2"))
+    lang, post = "70000000-0000-0000-0000-0000000009f1", "71000000-0000-0000-0000-0000000009f1"
+    approved_member(ina, "ina@example.com", "Ina I")
+    approved_member(jai, "jai@example.com", "Jai J")
+    check("only city groups are left", "SELECT count(*) FROM groups WHERE category <> 'City'", expect="0")
+    check("... the language, students' and parents' groups are gone",
+          "SELECT count(*) FROM groups WHERE name IN ('Hindi speakers', 'Tamil community', 'Indian students abroad', 'Parents'' corner')",
+          expect="0")
+    check("a member can still ask for a city group",
+          "INSERT INTO groups (name, created_by) VALUES ('Indians in Ninetown', auth.uid())", as_user=ina)
+    check("... but not for a university group",
+          "INSERT INTO groups (name, category, created_by) VALUES ('Indians at TU Nine', 'University', auth.uid())",
+          as_user=ina, error_has="groups_category_check")
+    check("... or a language group",
+          "INSERT INTO groups (name, category, created_by) VALUES ('Telugu nine', 'Language', auth.uid())",
+          as_user=ina, error_has="groups_category_check")
+    check("nor can our team make one", "INSERT INTO groups (name, category, is_approved) VALUES ('Parents nine', 'Support', true)",
+          error_has="groups_category_check")
+    migration = open(CITY_GROUPS_ONLY, encoding="utf-8").read()
+    check("the update deletes a group that isn't a city group and who joined it; its posts stay, without a group", f"""
+          ALTER TABLE groups DROP CONSTRAINT groups_category_check;
+          INSERT INTO groups (id, name, category, is_approved) VALUES ('{lang}', 'Kannada nine', 'Language', true);
+          INSERT INTO group_members (group_id, user_id) VALUES ('{lang}', '{jai}');
+          INSERT INTO posts (id, user_id, group_id, content) VALUES ('{post}', '{jai}', '{lang}', 'Namaskara');
+          {migration}
+          SELECT concat_ws('|', (SELECT count(*) FROM groups WHERE id = '{lang}'),
+                                (SELECT count(*) FROM group_members WHERE group_id = '{lang}'),
+                                (SELECT count(*) FROM posts WHERE id = '{post}' AND group_id IS NULL))""", expect="0|0|1")
+    ok, _, err = psql(migration)
+    verdict("the migration can be run again", ok, err[:300])
+    check("... and city groups stay", "SELECT count(*) > 0 FROM groups WHERE name = 'Indians in Ninetown'", expect="t")
 
 
 if __name__ == "__main__":

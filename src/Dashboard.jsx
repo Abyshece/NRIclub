@@ -2537,8 +2537,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   const [places, setPlaces] = useState({ city: null, list: [] });
   const [newPlace, setNewPlace] = useState({ name: "", kind: "Grocery", address: "", note: "", languages: "" });
   const [placeKind, setPlaceKind] = useState("All"); // filter in the Places tab
-  const [groupKind, setGroupKind] = useState("all"); // filter on the Groups page
-  const [newGroupKind, setNewGroupKind] = useState("City"); // City | University, when requesting a group
   const [cityAmbassadors, setCityAmbassadors] = useState({ city: "", list: [] });
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [bookingMentor, setBookingMentor] = useState(null);
@@ -3601,15 +3599,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
 
         // Groups List View
         const myGroups = groups.filter(g => g.joined);
-        const kindOf = (g) => g.category === "City" || g.category === "Language" || g.category === "University" ? g.category : "Other";
-        const kindsPresent = ["City", "Language", "University", "Other"].filter(k => groups.some(g => kindOf(g) === k));
-        const groupTabList = (groupTab === "my" ? myGroups : groups).filter((g) => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()) && (groupKind === "all" || kindOf(g) === groupKind));
+        const groupTabList = (groupTab === "my" ? myGroups : groups).filter((g) => g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()));
         // On All groups, the member's own city comes first.
         const myCityGroupName = `indians in ${(user.location || "").split(",")[0].trim().toLowerCase()}`;
         if (groupTab !== "my") groupTabList.sort((a, b) => (b.name.toLowerCase() === myCityGroupName) - (a.name.toLowerCase() === myCityGroupName));
         // A search with no match can turn into a request for that city.
         const searchedCity = groupSearchQuery.trim().replace(/^indians in\s+/i, "");
-        const openGroupRequest = (city) => { setNewGroupCity(city); setNewGroupKind("City"); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true); };
+        const openGroupRequest = (city) => { setNewGroupCity(city); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true); };
         const thumbColorsAll = ["#5A6E55", "#4A5568", "#6B5B4E", "#3D5A80", "#7B6D4E", "#4A6741"];
 
         return (
@@ -3643,15 +3639,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               ))}
             </div>
 
-            {/* Kind of group */}
-            {kindsPresent.length > 1 && (
-              <div style={{ display: "flex", gap: 6, marginTop: -8, marginBottom: 18, overflowX: "auto", paddingBottom: 2 }}>
-                {[["all", "All"], ...kindsPresent.map(k => [k, { City: "🏙️ Cities", Language: "🗣️ Languages", University: "🎓 Students", Other: "✨ More" }[k]])].map(([k, l]) => (
-                  <button key={k} onClick={() => setGroupKind(k)} aria-pressed={groupKind === k} style={{ flexShrink: 0, padding: "6px 14px", borderRadius: 20, border: "1px solid " + (groupKind === k ? "#37352F" : "#E0E0DE"), background: groupKind === k ? "#37352F" : "#fff", color: groupKind === k ? "#fff" : "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{l}</button>
-                ))}
-              </div>
-            )}
-
             {/* 2-column grid of community cards */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="groups-grid">
               {groupTabList.map((g, i) => (
@@ -3680,9 +3667,6 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <h3 style={{ fontSize: 15, fontWeight: 600, color: "#37352F", fontFamily: font, marginBottom: 3 }}>{g.name}</h3>
-                        {g.category !== "City" && <span style={{ fontSize: 9, color: "#9B9A97", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.08em", border: "1px solid #EDEDEB", padding: "2px 6px", borderRadius: 3 }}>
-                          {g.category}
-                        </span>}
                       </div>
                     </div>
                     {/* The default "Community for Indians living in X." only repeats the name */}
@@ -3719,9 +3703,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
             {groupTabList.length === 0 && groupsLoaded && (
               <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 12, border: "1px dashed #E8E7E4", color: "#9B9A97", fontSize: 14, fontFamily: font }}>
                 {groups.length === 0 ? "Groups couldn't be loaded. Please reload the page." : "No groups found."}
-                {(groupSearchQuery || groupKind !== "all") && (<>
+                {groupSearchQuery && (<>
                   <br />
-                  <button onClick={() => { setGroupSearchQuery(""); setGroupKind("all"); }} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", cursor: "pointer", marginTop: 8, fontSize: 13, fontFamily: font }}>
+                  <button onClick={() => setGroupSearchQuery("")} style={{ background: "none", border: "none", color: "#37352F", textDecoration: "underline", cursor: "pointer", marginTop: 8, fontSize: 13, fontFamily: font }}>
                     Clear Search
                   </button>
                 </>)}
@@ -4902,7 +4886,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     setSelectedGroup(null);
     setView("groups");
     if (cityMissing) {
-      setNewGroupCity(welcomeCity); setNewGroupKind("City"); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true);
+      setNewGroupCity(welcomeCity); setGroupRequestSent(false); setGroupRequestError(""); setGroupRequestModal(true);
     } else if (welcomeCity) {
       try { if (window.location.pathname !== "/groups") window.history.pushState(null, "", "/groups"); } catch (e) {}
       setPendingRoute({ kind: "city", id: welcomeCity });
@@ -6612,26 +6596,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               </div>
             ) : (() => {
               const requestCity = newGroupCity.trim();
-              const uni = newGroupKind === "University";
-              const requestName = uni ? `Indians at ${requestCity}` : `Indians in ${requestCity}`;
+              const requestName = `Indians in ${requestCity}`;
               const existingGroup = requestCity ? groups.find(g => g.name.toLowerCase() === requestName.toLowerCase()) : null;
               const canSubmit = !!requestCity && !existingGroup;
               return (
             <div style={{ padding: 24 }}>
-              {/* A city or a university */}
-              <div role="radiogroup" aria-label="Kind of group" style={{ display: "flex", gap: 4, padding: 4, background: "#F0EFED", borderRadius: 8, marginBottom: 18, width: "fit-content" }}>
-                {[["City", "🏙️ A city"], ["University", "🎓 A university"]].map(([k, l]) => (
-                  <button key={k} role="radio" aria-checked={newGroupKind === k} onClick={() => { setNewGroupKind(k); setGroupRequestError(""); }} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: newGroupKind === k ? "#fff" : "transparent", color: newGroupKind === k ? "#37352F" : "#6B6A67", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{l}</button>
-                ))}
-              </div>
-              {/* City or university name */}
+              {/* City name */}
               <div style={{ marginBottom: 24 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>
-                  {uni ? "University" : "City Name"}
+                  City Name
                 </label>
                 <input
                   value={newGroupCity} onChange={(e) => { setNewGroupCity(e.target.value); setGroupRequestError(""); }}
-                  placeholder={uni ? "e.g. TU Munich" : "e.g. Paris"}
+                  placeholder="e.g. Paris"
                   style={{
                     width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #E0E0DE",
                     fontSize: 14, background: "#FAFAF8", outline: "none", color: "#37352F", fontFamily: font, boxSizing: "border-box",
@@ -6646,7 +6623,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                     </button>
                   </p>
                 ) : (
-                  <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 8, fontFamily: font, overflowWrap: "anywhere" }}>Your group will be called {uni ? "Indians at" : "Indians in"} {requestCity || "…"}</p>
+                  <p style={{ fontSize: 12, color: "#9B9A97", marginTop: 8, fontFamily: font, overflowWrap: "anywhere" }}>Your group will be called Indians in {requestCity || "…"}</p>
                 )}
                 {groupRequestError && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", marginTop: 8, fontFamily: font }}>{groupRequestError}</p>}
               </div>
@@ -6661,7 +6638,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                     if (!canSubmit) return;
                     setGroupRequestError("");
                     try {
-                      await api.requestNewGroup(requestCity, newGroupKind);
+                      await api.requestNewGroup(requestCity);
                       setGroupRequestSent(true);
                       setNewGroupCity("");
                     } catch(e) {
