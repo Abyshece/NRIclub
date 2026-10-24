@@ -96,6 +96,8 @@ export default function AdminPanel({ onLogout }) {
   const queueCache = useRef({});
   const usersRef = useRef(users);
   usersRef.current = users;
+  const reportsRef = useRef(reports);
+  reportsRef.current = reports;
   const countsTimer = useRef(null);
   const countsSeq = useRef(0);
   const loadSeq = useRef(0);
@@ -265,6 +267,10 @@ export default function AdminPanel({ onLogout }) {
     try {
       const { rows } = await api.adminGetOpenReports(feedback, after);
       const byId = Object.fromEntries(usersRef.current.map((u) => [u.id, u]));
+      // Reports already shown (flags from ambassadors load with the first
+      // page) aren't counted again.
+      const shown = new Set(reportsRef.current.map((r) => r.id));
+      const fresh = rows.filter((r) => !shown.has(r.id)).length;
       setReports((prev) => {
         const have = new Set(prev.map((r) => r.id));
         const added = rows.filter((r) => !have.has(r.id)).map((r) => ({
@@ -276,7 +282,7 @@ export default function AdminPanel({ onLogout }) {
       setMoreOpen((m) => ({
         ...m,
         [key]: {
-          hidden: Math.max(0, m[key].hidden - rows.length),
+          hidden: Math.max(0, m[key].hidden - fresh),
           after: rows.length < api.OPEN_REPORTS_PAGE ? null : rows[rows.length - 1],
         },
       }));
@@ -326,6 +332,13 @@ export default function AdminPanel({ onLogout }) {
     setPage(key);
     window.scrollTo(0, 0);
   };
+  // A member another page links to (e.g. an ambassador): Members, searched
+  // for their name, with their details open.
+  const [memberFocus, setMemberFocus] = useState(null); // { id, name, key }
+  const openMember = useCallback((m) => {
+    setMemberFocus({ id: m.id, name: m.name || "", key: Date.now() });
+    go("members");
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const signOut = async () => {
     if (signingOut) return;
@@ -346,11 +359,11 @@ export default function AdminPanel({ onLogout }) {
   } else if (page === "verification") {
     content = <VerificationView usersById={usersById} counts={counts} countsExact={countsExact} cache={queueCache} onMemberChange={onMemberChange} onMemberDeleted={onMemberDeleted} showToast={showToast} recorded={recorded} />;
   } else if (page === "members") {
-    content = <MembersView users={users} total={membersTotal} blockedTotal={blockedTotal} onMemberChange={onMemberChange} onMemberDeleted={onMemberDeleted} showToast={showToast} recorded={recorded} />;
+    content = <MembersView users={users} total={membersTotal} blockedTotal={blockedTotal} onMemberChange={onMemberChange} onMemberDeleted={onMemberDeleted} showToast={showToast} recorded={recorded} focus={memberFocus} />;
   } else if (page === "communities") {
     content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} recorded={recorded} />;
   } else if (page === "ambassadors") {
-    content = <AmbassadorsView showToast={showToast} onCountsChange={setAmbassadorCounts} initialCounts={ambassadorCounts} />;
+    content = <AmbassadorsView showToast={showToast} onCountsChange={setAmbassadorCounts} initialCounts={ambassadorCounts} onOpenMember={openMember} />;
   } else if (page === "reports") {
     content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} moreOpen={moreOpen.reports.after ? moreOpen.reports.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(false)} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} notices={notices} setNotices={setNotices} recorded={recorded} />;
   } else if (page === "whatson") {

@@ -35,6 +35,8 @@ ADMIN_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mi
                            "20261025100000_admin_tools.sql")
 TRAVEL_BOARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                             "20261026000000_travel_board.sql")
+AMBASSADOR_PANEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                                "20261027000000_ambassador_panel.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1269,21 +1271,24 @@ def main():
     # --- Download my data (F16) ---------------------------------------------
     check("the export covers every kind of the member's data",
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=ALICE,
-          expect="account,ambassador_applications,answer_thanks,blocks,comments,connections,conversations,"
+          expect="account,ambassador_agreement,ambassador_applications,ambassador_log,ambassador_welcomes_given,"
+                 "answer_thanks,blocks,comments,connections,conversations,"
                  "conversations_hidden,doc_comments,docs,"
                  "event_rsvps,events_organised,exported_at,files,group_memberships,groups_requested,help_requests,"
                  "help_responses,invite_code,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
                  "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,place_recommendations,"
                  "places_added,posts,profile,"
                  "profile_private,rate_limit_log,readme,reports_about_me,reports_filed,sessions,terms_acceptances,"
-                 "travel_posts,travel_rules_accepted,urgent_questions_sent,user_settings,verification_log")
+                 "travel_posts,travel_rules_accepted,urgent_questions_sent,user_settings,verification_log,"
+                 "welcomed_by_your_city_ambassador")
     check("... with the member's profile, private details, consent and rows of each kind",
           "SELECT concat_ws('|', d->'profile'->>'name', d->'profile_private'->>'email', d->'profile_private'->>'terms_version', "
           "d->'profile_private'->>'art9_consent_version', d->'terms_acceptances'->0->>'kind', "
           "(SELECT bool_and(jsonb_array_length(v) > 0)::text FROM jsonb_each(d) e(k, v) "
           "WHERE jsonb_typeof(v) = 'array' AND k NOT IN ('verification_log', 'conversations_hidden', 'places_added', "
           "'place_recommendations', 'answer_thanks', 'mentor_reviews_written', 'mentor_reviews_received', 'sessions', "
-          "'files', 'urgent_questions_sent', 'reports_about_me', 'ambassador_applications', 'travel_posts'))) "
+          "'files', 'urgent_questions_sent', 'reports_about_me', 'ambassador_applications', 'travel_posts', "
+          "'ambassador_agreement', 'ambassador_welcomes_given', 'welcomed_by_your_city_ambassador', 'ambassador_log'))) "
           "FROM (SELECT public.export_my_data() d) x",
           as_user=ALICE, expect=f"Alice Updated|alice@example.com|{TERMS_VERSION}|{ART9_VERSION}|art9|true")
     check("... and only the member's own rows",
@@ -1335,6 +1340,7 @@ def main():
     member_fixes()
     admin_tools()
     travel_board()
+    ambassador_panel()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -3587,11 +3593,12 @@ def ambassador_applications():
           SELECT string_agg(key, ',') FROM private.ambassador_application_log WHERE key LIKE 'amb-%';
           ROLLBACK;""", expect="1,2\nA-C0000002,A-C0000005\namb-new")
     check("... and still says what it deleted of everything else (the 2026-10-21 keys, plus the two new ones, "
-          "since 2026-10-25 the Inbox and since 2026-10-26 the travel board)", """
+          "since 2026-10-25 the Inbox, since 2026-10-26 the travel board and since 2026-10-27 the ambassadors' log "
+          "and welcomes)", """
           BEGIN;
           SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(private.daily_cleanup()) k;
           ROLLBACK;""",
-          expect="closed_notices,closed_reports,decided_ambassador_applications,declined_accounts,inbox_messages,moderation_actions,"
+          expect="ambassador_log,ambassador_welcomes,closed_notices,closed_reports,decided_ambassador_applications,declined_accounts,inbox_messages,moderation_actions,"
                  "moderation_copies_cleared,moderation_notes_cleared,moderation_records,read_notifications,"
                  "travel_posts,unconfirmed_signups,undecided_ambassador_applications,unfinished_accounts")
     check("members can't run the clean-up", "SELECT private.daily_cleanup()", as_user=asha, expect="error")
@@ -3610,9 +3617,9 @@ def ambassador_applications():
                 f"({len(added)} added, {len(removed)} changed)", removed == allowed and added,
                 f"removed: {removed}")
     check("... and the database runs the migration's versions (the same keys in \"Download my data\" as before, plus one, "
-          "and since 2026-10-26 the travel board's two)",
+          "since 2026-10-26 the travel board's two and since 2026-10-27 the ambassador panel's four)",
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=asha,
-          expect="account,ambassador_applications,answer_thanks,blocks,comments,connections,conversations,"
+          expect="account,ambassador_agreement,ambassador_applications,ambassador_log,ambassador_welcomes_given,answer_thanks,blocks,comments,connections,conversations,"
                  "conversations_hidden,doc_comments,docs,event_rsvps,events_organised,exported_at,files,"
                  "group_memberships,groups_requested,help_requests,help_responses,invite_code,likes,"
                  "marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
@@ -3620,7 +3627,7 @@ def ambassador_applications():
                  "place_recommendations,places_added,posts,profile,profile_private,rate_limit_log,readme,"
                  "reports_about_me,reports_filed,sessions,terms_acceptances,travel_posts,travel_rules_accepted,"
                  "urgent_questions_sent,user_settings,"
-                 "verification_log")
+                 "verification_log,welcomed_by_your_city_ambassador")
 
 
 def member_fixes():
@@ -4508,6 +4515,459 @@ def travel_board():
     verdict("the migration can be run again", ok, err[:300])
     check("... and still asks for the rules before a post", trip("offer", "Berlin", "Mumbai", 10), as_user=yash,
           error_has="row-level security")
+
+
+def ambassador_panel():
+    """The ambassador panel: the agreement accepted once per version, who may
+    use each function (only the city's ambassador, able to take part, with
+    the current agreement), newcomers and welcomes, open questions, the city
+    group's description and starter post, meetups hosted by the city
+    ambassador, flags to the team, stepping down, our team's view, clean-up
+    and "Download my data": migration 20261027000000_ambassador_panel."""
+    import difflib
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    # The sections before ran some older migrations again (the travel board's,
+    # the member fixes'), which replace functions and triggers this one
+    # changes (the clean-up, "Download my data", the events' protected
+    # columns): run it again so the database is as after every migration.
+    with open(AMBASSADOR_PANEL, encoding="utf-8") as f:
+        ok, _, err = psql(f.read())
+    if not ok:
+        sys.exit("the ambassador panel migration failed: " + err)
+    amy, kai, ned, obi, pia, quy, rex, sam, tia, kim =(f"00000000-0000-0000-0000-0000000010{n:02d}" for n in range(1, 11))
+    dus, kiel = "50000000-0000-0000-0000-0000000000d1", "50000000-0000-0000-0000-0000000000d2"
+    for uid, mail, name, city in ((amy, "amy.d@example.com", "Amy D", "Düsseldorf"), (kai, "kai.k@example.com", "Kai K", "Kiel"),
+                                  (ned, "ned.d@example.com", "Ned N", "Düsseldorf"), (obi, "obi.d@example.com", "Obi O", "Düsseldorf"),
+                                  (pia, "pia.d@example.com", "Pia P", "Düsseldorf"), (rex, "rex.d@example.com", "Rex R", "Düsseldorf"),
+                                  (sam, "sam.d@example.com", "Sam S", "Düsseldorf"), (tia, "tia.d@example.com", "Tia T", "Düsseldorf"),
+                                  (kim, "kim.k@example.com", "Kim K", "Kiel")):
+        approved_member(uid, mail, name, city=city)
+    # quy sent his details but our team hasn't approved him yet.
+    sign_up(quy, "quy.d@example.com", {"full_name": "Quy Q"}, accept_terms=True)
+    ok, _, err = psql(f"""
+      UPDATE profile_private SET verification_status = 'pending', submitted_at = now() WHERE id = '{quy}';
+      INSERT INTO groups (id, name, description, category, is_approved) VALUES
+        ('{dus}', 'Indians in Düsseldorf', 'Community for Indians living in Düsseldorf.', 'City', true),
+        ('{kiel}', 'Indians in Kiel', 'Community for Indians living in Kiel.', 'City', true);
+      -- Who joined which group when: rex 40 days ago, tia 10, pia 4, obi 3,
+      -- ned 2 and quy 1; sam and amy long ago.
+      INSERT INTO group_members (group_id, user_id, joined_at) VALUES
+        ('{dus}', '{amy}', now() - interval '200 days'), ('{dus}', '{sam}', now() - interval '60 days'),
+        ('{dus}', '{rex}', now() - interval '40 days'), ('{dus}', '{tia}', now() - interval '10 days'),
+        ('{dus}', '{pia}', now() - interval '4 days'), ('{dus}', '{obi}', now() - interval '3 days'),
+        ('{dus}', '{ned}', now() - interval '2 days'), ('{dus}', '{quy}', now() - interval '1 day'),
+        ('{kiel}', '{kai}', now() - interval '100 days'), ('{kiel}', '{kim}', now() - interval '5 days')""")
+    if not ok:
+        sys.exit("ambassador panel setup failed: " + err)
+
+    def made(uid, sql):
+        ok, out, err = psql(sql, "authenticated", uid)
+        if not ok:
+            sys.exit(f"ambassador panel setup failed: {err}")
+        return out.splitlines()[-1]
+
+    made(ADMIN, f"SELECT public.admin_set_ambassador('{amy}', 'Düsseldorf')")
+    made(ADMIN, f"SELECT public.admin_set_ambassador('{kai}', 'Kiel')")
+    # obi blocked amy; amy blocked pia.
+    made(obi, f"SELECT public.block_member('{amy}')")
+    made(amy, f"SELECT public.block_member('{pia}')")
+    ned_post = made(ned, f"INSERT INTO posts (user_id, content, group_id) VALUES (auth.uid(), 'Hello from Ned, new in Düsseldorf!', '{dus}') RETURNING id")
+    tia_post = made(tia, f"INSERT INTO posts (user_id, content, group_id) VALUES (auth.uid(), 'Cheap SIM cards, DM me.', '{dus}') RETURNING id")
+    amy_post = made(amy, f"INSERT INTO posts (user_id, content, group_id) VALUES (auth.uid(), 'Start here: welcome to Indians in Düsseldorf.', '{dus}') RETURNING id")
+    kim_post = made(kim, f"INSERT INTO posts (user_id, content, group_id) VALUES (auth.uid(), 'Moin from Kiel.', '{kiel}') RETURNING id")
+    feed_post = made(ned, "INSERT INTO posts (user_id, content) VALUES (auth.uid(), 'A post in the main feed.') RETURNING id")
+    soon = "to_char(private.today_in_germany() + 14, 'YYYY-MM-DD')"
+    event = lambda title, city: (f"INSERT INTO events (title, date, city, location, organizer_id) VALUES ('{title}', {soon}, "
+                                 f"'{city}', 'Rheinpark, {city}', auth.uid()) RETURNING id")
+    amy_event = made(amy, event("Chai meetup", "Düsseldorf"))
+    claims = lambda uid: json.dumps({"sub": uid, "role": "authenticated"})
+    accept = "SELECT public.accept_ambassador_agreement('2026-10-27') ->> 'accepted'"
+    status = ("SELECT concat_ws('|', s->>'city', s->>'version', s->>'accepted', s->>'can_take_part', s->>'group_id' IS NOT NULL) "
+              "FROM public.ambassador_status() s")
+    newcomers = "SELECT string_agg(name || ':' || welcomed, ',' ORDER BY joined_at DESC) FROM public.ambassador_new_members()"
+    mark = lambda uid, on="true": f"SELECT public.ambassador_mark_welcomed('{uid}', {on})"
+    describe = lambda text: f"SELECT public.ambassador_update_group('{text}') ->> 'description'"
+    hosted = f"SELECT ambassador_hosted FROM events WHERE id = '{amy_event}'"
+    why = "Selling fake visa appointments in the group."
+    flag = lambda kind, target, category="spam", words=why: (
+        f"SELECT public.ambassador_flag('{kind}', '{target}', '{category}', '{words}')")
+    logged = lambda uid, action: (f"SELECT count(*) FROM private.ambassador_log WHERE ambassador_id = '{uid}' "
+                                  f"AND action = '{action}'")
+    panel_calls = {
+        "the overview": "SELECT public.ambassador_overview() IS NOT NULL",
+        "the newcomers": "SELECT count(*) FROM public.ambassador_new_members()",
+        "welcomes": mark(ned),
+        "the open questions": "SELECT count(*) FROM public.ambassador_open_questions()",
+        "the group's description": describe("A friendly group for Indians in the city."),
+        "meetups": f"SELECT public.set_event_ambassador_hosted('{amy_event}', true)",
+        "flags": flag("post", ned_post) + " IS NOT NULL",
+    }
+
+    # --- the agreement ------------------------------------------------------------
+    with open(os.path.join(root, "src", "content", "ambassador.js"), encoding="utf-8") as f:
+        ambassador_js = f.read()
+    check("the site shows the version of the agreement the database asks for (AMBASSADOR_AGREEMENT_VERSION)",
+          "SELECT private.ambassador_agreement_version()",
+          expect=re.search(r'export const AMBASSADOR_AGREEMENT_VERSION = "([^"]+)"', ambassador_js).group(1))
+    for call in ("ambassador_status()", "accept_ambassador_agreement('2026-10-27')", "ambassador_overview()",
+                 "ambassador_new_members()", "ambassador_open_questions()", "ambassador_step_down()",
+                 "admin_ambassador_activity()"):
+        check(f"signed-out visitors can't call {call.split('(')[0]}", f"SELECT public.{call}", role="anon",
+              error_has="permission denied")
+    check("a member who isn't an ambassador: no city, the agreement not accepted", status, as_user=sam,
+          expect="2026-10-27|false|true|f")
+    check("amy, Düsseldorf's ambassador: her city and its group, the agreement not accepted yet", status, as_user=amy,
+          expect="Düsseldorf|2026-10-27|false|true|t")
+    for what, sql in panel_calls.items():
+        check(f"before she accepts the agreement, the panel refuses: {what}", sql, as_user=amy,
+              error_has="Please read and accept the ambassador agreement first")
+        check(f"... and refuses a member who isn't an ambassador: {what}", sql, as_user=sam,
+              error_has="Only a city ambassador can do this.")
+    check("... pinning the starter post needs the agreement too", f"SELECT public.pin_group_post('{dus}', '{amy_post}')",
+          as_user=amy, error_has="Please read and accept the ambassador agreement first")
+    check("... and a member who isn't an ambassador can't accept it", accept, as_user=sam,
+          error_has="Only a city ambassador can accept")
+    check("accepting another version of the agreement is refused", "SELECT public.accept_ambassador_agreement('2026-01-01')",
+          as_user=amy, error_has="agreement has changed")
+    check("amy accepts the agreement", accept, as_user=amy, expect="true")
+    check("... accepting again keeps when she first did; it's logged once", f"""
+          CREATE TEMP TABLE first_ack AS SELECT accepted_at FROM private.ambassador_agreement_ack WHERE user_id = '{amy}';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(amy)}', false) IS NOT NULL;
+          {accept}; RESET ROLE;
+          SELECT (SELECT accepted_at FROM private.ambassador_agreement_ack WHERE user_id = '{amy}') = (SELECT accepted_at FROM first_ack),
+            ({logged(amy, 'agreement')})""", expect="t\ntrue\nt|1")
+    check("... her status says so", status, as_user=amy, expect="Düsseldorf|2026-10-27|true|true|t")
+    for table in ("ambassador_agreement_ack", "ambassador_log", "ambassador_welcomes"):
+        check(f"members can't read private.{table}", f"SELECT count(*) FROM private.{table}", as_user=amy,
+              error_has="permission denied")
+    check("... nor record an agreement themselves", "INSERT INTO private.ambassador_agreement_ack (user_id, version) "
+          "VALUES (auth.uid(), '2026-10-27')", as_user=kai, error_has="permission denied")
+    check("kai, Kiel's ambassador, accepts it too", accept, as_user=kai, expect="true")
+
+    # --- the city at a glance, newcomers and welcomes -------------------------------------
+    overview = ("SELECT concat_ws('|', o->>'city', o->'group'->>'name', o->'group'->>'members', o->>'new_7d', o->>'new_30d', "
+                "o->>'events_upcoming', o->'events'->0->>'title', o->>'open_questions', o->>'unanswered', o->>'welcomed_30d') "
+                "FROM public.ambassador_overview() o")
+    check("the overview: her city, its group and members, newcomers in 7 and 30 days, upcoming events, open questions",
+          overview, as_user=amy, expect="Düsseldorf|Indians in Düsseldorf|8|1|2|1|Chai meetup|0|0|0")
+    check("... kai's is Kiel's", overview, as_user=kai, expect="Kiel|Indians in Kiel|2|1|1|0|0|0|0")
+    check("newcomers: who joined in the last 30 days, newest first; not the ambassador herself, members either of the "
+          "two blocked, accounts members don't see, or another city's members", newcomers, as_user=amy,
+          expect="Ned N:false,Tia T:false")
+    check("... the last 7 days", "SELECT string_agg(name, ',') FROM public.ambassador_new_members(7)", as_user=amy,
+          expect="Ned N")
+    check("... never more than 30 days back", "SELECT count(*) FROM public.ambassador_new_members(365)", as_user=amy,
+          expect="2")
+    check("... with only what members already see (name, photo, when they joined) and her welcome",
+          "SELECT bool_and(to_jsonb(n) - 'id' - 'name' - 'avatar_url' - 'joined_at' - 'welcomed' = '{}'::jsonb) "
+          "FROM public.ambassador_new_members() n", as_user=amy, expect="t")
+    check("kai sees Kiel's newcomers only", newcomers, as_user=kai, expect="Kim K:false")
+    check("amy marks ned as welcomed", f"{mark(ned)}; {newcomers}", as_user=amy, expect="t\nNed N:true,Tia T:false")
+    check("... again changes nothing", f"{mark(ned)}", as_user=amy, expect="t")
+    check("... (one welcome kept)", f"SELECT count(*) FROM private.ambassador_welcomes WHERE member_id = '{ned}'", expect="1")
+    for who, uid in (("a member who joined more than 30 days ago", rex), ("a member of another city's group", kim),
+                     ("a member who blocked her", obi), ("a member she blocked", pia),
+                     ("an account members don't see", quy)):
+        check(f"she can't mark {who}", mark(uid), as_user=amy, error_has="isn't one of the newcomers")
+    check("kai can't mark Düsseldorf's newcomers", mark(ned), as_user=kai, error_has="isn't one of the newcomers")
+    check("taking a welcome back", f"{mark(tia)}; {mark(tia, 'false')}; {newcomers}", as_user=amy,
+          expect="t\nf\nNed N:true,Tia T:false")
+    check("the overview counts her welcomes", "SELECT o->>'welcomed_30d' FROM public.ambassador_overview() o", as_user=amy,
+          expect="1")
+
+    # --- open questions from the city ------------------------------------------------------
+    ask = lambda title: f"INSERT INTO help_requests (user_id, title, description) VALUES (auth.uid(), '{title}', 'Any tips?') RETURNING id"
+    q_tia = made(tia, ask("Anmeldung appointment in Düsseldorf?"))
+    made(obi, ask("Obi asks: tax adviser?"))
+    made(kim, ask("Fish market tips?"))
+    made(amy, ask("Amy asks: venue for Diwali?"))
+    q_ned = made(ned, ask("Good Indian grocery near Bilk?"))
+    answer = made(sam, f"INSERT INTO help_responses (request_id, user_id, content) VALUES ('{q_tia}', auth.uid(), "
+                       "'Book online at 7am, new slots appear then.') RETURNING id")
+    questions = ("SELECT string_agg(title || ':' || answers || ':' || COALESCE(asker, '-'), ',' ORDER BY created_at DESC) "
+                 "FROM public.ambassador_open_questions()")
+    check("open questions from the city, newest first, with how many answers and who asked; not her own, nor from "
+          "members either of the two blocked, nor another city's", questions, as_user=amy,
+          expect="Good Indian grocery near Bilk?:0:Ned N,Anmeldung appointment in Düsseldorf?:1:Tia T")
+    check("... the overview counts them, and those with no answer at all",
+          "SELECT o->>'open_questions' || '|' || (o->>'unanswered') FROM public.ambassador_overview() o", as_user=amy,
+          expect="2|1")
+    check("once the asker chooses the best answer the question counts as answered",
+          f"UPDATE help_requests SET best_response_id = '{answer}' WHERE id = '{q_tia}' RETURNING status", as_user=tia,
+          expect="Resolved")
+    check("... and leaves the list", "SELECT string_agg(title, ',') FROM public.ambassador_open_questions()", as_user=amy,
+          expect="Good Indian grocery near Bilk?")
+    check("kai sees Kiel's questions only", "SELECT string_agg(title, ',') FROM public.ambassador_open_questions()",
+          as_user=kai, expect="Fish market tips?")
+
+    # --- the city group: description and starter post --------------------------------------
+    check("a description that's too short is refused", describe("Hi there"), as_user=amy, error_has="at least 10 characters")
+    check("... and one that's too long", describe("x" * 1001), as_user=amy, error_has="keep the description to 1,000")
+    new_text = "Indians in Düsseldorf: chai, cricket and help with the Anmeldung."
+    check("amy rewrites her group's description, spaces tidied", describe("  Indians in   Düsseldorf: chai, cricket and help "
+          "with the Anmeldung.  "), as_user=amy, expect=new_text)
+    check("... logged with the text before and after", "SELECT concat_ws('|', city, detail->>'before', detail->>'after') "
+          f"FROM private.ambassador_log WHERE ambassador_id = '{amy}' AND action = 'group_description'",
+          expect=f"Düsseldorf|Community for Indians living in Düsseldorf.|{new_text}")
+    check("... the same text again changes and logs nothing", f"{describe(new_text)}; RESET ROLE; {logged(amy, 'group_description')}",
+          as_user=amy, expect=f"{new_text}\n1")
+    check("... line breaks kept, at most one empty line in a row",
+          "SELECT replace(public.ambassador_update_group(E'First line\\r\\n\\r\\n\\r\\n\\r\\nSecond line') ->> 'description', E'\\n', '/')",
+          as_user=amy, expect="First line//Second line")
+    check("kai's change goes to Kiel's group, not Düsseldorf's", f"""
+          {describe('Moin! Indians in Kiel meet at the Förde.')}; RESET ROLE;
+          SELECT string_agg(replace(description, E'\\n', '/'), '|' ORDER BY name) FROM groups WHERE id IN ('{dus}', '{kiel}')""",
+          as_user=kai, expect="Moin! Indians in Kiel meet at the Förde.\nFirst line//Second line|Moin! Indians in Kiel meet at the Förde.")
+    check("members still can't change a group directly", f"UPDATE groups SET description = 'hacked' WHERE id = '{dus}' RETURNING 1",
+          as_user=amy, expect="")
+    check("20 changes a day", f"""
+          BEGIN;
+          INSERT INTO private.rate_log (member_id, action) SELECT '{amy}', 'ambassador_group' FROM generate_series(1, 20);
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(amy)}', true) IS NOT NULL;
+          {describe(new_text)};
+          ROLLBACK;""", error_has="doing that too often")
+    check("amy pins her starter post", f"SELECT public.pin_group_post('{dus}', '{amy_post}'); "
+          f"SELECT pinned_post_id FROM groups WHERE id = '{dus}'", as_user=amy, expect=amy_post)
+    check("... the overview shows it", "SELECT o->'group'->'pinned_post'->>'content' || '|' || (o->'group'->'pinned_post'->>'author') "
+          "FROM public.ambassador_overview() o", as_user=amy, expect="Start here: welcome to Indians in Düsseldorf.|Amy D")
+    check("kai can't pin in Düsseldorf's group", f"SELECT public.pin_group_post('{dus}', '{ned_post}')", as_user=kai,
+          error_has="Only the city's ambassador can pin")
+    check("... nor a member", f"SELECT public.pin_group_post('{dus}', '{ned_post}')", as_user=sam,
+          error_has="Only the city's ambassador can pin")
+    check("... nor can amy pin a post from another group", f"SELECT public.pin_group_post('{dus}', '{kim_post}')", as_user=amy,
+          error_has="isn't in this group")
+    check("amy unpins it", f"SELECT public.pin_group_post('{dus}', NULL); SELECT pinned_post_id IS NULL FROM groups WHERE id = '{dus}'",
+          as_user=amy, expect="t")
+    check("... both logged", "SELECT string_agg(action || ':' || (detail->>'post_id'), ',' ORDER BY at) FROM private.ambassador_log "
+          f"WHERE ambassador_id = '{amy}' AND action IN ('pin', 'unpin')", expect=f"pin:{amy_post},unpin:{amy_post}")
+    check("admins pin in any group, as before", f"SELECT public.pin_group_post('{kiel}', '{kim_post}'); "
+          f"SELECT pinned_post_id FROM groups WHERE id = '{kiel}'", as_user=ADMIN, expect=kim_post)
+
+    # --- meetups hosted by the city ambassador ----------------------------------------------
+    check("a member can't create an event marked as hosted by the city ambassador",
+          f"INSERT INTO events (title, date, city, organizer_id, ambassador_hosted) VALUES ('Diwali party', {soon}, "
+          "'Düsseldorf', auth.uid(), true) RETURNING ambassador_hosted", as_user=amy, expect="f")
+    check("... nor mark one by editing it", f"UPDATE events SET ambassador_hosted = true WHERE id = '{amy_event}' "
+          "RETURNING ambassador_hosted", as_user=amy, expect="f")
+    check("amy marks her meetup in Düsseldorf", f"SELECT public.set_event_ambassador_hosted('{amy_event}', true); {hosted}",
+          as_user=amy, expect="t\nt")
+    check("... members see the mark", hosted, as_user=sam, expect="t")
+    check("... and so does her overview", "SELECT e->>'ambassador_hosted' FROM public.ambassador_overview() o, "
+          f"jsonb_array_elements(o->'events') e WHERE e->>'id' = '{amy_event}'", as_user=amy, expect="true")
+    sam_event = made(sam, event("Cricket in the park", "Düsseldorf"))
+    check("she can't mark another member's event", f"SELECT public.set_event_ambassador_hosted('{sam_event}', true)",
+          as_user=amy, error_has="only mark events you organise")
+    amy_kiel = made(amy, event("Kiel Week trip", "Kiel"))
+    check("... nor her own event in another city", f"SELECT public.set_event_ambassador_hosted('{amy_kiel}', true)",
+          as_user=amy, error_has="Only an event in Düsseldorf")
+    kai_dus = made(kai, event("Kai visits Düsseldorf", "Düsseldorf"))
+    check("kai can't mark his event in Düsseldorf", f"SELECT public.set_event_ambassador_hosted('{kai_dus}', true)",
+          as_user=kai, error_has="Only an event in Kiel")
+    check("moving the meetup to another city takes the mark off", f"UPDATE events SET city = 'Köln' WHERE id = '{amy_event}' "
+          "RETURNING ambassador_hosted", as_user=amy, expect="f")
+    check("... back in Düsseldorf she marks it again", f"UPDATE events SET city = 'Dusseldorf' WHERE id = '{amy_event}'; "
+          f"SELECT public.set_event_ambassador_hosted('{amy_event}', true)", as_user=amy, expect="t")
+    check("... and can take it off", f"SELECT public.set_event_ambassador_hosted('{amy_event}', false); "
+          f"SELECT public.set_event_ambassador_hosted('{amy_event}', true)", as_user=amy, expect="f\nt")
+    check("... each logged", f"SELECT ({logged(amy, 'meetup')}) || '|' || ({logged(amy, 'meetup_off')})", expect="3|1")
+
+    # --- flag to the team -----------------------------------------------------------------------
+    flagged = lambda kind, target, show: (f"CREATE TEMP TABLE flagged AS {flag(kind, target)} AS id; "
+                                          f"SELECT {show} FROM reports r JOIN flagged f ON f.id = r.id")
+    check("amy flags ned's post in the city group: a report marked with her city, about ned, waiting for our team",
+          flagged("post", ned_post, f"concat_ws('|', r.content_type, r.ambassador_city, r.reported_user_id = '{ned}', "
+                  f"r.category, r.status, r.good_faith, r.explanation = '{why}')"), as_user=amy,
+          expect="post|Düsseldorf|t|spam|pending|t|t")
+    check("... every admin is told in the app", f"SELECT count(*) > 0 FROM notifications WHERE user_id = '{ADMIN}' AND type = 'alert' "
+          "AND text LIKE 'The ambassador of Düsseldorf flagged a post to our team.%'", expect="t")
+    check("... our team sees the mark", f"SELECT ambassador_city FROM reports WHERE reported_post_id = '{ned_post}' "
+          f"AND reporter_id = '{amy}'", as_user=ADMIN, expect="Düsseldorf")
+    check("... and it's logged", logged(amy, "flag"), expect="1")
+    check("she can't flag a post outside the city group", flag("post", feed_post), as_user=amy, error_has="only what is in your city")
+    check("... nor one in another city's group", flag("post", kim_post), as_user=amy, error_has="only what is in your city")
+    check("... nor a member of another city's group", flag("profile", kim), as_user=amy, error_has="only what is in your city")
+    check("... nor her own post", flag("post", amy_post), as_user=amy, error_has="your own content")
+    check("... nor without one of the report form's reasons", flag("post", tia_post, category="nonsense"), as_user=amy,
+          error_has="choose what the problem is")
+    check("... nor without saying why", flag("post", tia_post, words="Bad"), as_user=amy, error_has="10 to 1,000 characters")
+    check("kai can't flag what is in Düsseldorf", flag("post", tia_post), as_user=kai, error_has="only what is in your city")
+    for kind, target, what in (("profile", rex, "a member of the city group"), ("help", q_ned, "a question from the city"),
+                               ("event", sam_event, "an event in the city"), ("answer", answer, "an answer to a question from the city")):
+        check(f"amy can flag {what}", flagged(kind, target, "r.content_type || '|' || r.ambassador_city"), as_user=amy,
+              expect=f"{kind}|Düsseldorf")
+    check("an open report of hers about the same item becomes the flag (one open report per member and item)", f"""
+          INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith)
+            VALUES (auth.uid(), '{tia_post}', '[POST] Cheap SIM — Spam', 'post', 'spam', 'The same advert again and again.', true);
+          SELECT count(*) FROM reports WHERE reporter_id = auth.uid() AND reported_post_id = '{tia_post}' AND ambassador_city = '';
+          SELECT {flag('post', tia_post, 'harassment', 'Insulting members who asked about it.')[7:]} IS NOT NULL;
+          SELECT string_agg(ambassador_city || ':' || category, ',') FROM reports WHERE reporter_id = auth.uid()
+            AND reported_post_id = '{tia_post}'""", as_user=amy, expect="1\nt\nDüsseldorf:harassment")
+    check("members can't mark their own reports as flags",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith, "
+          f"ambassador_city) VALUES (auth.uid(), '{ned_post}', '[POST] Hello — Spam', 'post', 'spam', 'Spam spam spam spam.', "
+          "true, 'Düsseldorf') RETURNING ambassador_city = ''", as_user=sam, expect="t")
+    check("flags count towards the limit of 20 reports a day", f"""
+          BEGIN;
+          INSERT INTO private.rate_log (member_id, action) SELECT '{amy}', 'report' FROM generate_series(1, 20);
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(amy)}', true) IS NOT NULL;
+          {flag('profile', tia)};
+          ROLLBACK;""", error_has="doing that too often")
+    check("ambassadors can't remove anything: admin_moderate stays our team's", f"SELECT {moderate('post', tia_post, 'remove')}",
+          as_user=amy, error_has="Admins only")
+
+    # --- our team's view ------------------------------------------------------------------------
+    check("members can't see the ambassadors' activity", "SELECT public.admin_ambassador_activity()", as_user=sam,
+          error_has="Admins only")
+    check("... nor can an ambassador", "SELECT public.admin_ambassador_activity()", as_user=amy, error_has="Admins only")
+    two_step = ("BEGIN; UPDATE private.app_settings SET value = 'true' WHERE key = 'admin_mfa_required'; SET ROLE authenticated; "
+                "SELECT set_config('request.jwt.claims', '{\"sub\": \"" + ADMIN + "\", \"role\": \"authenticated\", \"aal\": \"%s\"}', false) IS NULL; ")
+    check("with two-step login required, an admin signed in with the password only can't see it either "
+          "(nor the coverage overview, which is built from it)",
+          (two_step % "aal1") + "SELECT public.admin_ambassador_activity()", error_has="Admins only")
+    check("... signed in with the code, they can",
+          (two_step % "aal2") + "SELECT jsonb_array_length(public.admin_ambassador_activity()->'ambassadors') > 0", expect="f\nt")
+    check("since when: from our team's latest record for their current city (not an earlier city)", f"""
+          BEGIN;
+          INSERT INTO private.moderation_action (action, target_kind, target_id, target_user, explanation, source, created_at) VALUES
+            ('ambassador', 'member', '{kai}', '{kai}', 'Ambassador for Kiel', 'own_initiative', '2026-03-01 10:00+00'),
+            ('ambassador', 'member', '{kai}', '{kai}', 'Ambassador for Lübeck', 'own_initiative', NOW() + interval '1 day');
+          UPDATE private.moderation_action SET created_at = '2026-05-01 10:00+00'
+          WHERE action = 'ambassador' AND target_user = '{kai}' AND explanation = 'Ambassador for Kiel' AND created_at > '2026-04-01';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(ADMIN)}', true) IS NOT NULL;
+          SELECT a->>'city', (a->>'since')::timestamptz = '2026-05-01 10:00+00'
+          FROM jsonb_array_elements(public.admin_ambassador_activity()->'ambassadors') a WHERE a->>'id' = '{kai}';
+          ROLLBACK;""", expect="t\nKiel|t")
+    check("admins see each ambassador with the agreement they accepted, and what they did", f"""
+          SELECT concat_ws('|',
+            (SELECT string_agg(a->>'name' || '=' || (a->>'city') || '/' || (a->>'agreement_version') || '/' || (a->>'current')
+               || '/' || (a->>'agreement_accepted_at' IS NOT NULL) || '/' || (a->>'welcomed_30d')
+               || '/' || ((a->>'since')::timestamptz > now() - interval '1 hour'), ',' ORDER BY a->>'city')
+             FROM jsonb_array_elements(r->'ambassadors') a WHERE a->>'id' IN ('{amy}', '{kai}')),
+            (SELECT string_agg(DISTINCT l->>'action', ',' ORDER BY l->>'action') FROM jsonb_array_elements(r->'log') l
+             WHERE l->>'ambassador_id' = '{amy}'),
+            r->>'version')
+          FROM (SELECT public.admin_ambassador_activity(500) r) x""", as_user=ADMIN,
+          expect="Amy D=Düsseldorf/2026-10-27/true/true/1/true,Kai K=Kiel/2026-10-27/true/true/0/true|"
+                 "agreement,flag,group_description,meetup,meetup_off,pin,unpin|2026-10-27")
+
+    # --- who may use the panel ------------------------------------------------------------------
+    check("an ambassador who accepted an earlier version of the agreement is asked again", f"""
+          BEGIN;
+          UPDATE private.ambassador_agreement_ack SET version = '2026-01-01' WHERE user_id = '{kai}';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(kai)}', true) IS NOT NULL;
+          {status};
+          SELECT public.ambassador_overview();
+          ROLLBACK;""", error_has="Please read and accept the ambassador agreement first")
+    check("... (her status)", f"""
+          BEGIN;
+          UPDATE private.ambassador_agreement_ack SET version = '2026-01-01' WHERE user_id = '{kai}';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(kai)}', true) IS NOT NULL;
+          {status};
+          ROLLBACK;""", expect="t\nKiel|2026-10-27|false|true|t")
+    check("an ambassador who can't take part (still on Terms from before the Art. 9 consent) is refused", f"""
+          BEGIN;
+          UPDATE profile_private SET terms_version = '2026-10' WHERE id = '{kai}';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(kai)}', true) IS NOT NULL;
+          SELECT public.ambassador_overview();
+          ROLLBACK;""", error_has="can't take part on NRIClub right now")
+    check("... as is a blocked one, even if the role were still set", f"""
+          BEGIN;
+          ALTER TABLE public.profile_private DISABLE TRIGGER end_ambassador_when_inactive;
+          UPDATE profile_private SET status = 'blocked' WHERE id = '{kai}';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(kai)}', true) IS NOT NULL;
+          {flag('profile', kim)};
+          ROLLBACK;""", error_has="can't take part on NRIClub right now")
+    check("... and can't accept the agreement either", f"""
+          BEGIN;
+          ALTER TABLE public.profile_private DISABLE TRIGGER end_ambassador_when_inactive;
+          UPDATE profile_private SET status = 'blocked' WHERE id = '{kai}';
+          SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims(kai)}', true) IS NOT NULL;
+          {accept};
+          ROLLBACK;""", error_has="can't take part on NRIClub right now")
+    check("a newcomer our team blocks leaves the list", f"{block(tia)}", as_user=ADMIN, expect="blocked")
+    check("... (amy's newcomers)", newcomers, as_user=amy, expect="Ned N:true")
+
+    # --- stepping down ------------------------------------------------------------------------------
+    check("amy steps down", "SELECT public.ambassador_step_down(); SELECT ambassador_city = '' FROM profiles WHERE id = auth.uid()",
+          as_user=amy, expect="Düsseldorf\nt")
+    check("... her meetup isn't hosted by the city ambassador any more", hosted, as_user=sam, expect="f")
+    check("... it's logged, and every admin is told", f"SELECT ({logged(amy, 'step_down')}) || '|' || (SELECT count(*) > 0 "
+          f"FROM notifications WHERE user_id = '{ADMIN}' AND type = 'alert' "
+          "AND text = 'Amy D stepped down as the ambassador for Düsseldorf. See Ambassadors in the admin panel.')", expect="1|true")
+    check("... the panel is closed to her", "SELECT public.ambassador_overview()", as_user=amy,
+          error_has="Only a city ambassador can do this.")
+    check("... and pinning too", f"SELECT public.pin_group_post('{dus}', '{amy_post}')", as_user=amy,
+          error_has="Only the city's ambassador can pin")
+    check("... her status has no city", status, as_user=amy, expect="2026-10-27|true|true|f")
+    check("... stepping down again says she isn't one", "SELECT public.ambassador_step_down()", as_user=amy,
+          error_has="You aren't a city ambassador.")
+    check("... as for any member", "SELECT public.ambassador_step_down()", as_user=sam, error_has="You aren't a city ambassador.")
+    check("... and our team no longer lists her", "SELECT count(*) FROM jsonb_array_elements(public.admin_ambassador_activity() "
+          f"-> 'ambassadors') a WHERE a->>'id' = '{amy}'", as_user=ADMIN, expect="0")
+    check("blocking an ambassador ends the role, and the panel with it",
+          f"{block(kai)}; SELECT ambassador_city FROM profiles WHERE id = '{kai}'", as_user=ADMIN, expect="blocked")
+    check("... (kai)", "SELECT public.ambassador_overview()", as_user=kai, error_has="Only a city ambassador can do this.")
+
+    # --- clean-up ------------------------------------------------------------------------------------
+    check("the clean-up deletes the ambassadors' log and their welcomes 12 months after each entry", f"""
+          BEGIN;
+          INSERT INTO private.ambassador_log (ambassador_id, city, action, at) VALUES
+            ('{kai}', 'Kiel', 'pin', now() - interval '13 months'), ('{kai}', 'Kiel', 'unpin', now() - interval '11 months');
+          INSERT INTO private.ambassador_welcomes (ambassador_id, member_id, at) VALUES
+            ('{kai}', '{rex}', now() - interval '13 months'), ('{kai}', '{sam}', now() - interval '11 months');
+          SELECT concat_ws('|', r->>'ambassador_log', r->>'ambassador_welcomes', r ? 'travel_posts') FROM (SELECT private.daily_cleanup() r) x;
+          SELECT concat_ws('|', (SELECT string_agg(action, ',') FROM private.ambassador_log WHERE ambassador_id = '{kai}' AND city = 'Kiel'
+              AND action IN ('pin', 'unpin')),
+            (SELECT string_agg(member_id::text, ',') FROM private.ambassador_welcomes WHERE ambassador_id = '{kai}'));
+          ROLLBACK;""", expect=f"1|1|t\nunpin|{sam}")
+    old = function_source(TRAVEL_BOARD, "CREATE OR REPLACE FUNCTION private.daily_cleanup()").splitlines()
+    new = function_source(AMBASSADOR_PANEL, "CREATE OR REPLACE FUNCTION private.daily_cleanup()").splitlines()
+    removed = [l[2:] for l in difflib.ndiff(old, new) if l.startswith("- ")]
+    verdict("private.daily_cleanup() is its 2026-10-26 version with lines added only",
+            removed == ["    || jsonb_build_object('travel_posts', travel);"], f"removed: {removed}")
+    old = function_source(TRAVEL_BOARD, "CREATE OR REPLACE FUNCTION public.export_my_data()").splitlines()
+    new = function_source(AMBASSADOR_PANEL, "CREATE OR REPLACE FUNCTION public.export_my_data()").splitlines()
+    removed = [l[2:] for l in difflib.ndiff(old, new) if l.startswith("- ")]
+    verdict("export_my_data() is its 2026-10-26 version with lines added only", set(removed) <= {"  );"}, f"removed: {removed}")
+
+    # --- "Download my data" ----------------------------------------------------------------------------
+    check("\"Download my data\": the agreement she accepted, the newcomers she welcomed and what she did as ambassador", """
+          SELECT concat_ws('|', jsonb_array_length(d->'ambassador_agreement'), d->'ambassador_agreement'->0->>'version',
+            jsonb_array_length(d->'ambassador_welcomes_given'),
+            (SELECT string_agg(DISTINCT l->>'action', ',' ORDER BY l->>'action') FROM jsonb_array_elements(d->'ambassador_log') l),
+            (SELECT count(*) FROM jsonb_array_elements(d->'reports_filed') r WHERE r->>'ambassador_city' = 'Düsseldorf') >= 6)
+          FROM (SELECT public.export_my_data() d) x""", as_user=amy,
+          expect="1|2026-10-27|1|agreement,flag,group_description,meetup,meetup_off,pin,step_down,unpin|t")
+    check("... and ned's says when an ambassador welcomed him",
+          "SELECT jsonb_array_length(d->'welcomed_by_your_city_ambassador') FROM (SELECT public.export_my_data() d) x",
+          as_user=ned, expect="1")
+
+    # --- deleting accounts; the one-off file; running the migration again -------------------------------
+    check("deleting an account deletes the welcomes either way, the log and the record of the agreement", f"""
+          DELETE FROM auth.users WHERE id = '{ned}';
+          SELECT count(*) FROM private.ambassador_welcomes WHERE member_id = '{ned}';
+          DELETE FROM auth.users WHERE id = '{amy}';
+          SELECT (SELECT count(*) FROM private.ambassador_log WHERE ambassador_id = '{amy}')
+            + (SELECT count(*) FROM private.ambassador_agreement_ack WHERE user_id = '{amy}')
+            + (SELECT count(*) FROM private.ambassador_welcomes WHERE ambassador_id = '{amy}')""", expect="0\n0")
+    check("... her flags stay with our team, still marked (no longer linked to her)",
+          "SELECT count(*) >= 6 FROM reports WHERE reporter_id IS NULL AND ambassador_city = 'Düsseldorf'", expect="t")
+    with open(os.path.join(root, "supabase", "oneoff", "2026-10-27-ambassador-panel", "run_in_sql_editor.sql"),
+              encoding="utf-8") as f:
+        oneoff = f.read()
+    marker = "-- ==== 20261027000000_ambassador_panel.sql ====\n"
+    with open(AMBASSADOR_PANEL, encoding="utf-8") as f:
+        migration = f.read()
+    guard = oneoff[:oneoff.index(marker)] if marker in oneoff else ""
+    verdict("the one-off file is its guard (after the travel board, once) and then the migration as it is",
+            marker in oneoff and oneoff[oneoff.index(marker) + len(marker):] == migration
+            and "to_regclass('public.travel_posts') IS NULL" in guard
+            and "to_regclass('private.ambassador_agreement_ack') IS NOT NULL" in guard, "the file differs")
+    ok, _, err = psql(migration)
+    verdict("the migration can be run again", ok, err[:300])
+    check("... and members still can't mark events themselves",
+          f"INSERT INTO events (title, date, city, organizer_id, ambassador_hosted) VALUES ('Holi', {soon}, 'Kiel', "
+          "auth.uid(), true) RETURNING ambassador_hosted", as_user=kim, expect="f")
 
 
 if __name__ == "__main__":

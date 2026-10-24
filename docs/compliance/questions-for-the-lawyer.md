@@ -203,6 +203,20 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
     written volunteer agreement (what ambassadors may say on NRIClub's
     behalf, posters and stickers at universities, organising meetups,
     expenses)?
+14. **The ambassador agreement and panel** (2026-10-27; text in
+    `src/content/ambassador.js`, Privacy Policy 2026-10-24, section 2, "City
+    ambassadors and their panel"). Ambassadors accept a short, versioned
+    agreement before they use the panel (unpaid volunteer role; act for
+    NRIClub only in the panel's tasks; members' data confidential, used only
+    on NRIClub; never remove or judge content; we can end it, they can step
+    down). It is separate from the Terms of Use, which didn't change. The
+    panel shows newcomers to the city group (name, photo, join date, as
+    members see them) and logs the ambassador's actions for our team (12
+    months). Questions: is the agreement enough as a written volunteer
+    agreement (and is Art. 6(1)(b) right for it)? Do ambassadors who see
+    newcomers' names need a confidentiality undertaking beyond it (Art. 29
+    GDPR), as admins sign? Is legitimate interest right for showing
+    newcomers to the ambassador, and is 30 days a fair window?
 
 ### In the code, outside the legal texts (the texts allow for them)
 

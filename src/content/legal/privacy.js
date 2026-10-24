@@ -12,8 +12,8 @@ import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
 
-export const PRIVACY_VERSION = "2026-10-23";
-export const PRIVACY_DATE = "23 October 2026";
+export const PRIVACY_VERSION = "2026-10-24";
+export const PRIVACY_DATE = "24 October 2026";
 
 // How long data is kept: the periods this Policy promises. Until clean-up
 // jobs run on the database (plan C20), our team deletes by hand once a month
@@ -41,6 +41,8 @@ export const RETENTION = {
   inboxMonths: 12, // emails to hello@ in the admin panel's inbox, after they arrived (private.daily_cleanup)
   travelPostDays: 30, // travel board posts, after their last date (private.daily_cleanup)
   travelLimitDays: 30, // when a member posted on the travel board, for its limits (private.rate_log)
+  ambassadorLogMonths: 12, // what city ambassadors did in their panel (private.ambassador_log), after each entry (private.daily_cleanup)
+  ambassadorWelcomeMonths: 12, // newcomers an ambassador marked as welcomed (private.ambassador_welcomes), after each (private.daily_cleanup)
   // Photo files: true since the site deletes them with their post, listing,
   // event or profile photo and with the account (plan C1), and the photo
   // clean-up in the admin panel (src/admin/PhotoCleanup.jsx) deletes what is
@@ -218,6 +220,13 @@ export function privacyDoc() {
             ["Who sees it", "only our team. Other members don't see your application."],
             ["How long", `an application we've decided on (accepted or declined) is deleted ${months(R.ambassadorDecidedMonths)} after our decision; one we haven't decided on, ${months(R.ambassadorUndecidedMonths)} after you sent it. The coded addresses behind the daily limits are deleted after ${R.ambassadorLimitHours} hours. Deleting your account doesn't delete an application you sent: it stays, no longer linked to the account, for these periods (write to us to have it deleted sooner). Emails about it are kept like the other emails you send us (below).`],
           ] },
+          { id: "ambassador-panel", title: "City ambassadors and their panel", fields: [
+            ["What", "if you're a city ambassador: when you accepted the ambassador agreement, and which version of it; the newcomers you mark as welcomed in the ambassador panel, and when; and a log of what you do as ambassador: changing your city group's description (with the text before and after), pinning and unpinning its starter post, marking your meetups \"Hosted by the city ambassador\", flagging something to our team, and stepping down, each with the date. What you flag to our team is a report (\"Reports, notices of illegal content and moderation\" below), marked as coming from the city's ambassador. If you join a city's group, its ambassador sees in the panel, for 30 days, that you joined (section 4), and if they mark you as welcomed, that is kept as above."],
+            ["Why", "to run the volunteer role: so ambassadors can welcome newcomers without welcoming anyone twice, and so our team can see how the role is used, support ambassadors and put things right, for example a description changed by mistake."],
+            ["Legal basis", "for the ambassador's own data, the ambassador agreement (contract, Art. 6(1)(b) GDPR). For newcomers in the panel, the welcomes and the log: legitimate interests (welcoming new members to their city, and overseeing a role that acts for NRIClub)."],
+            ["Who sees it", "the welcomes: only the ambassador who made them, and our team. The record of the agreement and the log: only our team, and the ambassador in \"Download my data\". In the panel an ambassador sees only what other members see: newcomers' names, photos and when they joined the group, without members who blocked them or whom they blocked. The agreement binds ambassadors to use this only for their tasks on NRIClub and to keep it to themselves."],
+            ["How long", `each entry in the log is deleted ${months(R.ambassadorLogMonths)} after it was made, and each welcome ${months(R.ambassadorWelcomeMonths)} after it was marked. Deleting the ambassador's account deletes the record of the agreement, the welcomes and the log at once; deleting a member's account deletes the welcomes about them. Otherwise the record of the agreement is kept until the ambassador deletes their account, so we can show what was agreed.`],
+          ] },
           { title: "Server and security logs", fields: [
             ["What", "when you use NRIClub, the servers of our providers automatically log each request: IP address, time, the page or data requested, browser and device type, and any error."],
             ["Why", "to deliver the site, find faults, and detect and stop attacks and misuse."],
@@ -272,7 +281,7 @@ export function privacyDoc() {
               : "While you wait for our check, approved members can already see your profile (name, photo, city and what else you filled in), but not your check details."}`],
           ] },
           { title: "Your city group and its ambassadors", fields: [
-            ["What", "when you join a city's group, the city's ambassador is told. If you post an urgent question, the city's ambassadors and up to 500 members of your city group get an in-app notice with your name and the question's title."],
+            ["What", "when you join a city's group, the city's ambassador is told, and for 30 days sees in their ambassador panel that you joined, with your name, photo and the day, as members of the group can. If you post an urgent question, the city's ambassadors and up to 500 members of your city group get an in-app notice with your name and the question's title. The panel also lists questions from your city still waiting for an answer, as Ask does. Events the city's ambassador hosts show \"Hosted by the city ambassador\" (section 2, \"City ambassadors and their panel\")."],
           ] },
           { title: "Only the people involved", fields: [
             ["Messages", "only you and the member you write with. Messages are encrypted on the way and stored encrypted by our database provider, but they are not end-to-end encrypted. Our admin tools don't show them, and we don't read them, with one exception: if the member you write with reports one of your messages to us, our team sees that one message to decide on the report."],
@@ -281,7 +290,7 @@ export function privacyDoc() {
             ["Your invite link", "it carries a random code, not your member ID. Someone who signs up through it sees your first name and member ID in the details they send for our check, where we fill in who invited them."],
           ] },
           { title: "Our team", fields: [
-            ["What", `everything approved members see${VISIBILITY.onlyApprovedListed ? " (your profile also while other members don't see it)" : ""}, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, our decisions about your content and account, your account status, the record of your confirmations and consent, and an application to be a city ambassador if you send one. Not your messages, except one reported to us (above).`],
+            ["What", `everything approved members see${VISIBILITY.onlyApprovedListed ? " (your profile also while other members don't see it)" : ""}, plus your email address, your check details (LinkedIn link or note, the member who vouched for you, our notes and decisions), reports you send or that concern you, our decisions about your content and account, your account status, the record of your confirmations and consent, an application to be a city ambassador if you send one, and, if you're an ambassador, when you accepted the ambassador agreement and what you did as ambassador. Not your messages, except one reported to us (above).`],
           ] },
           { title: "Our service providers", fields: [
             ["What", "they store and process data for us (section 7)."],
@@ -363,7 +372,7 @@ export function privacyDoc() {
         { p: "We keep data only as long as we need it for the purposes in section 2, and for the periods given there." },
         { ul: [
           [strong("Your account, profile and content"), " stay until you delete them or your account, or until we delete an account as section 2 says (a sign-up never confirmed, an account that never sent its check details, or one we declined or whose membership we ended)."],
-          [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, travel board posts and your agreement to the board's rules, the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
+          [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings, travel board posts and your agreement to the board's rules, the record of the ambassador agreement and the ambassador log and welcomes (also welcomes about you), the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
           photoFilesText(),
           [strong("What stays after you delete your account:"), " places you added to a city's list and groups you created, without your name, because other members use them; reports you sent about content or members, and reports other members made about you, no longer linked to your account (their text can still contain your name); the record of our decisions about your content and account, no longer linked to it; copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; an application to be a city ambassador, no longer linked to your account, until it is deleted (section 2); emails you sent us (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2)."],
           ...(R.byHand ? [`Until these deletions run automatically, our team carries them out by hand${R.photoFilesDeleted ? " once a month" : ": photo files every week, everything else once a month"}, so data can stay up to a month longer than the period given.`] : []),
@@ -386,7 +395,7 @@ export function privacyDoc() {
 
       { id: "object", title: "11. Your right to object", blocks: [
         { box: { title: "Right to object (Widerspruchsrecht, Art. 21 GDPR)", blocks: [
-          { p: [strong("Where we process your data on the basis of legitimate interests (Art. 6(1)(f) GDPR), you can object at any time, on grounds relating to your particular situation."), " This covers in particular the membership check, sign-in sessions as far as they serve security, the record of your age confirmation and of which Terms you accepted, reports and moderation, the record of declined and blocked accounts, keeping applications to be a city ambassador after our decision and the limits on that form, places members add about businesses and practices (section 5), server and security logs, and emails we answer on that basis (section 2)."] },
+          { p: [strong("Where we process your data on the basis of legitimate interests (Art. 6(1)(f) GDPR), you can object at any time, on grounds relating to your particular situation."), " This covers in particular the membership check, sign-in sessions as far as they serve security, the record of your age confirmation and of which Terms you accepted, reports and moderation, the record of declined and blocked accounts, keeping applications to be a city ambassador after our decision and the limits on that form, the ambassador panel's newcomers, welcomes and log, places members add about businesses and practices (section 5), server and security logs, and emails we answer on that basis (section 2)."] },
           { p: "If you object, we stop unless we can show compelling legitimate grounds that override your interests, rights and freedoms, or we need the data to establish, exercise or defend legal claims." },
           { p: ["To object, write to ", mail("Objection"), "."] },
         ] } },

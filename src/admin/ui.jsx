@@ -77,6 +77,8 @@ const TONES = {
   green: ["#DDEDEA", "#0F7B6C"],
   red: ["#FBE4E4", "#E03E3E"],
   blue: ["#DDEBF1", "#0B6E99"],
+  // City ambassadors (as their badge in the app).
+  indigo: ["#EEF2FF", "#3730A3"],
 };
 
 export function Pill({ tone = "gray", dot = true, children, title }) {
@@ -441,6 +443,32 @@ button.adm-stat:hover { background:#FBFBFA; }
 .adm-bar { width:100%; max-width:36px; background:#5B9CFF; border-radius:4px 4px 0 0; min-height:2px; }
 .adm-bar.is-zero { background:#EDEDEB; }
 .adm-bar-label { font-size:11px; color:var(--faint); white-space:nowrap; }
+
+/* Ambassador coverage (AmbassadorCoverage.jsx): soft saffron, green and indigo */
+.adm-cov { margin-top:10px; border:1px solid #F1E6D6; border-radius:10px; padding:16px 18px; background:linear-gradient(135deg, #FFF8F0 0%, #F5FBF7 55%, #F4F5FE 100%); }
+.adm-cov-head { display:flex; align-items:baseline; gap:4px 14px; flex-wrap:wrap; }
+.adm-cov-big { font-size:20px; font-weight:600; line-height:1.3; font-variant-numeric:tabular-nums; }
+.adm-cov-bar { height:8px; border-radius:4px; background:rgba(55,53,47,0.07); overflow:hidden; margin:10px 0 14px; }
+.adm-cov-bar > span { display:block; height:100%; border-radius:4px; background:linear-gradient(90deg, #F2B36F, #8CCBA2); }
+.adm-cov-states { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:6px; }
+.adm-cov-state { display:flex; justify-content:space-between; align-items:center; gap:6px; min-width:0; padding:4px 8px; border:1px solid transparent; border-radius:6px; background:#FFF1E0; color:#8A4B0F; font:inherit; font-size:12px; line-height:1.4; text-align:left; cursor:pointer; }
+.adm-cov-state.is-some { background:#E7F5EC; color:#1E6B3A; }
+.adm-cov-state.is-all { background:#D2EEDC; color:#14532D; }
+.adm-cov-state:hover { filter:brightness(0.97); }
+.adm-cov-state[aria-pressed="true"] { border-color:currentColor; }
+.adm-cov-state-name { min-width:0; overflow-wrap:anywhere; }
+.adm-cov-state-count { flex-shrink:0; font-weight:600; font-variant-numeric:tabular-nums; }
+.adm-cov-lists { display:grid; grid-template-columns:repeat(auto-fit, minmax(290px, 1fr)); gap:16px; align-items:start; }
+.adm-cov-list { border:1px solid var(--line); border-radius:8px; background:#fff; overflow:hidden; min-width:0; }
+.adm-cov-list-head { display:flex; align-items:center; gap:8px; padding:8px 12px; font-size:13px; font-weight:600; }
+.adm-cov-list-head.is-covered { background:#EEF8F1; color:#1E6B3A; }
+.adm-cov-list-head.is-needed { background:#FFF4E6; color:#8A4B0F; }
+.adm-cov-list-head.is-other { background:#EEF2FF; color:#3730A3; }
+.adm-cov-count { font-weight:500; opacity:.75; font-variant-numeric:tabular-nums; }
+.adm-cov-city { padding:10px 12px; border-top:1px solid var(--line); font-size:13px; overflow-wrap:anywhere; }
+.adm-cov-city-name { font-weight:600; color:var(--text); }
+.adm-cov-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; margin-top:4px; }
+.adm-cov-apps { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 12px; margin-bottom:12px; border-radius:6px; background:#FFF4E6; color:#8A4B0F; font-size:13px; }
 
 @media (max-width: 1100px) {
   .adm-page { padding:56px 40px 120px; }
