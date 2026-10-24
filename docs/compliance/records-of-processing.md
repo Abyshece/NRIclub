@@ -245,6 +245,20 @@ by email (No. 13).
 | Recipients | Admins only (admin panel → Ambassadors; an in-app `alert` notice per new application with the city and reference only, not the applicant's name, No. 7); the applicant's own applications in "Download my data" (without the note). Replies go by email from hello@ (No. 13) |
 | Retention | 6 months after the decision (accepted or declined); undecided ones 12 months after they were sent; limit hashes 1 day. Not deleted with the account: the link to it is removed, and the application stays for these periods. Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
 
+### 17. City ambassadors' panel
+
+Since the database update `20261027000000_ambassador_panel.sql` (the site
+shows "Coming soon" before it).
+
+| | |
+|---|---|
+| Purpose | Let volunteer city ambassadors welcome newcomers to their city group, point to open questions, look after the group's description and starter post, mark their meetups and flag problems to our team; let our team oversee the role |
+| Legal basis | The ambassador's own data: Art. 6(1)(b) (the ambassador agreement, accepted in the panel, versioned). Newcomers shown in the panel, welcomes and the log: Art. 6(1)(f) (welcoming new members; overseeing a role that acts for NRIClub) |
+| Data subjects | City ambassadors; members of the city group who joined in the last 30 days; askers of open questions from the city |
+| Data | When and which version of the agreement was accepted (`private.ambassador_agreement_ack`); newcomers marked as welcomed, by whom and when (`private.ambassador_welcomes`); the log of the ambassador's actions with the city and details, e.g. the group description before and after (`private.ambassador_log`); `events.ambassador_hosted`; `reports.ambassador_city` on flags (a report like any other, No. 7/8). The panel shows newcomers' id, name, photo and join date only, as members already see them, without blocked pairs or accounts not shown to members |
+| Recipients | The welcomes: the ambassador who made them and admins. The agreement record and the log: admins only (admin panel → Ambassadors, `public.admin_ambassador_activity`), and the ambassador in "Download my data". Every admin gets an in-app `alert` for a flag and when an ambassador steps down |
+| Retention | Log and welcomes: 12 months after each entry; all three deleted with the ambassador's account, welcomes also with the welcomed member's account; the agreement record otherwise until the account is deleted. Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
+
 ## Technical and organisational measures
 
 See `toms.md` (Art. 30(1)(g), Art. 32).
