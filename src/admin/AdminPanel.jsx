@@ -14,6 +14,7 @@ import WhatsOnView from "./WhatsOnView";
 import InboxView from "./InboxView";
 import OverviewView from "./OverviewView";
 import SecurityView from "./SecurityView";
+import AnalyticsView from "./AnalyticsView";
 import { usePhotoCleanup } from "./PhotoCleanup";
 import { FeedbackView, ReportsView, contentPreview, isFeedback, isOpenBug, isOpenIdea, isOpenReport, isSafetyReport, personOf, targetKey } from "./ReportsView";
 import { ADMIN_CSS, ErrorNote, Icon, SkeletonRows, Toast } from "./ui";
@@ -319,6 +320,7 @@ export default function AdminPanel({ onLogout }) {
     { key: "bugs", label: "Feedback", icon: "bug", count: feedbackCount },
     { key: "inbox", label: "Inbox", icon: "mail", count: inboxUnread || 0 },
     { key: "overview", label: "Overview", icon: "chart" },
+    { key: "analytics", label: "Analytics", icon: "eye" },
     { key: "security", label: "Security", icon: "lock" },
   ];
 
@@ -357,6 +359,8 @@ export default function AdminPanel({ onLogout }) {
     content = <WhatsOnView showToast={showToast} />;
   } else if (page === "inbox") {
     content = <InboxView showToast={showToast} onUnread={setInboxUnread} />;
+  } else if (page === "analytics") {
+    content = <AnalyticsView />;
   } else if (page === "security") {
     content = <SecurityView showToast={showToast} />;
   } else if (page === "bugs") {
