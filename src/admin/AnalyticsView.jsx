@@ -127,6 +127,7 @@ function VisitsChart({ days }) {
   const barW = Math.max(1, Math.min(28, step - 2));
   const total = days.reduce((s, d) => s + d.sessions, 0);
   const shown = hover != null ? days[hover] : null;
+  if (!days.length) return null;
   return (
     <div>
       <div className="an-chart-sum adm-muted" aria-live="polite">

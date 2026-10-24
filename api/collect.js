@@ -244,12 +244,15 @@ export async function handle(request, env = {}) {
     // Supabase's newer secret keys ("sb_secret_…") go in apikey only; the
     // older service_role key (a JWT) also as the bearer token.
     const auth = key.startsWith("sb_") ? {} : { Authorization: `Bearer ${key}` };
-    await fetch(`${url}/rest/v1/rpc/analytics_ingest`, {
+    const res = await fetch(`${url}/rest/v1/rpc/analytics_ingest`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: key, ...auth },
       body: JSON.stringify({ p_events: checked.events, p_meta: meta }),
       signal: AbortSignal.timeout(5000),
     });
+    // For Vercel's function logs (a wrong key, or the SQL not run yet);
+    // nothing about the visitor.
+    if (!res.ok) console.warn(`analytics: the database answered ${res.status}`);
   } catch { /* dropped: analytics never get in a visitor's way */ }
   return answer(204);
 }
