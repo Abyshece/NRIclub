@@ -25,6 +25,7 @@ the monthly part of this routine.
 | Applications to be a city ambassador (`private.ambassador_applications`) | 6 months after our decision (accepted or declined); undecided ones 12 months after they were sent | once a month |
 | Coded addresses behind the application limits (`private.ambassador_application_log`) | 24 hours | once a month |
 | Travel board posts (`public.travel_posts`) | 30 days after their last date | once a month |
+| Housing listings with details (`public.housing_listings`, with their Market listing) and "Looking for a place" posts (`public.housing_wanted`); the counts behind their limits (`private.housing_post_log`) | 30 days after they expired (listings: their "until" date, or 60 days after posting or renewal if open-ended; looking posts: their end date, or 60 days); counts 30 days | **automatic** every night (pg_cron job `nriclub-housing-cleanup`, since the update of 30 October 2026); if it isn't scheduled, run `SELECT private.housing_cleanup();` once a month |
 | What city ambassadors did in their panel (`private.ambassador_log`) and the newcomers they marked as welcomed (`private.ambassador_welcomes`) | 12 months after each entry | once a month |
 | Record of our decisions (`private.moderation_action`) | 24 months; the copy of removed content in it after 6 months | once a month |
 | Record of declined and blocked accounts | 24 months after the decision; its note after 12 months | once a month |

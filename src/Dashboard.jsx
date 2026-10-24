@@ -15,6 +15,8 @@ import { upcomingFestival } from "./festivals";
 import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
 import TravelBoard from "./member/TravelBoard";
+import HousingSearch, { HousingFields, HousingListingInfo, useHousingStatus, EMPTY_HOUSING } from "./member/HousingSearch";
+import { listingProblem, money } from "./content/housing";
 import ReportDialog from "./member/ReportDialog";
 import { HostedBadge, sameCity } from "./member/ambassadorBits";
 import { MEETUP_TITLE } from "./content/ambassador";
@@ -183,6 +185,13 @@ const listingPhotos = (value) => {
   return parsed.filter(p => typeof p === "string" && /^https?:\/\//i.test(p));
 };
 
+// A marketplace row (with its author's profile) as the Market shows it.
+const toMarketItem = (m) => ({
+  id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location,
+  seller: m.profiles?.name || "User", sellerHidden: !!m.profiles?.unlisted, date: new Date(m.created_at).toLocaleDateString(),
+  photos: listingPhotos(m.image_url), color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)],
+});
+
 // The tags stored with a post: its hashtags, each once, plus the
 // "__external__" marker for posts with a link. Kept within the database's
 // limits (30 tags, 1,500 characters in all) so a post can always be published.
@@ -222,7 +231,7 @@ const MARKET_LABELS = { Housing: "Housing & roommates", Referrals: "Job referral
 const MARKET_CATEGORIES = ["Housing", "Referrals", "Jobs", "Items", "Vehicles", "Services"];
 const marketLabel = (c) => MARKET_LABELS[c] || c;
 const MARKET_FORM = {
-  Housing: { title: "e.g. Room in a 2-bedroom flat, Kreuzberg", price: "Rent / month", pricePh: "e.g. €650", desc: "Area, move-in date, who you're looking for..." },
+  Housing: { title: "e.g. Room in a 2-bedroom flat, Kreuzberg", price: "Rent / month", pricePh: "e.g. €650", desc: "Describe the place: the rooms, the area, transport, what the rent includes..." },
   Jobs: { title: "e.g. Hiring: Java developer", price: "Salary (optional)", pricePh: "e.g. €60k", desc: "Role, company, how to apply..." },
   Referrals: { title: "e.g. I can refer at Siemens (software roles)", price: null, desc: "Which company and roles, or which referral you're looking for..." },
 };
@@ -706,7 +715,7 @@ const toHelp = (h, responses) => ({
 });
 
 // The small sign on a notification's avatar, by type.
-const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐", moderation: "🛡️", report: "🚩", alert: "⚠️", travel_match: "✈️", profile: "✏️" };
+const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐", moderation: "🛡️", report: "🚩", alert: "⚠️", travel_match: "✈️", housing_match: "🏠", profile: "✏️" };
 
 // Messages from our team (the database writes them): why we removed
 // something of the member's or acted on their account (a statement of
@@ -1493,6 +1502,14 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   const [newMarket, setNewMarket] = useState({ title: "", price: "", category: "Items", city: "", description: "" });
   const [marketPhotos, setMarketPhotos] = useState([]);
   const [marketItems, setMarketItems] = useState([]);
+  // Housing in the Market (member/HousingSearch.jsx): the details asked in
+  // "Post in Market" for Housing once the database has the housing search
+  // (housingStatus: undefined until known, null before that update).
+  const [newHousing, setNewHousing] = useState(EMPTY_HOUSING);
+  const [housingError, setHousingError] = useState("");
+  const [housingKey, setHousingKey] = useState(0);
+  const housingStatus = useHousingStatus(marketModal);
+  const housingForm = newMarket.category === "Housing" && !!housingStatus;
   // Host Event, Create Doc and Post Item start at the member's own city (they can still change it).
   const myCity = GLOBAL_CITIES.find(c => c.toLowerCase() === (user.location || "").split(",")[0].trim().toLowerCase()) || "";
   useEffect(() => { if (eventModal && myCity && !editingEvent) setNewEvent(prev => prev.city ? prev : { ...prev, city: myCity }); }, [eventModal, myCity]);
@@ -1773,10 +1790,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       }
       if (dbNotifs) setNotifsLoaded(true);
       if (dbMarket && dbMarket.length) {
-        setMarketItems(dbMarket.map(m => {
-          const photos = listingPhotos(m.image_url);
-          return { id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location, seller: m.profiles?.name || "User", sellerHidden: !!m.profiles?.unlisted, date: new Date(m.created_at).toLocaleDateString(), photos, color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)] };
-        }));
+        setMarketItems(dbMarket.map(toMarketItem));
       }
       setListsLoaded(true);
     })();
@@ -4321,7 +4335,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 <h2 style={{ fontSize: 22, fontWeight: 700, color: "#37352F", fontFamily: font }}>Marketplace</h2>
                 <p style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>Buy, sell, rent, and find services within the community.</p>
               </div>
-              <button onClick={() => setMarketModal(true)} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Post Item</button>
+              <button onClick={() => { if (marketCategory === "Housing") setNewMarket(prev => ({ ...prev, category: "Housing" })); setMarketModal(true); }} style={{ ...btnPrimary, whiteSpace: "nowrap", flexShrink: 0 }}>{Icons.plus({ size: 14 })} Post Item</button>
             </div>
             {/* Travel companions and documents: the travel board. */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "12px 14px", marginBottom: 16, background: "#F5F8FF", border: "1px solid #DCE6FA", borderRadius: 12, fontFamily: font }}>
@@ -4350,6 +4364,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 </button>
               ))}
             </div>
+            {/* Housing: search by city and dates, "Looking for a place" posts
+                and the member's own housing listings (before the database
+                update it says it's coming soon). The listings below stay. */}
+            {marketCategory === "Housing" && (
+              <HousingSearch key={housingKey} user={user} Avatar={Avatar} reportedIds={reportedIds} blockedIds={blockedIds}
+                onOpen={(item) => { setMarketPhotoIdx(0); setExpandedMarketItem(item); }}
+                onContact={(item) => { setSelectedMarketItem(item); setContactMsg(contactGreeting(item)); }}
+                onReport={setReportConfirm}
+                onPost={() => { setNewMarket(prev => ({ ...prev, category: "Housing" })); setMarketModal(true); }} />
+            )}
+            {marketCategory === "Housing" && <h3 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 10px", fontFamily: font }}>All housing listings</h3>}
             {/* Items grid */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="market-grid">
               {filteredMarket.map(item => (
@@ -4809,6 +4834,27 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     }
   };
 
+  // Opens a Market listing (e.g. from a notification) in the Market, with
+  // its category chosen; one posted since the lists loaded is fetched.
+  const openMarketListing = async (id, category = "All") => {
+    setMarketCategory(category);
+    setView("market");
+    if (!id) return;
+    let item = marketItems.find(i => String(i.id) === String(id));
+    if (!item) {
+      try {
+        const row = await api.getMarketItem(String(id));
+        if (row && !blockedIds.has(row.user_id)) {
+          item = toMarketItem(row);
+          setMarketItems(prev => prev.some(i => i.id === item.id) ? prev : [item, ...prev]);
+        }
+      } catch (e) {}
+    }
+    if (!item) { alert("This listing isn't available any more."); return; }
+    setMarketPhotoIdx(0);
+    setExpandedMarketItem(item);
+  };
+
   // A notification from the bell (or from its pop-up): go where it points.
   const openNotification = (n) => {
     if (n.type === "like" || n.type === "comment") {
@@ -4848,6 +4894,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
       setTravelFocus(n.reference_id ? String(n.reference_id) : null);
       setView("travel");
+    } else if (n.type === "housing_match") {
+      // A new housing listing that fits what the member is looking for.
+      setNotifOpen(false);
+      Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+      openMarketListing(n.reference_id, "Housing");
     } else if (n.type === "profile") {
       // A reminder from our team about missing profile details.
       setNotifOpen(false);
@@ -5745,6 +5797,22 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               {/* Description */}
               <p style={{ fontSize: 15, color: "#5F5E5B", lineHeight: 1.7, marginBottom: 20, fontFamily: font }}>{expandedMarketItem.description}</p>
 
+              {/* Housing: the place's details and the safety warning; for its
+                  author, renewing or changing it and who is looking. */}
+              {expandedMarketItem.category === "Housing" && (
+                <HousingListingInfo item={expandedMarketItem} user={user} Avatar={Avatar}
+                  onMessage={async (id, text) => {
+                    const problem = id && id !== user.id ? await sendFirstMessage(id, text) : "You can't message this member.";
+                    if (!problem) { setExpandedMarketItem(null); setMarketPhotoIdx(0); }
+                    return problem;
+                  }}
+                  onChanged={(h) => {
+                    setMarketItems(prev => prev.map(i => i.id === h.listing_id ? { ...i, price: `${money(h.warm_rent)}/month warm`, location: h.city } : i));
+                    setExpandedMarketItem(prev => prev && prev.id === h.listing_id ? { ...prev, price: `${money(h.warm_rent)}/month warm`, location: h.city } : prev);
+                    setHousingKey(k => k + 1);
+                  }} />
+              )}
+
               {/* Details grid */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
                 <div style={{ padding: "12px 14px", background: "#FAFAF8", borderRadius: 8, border: "1px solid #EDEDEB" }}>
@@ -6538,18 +6606,18 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
             </div>
             <div style={{ padding: 24 }}>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
-                <input style={inputStyle} value={newMarket.title} onChange={(e) => setNewMarket({...newMarket, title: e.target.value})} placeholder={marketForm(newMarket.category).title} />
+                <label htmlFor="market-title" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Title</label>
+                <input id="market-title" style={inputStyle} value={newMarket.title} onChange={(e) => setNewMarket({...newMarket, title: e.target.value})} placeholder={marketForm(newMarket.category).title} />
               </div>
               <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-                {marketForm(newMarket.category).price ? (
+                {marketForm(newMarket.category).price && !housingForm ? (
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>{marketForm(newMarket.category).price}</label>
                   <input style={inputStyle} value={newMarket.price} onChange={(e) => setNewMarket({...newMarket, price: e.target.value})} placeholder={marketForm(newMarket.category).pricePh} />
                 </div>) : <div />}
                 <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
-                  <select style={{ ...inputStyle, appearance: "none", cursor: "pointer" }} value={newMarket.category} onChange={(e) => setNewMarket({...newMarket, category: e.target.value})}>
+                  <label htmlFor="market-category" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
+                  <select id="market-category" style={{ ...inputStyle, appearance: "none", cursor: "pointer" }} value={newMarket.category} onChange={(e) => setNewMarket({...newMarket, category: e.target.value})}>
                     {MARKET_CATEGORIES.map(c => <option key={c} value={c}>{marketLabel(c)}</option>)}
                   </select>
                 </div>
@@ -6558,15 +6626,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 Looking for a travel companion, or someone to carry documents? <button type="button" onClick={() => { setMarketModal(false); setTravelFocus(null); setView("travel"); }} style={{ background: "none", border: "none", padding: "4px 0", color: "#37352F", fontWeight: 600, textDecoration: "underline", cursor: "pointer", fontSize: 12, fontFamily: font }}>Use the travel board</button>.
               </p>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>City</label>
-                <select style={{ ...inputStyle, cursor: "pointer" }} value={newMarket.city} onChange={(e) => setNewMarket({...newMarket, city: e.target.value})}>
+                <label htmlFor="market-city" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>City</label>
+                <select id="market-city" style={{ ...inputStyle, cursor: "pointer" }} value={newMarket.city} onChange={(e) => setNewMarket({...newMarket, city: e.target.value})}>
                   <option value="">Select a city...</option>
                   {GLOBAL_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
+              {/* Housing: the details the housing search uses (once the database has it). */}
+              {housingForm && <HousingFields value={newHousing} onChange={(v) => { setNewHousing(v); setHousingError(""); }} today={todayInGermany()} idPrefix="market-housing" />}
               <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
-                <textarea style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newMarket.description} onChange={(e) => setNewMarket({...newMarket, description: e.target.value})} placeholder={marketForm(newMarket.category).desc} />
+                <label htmlFor="market-description" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
+                <textarea id="market-description" style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newMarket.description} onChange={(e) => setNewMarket({...newMarket, description: e.target.value})} placeholder={marketForm(newMarket.category).desc} />
               </div>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Photos (max 4)</label>
@@ -6592,9 +6662,17 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   )}
                 </div>
               </div>
+              {housingForm && housingError && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", lineHeight: 1.5, margin: "0 0 12px", fontFamily: font }}>{housingError}</p>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => { setMarketModal(false); setMarketPhotos([]); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
-                <button disabled={!newMarket.title || (marketForm(newMarket.category).price && !newMarket.price && newMarket.category !== "Jobs")} onClick={async () => {
+                <button disabled={!newMarket.title || (!housingForm && marketForm(newMarket.category).price && !newMarket.price && newMarket.category !== "Jobs")} onClick={async () => {
+                  // Housing with details: checked before any photo goes up.
+                  const housing = housingForm ? { ...newHousing, city: newMarket.city, until: newHousing.openEnded ? "" : newHousing.until } : null;
+                  if (housing) {
+                    const problem = listingProblem(housing, todayInGermany());
+                    setHousingError(problem);
+                    if (problem) return;
+                  }
                   // Upload photos to Supabase Storage
                   let imageUrls = [];
                   for (const photo of marketPhotos) {
@@ -6613,16 +6691,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                     }
                   }
                   try {
-                    const created = await api.createMarketItem({ title: newMarket.title, price: marketForm(newMarket.category).price ? newMarket.price : "", category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
-                    // Add to local state immediately
-                    setMarketItems(prev => [{ id: created?.[0]?.id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
+                    if (housing) {
+                      // The listing and its details in one go; members looking for such a place hear about it.
+                      const posted = await api.postHousingListing({ ...housing, title: newMarket.title, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
+                      setMarketItems(prev => [{ id: posted?.listing_id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: `${money(housing.rent)}/month warm`, category: "Housing", location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
+                      setNewHousing(EMPTY_HOUSING);
+                      setHousingKey(k => k + 1);
+                      pushToast({ id: "housing-posted", icon: "🏠", text: "Your housing listing is up. Members looking for a place like it get a notification." });
+                    } else {
+                      const created = await api.createMarketItem({ title: newMarket.title, price: marketForm(newMarket.category).price ? newMarket.price : "", category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
+                      // Add to local state immediately
+                      setMarketItems(prev => [{ id: created?.[0]?.id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
+                    }
                   } catch(e) {
                     api.deleteOwnImages(imageUrls);
+                    if (housing) { setHousingError(apiErrorMessage(e, "Your listing couldn't be posted. Please try again.")); return; }
                     alert(apiErrorMessage(e, "Your listing couldn't be posted. Please try again."));
                     return;
                   }
                   setNewMarket({ title: "", price: "", category: "Items", city: "", description: "" }); setMarketPhotos([]); setMarketModal(false);
-                }} style={{ ...btnPrimary, opacity: newMarket.title && (!marketForm(newMarket.category).price || newMarket.price || newMarket.category === "Jobs") ? 1 : 0.4 }}>Post</button>
+                }} style={{ ...btnPrimary, opacity: newMarket.title && (housingForm || !marketForm(newMarket.category).price || newMarket.price || newMarket.category === "Jobs") ? 1 : 0.4 }}>Post</button>
               </div>
             </div>
           </div>
