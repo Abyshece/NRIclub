@@ -35,6 +35,8 @@ ADMIN_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mi
                            "20261025100000_admin_tools.sql")
 TRAVEL_BOARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                             "20261026000000_travel_board.sql")
+PROFILE_COMPLETENESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                                    "20261028000000_profile_completeness.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1335,6 +1337,7 @@ def main():
     member_fixes()
     admin_tools()
     travel_board()
+    profile_completeness()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -4508,6 +4511,333 @@ def travel_board():
     verdict("the migration can be run again", ok, err[:300])
     check("... and still asks for the rules before a post", trip("offer", "Berlin", "Mumbai", 10), as_user=yash,
           error_has="row-level security")
+
+
+def sq(text):
+    """text as an SQL string literal."""
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+def profile_completeness():
+    """Members' progress in the admin panel: sign-up stages, profile
+    completeness and reminders about missing profile details: migration
+    20261028000000_profile_completeness."""
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    with open(PROFILE_COMPLETENESS, encoding="utf-8") as f:
+        migration = f.read()
+    # The travel board's checks above ran that update again, and its list of
+    # kinds of notification has no 'profile': this update runs after it.
+    ok, _, err = psql(migration)
+    verdict("the update runs after the travel board's", ok, err[:300])
+    full, six, none, nocity, pend, blk, unconf, unfin, needs, rej, gone = (
+        f"00000000-0000-0000-0000-000000000b{n}" for n in ("01", "02", "03", "04", "05", "06", "07", "08", "09", "0a", "0b"))
+    emails = {full: "fatima.pc@example.com", six: "sami.pc@example.com", none: "nora.pc@example.com",
+              nocity: "cyrus.pc@example.com", pend: "pia.pc@example.com", blk: "bala.pc@example.com",
+              unconf: "uma.pc@example.com", unfin: "uday.pc@example.com", needs: "neel.pc@example.com",
+              rej: "ravi.pc@example.com", gone: "gita.pc@example.com"}
+    for uid, city in ((full, "Regensburg"), (six, "Regensburg"), (none, "Berlin"), (nocity, "Berlin"), (blk, "Berlin"), (gone, "Berlin")):
+        approved_member(uid, emails[uid], emails[uid].split(".")[0].title() + " PC", city)
+    items = {"avatar_url": None, "profession": "Engineer", "occupation_status": "Student", "bio": "Chai and cricket.",
+             "hometown": "Pune", "ask_me_about": "Blue Card, schools", "years_abroad": "1-3 years"}
+
+    def fill(uid, skip=()):
+        sets = ", ".join(f"{k} = {sq(v or f'{STORE}/avatars/{uid}/me.jpg')}" for k, v in items.items() if k not in skip)
+        ok, _, err = psql(f"UPDATE profiles SET {sets} WHERE id = '{uid}'")
+        if not ok:
+            sys.exit(f"filling a profile failed: {err}")
+    fill(full)
+    fill(six, skip=("avatar_url",))
+    fill(nocity, skip=("bio", "hometown"))
+    psql(f"UPDATE profiles SET city = '' WHERE id = '{nocity}'")
+    sign_up(pend, emails[pend], {"full_name": "Pia PC"}, accept_terms=True)
+    sign_up(needs, emails[needs], {"full_name": "Neel PC"}, accept_terms=True)
+    sign_up(rej, emails[rej], {"full_name": "Ravi PC"}, accept_terms=True)
+    psql(f"UPDATE profile_private SET verification_status = 'pending', submitted_at = now() WHERE id IN ('{pend}', '{needs}', '{rej}')")
+    psql(as_admin(f"SELECT public.review_member('{needs}', 'needs_info', 'Please add your LinkedIn link.', ''); "
+                  f"SELECT public.review_member('{rej}', 'rejected', 'We could not confirm you live abroad.', '')"))
+    sign_up(unconf, emails[unconf], {"full_name": "Uma PC"}, confirmed=False)
+    sign_up(unfin, emails[unfin], {"full_name": "Uday PC"}, accept_terms=True)
+    fill(blk)
+    check("our team blocks bala (approved, complete profile)", block(blk), as_user=ADMIN, expect="blocked")
+
+    # The words, as the site sends them (src/content/profileReminders.js).
+    proc = subprocess.run(["node", "--input-type=module", "-e",
+                           "import * as r from './src/content/profileReminders.js';"
+                           "console.log(JSON.stringify({ keys: r.PROFILE_ITEM_KEYS, days: r.REMINDER_DAYS,"
+                           " payload: Object.fromEntries(['general', ...r.PROFILE_ITEM_KEYS].map((k) => [k, r.reminderPayload(k)])) }))"],
+                          cwd=root, capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.exit(f"reading src/content/profileReminders.js failed: {proc.stderr[:300]}")
+    js = json.loads(proc.stdout)
+
+    def js_text(kind, missing, city):
+        p = subprocess.run(["node", "--input-type=module", "-e",
+                            "import { reminderText } from './src/content/profileReminders.js';"
+                            f"console.log(reminderText({json.dumps(kind)}, {{ missing: {json.dumps(missing)}, city: {json.dumps(city)} }}))"],
+                           cwd=root, capture_output=True, text=True)
+        return p.stdout.rstrip("\n")
+
+    def send(ids, kind, text=None, words=None):
+        payload = js["payload"].get(kind, {"text": "x", "words": {}})
+        return (f"public.admin_send_profile_reminders(ARRAY[{', '.join(sq(i) for i in ids)}]::uuid[], {sq(kind)}, "
+                f"{sq(payload['text'] if text is None else text)}, {sq(json.dumps(payload['words'] if words is None else words))}::jsonb)")
+
+    def outcome(ids, kind, **kw):
+        return (f"SELECT concat_ws('|', r->>'sent', r->>'skipped_recent', r->>'skipped_complete', r->>'skipped_not_eligible') "
+                f"FROM (SELECT {send(ids, kind, **kw)}) x(r)")
+
+    stage_list = lambda stage, q="": f"public.admin_signup_stages({sq(stage)}, {sq(q)})"
+    progress = lambda **kw: "public.admin_profile_completeness(" + ", ".join(
+        f"p_{k} => {sq(v) if isinstance(v, str) else ('NULL' if v is None else str(v).lower())}" for k, v in kw.items()) + ")"
+    one = lambda uid, fields: (f"SELECT concat_ws('|', {', '.join(f'm->>{sq(f)}' for f in fields)}) "
+                               f"FROM jsonb_array_elements({progress(query=emails[uid])}->'members') m")
+
+    # --- who may ask ------------------------------------------------------------------------------------------
+    for name, sql in (("admin_signup_stages", "SELECT public.admin_signup_stages()"),
+                      ("admin_profile_completeness", f"SELECT {progress()}"),
+                      ("admin_send_profile_reminders", f"SELECT {send([none], 'general')}")):
+        check(f"anon can't call {name}", sql, role="anon", expect="error")
+        check(f"a member can't call {name}", sql, as_user=none, error_has="Admins only")
+    check("... and nothing was sent", f"SELECT count(*) FROM notifications WHERE type = 'profile' AND user_id = '{none}'",
+          expect="0")
+    check("members can't read the notes of reminders", "SELECT count(*) FROM private.profile_reminders", as_user=none,
+          expect="error")
+    check("... nor can admins through the API (only the functions read them)",
+          "SELECT count(*) FROM private.profile_reminders", as_user=ADMIN, expect="error")
+
+    # --- sign-up stages ----------------------------------------------------------------------------------------
+    stages = ["unconfirmed", "unfinished", "pending", "needs_info", "approved", "rejected", "blocked"]
+    expected = {unconf: "unconfirmed", unfin: "unfinished", pend: "pending", needs: "needs_info", full: "approved",
+                none: "approved", rej: "rejected", blk: "blocked"}
+    for uid, stage in expected.items():
+        found = " + ".join(f"(SELECT count(*) FROM jsonb_array_elements({stage_list(s, emails[uid])}->'members') m "
+                           f"WHERE m->>'id' = '{uid}')::int * {i + 1}" for i, s in enumerate(stages))
+        check(f"{emails[uid].split('.')[0]} is at one stage only: {stage}", f"SELECT {found}", as_user=ADMIN,
+              expect=str(stages.index(stage) + 1))
+    _, counts, err = psql("SELECT public.admin_signup_stages()->'counts'", "authenticated", ADMIN)
+    _, tables, err2 = psql(f"""
+          SELECT jsonb_object_agg(s, (
+            SELECT count(*) FROM profiles p JOIN profile_private pp ON pp.id = p.id WHERE s = CASE
+              WHEN pp.status = 'blocked' THEN 'blocked'
+              WHEN pp.verification_status = 'incomplete' AND NOT EXISTS (
+                SELECT 1 FROM auth.users u WHERE u.id = p.id AND u.email_confirmed_at IS NOT NULL) THEN 'unconfirmed'
+              WHEN pp.verification_status = 'incomplete' THEN 'unfinished'
+              ELSE pp.verification_status END)) FROM unnest(ARRAY[{', '.join(sq(s) for s in stages)}]) s""")
+    _, accounts, _ = psql("SELECT count(*) FROM auth.users")
+    stage_counts = json.loads(counts) if counts.startswith("{") else {}
+    verdict("the stage counts are those of the accounts (blocked first, then a confirmed email, then the check)",
+            stage_counts == json.loads(tables or "null") and all(stage_counts.get(s, 0) > 0 for s in stages),
+            f"{counts} vs {tables} {err[:200]} {err2[:200]}")
+    verdict("... and every account is counted at exactly one stage", sum(stage_counts.values()) == int(accounts or -1),
+            f"{counts} vs {accounts} accounts")
+    check("each stage's count is the length of its list",
+          "SELECT bool_and((public.admin_signup_stages()->'counts'->>s)::int = (public.admin_signup_stages(s)->>'total')::int)::text "
+          f"FROM unnest(ARRAY[{', '.join(sq(s) for s in stages)}]) s", as_user=ADMIN, expect="true")
+    check("a stage's list comes a page at a time",
+          "SELECT concat_ws('|', (a->'members'->0->>'id') <> (b->'members'->0->>'id'), a->>'total' = b->>'total', "
+          "jsonb_array_length(a->'members')) FROM (SELECT public.admin_signup_stages('approved', '', 1, 0), "
+          "public.admin_signup_stages('approved', '', 1, 1)) x(a, b)", as_user=ADMIN, expect="t|t|1")
+    check("an unknown stage is refused", "SELECT public.admin_signup_stages('lost')", as_user=ADMIN,
+          error_has="Unknown stage")
+    check("without a stage: the counts, no list",
+          "SELECT jsonb_array_length(public.admin_signup_stages()->'members')", as_user=ADMIN, expect="0")
+
+    # --- completeness ------------------------------------------------------------------------------------------
+    fields = ("filled", "percent", "missing", "reminded_at")
+    check("a complete profile: 7 of 7, 100%, nothing missing", one(full, fields), as_user=ADMIN, expect="7|100|[]")
+    check("one item missing: 6 of 7, 86%", one(six, fields), as_user=ADMIN, expect='6|86|["photo"]')
+    check("nothing filled in: 0%, all seven missing, in order", one(none, fields), as_user=ADMIN,
+          expect='0|0|["photo", "profession", "occupation_status", "bio", "hometown", "ask_me_about", "years_abroad"]')
+    check("two missing: 71%", one(nocity, fields), as_user=ADMIN, expect='5|71|["bio", "hometown"]')
+    check("an item of only spaces is missing",
+          f"BEGIN; UPDATE profiles SET bio = '   ', hometown = E'\\n' WHERE id = '{full}'; "
+          f"SELECT array_to_string(private.profile_missing(p), ',') FROM profiles p WHERE id = '{full}'; ROLLBACK;",
+          expect="bio,hometown")
+    for uid in (pend, blk, unconf, unfin, needs, rej):
+        check(f"only approved, active members are counted: not {emails[uid].split('.')[0]}",
+              f"SELECT {progress(query=emails[uid])}->>'total'", as_user=ADMIN, expect="0")
+    check("the levels add up to the approved members, as many as at the stage 'approved'",
+          f"SELECT concat_ws('|', (SELECT sum(value::int) FROM jsonb_each_text(r->'levels')) = (r->>'approved')::int, "
+          f"(r->>'approved')::int = (public.admin_signup_stages()->'counts'->>'approved')::int) FROM (SELECT {progress()}) x(r)",
+          as_user=ADMIN, expect="t|t")
+    check("each level and each missing item counts the members its filter lists",
+          f"SELECT bool_and(c)::text FROM (SELECT (r->'levels'->>l::text)::int = ({progress()[:-1]}p_level => l)->>'total')::int AS c "
+          f"FROM (SELECT {progress()}) x(r), generate_series(0, 7) l UNION ALL "
+          f"SELECT (r->'missing'->>k)::int = (public.admin_profile_completeness(p_missing => k)->>'total')::int "
+          f"FROM (SELECT {progress()}) x(r), unnest(ARRAY[{', '.join(sq(k) for k in js['keys'])}]) k) y",
+          as_user=ADMIN, expect="true")
+    check("... and the counts are those of the profiles", f"""
+          SELECT ((SELECT {progress()}->'missing'->>'photo')::int = (SELECT count(*) FROM profiles p
+            JOIN profile_private pp ON pp.id = p.id WHERE pp.status = 'active' AND pp.verification_status = 'approved'
+            AND btrim(p.avatar_url) = ''))::text""", as_user=ADMIN, expect="true")
+    in_list = lambda uid, **kw: (f"SELECT count(*) FROM jsonb_array_elements({progress(limit=200, **kw)}->'members') m "
+                                 f"WHERE m->>'id' = '{uid}'")
+    check("filter by city, any case", f"{in_list(full, city='regensburg')}; {in_list(six, city=' REGENSBURG ')}; {in_list(none, city='regensburg')}",
+          as_user=ADMIN, expect="1\n1\n0")
+    check("filter by level", f"{in_list(full, level=7)}; {in_list(six, level=7)}; {in_list(six, level=6)}",
+          as_user=ADMIN, expect="1\n0\n1")
+    check("filter by missing item, with a city", f"{in_list(six, missing='photo', city='Regensburg')}; "
+          f"{in_list(full, missing='photo', city='Regensburg')}", as_user=ADMIN, expect="1\n0")
+    check("search by name, email or city, any case; % only as itself",
+          f"SELECT concat_ws('|', {progress(query='SAMI.PC@')}->>'total', {progress(query='%')}->>'total', "
+          f"{progress(query='regensBURG')}->>'total')", as_user=ADMIN, expect="1|0|2")
+    check("most to do first", f"SELECT (array_agg((m->>'filled')::int ORDER BY o) = array_agg((m->>'filled')::int "
+          f"ORDER BY (m->>'filled')::int, o))::text FROM jsonb_array_elements({progress(limit=200)}->'members') "
+          "WITH ORDINALITY x(m, o)", as_user=ADMIN, expect="true")
+    check("a page at a time", f"SELECT jsonb_array_length({progress(limit=2, offset=1)}->'members')", as_user=ADMIN,
+          expect="2")
+    check("ids for a bulk send: every match, no members",
+          f"SELECT concat_ws('|', r ? 'members', jsonb_array_length(r->'ids') = (r->>'total')::int, r->'ids' @> to_jsonb(ARRAY['{six}'])) "
+          f"FROM (SELECT {progress(missing='photo', ids_only=True)}) x(r)", as_user=ADMIN, expect="f|t|t")
+    check("a level is 0 to 7", f"SELECT {progress(level=8)}", as_user=ADMIN, error_has="A level is a number")
+    check("an unknown item is refused", f"SELECT {progress(missing='shoe_size')}", as_user=ADMIN,
+          error_has="Unknown profile item")
+    rows = psql("SELECT json_agg(json_build_object('id', id, 'avatar_url', avatar_url, 'profession', profession, "
+                "'occupation_status', occupation_status, 'bio', bio, 'hometown', hometown, 'ask_me_about', ask_me_about, "
+                "'years_abroad', years_abroad, 'missing', private.profile_missing(p)) ORDER BY id) FROM profiles p "
+                f"WHERE id IN ('{full}', '{six}', '{none}', '{nocity}')")[1]
+    p = subprocess.run(["node", "--input-type=module", "-e",
+                        "import { missingItems, PROFILE_ITEM_KEYS } from './src/content/profileReminders.js';"
+                        f"const rows = {rows};"
+                        "console.log(JSON.stringify(rows.map((r) => missingItems(r).join(',') === r.missing.join(','))))"],
+                       cwd=root, capture_output=True, text=True)
+    verdict("the site counts the same items as missing as the database (missingItems)",
+            p.returncode == 0 and json.loads(p.stdout) == [True] * 4, p.stdout + p.stderr[:300])
+    check("the database has the site's seven items, in the same order",
+          "SELECT array_to_json(private.profile_item_keys())::text", expect=json.dumps(js["keys"], separators=(",", ":")))
+    verdict(f"... and the same {js['days']}-day limit", js["days"] == 7
+            and migration.count("INTERVAL '7 days'") == 2, "REMINDER_DAYS and the migration differ")
+
+    # --- reminders ---------------------------------------------------------------------------------------------
+    check("a general reminder goes to nora", outcome([none], "general"), as_user=ADMIN, expect="1|0|0|0")
+    check("... as a notification of type 'profile' from our team, pointing at the note of it", f"""
+          SELECT concat_ws('|', n.type, n.actor_id IS NULL, n.read, r.kind, r.admin_id = '{ADMIN}', r.id = n.reference_id)
+          FROM notifications n JOIN private.profile_reminders r ON r.member_id = n.user_id
+          WHERE n.user_id = '{none}' AND n.type = 'profile'""", expect="profile|t|f|general|t|t")
+    check("... with the site's words, her percentage, missing items and city",
+          f"SELECT text FROM notifications WHERE user_id = '{none}' AND type = 'profile'",
+          expect=js_text("general", js["keys"], "Berlin"))
+    check("nora reads it", "SELECT count(*) FROM notifications WHERE type = 'profile'", as_user=none, expect="1")
+    check("... and can mark it read", "UPDATE notifications SET read = true WHERE type = 'profile' RETURNING read",
+          as_user=none, expect="t")
+    check("at most one profile reminder in 7 days: skipped, not refused", outcome([none], "general"), as_user=ADMIN,
+          expect="0|1|0|0")
+    check("... whatever it's about", outcome([none], "photo"), as_user=ADMIN, expect="0|1|0|0")
+    check("... so nora has one", f"SELECT count(*) FROM notifications WHERE user_id = '{none}' AND type = 'profile'",
+          expect="1")
+    check("a reminder about one item: sami's photo", outcome([six], "photo"), as_user=ADMIN, expect="1|0|0|0")
+    check("... in the item's own words", f"SELECT text FROM notifications WHERE user_id = '{six}' AND type = 'profile'",
+          expect=js["payload"]["photo"]["text"])
+    check("nothing to remind fatima of: skipped", outcome([full], "general"), as_user=ADMIN, expect="0|0|1|0")
+    check("... nor of an item she has", outcome([full], "bio"), as_user=ADMIN, expect="0|0|1|0")
+    check("never to members who aren't approved and active (waiting, asked for more, declined, unfinished, "
+          "unconfirmed, blocked, no account)",
+          outcome([pend, needs, rej, unfin, unconf, blk, "00000000-0000-0000-0000-00000000dead"], "general"),
+          as_user=ADMIN, expect="0|0|0|7")
+    check("... none of them got anything",
+          f"SELECT count(*) FROM notifications WHERE type = 'profile' AND user_id IN ('{pend}', '{needs}', '{rej}', "
+          f"'{unfin}', '{unconf}', '{blk}')", expect="0")
+    check("a bulk send counts each member once, and each skip by its reason",
+          outcome([nocity, none, full, pend, nocity], "general"), as_user=ADMIN, expect="1|1|1|1")
+    check("... and a member without a city reads 'your city'",
+          f"SELECT text FROM notifications WHERE user_id = '{nocity}' AND type = 'profile'",
+          expect=js_text("general", ["bio", "hometown"], ""))
+    check("the panel lists when each was last reminded, and about what",
+          f"SELECT concat_ws('|', m->>'reminded_kind', (m->>'reminded_at')::timestamptz > now() - interval '1 minute') "
+          f"FROM jsonb_array_elements({progress(query=emails[none])}->'members') m", as_user=ADMIN, expect="general|t")
+    check("... and how many in a list were reminded lately, or have nothing missing",
+          f"SELECT concat_ws('|', r->>'total', r->>'recent', r->>'complete') FROM (SELECT {progress(city='Regensburg')}) x(r)",
+          as_user=ADMIN, expect="2|1|1")
+    check("8 days later nora can get the next one", f"""
+          UPDATE private.profile_reminders SET sent_at = sent_at - interval '8 days' WHERE member_id = '{none}';
+          {as_admin(outcome([none], 'profession'))}""", expect="f\n1|0|0|0")
+    check("... and the panel shows the newest", one(none, ("reminded_kind",)), as_user=ADMIN, expect="profession")
+    psql("DELETE FROM private.rate_log WHERE action = 'profile_reminders'")
+
+    # --- the words ---------------------------------------------------------------------------------------------
+    general = js["payload"]["general"]
+    for name, kind, text, words in (
+            ("a general reminder without the missing items", "general", "Your profile is {percent}% complete.", None),
+            ("an item's reminder with blanks only the general one has", "photo", "Your profile is {percent}% complete.", None),
+            ("a blank the database doesn't fill in", "general", general["text"] + " Hi {name}!", None),
+            ("a stray brace", "photo", "Add a photo {", None),
+            ("no words", "photo", "  ", None),
+            ("words that are too long", "photo", "x" * 401, None),
+            ("the general one without an item's words", "general", None,
+             {**general["words"], "items": {k: v for k, v in general["words"]["items"].items() if k != "bio"}}),
+            ("{city} without the words for no city", "photo", "Add a photo, {city}.", {})):
+        check(f"refused: {name}", f"SELECT {send([six], kind, text=text, words=words)}", as_user=ADMIN,
+              error_has="missing" if "without" in name and "words" in name else "aren't right")
+    check("refused: an unknown kind", f"SELECT {send([six], 'shoe_size', text='x')}", as_user=ADMIN,
+          error_has="Unknown kind of reminder")
+    check("refused: more than 500 at a time",
+          f"SELECT public.admin_send_profile_reminders(ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 501)), "
+          f"'photo', {sq(js['payload']['photo']['text'])}, '{{}}')", as_user=ADMIN, error_has="At most 500")
+    check("an admin can send at most 30 times a minute",
+          f"DO $$BEGIN FOR i IN 1..31 LOOP PERFORM {send([full], 'bio')}; END LOOP; END$$",
+          as_user=ADMIN, error_has="too often")
+    psql("DELETE FROM private.rate_log WHERE action = 'profile_reminders'")
+
+    # --- members can't write them --------------------------------------------------------------------------------
+    check("members can't create a 'profile' notification",
+          "INSERT INTO notifications (user_id, type, text) VALUES (auth.uid(), 'profile', 'Your profile is 0% complete.')",
+          as_user=six, error_has="row-level security")
+    check("... not even for someone else",
+          f"INSERT INTO notifications (user_id, type, text) VALUES ('{none}', 'profile', 'Add a photo.')",
+          as_user=six, error_has="row-level security")
+    psql(f"INSERT INTO notifications (user_id, type, text) VALUES ('{none}', 'trending', 'Popular this week')")
+    check("... nor turn another notification into one",
+          "UPDATE notifications SET type = 'profile', text = 'x' WHERE type = 'trending' RETURNING type || '|' || text",
+          as_user=none, expect="trending|Popular this week")
+
+    # --- the kinds of notification -----------------------------------------------------------------------------
+    kinds_sql = ("SELECT string_agg(m[1], ',' ORDER BY n) FROM pg_constraint c, "
+                 "regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''', 'g') WITH ORDINALITY x(m, n) "
+                 "WHERE c.conname = 'notifications_type_check'")
+    travel_kinds = re.search(r"notifications_type_check CHECK \(type IN \((.*?)\)\);", open(TRAVEL_BOARD, encoding="utf-8").read(),
+                             re.S).group(1)
+    before = re.findall(r"'([^']+)'", travel_kinds)
+    check("notifications accept the kinds they did, plus 'profile'", kinds_sql, expect=",".join(before + ["profile"]))
+    check("the new list is built from the one the database has (kinds another update added stay)", f"""
+          BEGIN;
+          DELETE FROM notifications WHERE type = 'profile';
+          ALTER TABLE notifications DROP CONSTRAINT notifications_type_check,
+            ADD CONSTRAINT notifications_type_check CHECK (type IN ({', '.join(sq(k) for k in before)}, 'other_update'));
+          {migration}
+          {kinds_sql};
+          ROLLBACK;""", expect=",".join(before + ["other_update", "profile"]))
+    ok, _, err = psql(migration)
+    verdict("the migration can be run again", ok, err[:300])
+    check("... and 'profile' is in the list once", kinds_sql, expect=",".join(before + ["profile"]))
+    check("... and the notes of reminders stay", "SELECT count(*) > 0 FROM private.profile_reminders", expect="t")
+    verdict("the migration leaves private.daily_cleanup as it is",
+            "daily_cleanup()" not in re.sub(r"--[^\n]*", "", migration), "it mentions private.daily_cleanup")
+
+    # --- clean-up ----------------------------------------------------------------------------------------------
+    check("the notes of reminders are deleted after 12 months (their own clean-up)", f"""
+          BEGIN;
+          INSERT INTO private.profile_reminders (member_id, admin_id, kind, sent_at) VALUES
+            ('{six}', '{ADMIN}', 'bio', now() - interval '13 months'), ('{six}', NULL, 'hometown', now() - interval '11 months');
+          SELECT private.profile_reminders_cleanup();
+          SELECT string_agg(kind, ',' ORDER BY sent_at) FROM private.profile_reminders WHERE member_id = '{six}';
+          ROLLBACK;""", expect="1\nhometown,photo")
+    check("... every night, with its own pg_cron job", """
+          BEGIN;
+          CREATE SCHEMA cron;
+          CREATE TABLE cron.jobs (name text, schedule text, command text);
+          CREATE FUNCTION cron.schedule(a text, b text, c text) RETURNS bigint LANGUAGE sql
+            AS $f$ INSERT INTO cron.jobs VALUES (a, b, c) RETURNING 1::bigint $f$;
+          SELECT left(private.schedule_profile_reminders_cleanup(), 10);
+          SELECT concat_ws('|', name, schedule, command) FROM cron.jobs;
+          ROLLBACK;""", expect="scheduled:\nnriclub-profile-reminders-cleanup|29 3 * * *|SELECT private.profile_reminders_cleanup()")
+    check("... and says so where there's no pg_cron", "SELECT left(private.schedule_profile_reminders_cleanup(), 14)",
+          expect="not scheduled:")
+    check("members can't run the clean-up", "SELECT private.profile_reminders_cleanup()", as_user=none, expect="error")
+    check("deleting an account deletes the notes of its reminders", f"""
+          {as_admin(outcome([gone], 'general'))};
+          RESET ROLE;
+          DELETE FROM auth.users WHERE id = '{gone}';
+          SELECT count(*) FROM private.profile_reminders WHERE member_id = '{gone}'""", expect="f\n1|0|0|0\n0")
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ import WhatsOnView from "./WhatsOnView";
 import InboxView from "./InboxView";
 import OverviewView from "./OverviewView";
 import SecurityView from "./SecurityView";
+// Members' progress: sign-up stages, profile completeness and reminders.
+import ProgressView from "./ProgressView";
 import { usePhotoCleanup } from "./PhotoCleanup";
 import { FeedbackView, ReportsView, contentPreview, isFeedback, isOpenBug, isOpenIdea, isOpenReport, isSafetyReport, personOf, targetKey } from "./ReportsView";
 import { ADMIN_CSS, ErrorNote, Icon, SkeletonRows, Toast } from "./ui";
@@ -89,6 +91,8 @@ export default function AdminPanel({ onLogout }) {
   // Unread mail to hello@nriclub.app; null before the 2026-10-25 database
   // update or when it couldn't be loaded.
   const [inboxUnread, setInboxUnread] = useState(null);
+  // A member to open in Members, from Members' progress: { id, query }.
+  const [memberLink, setMemberLink] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [toast, setToast] = useState(null);
@@ -312,6 +316,7 @@ export default function AdminPanel({ onLogout }) {
   const nav = [
     { key: "verification", label: "Verification", icon: "shieldCheck", count: counts.pending, hot: counts.pending > 0 },
     { key: "members", label: "Members", icon: "users", count: membersTotal },
+    { key: "progress", label: "Members' progress", icon: "checkCircle" },
     { key: "communities", label: "Communities", icon: "globe", count: pendingGroups },
     { key: "ambassadors", label: "Ambassadors", icon: "star", count: ambassadorCounts?.new || 0 },
     { key: "whatson", label: "What's on", icon: "calendar" },
@@ -323,9 +328,16 @@ export default function AdminPanel({ onLogout }) {
   ];
 
   const go = (key) => {
+    setMemberLink(null);
     setPage(key);
     window.scrollTo(0, 0);
   };
+  // Members, searched for this member, with them open.
+  const openMember = useCallback((m) => {
+    setMemberLink({ id: m.id, query: m.email || m.name || "" });
+    setPage("members");
+    window.scrollTo(0, 0);
+  }, []);
 
   const signOut = async () => {
     if (signingOut) return;
@@ -346,7 +358,9 @@ export default function AdminPanel({ onLogout }) {
   } else if (page === "verification") {
     content = <VerificationView usersById={usersById} counts={counts} countsExact={countsExact} cache={queueCache} onMemberChange={onMemberChange} onMemberDeleted={onMemberDeleted} showToast={showToast} recorded={recorded} />;
   } else if (page === "members") {
-    content = <MembersView users={users} total={membersTotal} blockedTotal={blockedTotal} onMemberChange={onMemberChange} onMemberDeleted={onMemberDeleted} showToast={showToast} recorded={recorded} />;
+    content = <MembersView users={users} total={membersTotal} blockedTotal={blockedTotal} onMemberChange={onMemberChange} onMemberDeleted={onMemberDeleted} showToast={showToast} recorded={recorded} openOnStart={memberLink} />;
+  } else if (page === "progress") {
+    content = <ProgressView showToast={showToast} onOpenMember={openMember} />;
   } else if (page === "communities") {
     content = <CommunitiesView groups={groups} setGroups={setGroups} usersById={usersById} showToast={showToast} onReload={load} recorded={recorded} />;
   } else if (page === "ambassadors") {

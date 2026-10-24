@@ -22,6 +22,7 @@ import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
 import { WHATS_ON_NOTE, upcoming, todayInGermany, citySlug, eventCitySlug } from "./content/whatson";
 import { CompactEvent } from "./WhatsOnItems";
 import { useWhatsOn } from "./whatsOnLive";
+import { PROFILE_ITEMS, missingItems, reminderKind } from "./content/profileReminders";
 
 // The application to be a city ambassador, loaded when it is opened.
 const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
@@ -700,7 +701,7 @@ const toHelp = (h, responses) => ({
 });
 
 // The small sign on a notification's avatar, by type.
-const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐", moderation: "🛡️", report: "🚩", alert: "⚠️", travel_match: "✈️" };
+const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐", moderation: "🛡️", report: "🚩", alert: "⚠️", travel_match: "✈️", profile: "✏️" };
 
 // Messages from our team (the database writes them): why we removed
 // something of the member's or acted on their account (a statement of
@@ -2639,6 +2640,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       linkedinPublicWas.current = mine.linkedin_public;
       setEditProfile((p) => (p && p.linkedinPublic === undefined ? { ...p, linkedinPublic: mine.linkedin_public } : p));
     }).catch(() => {});
+  };
+
+  // A reminder from our team about missing profile details (a 'profile'
+  // notification): Edit profile opens on the field it's about, or the first
+  // missing one Edit profile has. One about the photo opens the photo picker.
+  const openProfileReminder = (text) => {
+    const missing = missingItems(user);
+    const kind = reminderKind(text);
+    if (kind === "photo" && missing.includes("photo")) {
+      const picker = document.getElementById("avatar-upload") || document.getElementById("profile-avatar-upload");
+      if (picker) { picker.click(); return; }
+    }
+    const abroad = isUserNRI(user);
+    const inEditor = (key) => key !== "photo" && (abroad || (key !== "hometown" && key !== "years_abroad"))
+      && (key !== "ask_me_about" || user.hasTopics);
+    const target = [kind, ...missing].find((key) => missing.includes(key) && inEditor(key));
+    openProfileEditor(target ? PROFILE_ITEMS.find((i) => i.key === target).field : null);
   };
 
   const saveProfileChanges = async () => {
@@ -4698,6 +4716,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
       setTravelFocus(n.reference_id ? String(n.reference_id) : null);
       setView("travel");
+    } else if (n.type === "profile") {
+      // A reminder from our team about missing profile details.
+      setNotifOpen(false);
+      Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+      openProfileReminder(n.text);
     } else if (n.type === "event") {
       setView("events");
       setNotifOpen(false);
@@ -4999,7 +5023,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                               </div>
                             ) : (
                               <div style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: n.type === "event" ? "#FFF3E0" : n.type === "group" ? "#EDF4FF" : "#F0EFED", color: n.type === "event" ? "#E65100" : n.type === "group" ? "#5B9CFF" : "#5F5E5B" }}>
-                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : n.type === "verification" || n.type === "moderation" ? Icons.shield({ size: 16 }) : n.type === "report" || n.type === "alert" ? Icons.flag({ size: 16 }) : Icons.trending({ size: 16 })}
+                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : n.type === "verification" || n.type === "moderation" ? Icons.shield({ size: 16 }) : n.type === "report" || n.type === "alert" ? Icons.flag({ size: 16 }) : n.type === "profile" ? Icons.edit({ size: 16 }) : Icons.trending({ size: 16 })}
                               </div>
                             )}
                           </div>

@@ -21,14 +21,15 @@ const fmt = (n) => n.toLocaleString("en-GB");
 // to the server (api.adminSearchMembers) and cover every member; before the
 // database could search (its 2026-10-23 update) they cover the loaded ones.
 // recorded: whether the database records our team's decisions and tells the
-// member (the 2026-10-21 update).
+// member (the 2026-10-21 update). openOnStart: { id, query } to start with
+// that search and that member open (from Members' progress).
 const SEARCH_DELAY_MS = 300;
 
-export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, onMemberDeleted, showToast, recorded = true }) {
-  const [query, setQuery] = useState("");
+export default function MembersView({ users, total = users.length, blockedTotal = null, onMemberChange, onMemberDeleted, showToast, recorded = true, openOnStart = null }) {
+  const [query, setQuery] = useState(openOnStart?.query || "");
   const [show, setShow] = useState("all"); // all | blocked
   const [limit, setLimit] = useState(PAGE);
-  const [openId, setOpenId] = useState(null);
+  const [openId, setOpenId] = useState(openOnStart?.id || null);
   const [details, setDetails] = useState({}); // id -> row from admin_verification_queue
   const [loadingDetails, setLoadingDetails] = useState({}); // id -> true while their row loads
   const [blocking, setBlocking] = useState(null); // member to block (from the list)
