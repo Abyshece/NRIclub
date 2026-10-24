@@ -2,6 +2,7 @@ import { Fragment, useEffect } from "react";
 import LogoMark from "./LogoMark";
 import { hasImprint } from "./content/imprint";
 import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
+import { PrivacySettingsLink } from "./ConsentBanner";
 
 // ============================================================================
 // The frame of the public pages (city pages, guides, What's on and the
@@ -105,6 +106,7 @@ export default function PublicShell({ onLogin, onJoin, loginLabel, hero, childre
         <div style={{ display: "flex", flexWrap: "wrap" }}>
           <a href="/terms" style={footerLink}>Terms of Use</a>
           <a href="/privacy" style={footerLink}>Privacy Policy</a>
+          <PrivacySettingsLink style={footerLink} />
           {hasImprint() && <a href="/impressum" style={footerLink}>Impressum</a>}
           <a href={REPORT_HREF} style={footerLink}>{REPORT_LINK_TEXT}</a>
         </div>

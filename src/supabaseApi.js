@@ -2825,6 +2825,26 @@ export async function adminCityStats() {
   return (await restCall("POST", "/rest/v1/rpc/admin_city_stats", {})) || [];
 }
 
+// Website analytics for the admin panel's Analytics page (admins only; see
+// supabase/migrations/20261029000000_analytics.sql). adminAnalytics: the
+// numbers for the last `days` days; null before that database update.
+export async function adminAnalytics(days) {
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_analytics", { p_days: days });
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+// Recent visits, newest first: { total, sessions }.
+export async function adminAnalyticsSessions(days, offset = 0, limit = 25) {
+  return restCall("POST", "/rest/v1/rpc/admin_analytics_sessions", { p_days: days, p_limit: limit, p_offset: offset });
+}
+// One visit's pages and clicks, in order.
+export async function adminAnalyticsJourney(sessionId) {
+  return (await restCall("POST", "/rest/v1/rpc/admin_analytics_journey", { p_session: sessionId })) || [];
+}
+
 // A function of the 2026-10-21 database update, or `old()` (the way the
 // panel did it before) while the database doesn't have it yet. old()
 // returns what the function would, or throws.

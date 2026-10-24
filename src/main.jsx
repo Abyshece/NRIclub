@@ -14,6 +14,7 @@ import '@fontsource/dm-sans/600.css';
 import '@fontsource/dm-sans/700.css';
 import '@fontsource/dm-sans/800.css';
 import App from './App';
+import ConsentBanner from './ConsentBanner';
 
 // "Add to Home Screen": browsers that support it offer installing the site
 // once; keep that offer for the menu item in Settings.
@@ -57,6 +58,9 @@ class ErrorBoundary extends React.Component {
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ErrorBoundary>
+      {/* The privacy banner (website analytics) first, so the keyboard and
+          screen readers reach it first; it shows along the bottom. */}
+      <ConsentBanner />
       <App />
     </ErrorBoundary>
   </React.StrictMode>

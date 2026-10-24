@@ -22,7 +22,7 @@ Two or more criteria usually mean a DPIA is needed.
 |---|---|---|---|
 | 1 | Evaluation or scoring, profiling | No scoring or profiling. Admins judge each sign-up by hand | No |
 | 2 | Automated decisions with legal or similar effect | No. The only automatic step holds a sign-up that matches a declined or blocked account until a person decides | No |
-| 3 | Systematic monitoring | No tracking, no analytics; "last active" time only | No |
+| 3 | Systematic monitoring | No third-party tracking. Own website analytics only with consent (privacy banner): pseudonymous visitor ID, IP shortened before storing, approximate place, not linked to accounts, kept 6 months; "last active" time | No |
 | 4 | Sensitive data (Art. 9) or highly personal data | Yes: membership, hometown, language and faith groups, temple recommendations, festivals, health questions can reveal ethnic origin, religion, health; private messages | **Yes** |
 | 5 | Large scale | Not today. At 10,000+ members across many countries it may be | **Later, likely** |
 | 6 | Matching or combining datasets | Only the match against the record of declined and blocked accounts | Borderline |

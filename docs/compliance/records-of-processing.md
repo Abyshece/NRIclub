@@ -220,7 +220,7 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Keep the member signed in; remember dismissed tips and an invite |
 | Legal basis | § 25(2) No. 2 TDDDG (strictly necessary, no consent); Art. 6(1)(b) |
-| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested` (at most 24 hours), `nriclub_invite` (session storage, until the check details are sent; Get verified sends its code to `public.resolve_invite` to fill in the inviter), per-member flags (removed when the account is deleted in that browser); list in the Privacy Policy, section 8. `nriclub_profile_cache` and `nriclub_cookie_consent` are no longer written, and the site deletes them. No cookies, no analytics |
+| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested` (at most 24 hours), `nriclub_invite` (session storage, until the check details are sent; Get verified sends its code to `public.resolve_invite` to fill in the inviter), per-member flags (removed when the account is deleted in that browser); list in the Privacy Policy, section 8. `nriclub_profile_cache` and `nriclub_cookie_consent` are no longer written, and the site deletes them. `nriclub_analytics_consent` (the privacy banner's choice and date: strictly necessary to respect it). No cookies. The analytics items (`nriclub_visitor_id`, `nriclub_analytics_session`) need consent: No. 18 |
 | Retention | See the Privacy Policy, section 8 |
 
 ### 15. Compliance records
@@ -259,6 +259,21 @@ shows "Coming soon" before it).
 | Data | When and which version of the agreement was accepted (`private.ambassador_agreement_ack`); newcomers marked as welcomed, by whom and when (`private.ambassador_welcomes`); the log of the ambassador's actions with the city and details, e.g. the group description before and after (`private.ambassador_log`); `events.ambassador_hosted`; `reports.ambassador_city` on flags (a report like any other, No. 7/8). The panel shows newcomers' id, name, photo and join date only, as members already see them, without blocked pairs or accounts not shown to members |
 | Recipients | The welcomes: the ambassador who made them and admins. The agreement record and the log: admins only (admin panel → Ambassadors, `public.admin_ambassador_activity`), and the ambassador in "Download my data". Every admin gets an in-app `alert` for a flag and when an ambassador steps down |
 | Retention | Log and welcomes: 12 months after each entry; all three deleted with the ambassador's account, welcomes also with the welcomed member's account; the agreement record otherwise until the account is deleted. Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
+
+### 18. Website analytics (with consent)
+
+Since the site update with the privacy banner and the database update
+`20261029000000_analytics.sql` (Privacy Policy 2026-10-24).
+
+| | |
+|---|---|
+| Purpose | Improve the site: which pages and features are used, where visitors come from (referrers, campaign links), where sign-up loses people |
+| Legal basis | Art. 6(1)(a) GDPR and § 25(1) TDDDG (consent on the privacy banner: Accept and Decline equally prominent, nothing preselected; asked again after 12 months (Accept) or 6 months (Decline); withdrawn with "Privacy settings", which stops it at once and deletes the visitor ID). The choice and its date stay in the visitor's browser; the browser sends nothing before Accept, and `/api/collect` refuses requests without the consent flag |
+| Data subjects | Visitors of nriclub.app and members using the app, in browsers where Accept was chosen |
+| Data | Random visitor ID and visit ID; page paths (ids replaced by ":id") and titles; clicked buttons' and links' visible text (80 characters; in the members' area only the site's menu names) and link targets; sign-up and log-in steps reached (no values); exit page; first page's referrer domain and utm_source/medium/campaign/content; IP address shortened by `/api/collect` before storing (IPv4 /24, IPv6 /48); country, region and city from Vercel's IP lookup; device class (mobile, tablet, desktop), browser and system family (`private.analytics_events`). Daily counts of Accept and Decline without any identifier (`private.analytics_consent_counts`). Not linked to accounts (no member ID, name or email) |
+| Recipients | Admins (admin panel → Analytics: totals and single visits). Processors: Vercel (Edge Function `/api/collect`, IP lookup; transfer safeguard as for No. 11), Supabase (storage) |
+| Retention | Events: 6 months (`private.analytics_cleanup()`, nightly pg_cron job `nriclub-analytics-cleanup`). Consent counts: kept (no personal data). Visitor ID in the browser: until Decline or the site's data is cleared |
+| Note | Data-subject requests: the data can only be found with the visitor ID (shown in Privacy settings while analytics are on); `DELETE FROM private.analytics_events WHERE visitor_id = '…'` |
 
 ## Technical and organisational measures
 
