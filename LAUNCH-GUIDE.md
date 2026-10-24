@@ -442,6 +442,24 @@ Listings already in the Market's Travel category stay until they're deleted.
    routine (`docs/compliance/deletion-routine.md`) until
    `private.daily_cleanup()` is scheduled.
 
+## Members' progress: what to do
+
+The admin panel's **Members' progress** shows how many accounts are at each
+sign-up stage, how complete approved members' profiles are, and sends
+members a reminder in the app about what's missing (at most one a week each).
+
+1. **Deploy the site.** Until the SQL below runs, the page says it needs the
+   database update; everything else works as before.
+2. **Run** `supabase/migrations/20261028000000_profile_completeness.sql` in
+   the SQL editor, the whole file at once (it can be run again). Its message
+   says whether the nightly clean-up of the reminder notes
+   (`nriclub-profile-reminders-cleanup`) is scheduled. If the page still
+   says it needs the update a few minutes later, run
+   `NOTIFY pgrst, 'reload schema';`.
+3. **Use it:** pick a bar or a missing item to list those members, then
+   **Remind** (general), a missing item's chip (about that item) or **Remind
+   all N in this list…**. The words are in `src/content/profileReminders.js`.
+
 ## What's on: other organisers' events in Germany
 
 nriclub.app/whats-on lists Indian events in Germany that other organisers run

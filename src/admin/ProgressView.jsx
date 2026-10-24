@@ -91,7 +91,8 @@ const PROGRESS_CSS = `
 button.adm-pg-chip { cursor:pointer; }
 button.adm-pg-chip:hover:not(:disabled) { background:#DDEBF1; border-color:#DDEBF1; color:#0B6E99; }
 button.adm-pg-chip:disabled { cursor:default; opacity:.6; }
-.adm-pg-when { font-size:12px; color:var(--muted); }
+.adm-pg-when { font-size:12px; color:var(--muted); min-width:0; }
+.adm-pg-when-label { display:none; }
 .adm-pg-act { display:flex; justify-content:flex-end; }
 .adm-pg-srow { display:flex; align-items:center; gap:10px; padding:9px 8px; border-bottom:1px solid var(--line); }
 .adm-pg-srow:hover { background:var(--row-hover); }
@@ -113,6 +114,7 @@ button.adm-pg-chip:disabled { cursor:default; opacity:.6; }
   .adm-pg-row > .adm-pg-pctcell { grid-area:pct; min-width:56px; }
   .adm-pg-row > .adm-pg-chips { grid-area:chips; }
   .adm-pg-row > .adm-pg-when { grid-area:when; }
+  .adm-pg-when-label { display:inline; }
   .adm-pg-row > .adm-pg-act { grid-area:act; }
   .adm-pg-srow { padding:10px 4px; }
 }
@@ -306,7 +308,9 @@ function MemberRow({ m, busy, onRemind, onOpenMember }) {
         })}
       </div>
       <div className="adm-pg-when" role="cell" title={m.reminded_at ? formatDate(m.reminded_at, { time: true }) : undefined}>
-        {m.reminded_at ? `Reminded ${ago(m.reminded_at)}` : "Not reminded"}
+        {m.reminded_at
+          ? <><span className="adm-pg-when-label">Reminded </span>{formatDate(m.reminded_at)}<div className="adm-pg-sub">{ago(m.reminded_at)}{itemByKey(m.reminded_kind) ? ` · ${itemByKey(m.reminded_kind).label}` : ""}</div></>
+          : "Never reminded"}
       </div>
       <div className="adm-pg-act" role="cell">
         {!done && (
@@ -425,7 +429,6 @@ export default function ProgressView({ showToast, onOpenMember }) {
   }, []);
 
   useEffect(() => load(JSON.parse(paramsKey), q ? SEARCH_DELAY_MS : 0), [paramsKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
 
   const loadMore = async () => {
     if (!data || loadingMore) return;
