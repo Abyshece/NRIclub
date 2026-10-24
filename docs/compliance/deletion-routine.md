@@ -18,6 +18,7 @@ the monthly part of this routine.
 | Accounts our team declined | 6 months after the decision | once a month |
 | Accounts whose membership we ended | 6 months after the decision | once a month (by hand, below) |
 | In-app notices the member has read | 6 months | once a month |
+| Notes of profile reminders our team sent (`private.profile_reminders`) | 12 months | **automatic** every night (pg_cron job `nriclub-profile-reminders-cleanup`, since the update of 28 October 2026); if it isn't scheduled, run `SELECT private.profile_reminders_cleanup();` once a month |
 | Closed reports, and evidence copies kept with them | once closed and 12 months old | once a month |
 | Closed reports from the form at nriclub.app/report | once closed and 12 months old | once a month |
 | Coded addresses behind the report limits (`private.notice_log`) | 24 hours | once a month |

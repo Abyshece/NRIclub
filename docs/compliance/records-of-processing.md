@@ -149,6 +149,7 @@ references the member cascades, except where noted).
 | Purpose | Tell members about likes, comments, Namaste, answers, events, bookings, verification results, urgent questions in their city, members joining (ambassadors); statements of reasons and warnings (type `moderation`), outcomes of reports they sent (`report`), and for admins new reports from the form, safety reports and new applications to be a city ambassador (`alert`) |
 | Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5) and 17 DSA for statements of reasons and report outcomes |
 | Data | Recipient, actor, short text, reference, read state (`public.notifications`) |
+| Profile reminders | Our team's reminders about missing profile details (type `profile`, Art. 6(1)(f): helping members recognise and find each other), at most one a week per member; a note of which reminder went to whom, from which admin and when (`private.profile_reminders`), deleted after 12 months (automatic) |
 | Recipients | The recipient only |
 | Retention | Until account deletion; read notices after 6 months *(by hand)* |
 
