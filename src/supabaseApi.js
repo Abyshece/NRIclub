@@ -1834,6 +1834,162 @@ export async function deleteTravelPost(id) {
 }
 
 // ============================================================================
+// FIND A PLACE (housing in the Market, src/member/HousingSearch.jsx)
+// ============================================================================
+
+// Since the 2026-10-30 database update. Before it the database has none of
+// these: the reads below return null and the site says the search is coming
+// soon, on whatever PostgREST or Postgres answer for something that doesn't
+// exist (as for the travel board). The rest of the Market works as before.
+export const housingMissing = (err) => travelMissing(err);
+
+// { version, can_take_part, listing_limit, listings_left, looking_limit,
+// looking_left }, or null before the database update (asked again a few
+// minutes later, so the site switches over without a reload).
+export async function getHousingStatus() {
+  if (knownMissing("housing")) return null;
+  try {
+    const status = await restCall("POST", "/rest/v1/rpc/housing_status", {});
+    delete missingSince.housing;
+    return status;
+  } catch (err) {
+    if (!housingMissing(err)) throw err;
+    missingSince.housing = Date.now();
+    return null;
+  }
+}
+
+// Housing listings by kinds, city, dates ("YYYY-MM-DD"), flexible ±1 week,
+// highest warm rent, furnished and Anmeldung possible (each may be left
+// out): { total, wanted_days, from, to, results }, the best fit first (see
+// public.search_housing). null before the database update.
+export async function searchHousing({ kinds = [], city = "", from = "", to = "", flexible = false, maxRent = "",
+  furnished = false, anmeldung = false, limit = 100 } = {}) {
+  try {
+    return await restCall("POST", "/rest/v1/rpc/search_housing", {
+      p_kinds: kinds.length ? kinds : null, p_city: String(city || "").trim() || null, p_from: from || null, p_to: to || null,
+      p_flexible: !!flexible, p_max_rent: String(maxRent || "").trim() ? Number(maxRent) : null,
+      p_furnished: !!furnished, p_anmeldung: !!anmeldung, p_limit: limit,
+    });
+  } catch (err) {
+    if (!housingMissing(err)) throw err;
+    missingSince.housing = Date.now();
+    return null;
+  }
+}
+
+const HOUSING_FIELDS = "listing_id,user_id,kind,city,city_key,available_from,available_until,warm_rent,deposit,size_m2,"
+  + "furnished,anmeldung,expires_on,renewed_at,created_at,updated_at";
+
+// One Market listing's housing details, or null (a listing from before, or
+// before the database update).
+export async function getHousingListing(id) {
+  if (!UUID.test(id || "") || knownMissing("housing")) return null;
+  try {
+    const rows = await restCall("GET", `/rest/v1/housing_listings?listing_id=eq.${id}&select=${HOUSING_FIELDS}`);
+    return rows?.[0] || null;
+  } catch (err) {
+    if (!housingMissing(err)) throw err;
+    missingSince.housing = Date.now();
+    return null;
+  }
+}
+
+// The member's own housing listings with details, also those that have
+// expired, with their Market listing (listing: { id, title, description,
+// image_url, price, location, status, created_at }), the newest first.
+export async function getMyHousingListings() {
+  if (!currentUser) return [];
+  return (await restCall("GET", `/rest/v1/housing_listings?user_id=eq.${currentUser.id}&select=${HOUSING_FIELDS},`
+    + "listing:listing_id(id,title,description,image_url,price,location,status,created_at)&order=created_at.desc")) || [];
+}
+
+// A new housing listing: the Market listing and its details at once.
+// item: { title, description, image_url, kind, city, from, until (or ""),
+// rent, deposit, size (or ""), furnished, anmeldung }. Returns
+// { listing_id, expires_on }.
+export async function postHousingListing(item) {
+  if (!currentUser) throw new Error("Not logged in");
+  return restCall("POST", "/rest/v1/rpc/post_housing_listing", {
+    p_title: item.title, p_description: item.description || "", p_image_url: item.image_url || "",
+    p_kind: item.kind, p_city: item.city, p_from: item.from, p_until: item.until || null,
+    p_warm_rent: Number(item.rent), p_deposit: Number(item.deposit || 0),
+    p_size_m2: String(item.size ?? "").trim() ? Number(item.size) : null,
+    p_furnished: !!item.furnished, p_anmeldung: !!item.anmeldung,
+  });
+}
+
+// The author's changes to a listing's details (the same fields, without
+// title, description and photos). Returns the details as saved.
+export async function updateHousingListing(id, d) {
+  if (!UUID.test(id || "")) throw new Error("Unknown listing");
+  return restCall("POST", "/rest/v1/rpc/update_housing_listing", {
+    p_listing: id, p_kind: d.kind, p_city: d.city, p_from: d.from, p_until: d.until || null,
+    p_warm_rent: Number(d.rent), p_deposit: Number(d.deposit || 0),
+    p_size_m2: String(d.size ?? "").trim() ? Number(d.size) : null, p_furnished: !!d.furnished, p_anmeldung: !!d.anmeldung,
+  });
+}
+
+// An open-ended listing is shown for 60 more days: { listing_id, expires_on, renewed_at }.
+export async function renewHousingListing(id) {
+  if (!UUID.test(id || "")) throw new Error("Unknown listing");
+  return restCall("POST", "/rest/v1/rpc/renew_housing_listing", { p_listing: id });
+}
+
+// For a listing's author: the "Looking for a place" posts their listing
+// fits, with their authors ([{ id, user_id, name, avatar_url, kinds, city,
+// date_from, date_to, max_rent, furnished, anmeldung, note, created_at }]).
+export async function getHousingMatches(id) {
+  if (!UUID.test(id || "")) return [];
+  return (await restCall("POST", "/rest/v1/rpc/housing_matches", { p_listing: id })) || [];
+}
+
+const LOOKING_FIELDS = "id,user_id,kinds,city,city_key,date_from,date_to,max_rent,furnished,anmeldung,note,active,expires_on,created_at,updated_at";
+const lookingBody = (p) => ({
+  kinds: p.kinds, city: String(p.city || "").replace(/\s+/g, " ").trim(), date_from: p.from, date_to: p.until || null,
+  max_rent: String(p.rent ?? "").trim() ? Number(p.rent) : null, furnished: !!p.furnished, anmeldung: !!p.anmeldung,
+  note: String(p.note || "").trim(),
+});
+
+// The member's own "Looking for a place" posts, the newest first.
+export async function getMyLookingPosts() {
+  if (!currentUser) return [];
+  return (await restCall("GET", `/rest/v1/housing_wanted?user_id=eq.${currentUser.id}&select=${LOOKING_FIELDS}&order=created_at.desc`)) || [];
+}
+
+// p: { kinds, city, from, until (or ""), rent (or ""), furnished, anmeldung, note }. Returns it as saved.
+export async function createLookingPost(p) {
+  if (!currentUser) throw new Error("Not logged in");
+  const rows = await restCall("POST", `/rest/v1/housing_wanted?select=${LOOKING_FIELDS}`,
+    { ...lookingBody(p), user_id: currentUser.id }, { Prefer: "return=representation" });
+  if (!rows?.[0]) throw userError("Your post couldn't be saved. Please try again.");
+  return rows[0];
+}
+
+// The author changes a looking post (p as above) or turns it on or off
+// ({ active }). Returns it as saved.
+export async function updateLookingPost(id, p) {
+  if (!UUID.test(id || "")) throw new Error("Unknown post");
+  const body = Object.keys(p).length === 1 && "active" in p ? { active: !!p.active } : lookingBody(p);
+  const rows = await restCall("PATCH", `/rest/v1/housing_wanted?id=eq.${id}&select=${LOOKING_FIELDS}`, body,
+    { Prefer: "return=representation" });
+  if (!rows?.[0]) throw userError("This post couldn't be saved. It may have been deleted.");
+  return rows[0];
+}
+
+export async function deleteLookingPost(id) {
+  if (!UUID.test(id || "")) throw new Error("Unknown post");
+  return restCall("DELETE", `/rest/v1/housing_wanted?id=eq.${id}`);
+}
+
+// One Market listing (e.g. from a notification), if the member may see it; else null.
+export async function getMarketItem(id) {
+  if (!UUID.test(id || "")) return null;
+  const rows = withPerson(await restCall("GET", `/rest/v1/marketplace?id=eq.${id}&select=*,profiles:user_id(id,name,avatar_url)`));
+  return rows?.[0] || null;
+}
+
+// ============================================================================
 // DOCS
 // ============================================================================
 
