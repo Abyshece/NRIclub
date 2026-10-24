@@ -41,6 +41,8 @@ PROFILE_COMPLETENESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                     "20261028000000_profile_completeness.sql")
 CITY_GROUPS_ONLY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                                 "20261028100000_city_groups_only.sql")
+ANALYTICS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                         "20261029000000_analytics.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1347,6 +1349,7 @@ def main():
     ambassador_panel()
     profile_completeness()
     city_groups_only()
+    analytics()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -5338,6 +5341,208 @@ def city_groups_only():
     ok, _, err = psql(migration)
     verdict("the migration can be run again", ok, err[:300])
     check("... and city groups stay", "SELECT count(*) > 0 FROM groups WHERE name = 'Indians in Ninetown'", expect="t")
+
+
+def analytics():
+    """Website analytics, only with the visitor's consent: who may store and
+    read the events, the checks on what's stored, the counter of the
+    banner's choices, the admin panel's numbers and the clean-up: migration
+    20261029000000_analytics."""
+    member = "00000000-0000-0000-0000-0000000a11a1"
+    approved_member(member, "analytics.member@example.com", "Asha A")
+    v1, v2, v3 = (f"a0000000-0000-4000-8000-00000000000{n}" for n in (1, 2, 3))
+    s1, s2, s3, s4 = (f"b0000000-0000-4000-8000-00000000000{n}" for n in (1, 2, 3, 4))
+    meta = {"visitor_id": v1, "session_id": s1, "device": "mobile", "browser": "Chrome", "os": "Android",
+            "country": "de", "region": "BY", "city": "München", "ip_truncated": "203.0.113.0"}
+
+    def ingest(events, m=None):
+        return (f"SELECT public.analytics_ingest($j${json.dumps(events)}$j$::jsonb, "
+                f"$j${json.dumps(m or meta)}$j$::jsonb)")
+    sample = [{"type": "pageview", "path": "/", "title": "NRIClub"}]
+
+    # --- nobody reads the tables; only the site's function stores --------------------------
+    for table in ("private.analytics_events", "private.analytics_consent_counts"):
+        check(f"anon can't read {table}", f"SELECT count(*) FROM {table}", role="anon", expect="error")
+        check(f"... nor can members", f"SELECT count(*) FROM {table}", as_user=member, expect="error")
+        check(f"... nor admins, directly", f"SELECT count(*) FROM {table}", as_user=ADMIN, expect="error")
+        check(f"{table} has row-level security on, and no grants for anon or members",
+              f"SELECT relrowsecurity::text || '|' || has_table_privilege('anon', '{table}', 'SELECT')::text || '|' "
+              f"|| has_table_privilege('authenticated', '{table}', 'INSERT')::text FROM pg_class WHERE oid = '{table}'::regclass",
+              expect="true|false|false")
+    check("anon can't store events", ingest(sample), role="anon", error_has="permission denied")
+    check("... nor can members", ingest(sample), as_user=member, error_has="permission denied")
+    check("... nor admins (only /api/collect, with the service role key)", ingest(sample), as_user=ADMIN,
+          error_has="permission denied")
+    check("the service role stores page views, clicks and steps, and leaves out unknown kinds and steps", ingest([
+        {"type": "pageview", "path": "/", "title": "NRIClub", "referrer_domain": "Google.com", "utm_source": "whatsapp",
+         "utm_campaign": "munich"},
+        {"type": "click", "path": "/", "label": "Join free"},
+        {"type": "funnel", "path": "/", "label": "signup_open"},
+        {"type": "funnel", "path": "/", "label": "member_email_was_x"},
+        {"type": "profile", "path": "/u/:id", "label": "Priya"},
+        "not an event"]), role="service_role", expect="3")
+    check("... with the visit's details as sent: the country in capitals, the referrer in small letters", f"""
+          SELECT string_agg(concat_ws('|', type, path, label, referrer_domain, utm_source, utm_campaign, country, region, city,
+            ip_truncated, device, browser, os), ';' ORDER BY id)
+          FROM private.analytics_events WHERE session_id = '{s1}'""",
+          expect="pageview|/||google.com|whatsapp|munich|DE|BY|München|203.0.113.0|mobile|Chrome|Android;"
+                 "click|/|Join free||||DE|BY|München|203.0.113.0|mobile|Chrome|Android;"
+                 "funnel|/|signup_open||||DE|BY|München|203.0.113.0|mobile|Chrome|Android")
+    now_ms = int(time.time() * 1000)
+    check("texts are cut to their length, unknown devices and countries left empty, and the time kept within the hour "
+          "before it arrived (minutes ago)", f"""
+          BEGIN;
+          {ingest([{"type": "pageview", "path": "/" + "x" * 300, "title": "T" * 200, "at": now_ms - 10 * 60000},
+                   {"type": "click", "path": "/", "label": "L" * 120, "target": "t" * 250, "at": now_ms - 2 * 3600000},
+                   {"type": "click", "path": "/", "at": 99999999999999},
+                   {"type": "pageview", "path": "/", "at": "yesterday"}],
+                  {**meta, "session_id": s4, "device": "fridge", "country": "Germany", "city": "C" * 150})};
+          SELECT string_agg(concat_ws('|', length(path), length(title), length(label), length(target), device, country,
+            length(city), round(extract(epoch FROM now() - at) / 60)), ';' ORDER BY id)
+          FROM private.analytics_events WHERE session_id = '{s4}';
+          ROLLBACK;""", expect="4\n200|120|0|0|||100|10;1|0|80|200|||100|60;1|0|0|0|||100|0;1|0|0|0|||100|0")
+    check("more than 50 events at a time are refused", ingest(sample * 51), role="service_role", error_has="At most 50")
+    check("an id that isn't a uuid is refused", ingest(sample, {**meta, "visitor_id": "alice@example.com"}),
+          role="service_role", error_has="must be ids")
+    check("nothing to store is no error", "SELECT public.analytics_ingest('[]'::jsonb, '{}'::jsonb)", role="service_role",
+          expect="0")
+    check("one visit stores at most 2,000 events", f"""
+          BEGIN;
+          INSERT INTO private.analytics_events (visitor_id, session_id, type, path)
+            SELECT '{v3}', '{s3}', 'click', '/' FROM generate_series(1, 1999);
+          {ingest(sample * 3, {**meta, "visitor_id": v3, "session_id": s3})};
+          {ingest(sample, {**meta, "visitor_id": v3, "session_id": s3})};
+          SELECT count(*) FROM private.analytics_events WHERE session_id = '{s3}';
+          ROLLBACK;""", expect="1\n0\n2000")
+
+    # --- the banner's choices, counted ------------------------------------------------------
+    today = "(now() AT TIME ZONE 'Europe/Berlin')::date"
+    count = f"SELECT concat_ws('|', accepted, declined) FROM private.analytics_consent_counts WHERE day = {today}"
+    check("anyone's browser counts a choice: Accept, signed out", "SELECT public.analytics_consent_count('accepted')",
+          role="anon", expect="t")
+    check("... Decline, signed in", "SELECT public.analytics_consent_count('declined')", as_user=member, expect="t")
+    check("... and the counts are per day, with nothing about who chose", f"""
+          {count}; SELECT string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns
+          WHERE table_schema = 'private' AND table_name = 'analytics_consent_counts'""", expect="1|1\nday,accepted,declined")
+    check("only Accept or Decline", "SELECT public.analytics_consent_count('maybe')", role="anon",
+          error_has="accepted or declined")
+    check("anon can't change the counts any other way", f"UPDATE private.analytics_consent_counts SET accepted = 999",
+          role="anon", expect="error")
+    check("the counter stops at 50,000 choices a day", f"""
+          BEGIN;
+          UPDATE private.analytics_consent_counts SET accepted = 49998 WHERE day = {today};
+          SELECT public.analytics_consent_count('declined');
+          SELECT public.analytics_consent_count('accepted');
+          {count};
+          ROLLBACK;""", expect="t\nf\n49998|2")
+
+    # --- the admin panel's numbers ------------------------------------------------------------
+    for call in ("public.admin_analytics(30)", "public.admin_analytics_sessions(30, 25, 0)",
+                 f"public.admin_analytics_journey('{s1}')"):
+        check(f"anon can't call {call.split('(')[0]}", f"SELECT {call}", role="anon", error_has="permission denied")
+        check("... members get \"Admins only\"", f"SELECT {call}", as_user=member, error_has="Admins only")
+    ev = ("INSERT INTO private.analytics_events (at, visitor_id, session_id, type, path, title, label, target, "
+          "referrer_domain, utm_source, utm_medium, utm_campaign, country, city, ip_truncated, device, browser, os) VALUES ")
+
+    def row(ago, v, s, typ, path, label="", target="", ref="", utm=("", "", ""), place=("DE", "München"),
+            dev=("mobile", "Chrome", "Android"), title=""):
+        return (f"(now() - interval '{ago}', '{v}', '{s}', '{typ}', '{path}', '{title}', '{label}', '{target}', '{ref}', "
+                f"'{utm[0]}', '{utm[1]}', '{utm[2]}', '{place[0]}', '{place[1]}', '203.0.113.0', '{dev[0]}', '{dev[1]}', '{dev[2]}')")
+    seed = (f"DELETE FROM private.analytics_events; DELETE FROM private.analytics_consent_counts; " + ev + ", ".join([
+        row("3 days 10 minutes", v1, s1, "pageview", "/", ref="google.com", utm=("whatsapp", "social", "munich"), title="NRIClub"),
+        row("3 days 9 minutes", v1, s1, "click", "/", label="Join free"),
+        row("3 days 8 minutes", v1, s1, "funnel", "/", label="signup_open"),
+        row("3 days 7 minutes", v1, s1, "funnel", "/", label="signup_email"),
+        row("3 days 6 minutes", v1, s1, "pageview", "/city/munich", title="Indians in Munich"),
+        row("3 days 5 minutes", v1, s1, "click", "/city/munich", label="WhatsApp", target="wa.me"),
+        row("3 days 4 minutes", v1, s1, "session_end", "/city/munich"),
+        row("2 minutes", v1, s2, "pageview", "/guides"),
+        row("1 minute", v1, s2, "funnel", "/guides", label="signup_open"),
+        row("50 seconds", v1, s2, "funnel", "/guides", label="signup_code_sent"),
+        row("40 days", v2, s3, "pageview", "/", place=("IN", "Pune"), dev=("desktop", "Firefox", "Windows")),
+        row("40 days", v2, s3, "funnel", "/", label="login_start", place=("IN", "Pune"), dev=("desktop", "Firefox", "Windows")),
+    ]) + f"; INSERT INTO private.analytics_consent_counts VALUES ({today}, 5, 2), ({today} - 40, 1, 1)")
+    numbers = """SELECT concat_ws('|', a->'overview'->>'visitors', a->'overview'->>'sessions', a->'overview'->>'pageviews',
+                   a->'overview'->>'pages_per_session', a->'overview'->>'accepted', a->'overview'->>'declined',
+                   a->'overview'->>'signups_started', a->'overview'->>'details_sent', jsonb_array_length(a->'per_day'),
+                   (SELECT sum((d->>'sessions')::int) FROM jsonb_array_elements(a->'per_day') d))
+                 FROM (SELECT public.admin_analytics(%s) a) x"""
+    check("our team's numbers for 30 days: visitors, visits, page views, pages per visit, the banner's choices and sign-ups",
+          f"BEGIN; {seed}; {as_admin(numbers % 30)}; ROLLBACK;", expect="f\n1|2|3|1.5|5|2|1|0|30|2")
+    check("... and for 90 days, with the visit 40 days ago", f"BEGIN; {seed}; {as_admin(numbers % 90)}; ROLLBACK;",
+          expect="f\n2|3|4|1.3|6|3|1|0|90|3")
+    lists = """SELECT concat_ws(' ; ',
+        (SELECT string_agg(p->>'path' || '=' || (p->>'views'), ',') FROM jsonb_array_elements(a->'top_pages') p),
+        (SELECT string_agg((c->>'label') || '@' || (c->>'path') || '>' || (c->>'target') || '=' || (c->>'clicks'), ',')
+           FROM jsonb_array_elements(a->'top_clicks') c),
+        (SELECT string_agg((e->>'path') || '=' || (e->>'exits'), ',') FROM jsonb_array_elements(a->'exit_pages') e),
+        (SELECT string_agg((f->>'step') || '=' || (f->>'visitors'), ',') FROM jsonb_array_elements(a->'funnel') f),
+        (SELECT string_agg(coalesce(nullif(r->>'domain', ''), '-') || '=' || (r->>'sessions'), ',') FROM jsonb_array_elements(a->'referrers') r),
+        (SELECT string_agg(concat_ws('/', u->>'source', u->>'medium', u->>'campaign') || '=' || (u->>'sessions'), ',')
+           FROM jsonb_array_elements(a->'campaigns') u),
+        (SELECT string_agg((g->>'name') || '=' || (g->>'sessions'), ',') FROM jsonb_array_elements(a->'cities') g),
+        (SELECT string_agg((g->>'name') || '=' || (g->>'sessions'), ',') FROM jsonb_array_elements(a->'devices') g))
+      FROM (SELECT public.admin_analytics(30) a) x"""
+    check("... top pages, clicks, exit pages, the sign-up steps, sources, places and devices",
+          f"BEGIN; {seed}; {as_admin(lists)}; ROLLBACK;",
+          expect="f\n/=1,/city/munich=1,/guides=1 ; Join free@/>=1,WhatsApp@/city/munich>wa.me=1 ; "
+                 "/city/munich=1,/guides=1 ; signup_open=1,signup_email=1,signup_code_sent=1,signup_code_ok=0,"
+                 "signup_password=0,details_open=0,details_sent=0,login_start=0,login_ok=0 ; -=1,google.com=1 ; "
+                 "whatsapp/social/munich=1 ; München=2 ; mobile=2")
+    visits = """SELECT (r->>'total') || ' ; ' || (SELECT string_agg(concat_ws('|', s->>'id', s->>'steps', s->>'pages', s->>'exit',
+        s->>'city', s->>'ip', s->>'device', s->>'referrer_domain', s->>'utm_campaign'), ',') FROM jsonb_array_elements(r->'sessions') s)
+      FROM (SELECT public.admin_analytics_sessions(30, %s, %s) r) x"""
+    check("the visits, newest first, with place, shortened IP, device, source and steps",
+          f"BEGIN; {seed}; {as_admin(visits % (25, 0))}; ROLLBACK;",
+          expect=f"f\n2 ; {s2}|1|1|/guides|München|203.0.113.0|mobile||,{s1}|4|2|/city/munich|München|203.0.113.0|mobile|google.com|munich")
+    check("... a page at a time", f"BEGIN; {seed}; {as_admin(visits % (1, 1))}; ROLLBACK;",
+          expect=f"f\n2 ; {s1}|4|2|/city/munich|München|203.0.113.0|mobile|google.com|munich")
+    check("one visit's journey, in order", f"""BEGIN; {seed}; {as_admin(f'''SELECT string_agg((e->>'type') || ':' || (e->>'path')
+          || coalesce(':' || nullif(e->>'label', ''), ''), ', ') FROM jsonb_array_elements(public.admin_analytics_journey('{s1}')) e''')};
+          ROLLBACK;""", expect="f\npageview:/, click:/:Join free, funnel:/:signup_open, funnel:/:signup_email, "
+                               "pageview:/city/munich, click:/city/munich:WhatsApp, session_end:/city/munich")
+    check("a range outside 1 to 183 days is brought within it", f"""BEGIN; {seed}; {as_admin('''SELECT concat_ws('|',
+          public.admin_analytics(0)->>'days', public.admin_analytics(5000)->>'days',
+          jsonb_array_length(public.admin_analytics(NULL)->'per_day'))''')}; ROLLBACK;""", expect="f\n1|183|30")
+
+    # --- the clean-up: 6 months, its own job -----------------------------------------------------
+    check("the clean-up deletes events older than 6 months and keeps the rest", f"""
+          BEGIN;
+          DELETE FROM private.analytics_events;
+          {ev} {row('6 months 1 day', v3, s4, 'pageview', '/')}, {row('5 months 28 days', v3, s4, 'pageview', '/guides')};
+          SELECT private.analytics_cleanup()->>'analytics_events';
+          SELECT string_agg(path, ',') FROM private.analytics_events;
+          ROLLBACK;""", expect="1\n/guides")
+    check("anon can't run the clean-up", "SELECT private.analytics_cleanup()", role="anon", expect="error")
+    check("... nor can members", "SELECT private.analytics_cleanup()", as_user=member, expect="error")
+    check("its nightly job is scheduled when the database has pg_cron (this test database hasn't)",
+          "SELECT private.schedule_analytics_cleanup() ~ '^(scheduled: private.analytics_cleanup\\(\\) runs every night at 03:41 UTC "
+          "\\(pg_cron job nriclub-analytics-cleanup\\)|not scheduled)'", expect="t")
+    text = open(ANALYTICS, encoding="utf-8").read()
+    verdict("the migration leaves private.daily_cleanup alone (another update changes it)",
+            "FUNCTION private.daily_cleanup" not in text and "'nriclub-daily-cleanup'" not in text)
+
+    # --- the site, the function and the database name the same steps -------------------------------
+    proc = subprocess.run(["node", "--input-type=module", "-e",
+                           "import { FUNNEL_STEPS, EVENT_TYPES, MAX_EVENTS } from './src/content/analytics.js';"
+                           "console.log(JSON.stringify({ steps: FUNNEL_STEPS, types: EVENT_TYPES, max: MAX_EVENTS }))"],
+                          cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
+                          capture_output=True, text=True)
+    js = json.loads(proc.stdout) if proc.returncode == 0 else {}
+    ok, out, err = psql("SELECT array_to_string(private.analytics_funnel_steps(), ',')")
+    verdict("the sign-up and log-in steps are the same in the site and the database",
+            ok and js.get("steps") and out.split(",") == js["steps"], f"node: {proc.stderr[:200]} db: {out} {err[:200]}")
+    verdict("... and so are the kinds of event and the 50 events a request",
+            js.get("types") == ["pageview", "click", "funnel", "session_end"] and js.get("max") == 50
+            and "'pageview', 'click', 'funnel', 'session_end'" in text and "At most 50 events" in text, str(js))
+
+    # --- running the migration again --------------------------------------------------------------
+    before = psql("SELECT (SELECT count(*) FROM private.analytics_events) || '|' || (SELECT count(*) FROM private.analytics_consent_counts)")[1]
+    ok, _, err = psql(text)
+    verdict("the migration can be run again", ok, err[:300])
+    check("... and keeps the data", "SELECT (SELECT count(*) FROM private.analytics_events) || '|' || "
+          "(SELECT count(*) FROM private.analytics_consent_counts)", expect=before)
+    check("... and the permissions", ingest(sample), role="anon", error_has="permission denied")
 
 
 if __name__ == "__main__":

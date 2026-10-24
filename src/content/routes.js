@@ -10,6 +10,9 @@
 //   /city/<city>  /guides[/<slug>]  /whats-on  /travel[/<id>]  /ambassador
 //   /impressum  /terms[/<version>]  /privacy  /report
 // The admin site (admin.nriclub.app) answers every path.
+// /api/... belongs to Vercel's functions (api/collect.js, the website
+// analytics), which Vercel answers before any rewrite: never make "api" one
+// of the app's sections (the build stops if it is).
 // ============================================================================
 
 export const APP_SECTIONS = [

@@ -26,7 +26,7 @@ There is no server of our own.
 | Encryption in transit | HTTPS everywhere; HSTS with subdomains (vercel.json) | In place |
 | Encryption at rest | Provided by Supabase/AWS for the database, Storage and backups | In place (provider) |
 | Browser protections | Content-Security-Policy allowing only the site's own scripts, Supabase connections and images; no framing; nosniff; strict referrer; camera, microphone, location, payment and USB off (vercel.json) | In place from the deploy after 16 October 2026 |
-| No third parties in the browser | No cookies, no analytics, no ads, self-hosted fonts; external sites only on click | In place |
+| No third parties in the browser | No cookies, no ads, no other companies' trackers, self-hosted fonts; external sites only on click. Our own website analytics only after consent on the privacy banner, IP shortened before storing, not linked to accounts, kept 6 months (records of processing No. 18) | In place |
 | Secrets | Only the public anon key is in the site; the service-role key is never in the code or in `VITE_` variables | In place. Note: an old admin password is in the public git history (see `breach-register.md`); it must be treated as known |
 
 ## 2. Integrity (Art. 32(1)(b))

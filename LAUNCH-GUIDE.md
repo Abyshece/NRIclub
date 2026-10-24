@@ -211,7 +211,9 @@ key in the frontend or in a `VITE_` variable.
 1. Import the GitHub repository in Vercel (framework preset **Vite**, build
    command `npm run build`, output directory `dist`).
 2. **Settings → Environment Variables**: add `VITE_SUPABASE_URL` and
-   `VITE_SUPABASE_ANON_KEY`.
+   `VITE_SUPABASE_ANON_KEY`. For website analytics, also `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY` (no `VITE_` in front: only the server sees
+   them; "Website analytics: what to do" below).
 3. Deploy, then set the Supabase Site URL / redirect URLs to the Vercel or
    custom domain (Step 2.6).
 4. `vercel.json` sends security headers with every page. Its
@@ -237,8 +239,8 @@ key in the frontend or in a `VITE_` variable.
   long Vercel keeps request logs on your plan.
 - **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` says "23 October
   2026" (the Terms 2026-10-23, with the travel board's rules in section 7);
-  `PRIVACY_DATE` in `src/content/legal/privacy.js` says "23 October 2026"
-  (the Privacy Policy 2026-10-23, which adds the travel board). When you
+  `PRIVACY_DATE` in `src/content/legal/privacy.js` says "24 October 2026"
+  (the Privacy Policy 2026-10-24, which adds website analytics). When you
   change a text, set its date to the day the change goes live.
 - **Deleting old data:** the Privacy Policy promises retention periods
   that, for now, you keep by hand once a month
@@ -487,6 +489,83 @@ app. No database is involved: the list is `WHATS_ON` in
    Listing is free and at our discretion; remove an event when an organiser
    asks.
 
+## Website analytics: what to do
+
+Visitors who choose **Accept** on the privacy banner (shown once on every page
+of the site and the app, never on the admin site) are counted: the pages they
+open, the buttons and links they click, the steps of signing up and logging
+in, where each visit came from and where it ended, with a shortened IP
+address and the approximate place. Nothing is recorded for anyone who chooses
+**Decline** or hasn't chosen, and nothing is linked to members' accounts.
+"Privacy settings" at the foot of every page (in the app: Settings → Privacy &
+Safety) opens the banner again. The Privacy Policy 2026-10-24 (section 2,
+"Website analytics", and section 8) describes it.
+
+1. **Run the SQL:** `supabase/oneoff/2026-10-29-analytics/run_in_sql_editor.sql`
+   in the SQL editor, the whole file at once (the migration
+   `20261029000000_analytics.sql` with a check in front). It refuses to run
+   before the travel board update, and a second time. Its messages say
+   whether the nightly clean-up (events older than 6 months) is scheduled;
+   if it says "not scheduled", enable pg_cron under Database → Extensions
+   and run `SELECT private.schedule_analytics_cleanup();`.
+2. **Add two settings in Vercel** (Project → Settings → Environment
+   Variables, for Production, and Preview if you test there):
+   - `SUPABASE_URL`: the same address as `VITE_SUPABASE_URL`
+     (`https://uzzkdmybsbwknpsucuvv.supabase.co`).
+   - `SUPABASE_SERVICE_ROLE_KEY`: Supabase → Project Settings → API Keys,
+     the `service_role` key (or a new secret key, `sb_secret_…`). Mark it
+     **Sensitive**. It can do anything in the database: never put it in a
+     `VITE_` variable, the code or a chat.
+   Then **redeploy** (Deployments → … → Redeploy): Vercel passes new settings
+   only to new deployments. Without them the site works the same and
+   `/api/collect` quietly drops what it receives.
+3. **Check:** open nriclub.app in a private window, choose **Accept**, open a
+   few pages and click "Join free". Within a minute the admin panel's
+   **Analytics** page shows the visit under *Visitor journeys*. In the
+   browser's developer tools (Network), requests to `/api/collect` answer
+   `204`. Then **Privacy settings → Decline**: nothing more is sent, and
+   `nriclub_visitor_id` is gone from the site's local storage.
+4. **Campaign links:** to see which WhatsApp group, post or poster brings
+   people, share links with `utm_` details, one per place you share them:
+   `https://nriclub.app/?utm_source=whatsapp&utm_medium=group&utm_campaign=munich`,
+   `https://nriclub.app/city/berlin?utm_source=instagram&utm_campaign=diwali`.
+   They show under *Campaigns and links*. WhatsApp and most apps don't say
+   which site a visit came from, so without such a link those visits count
+   as "Direct".
+
+**How to read the analytics** (admin panel → Analytics; choose 7, 30 or 90
+days):
+
+- *Only visitors who accepted are counted*, so the numbers are lower than
+  the real traffic. "Accepted analytics" shows the share who accept: with
+  70% accepting, real visits are roughly the shown ones divided by 0.7.
+- *Visitors* are browsers (the same person on a phone and a laptop counts
+  twice; someone who clears the site's data counts again). A *visit* ends
+  after 30 minutes without activity. *Pages per visit* is page views divided
+  by visits.
+- *Sign-up steps*: how many visitors reached each step, and the share who
+  didn't go on to the next one. The step marked "the most people leave
+  here" is the first thing to make easier. Steps can happen in different
+  visits (sign up today, send check details tomorrow), so a later step can
+  have more visitors than the one before when people started before the
+  chosen days.
+- *Exit pages*: where visits ended. A high share on a page meant to lead on
+  (for example the sign-up form) points to a problem there.
+- *Top clicked*: on the public pages, the buttons' and links' own words; in
+  the members' area only the menus' names (other buttons can carry members'
+  names, so they count as "(button)" or "(link)").
+- *Places* come from the shortened IP address: right for the country,
+  roughly right for the city (a mobile network can place someone in another
+  city).
+- *Visitor journeys*: single visits with their pages, clicks and steps in
+  order. Use them to understand patterns, never to find out who someone is:
+  the Privacy Policy promises the data isn't linked to members.
+- A visitor who wants their analytics deleted can send the visitor ID that
+  Privacy settings shows. To delete it, in the SQL editor:
+  `DELETE FROM private.analytics_events WHERE visitor_id = '<the ID>';`
+- Raw events are deleted after 6 months; the totals for older days go with
+  them.
+
 ## Before inviting the public
 
 Launch tasks from the Phase 1 review (2026-10-12):
@@ -566,6 +645,9 @@ for f in supabase/migrations/*.sql; do
 done
 python3 supabase/tests/rls_test.py "dbname=nriclub_test"
 ```
+
+The website analytics' collecting function and browser helpers have their
+own tests, without a database: `node --test tests/analytics.test.mjs`.
 
 The migrations run in name order, each in one transaction:
 `20261012000000_nriclub_schema.sql`, `20261013000000_review_fixes.sql`,

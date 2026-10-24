@@ -19,7 +19,7 @@ import { docToHtml, CONTACT_EMAIL } from './src/content/legal/doc.js';
 import { privacyDoc } from './src/content/legal/privacy.js';
 import { termsDoc, TERMS_VERSION, TERMS_ARCHIVE } from './src/content/legal/terms.js';
 import { REPORT_HREF, REPORT_LINK_TEXT, REPORT_MAILTO, REPORT_PAGE } from './src/content/legal/reporting.js';
-import { APP_REWRITE_SOURCE } from './src/content/routes.js';
+import { APP_REWRITE_SOURCE, APP_SECTIONS } from './src/content/routes.js';
 
 const SITE = 'https://nriclub.app';
 
@@ -167,6 +167,11 @@ function publicPages() {
       }
       if (!rewrites.some((r) => r.source === '/(.*)' && r.destination === '/app.html' && r.has?.[0]?.value === 'admin.nriclub.app')) {
         throw new Error('vercel.json must send every address on admin.nriclub.app to the app (a rewrite with "has" the host admin.nriclub.app).');
+      }
+      // /api/collect (api/collect.js) receives the website analytics: no
+      // rewrite of the main site may claim /api/.
+      if (APP_SECTIONS.includes('api') || rewrites.some((r) => !r.has && /^\/\(?api\b/.test(r.source))) {
+        throw new Error('vercel.json and src/content/routes.js must leave /api/ to the site\'s functions (api/collect.js): take "api" out of APP_SECTIONS and the rewrites.');
       }
       if (!hasImprint()) {
         this.warn('src/content/imprint.js has no name and address yet: no Impressum page, and the Terms and Privacy Policy say NRIClub is run by its founder in Germany.');
