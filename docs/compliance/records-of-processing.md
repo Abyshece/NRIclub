@@ -146,7 +146,7 @@ references the member cascades, except where noted).
 
 | | |
 |---|---|
-| Purpose | Tell members about likes, comments, Namaste, answers, events, bookings, verification results, urgent questions in their city, members joining (ambassadors); statements of reasons and warnings (type `moderation`), outcomes of reports they sent (`report`), and for admins new reports from the form, safety reports and new applications to be a city ambassador (`alert`) |
+| Purpose | Tell members about likes, comments, Namaste, answers, events, bookings, verification results, urgent questions in their city, members joining (ambassadors), matching travel posts (`travel_match`) and housing listings (`housing_match`, No. 19); statements of reasons and warnings (type `moderation`), outcomes of reports they sent (`report`), and for admins new reports from the form, safety reports and new applications to be a city ambassador (`alert`) |
 | Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5) and 17 DSA for statements of reasons and report outcomes |
 | Data | Recipient, actor, short text, reference, read state (`public.notifications`) |
 | Profile reminders | Our team's reminders about missing profile details (type `profile`, Art. 6(1)(f): helping members recognise and find each other), at most one a week per member; a note of which reminder went to whom, from which admin and when (`private.profile_reminders`), deleted after 12 months (automatic) |
@@ -274,6 +274,20 @@ Since the site update with the privacy banner and the database update
 | Recipients | Admins (admin panel → Analytics: totals and single visits). Processors: Vercel (Edge Function `/api/collect`, IP lookup; transfer safeguard as for No. 11), Supabase (storage) |
 | Retention | Events: 6 months (`private.analytics_cleanup()`, nightly pg_cron job `nriclub-analytics-cleanup`). Consent counts: kept (no personal data). Visitor ID in the browser: until Decline or the site's data is cleared |
 | Note | Data-subject requests: the data can only be found with the visitor ID (shown in Privacy settings while analytics are on); `DELETE FROM private.analytics_events WHERE visitor_id = '…'` |
+
+### 19. Housing search ("Find a place")
+
+Since the database update `20261030000000_housing_search.sql` (Privacy
+Policy 2026-10-30; the site shows "Coming soon" before it).
+
+| | |
+|---|---|
+| Purpose | Let members find a room, sublet or flat by city and dates, and tell members who are looking for a place about matching listings |
+| Legal basis | Art. 6(1)(b); Art. 9(2)(a) where content reveals special categories. The limits: Art. 6(1)(f) (keeping the Market free of misuse) |
+| Data subjects | Members who post housing listings or "Looking for a place" posts |
+| Data | Housing details of a Market listing: kind of place, city, available from and until (or open-ended), warm rent, deposit, size, furnished, Anmeldung possible, when it expires or was renewed (`public.housing_listings`; the listing itself in `public.marketplace`, No. 5). Looking posts: kinds of place, city, dates, highest rent, furnished or Anmeldung needed, note, on/off (`public.housing_wanted`). When a member posted either or changed a listing's details, for the limits (`private.housing_post_log`). Matching notices (type `housing_match`, No. 7). Search terms aren't stored. No fields or filters for gender, religion, caste, origin, nationality, language or diet (AGG) |
+| Recipients | Listing details: approved members and admins. Looking posts: the author, admins, and the authors of listings they match (`public.housing_matches`, with name and photo). In "Download my data" |
+| Retention | Listings: shown until their "until" date, or 60 days after posting or renewal if open-ended; deleted 30 days after that (with their Market listing and matching notices) unless renewed. Looking posts: until their end date, or 60 days without one; deleted 30 days after. Limit counts: 30 days. All deleted with the account. Run by `private.housing_cleanup()` (nightly pg_cron job `nriclub-housing-cleanup`) |
 
 ## Technical and organisational measures
 
