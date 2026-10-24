@@ -65,6 +65,10 @@ export function termsDoc(version = TERMS_VERSION) {
     sections: [
       { id: "provider", title: "1. Who we are", blocks: providerBlocks() },
 
+      // For the next version: since 24 October 2026 there are only city
+      // groups (language, interest and university groups were removed), so
+      // "groups for cities, languages, interests and universities" becomes
+      // "a group for each city". Changing the text needs a new version.
       { id: "service", title: "2. What NRIClub is", blocks: [
         { p: "NRIClub is an online community for Indians abroad and people connected with the Indian community. Members can join groups for cities, languages, interests and universities; post and comment; ask and answer questions; organise and join events; offer and find things in the Market; recommend places; connect with each other (Namaste) and send messages; offer or book free mentoring; and read our guides." },
         { p: "NRIClub is free. There are no fees, no paid features and no advertising." },

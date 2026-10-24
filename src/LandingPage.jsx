@@ -112,7 +112,7 @@ const FEATURES = [
 const STEPS = [
   { title: "Join free", text: "Your name, email and a password. No phone number and no app store: NRIClub works in your browser and can sit on your home screen." },
   { title: "Get checked", text: "Paste your LinkedIn. No LinkedIn? Write a sentence on how you're connected to the community, like your university or employer. If a member knows you, you can name them too. A person on our team checks it, usually within a day; meanwhile you can join groups and say hello." },
-  { title: "Meet your city", text: "Join your city's group, plus your language group, Indian students abroad or the parents' corner." },
+  { title: "Meet your city", text: "Join your city's group: one place for every Indian who lives there, students and working people alike." },
 ];
 
 const ArrowRight = () => (
@@ -283,7 +283,7 @@ export default function LandingPage({ onJoin, onLogin }) {
             ))}
           </div>
           <p style={{ textAlign: "center", fontSize: 15, color: MUTED, margin: "22px 0 0" }}>
-            Plus your city's group, language groups, a group for Indian students abroad, the parents' corner and a travel board for flights to and from India.
+            Plus one group for each city, for every Indian who lives there, and a travel board for flights to and from India.
           </p>
         </section>
 
