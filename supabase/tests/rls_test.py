@@ -5731,7 +5731,7 @@ def housing_search():
     owner(f"SET session_replication_role = replica; UPDATE housing_listings SET created_at = now() - interval '70 days', "
           f"expires_on = private.today_in_germany() - 10 WHERE listing_id = '{open_one}'; "
           f"UPDATE marketplace SET status = 'expired' WHERE id = '{open_one}'; RESET session_replication_role; SELECT 1")
-    check("ana renews her open-ended listing that had expired: shown 60 more days from today, and back in the Market",
+    check("ana renews an open-ended listing that had expired: shown 60 more days from today, and back in the Market",
           f"SELECT (public.renew_housing_listing('{open_one}') ->> 'expires_on')::date - private.today_in_germany(); "
           f"SELECT status FROM marketplace WHERE id = '{open_one}'", as_user=ana, expect="60\nactive")
     check("... a listing with an until date is renewed by changing its dates",
@@ -5836,7 +5836,7 @@ def housing_search():
         check(name, sql, as_user=ben, error_has=error)
     ben_post = post(ben, hs_looking(["sublet", "wg_room", "sublet"], " Munich ", 30, 49, max_rent=700,
                                     note=" Starting a job in Garching. "))
-    check("ben is looking for a WG room or a sublet in Munich: the kinds each once, in the site's order; ends after his last day",
+    check("ben is looking for a WG room or a sublet in Munich: the kinds each once, in the site's order; ends after the last day",
           f"SELECT concat_ws('|', kinds::text, city, city_key, note, active, expires_on - private.today_in_germany()) "
           f"FROM housing_wanted WHERE id = '{ben_post}'", as_user=ben,
           expect="{wg_room,sublet}|Munich|munich|Starting a job in Garching.|t|49")
@@ -5869,7 +5869,7 @@ def housing_search():
                          f"FROM notifications n WHERE n.user_id = '{uid}' AND n.type = 'housing_match'")
     room = post(ana, hs_post("Room near Ostbahnhof", "wg_room", "München", 28, 50, rent=650, deposit=1300, anmeldung="true"))
     dates = psql("SELECT private.housing_dates_text(private.today_in_germany() + 28, private.today_in_germany() + 50)")[1]
-    check("ana posts a WG room in München free around ben's dates, within his rent: ben hears about it",
+    check("ana posts a WG room in München free around ben's dates, within ben's rent: ben hears about it",
           notes(ben), expect=f"1|{ana}:posted a WG room in München, free {dates}, €650 a month warm. "
                              "It matches what you're looking for.")
     check("... it points at ana's listing",
@@ -5881,11 +5881,11 @@ def housing_search():
     check("... not jon, whose rent is lower", notes(jon), expect="0|")
     check("... not kim, whose post has ended", notes(kim), expect="0|")
     check("... nor ana herself", notes(ana), expect="0|")
-    check("ana sees who is looking for a place like hers: ben, with what he wrote", f"""
+    check("ana sees who is looking for a place like it: ben, with the note", f"""
           SELECT string_agg(concat_ws('|', m->>'user_id', m->>'name', m->>'note', m->'kinds'), ';')
           FROM jsonb_array_elements(public.housing_matches('{room}')) m""", as_user=ana,
           expect=f"{ben}|Ben H|Starting a job in Garching.|[\"wg_room\", \"sublet\"]")
-    check("... only she does", f"SELECT public.housing_matches('{room}')", as_user=ben,
+    check("... only ana does", f"SELECT public.housing_matches('{room}')", as_user=ben,
           error_has="Only the member who posted this listing")
     check("... not a member waiting for our check", f"SELECT public.housing_matches('{room}')", as_user=eli,
           error_has="Only members our team has approved")
@@ -5920,7 +5920,7 @@ def housing_search():
     check("members can't write housing_match notifications themselves",
           f"INSERT INTO notifications (user_id, type, text) VALUES ('{ben}', 'housing_match', 'fake')", as_user=ana,
           expect="error")
-    check("ben turns his post off, and on again",
+    check("ben turns the post off, and on again",
           f"UPDATE housing_wanted SET active = false WHERE id = '{ben_post}' RETURNING active; "
           f"UPDATE housing_wanted SET active = true WHERE id = '{ben_post}' RETURNING active", as_user=ben, expect="f\nt")
 
@@ -5970,7 +5970,7 @@ def housing_search():
 
     # --- "Download my data" ---------------------------------------------------------------------------------------------
     post(ana, hs_looking(["flat"], "Munich", 60))
-    check("\"Download my data\": ana's housing details, looking posts and when she posted them", """
+    check("\"Download my data\": ana's housing details, looking posts and when they were posted", """
           SELECT concat_ws('|', (SELECT string_agg(h->>'kind', ',' ORDER BY h->>'kind') FROM jsonb_array_elements(d->'housing_listings') h),
             d->'housing_listings'->0 ? 'warm_rent', jsonb_array_length(d->'housing_looking_posts'),
             d->'housing_looking_posts'->0->>'kinds', jsonb_array_length(d->'housing_post_log'),
