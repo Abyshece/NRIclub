@@ -2689,6 +2689,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     }
     const topics = topicList(editProfile.askMeAbout).join(", ");
     if (user.hasTopics && topics !== (user.askMeAbout || "")) updates.ask_me_about = topics;
+    const bio = trim(editProfile.bio);
+    if (bio !== (user.bio || "")) updates.bio = bio;
     if (isUserNRI(country ? { countryCode: country } : user)) {
       updates.hometown = trim(editProfile.hometown);
       updates.years_abroad = editProfile.yearsAbroad || "";
@@ -2711,7 +2713,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     onUserUpdate(refreshed || {
       ...user, profession: updates.profession, linkedinUrl: updates.linkedin_url ?? user.linkedinUrl,
       ...(place ? { city: place.city, countryCode: place.country_code, location: place.location, isNRI: place.country_code !== "IN" } : {}),
-      occupationStatus: updates.occupation_status, askMeAbout: updates.ask_me_about ?? user.askMeAbout,
+      occupationStatus: updates.occupation_status, askMeAbout: updates.ask_me_about ?? user.askMeAbout, bio: updates.bio ?? user.bio,
       ...(updates.hometown !== undefined ? { hometown: updates.hometown, yearsAbroad: updates.years_abroad } : {}),
     });
     setProfileSaving(false);
@@ -4611,6 +4613,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   </span>
                 )}
               </div>
+              {/* About me, as other members see it on the profile. */}
+              {user.bio && <p style={{ fontSize: 14, color: "#37352F", lineHeight: 1.6, margin: "16px auto 0", maxWidth: 480, fontFamily: font, overflowWrap: "anywhere" }}>{user.bio}</p>}
               {user.ambassadorCity
                 ? <div style={{ marginTop: 12 }}><AmbassadorBadge city={user.ambassadorCity} /></div>
                 : user.status !== "blocked" && <button type="button" onClick={() => setAmbassadorApply({ city: user.city || "" })} style={{ marginTop: 12, background: "none", border: "1px dashed #C7D2FE", borderRadius: 20, padding: "5px 12px", minHeight: 32, fontSize: 12, color: "#000080", cursor: "pointer", fontFamily: font }}>Become a city ambassador</button>}
@@ -6757,6 +6761,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   input: { maxLength: 300 },
                   help: "Up to 5 topics you can help with, separated by commas. Members can find you by them.",
                 })}
+                <div style={{ marginBottom: 16 }}>
+                  <label htmlFor="edit-bio" style={editLabel}>About me</label>
+                  <textarea id="edit-bio" style={{ ...inputStyle, minHeight: 84, resize: "vertical", lineHeight: 1.5 }} value={editProfile.bio || ""} maxLength={500}
+                    placeholder="e.g. Moved to Berlin in 2021 for work. Into cricket, cooking and long walks."
+                    onChange={(e) => setField("bio", e.target.value)} autoFocus={profileFocus === "bio"} aria-describedby="edit-bio-help" />
+                  <p id="edit-bio-help" style={{ fontSize: 12, color: "#6B6A67", marginTop: 6, lineHeight: 1.45, fontFamily: font }}>A few words members see on your profile.</p>
+                </div>
                 {textField("linkedinUrl", "LinkedIn profile", "linkedin.com/in/your-name", {
                   input: { inputMode: "url", autoCapitalize: "none", spellCheck: false },
                   help: user.verificationStatus === "approved" ? REVIEW_AGAIN_NOTE("LinkedIn") : null,
