@@ -231,6 +231,17 @@ try {
     window.location.replace(`https://${ADMIN_HOST}/`);
   }
 } catch (e) {}
+// A one-time sign-in code from the members' site's "Admin panel" button
+// (#handoff=…, see api.adminHandoffCode): read once and taken out of the
+// address bar at once, so it isn't kept in the history.
+let adminHandoff = null;
+try {
+  const m = /^#handoff=([A-Za-z0-9_-]{10,200})$/.exec(window.location.hash);
+  if (m && isAdminRoute()) {
+    adminHandoff = m[1];
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+} catch (e) {}
 // Website analytics (with the visitor's consent): never on the admin site.
 try { if (!isAdminRoute()) startAnalytics(); } catch (e) {}
 
@@ -358,6 +369,17 @@ export default function App() {
       // the code from the app); without one it asks for the password.
       let session = null;
       try { session = await api.getSession(); } catch (e) {}
+      // Signed out here, but sent from the members' site with a code: sign
+      // in with it. A session this site already has is kept (it may have the
+      // 6-digit code already).
+      const code = adminHandoff;
+      adminHandoff = null;
+      if (!session?.user && code) {
+        try {
+          await api.signInWithHandoff(code);
+          session = await api.getSession();
+        } catch (e) {}
+      }
       showAdminLogin({ resume: !!session?.user });
       return;
     }
