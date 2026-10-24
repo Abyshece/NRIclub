@@ -178,6 +178,29 @@ changes to who is a city's ambassador. Undo of an approval works only while
 nobody has joined or posted. Deleting a community removes its members from
 it; its posts stay in the feed, without the community.
 
+City ambassadors are volunteers. Before they use the ambassador panel they
+accept the ambassador agreement (unpaid; they act for NRIClub only in the
+panel's tasks; members' data they see there stays confidential and is used
+only on NRIClub; they follow these guidelines; they never remove or judge
+content themselves; we can end the role and they can step down at any
+time). In the panel they welcome newcomers, change their city group's
+description and starter post, mark their own meetups "Hosted by the city
+ambassador" and flag things in their city to us. They can't remove, hide
+or block anything.
+
+- **Flags from ambassadors** are reports like any other: decide them as
+  above, on the facts, not because an ambassador sent them. Reports shows
+  them first after safety reports, labelled "From the ambassador of
+  <city>", and every admin gets an in-app notice.
+- **Ambassadors** (admin panel → Ambassadors) shows each ambassador, the
+  agreement they accepted and what they did (the description before and
+  after, pins, meetups, flags, stepping down). If an ambassador misuses the
+  role, end it under Members (`admin_set_ambassador` with no city), and
+  warn or block as for any member if the Terms were broken. An ambassador
+  who steps down loses the role at once; every admin is told.
+- The guidelines ambassadors see in the panel are in
+  `src/content/ambassador.js`; keep them in step with this section.
+
 ## Appeals
 
 A member may ask within 6 months to have a decision looked at again. A

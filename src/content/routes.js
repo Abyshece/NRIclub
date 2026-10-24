@@ -7,14 +7,14 @@
 // (vite.config.js), so add a new page's path here and there together.
 //   /find  /groups[/id]  /events[/id]  /help  /docs[/id]  /market[/id]
 //   /messages[/id]  /profile  /u/<id>  /post/<id>  /mentoring  /mentors
-//   /city/<city>  /guides[/<slug>]  /whats-on  /travel[/<id>]  /impressum
-//   /terms[/<version>]  /privacy  /report
+//   /city/<city>  /guides[/<slug>]  /whats-on  /travel[/<id>]  /ambassador
+//   /impressum  /terms[/<version>]  /privacy  /report
 // The admin site (admin.nriclub.app) answers every path.
 // ============================================================================
 
 export const APP_SECTIONS = [
   "find", "groups", "events", "help", "docs", "market", "messages", "profile", "u", "post", "mentoring", "mentors",
-  "city", "guides", "whats-on", "travel", "impressum", "terms", "privacy", "report",
+  "city", "guides", "whats-on", "travel", "ambassador", "impressum", "terms", "privacy", "report",
 ];
 
 // The rewrite in vercel.json that sends them to the app.
