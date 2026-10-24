@@ -3365,6 +3365,72 @@ export function adminInboxReply(messageId, body) {
   return adminFunction("admin-inbox-reply", { message_id: messageId, body });
 }
 
+// ---- Members' progress: sign-up stages, profile completeness and profile
+// reminders (20261028000000_profile_completeness.sql). Each returns null
+// before that database update. ----
+
+// Accounts by sign-up stage: { counts: { unconfirmed, unfinished, pending,
+// needs_info, approved, rejected, blocked }, total, members } (members: the
+// accounts at stage, a page from offset, matching query).
+export const PROGRESS_PAGE = 50;
+export async function adminSignupStages({ stage = null, query = "", offset = 0, limit = PROGRESS_PAGE } = {}) {
+  if (knownMissing("admin_signup_stages")) return null;
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_signup_stages", {
+      p_stage: stage, p_query: String(query || "").slice(0, 200), p_limit: limit, p_offset: offset,
+    });
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.admin_signup_stages = Date.now();
+    return null;
+  }
+}
+
+// How complete approved members' profiles are: { approved, levels, missing,
+// average, cities, total, recent, complete, members } for level (items
+// filled, 0-7), missing (an item's key), city and query, a page from
+// offset. idsOnly: ids (every match, at most 5,000) instead of members.
+export async function adminProfileCompleteness({ level = null, missing = null, city = null, query = "", offset = 0, limit = PROGRESS_PAGE, idsOnly = false } = {}) {
+  if (knownMissing("admin_profile_completeness")) return null;
+  try {
+    return await restCall("POST", "/rest/v1/rpc/admin_profile_completeness", {
+      p_level: level, p_missing: missing, p_city: city, p_query: String(query || "").slice(0, 200),
+      p_limit: limit, p_offset: offset, p_ids_only: !!idsOnly,
+    });
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.admin_profile_completeness = Date.now();
+    return null;
+  }
+}
+
+// Sends members a reminder about their profile in the app: kind "general"
+// or an item's key, with its words ({ text, words } from
+// src/content/profileReminders.js). The database skips members reminded in
+// the last 7 days, those with nothing to remind them of, and those who
+// aren't approved. Sent in batches of 500. { sent, skipped, skipped_recent,
+// skipped_complete, skipped_not_eligible, sent_to, sent_at }. If a batch
+// fails, the error has partial: what the batches before it did.
+export const REMINDER_BATCH = 500;
+export async function adminSendProfileReminders(memberIds, kind, { text, words = {} }) {
+  const total = { sent: 0, skipped: 0, skipped_recent: 0, skipped_complete: 0, skipped_not_eligible: 0, sent_to: [], sent_at: null };
+  for (let i = 0; i < memberIds.length; i += REMINDER_BATCH) {
+    let res;
+    try {
+      res = await restCall("POST", "/rest/v1/rpc/admin_send_profile_reminders", {
+        p_members: memberIds.slice(i, i + REMINDER_BATCH), p_kind: kind, p_text: text, p_words: words,
+      });
+    } catch (err) {
+      if (i > 0) err.partial = total;
+      throw err;
+    }
+    for (const k of ["sent", "skipped", "skipped_recent", "skipped_complete", "skipped_not_eligible"]) total[k] += Number(res?.[k]) || 0;
+    total.sent_to.push(...(res?.sent_to || []));
+    total.sent_at = res?.sent_at || total.sent_at;
+  }
+  return total;
+}
+
 // ---- Public city pages (work without signing in; counts only) ----
 export async function getCitySummary(city) {
   return restCall("POST", "/rest/v1/rpc/city_summary", { p_city: city });

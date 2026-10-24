@@ -43,6 +43,7 @@ export const RETENTION = {
   travelLimitDays: 30, // when a member posted on the travel board, for its limits (private.rate_log)
   ambassadorLogMonths: 12, // what city ambassadors did in their panel (private.ambassador_log), after each entry (private.daily_cleanup)
   ambassadorWelcomeMonths: 12, // newcomers an ambassador marked as welcomed (private.ambassador_welcomes), after each (private.daily_cleanup)
+  profileReminderMonths: 12, // the note of which profile reminder went to whom (private.profile_reminders_cleanup)
   // Photo files: true since the site deletes them with their post, listing,
   // event or profile photo and with the account (plan C1), and the photo
   // clean-up in the admin panel (src/admin/PhotoCleanup.jsx) deletes what is
@@ -187,6 +188,7 @@ export function privacyDoc() {
             ["Why", "so members can find, recognise and contact each other."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
             ["How long", "until you change it or delete your account."],
+            ["Reminders", `our team may send you a reminder in the app about profile details you haven't added yet, at most once a week (legitimate interests: helping members recognise and find each other). We keep a note of which reminder we sent you and when for ${months(R.profileReminderMonths)}.`],
           ] },
           { title: "What you post and do on NRIClub", fields: [
             ["What", "posts, comments and likes; photos (before uploading one, the site makes it smaller and saves it again, which removes hidden details such as where and when it was taken); guides you write and comments on them; questions and answers, including urgent questions, thanks and best answers; events you create and whether you're going; Market listings; places you add or recommend; groups you create, join or ask for; Namaste requests and connections; your invite code, if you open \"Invite a friend\"; messages; mentoring times and sessions, with the topic, note and meeting link; ratings and reviews; members you block; your settings (for example who can message you); and the in-app notices we show you."],

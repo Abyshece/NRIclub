@@ -24,6 +24,7 @@ import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
 import { WHATS_ON_NOTE, upcoming, todayInGermany, citySlug, eventCitySlug } from "./content/whatson";
 import { CompactEvent } from "./WhatsOnItems";
 import { useWhatsOn } from "./whatsOnLive";
+import { PROFILE_ITEMS, missingItems, reminderKind } from "./content/profileReminders";
 
 // The application to be a city ambassador, loaded when it is opened.
 const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
@@ -704,7 +705,7 @@ const toHelp = (h, responses) => ({
 });
 
 // The small sign on a notification's avatar, by type.
-const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐", moderation: "🛡️", report: "🚩", alert: "⚠️", travel_match: "✈️" };
+const NOTIF_BADGE = { answer: "💬", thanks: "🙏", best: "✅", urgent: "🚨", rsvp: "📅", member: "👋", booking: "🤝", booking_cancelled: "✖️", review: "⭐", moderation: "🛡️", report: "🚩", alert: "⚠️", travel_match: "✈️", profile: "✏️" };
 
 // Messages from our team (the database writes them): why we removed
 // something of the member's or acted on their account (a statement of
@@ -2698,6 +2699,23 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     }).catch(() => {});
   };
 
+  // A reminder from our team about missing profile details (a 'profile'
+  // notification): Edit profile opens on the field it's about, or the first
+  // missing one Edit profile has. One about the photo opens the photo picker.
+  const openProfileReminder = (text) => {
+    const missing = missingItems(user);
+    const kind = reminderKind(text);
+    if (kind === "photo" && missing.includes("photo")) {
+      const picker = document.getElementById("avatar-upload") || document.getElementById("profile-avatar-upload");
+      if (picker) { picker.click(); return; }
+    }
+    const abroad = isUserNRI(user);
+    const inEditor = (key) => key !== "photo" && (abroad || (key !== "hometown" && key !== "years_abroad"))
+      && (key !== "ask_me_about" || user.hasTopics);
+    const target = [kind, ...missing].find((key) => missing.includes(key) && inEditor(key));
+    openProfileEditor(target ? PROFILE_ITEMS.find((i) => i.key === target).field : null);
+  };
+
   const saveProfileChanges = async () => {
     if (profileSaving) return;
     const trim = (v) => (v || "").trim();
@@ -2728,6 +2746,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     }
     const topics = topicList(editProfile.askMeAbout).join(", ");
     if (user.hasTopics && topics !== (user.askMeAbout || "")) updates.ask_me_about = topics;
+    const bio = trim(editProfile.bio);
+    if (bio !== (user.bio || "")) updates.bio = bio;
     if (isUserNRI(country ? { countryCode: country } : user)) {
       updates.hometown = trim(editProfile.hometown);
       updates.years_abroad = editProfile.yearsAbroad || "";
@@ -2750,7 +2770,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     onUserUpdate(refreshed || {
       ...user, profession: updates.profession, linkedinUrl: updates.linkedin_url ?? user.linkedinUrl,
       ...(place ? { city: place.city, countryCode: place.country_code, location: place.location, isNRI: place.country_code !== "IN" } : {}),
-      occupationStatus: updates.occupation_status, askMeAbout: updates.ask_me_about ?? user.askMeAbout,
+      occupationStatus: updates.occupation_status, askMeAbout: updates.ask_me_about ?? user.askMeAbout, bio: updates.bio ?? user.bio,
       ...(updates.hometown !== undefined ? { hometown: updates.hometown, yearsAbroad: updates.years_abroad } : {}),
     });
     setProfileSaving(false);
@@ -4704,6 +4724,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   </span>
                 )}
               </div>
+              {/* About me, as other members see it on the profile. */}
+              {user.bio && <p style={{ fontSize: 14, color: "#37352F", lineHeight: 1.6, margin: "16px auto 0", maxWidth: 480, fontFamily: font, overflowWrap: "anywhere" }}>{user.bio}</p>}
               {user.ambassadorCity
                 ? <div style={{ marginTop: 12 }}><AmbassadorBadge city={user.ambassadorCity} /></div>
                 : user.status !== "blocked" && <button type="button" onClick={() => setAmbassadorApply({ city: user.city || "" })} style={{ marginTop: 12, background: "none", border: "1px dashed #C7D2FE", borderRadius: 20, padding: "5px 12px", minHeight: 32, fontSize: 12, color: "#000080", cursor: "pointer", fontFamily: font }}>Become a city ambassador</button>}
@@ -4809,6 +4831,12 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
       setTravelFocus(n.reference_id ? String(n.reference_id) : null);
       setView("travel");
+    } else if (n.type === "profile") {
+      // A reminder from our team about missing profile details.
+      setNotifOpen(false);
+      Promise.resolve(api.markNotificationHandled(n.id)).catch(() => {});
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+      openProfileReminder(n.text);
     } else if (n.type === "event") {
       setView("events");
       setNotifOpen(false);
@@ -5110,7 +5138,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                               </div>
                             ) : (
                               <div style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: n.type === "event" ? "#FFF3E0" : n.type === "group" ? "#EDF4FF" : "#F0EFED", color: n.type === "event" ? "#E65100" : n.type === "group" ? "#5B9CFF" : "#5F5E5B" }}>
-                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : n.type === "verification" || n.type === "moderation" ? Icons.shield({ size: 16 }) : n.type === "report" || n.type === "alert" ? Icons.flag({ size: 16 }) : Icons.trending({ size: 16 })}
+                                {n.type === "event" ? Icons.calendar({ size: 16 }) : n.type === "group" ? Icons.users({ size: 16 }) : n.type === "verification" || n.type === "moderation" ? Icons.shield({ size: 16 }) : n.type === "report" || n.type === "alert" ? Icons.flag({ size: 16 }) : n.type === "profile" ? Icons.edit({ size: 16 }) : Icons.trending({ size: 16 })}
                               </div>
                             )}
                           </div>
@@ -6863,6 +6891,13 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   input: { maxLength: 300 },
                   help: "Up to 5 topics you can help with, separated by commas. Members can find you by them.",
                 })}
+                <div style={{ marginBottom: 16 }}>
+                  <label htmlFor="edit-bio" style={editLabel}>About me</label>
+                  <textarea id="edit-bio" style={{ ...inputStyle, minHeight: 84, resize: "vertical", lineHeight: 1.5 }} value={editProfile.bio || ""} maxLength={500}
+                    placeholder="e.g. Moved to Berlin in 2021 for work. Into cricket, cooking and long walks."
+                    onChange={(e) => setField("bio", e.target.value)} autoFocus={profileFocus === "bio"} aria-describedby="edit-bio-help" />
+                  <p id="edit-bio-help" style={{ fontSize: 12, color: "#6B6A67", marginTop: 6, lineHeight: 1.45, fontFamily: font }}>A few words members see on your profile.</p>
+                </div>
                 {textField("linkedinUrl", "LinkedIn profile", "linkedin.com/in/your-name", {
                   input: { inputMode: "url", autoCapitalize: "none", spellCheck: false },
                   help: user.verificationStatus === "approved" ? REVIEW_AGAIN_NOTE("LinkedIn") : null,
