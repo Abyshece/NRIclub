@@ -88,7 +88,7 @@ export default function ReportDialog({ target, onClose, onReported, flagCity = "
             {target.name && <p style={{ ...text, fontSize: 12, marginBottom: 8, overflowWrap: "anywhere" }}>"{String(target.name).slice(0, 120)}"</p>}
             {flag ? (
               <p style={{ ...text, marginBottom: 14 }}>
-                Our team sees this first, marked as from the ambassador of {flagCity}. A person on our team decides what happens and tells you. You can't remove or hide anything yourself, and we don't tell the member who flagged it.
+                Our team sees this first, marked as from the ambassador of {flagCity}. A person on our team decides what happens and tells you. You can't remove or hide anything yourself. We don't tell the member who flagged it, unless the law requires it.
               </p>
             ) : (
               <p style={{ ...text, marginBottom: 14 }}>
