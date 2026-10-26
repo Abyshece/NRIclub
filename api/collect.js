@@ -11,10 +11,10 @@
 //     browser made when the visitor accepted), known kinds of event and steps,
 //     and no text longer than its limit (src/content/analytics.js). Anything
 //     else gets 400 (413 when too big) and nothing is stored.
-//   * Adds what the browser can't know: the visitor's IP address, shortened
-//     (IPv4: the last part becomes 0; IPv6: only the first 48 bits are kept),
-//     and the approximate place Vercel looks up from it (country, region,
-//     city). The full IP address is never stored.
+//   * Adds what the browser can't know: the approximate place Vercel looks up
+//     from the visitor's IP address (country, region, city). The IP address
+//     itself isn't passed on or stored, not even shortened (since 26 October
+//     2026: data minimisation, Art. 5(1)(c) GDPR).
 //   * Sends it all to the database with the service role key. Settings:
 //     SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel → Settings →
 //     Environment Variables (see LAUNCH-GUIDE.md). Without them the function
@@ -35,65 +35,6 @@ const STEPS = new Set(FUNNEL_STEPS);
 // Search engines' crawlers and test tools (they can't accept the banner, but
 // a copied request could come from anywhere).
 const BOT_RE = /googlebot|bingbot|yandex|baiduspider|duckduckbot|applebot|ahrefs|semrush|crawler|spider|facebookexternalhit|lighthouse/i;
-
-// ---- The visitor's IP address, shortened ----------------------------------
-
-// The shortened form of an IP address: IPv4 with its last part 0
-// ("203.0.113.0"), IPv6 with its first 48 bits only ("2001:db8:85a3::").
-// "" for anything that isn't an IP address.
-export function truncateIp(raw) {
-  let ip = String(raw ?? "").trim();
-  if (!ip || ip.length > 100) return "";
-  const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(ip);
-  if (bracketed) ip = bracketed[1];
-  const v4port = /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/.exec(ip);
-  if (v4port) ip = v4port[1];
-  ip = ip.replace(/%[0-9a-z_.-]+$/i, ""); // an IPv6 zone ("fe80::1%eth0")
-  const mapped = /^(?:0{0,4}:){0,5}:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip) || /^::(\d{1,3}(?:\.\d{1,3}){3})$/.exec(ip);
-  if (mapped) ip = mapped[1];
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip)) {
-    const parts = ip.split(".").map(Number);
-    if (parts.some((n) => n > 255)) return "";
-    return `${parts[0]}.${parts[1]}.${parts[2]}.0`;
-  }
-  return truncateIpv6(ip);
-}
-
-function truncateIpv6(ip) {
-  if (!ip.includes(":") || !/^[0-9a-f:.]+$/i.test(ip)) return "";
-  // An IPv4 address at the end ("64:ff9b::192.0.2.1") is two groups.
-  const v4 = /^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/.exec(ip);
-  if (v4) {
-    const p = v4[2].split(".").map(Number);
-    if (p.some((n) => n > 255)) return "";
-    ip = `${v4[1]}${((p[0] << 8) | p[1]).toString(16)}:${((p[2] << 8) | p[3]).toString(16)}`;
-  }
-  if (ip.includes(".")) return "";
-  const halves = ip.split("::");
-  if (halves.length > 2) return "";
-  const split = (s) => (s ? s.split(":") : []);
-  let groups;
-  if (halves.length === 1) {
-    groups = split(ip);
-    if (groups.length !== 8) return "";
-  } else {
-    const head = split(halves[0]);
-    const tail = split(halves[1]);
-    const fill = 8 - head.length - tail.length;
-    if (fill < 1) return "";
-    groups = [...head, ...Array(fill).fill("0"), ...tail];
-  }
-  if (groups.some((g) => !/^[0-9a-f]{1,4}$/i.test(g))) return "";
-  return `${groups.slice(0, 3).map((g) => parseInt(g, 16).toString(16)).join(":")}::`;
-}
-
-// The visitor's IP address as Vercel passes it on.
-export function clientIp(headers) {
-  const real = headers.get("x-real-ip");
-  if (real && real.trim()) return real.trim();
-  const forwarded = headers.get("x-forwarded-for");
-  return forwarded ? forwarded.split(",")[0].trim() : "";
-}
 
 // ---- The approximate place, from Vercel's headers -------------------------
 
@@ -239,7 +180,7 @@ export async function handle(request, env = {}) {
   const url = String(env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
   const key = String(env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   if (!url || !key) return answer(204);
-  const meta = { ...checked.meta, ip_truncated: truncateIp(clientIp(request.headers)), ...geoFrom(request.headers) };
+  const meta = { ...checked.meta, ...geoFrom(request.headers) };
   try {
     // Supabase's newer secret keys ("sb_secret_…") go in apikey only; the
     // older service_role key (a JWT) also as the bearer token.

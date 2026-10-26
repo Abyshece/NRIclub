@@ -14,7 +14,9 @@ and names the transfer safeguard in it, only where
 in step with this list. Checked on the providers' websites on 16 October
 2026: Supabase's and Resend's agreements are part of their terms of
 service; Vercel's applies only on its Pro and Enterprise plans; all three
-include the EU standard contractual clauses.
+include the EU standard contractual clauses. Updated on 26 October 2026:
+Vercel is on Pro with its DPA accepted, and there is no mailbox provider
+(no Google or Gmail): mail to hello@ goes from Resend to our database.
 
 ## Supabase (database, sign-in, photo storage, live updates)
 
@@ -39,21 +41,21 @@ include the EU standard contractual clauses.
 
 ## Vercel (website hosting and delivery)
 
-- [ ] Plan: the Hobby plan is for non-commercial use only. Move the project
-      to Pro if NRIClub is run on a business basis. **Plan: [fill in]**
-- [ ] DPA: vercel.com/legal/dpa says it applies "for Customers who are on
-      Enterprise and Pro plans". On Hobby there is no DPA, and the Privacy
-      Policy doesn't claim one. Once on Pro: download the DPA, file it, and
-      set `vercel: true` in `PRIVACY_DETAILS.agreements`. **Done on: [fill in]**
-- [ ] Transfer safeguard (Vercel Inc., USA, worldwide edge network): the
-      standard contractual clauses in the DPA (2021 SCCs). **Checked on: [fill in]**
-- [ ] Log retention for your plan (Vercel's docs, October 2026: 1 hour on
-      Hobby, 1 day on Pro, longer only with Observability Plus): put it in
-      `PRIVACY_DETAILS.vercelLogRetention`. **[fill in]**
+- [x] Plan: Pro (the Hobby plan is for non-commercial use only). Keep it on
+      Pro: on Hobby there is no DPA.
+- [x] DPA: vercel.com/legal/dpa applies "for Customers who are on
+      Enterprise and Pro plans"; accepted (as the owner states, 26 October
+      2026), and `vercel: true` in `PRIVACY_DETAILS.agreements`. Download
+      it for your files. **Downloaded on: [fill in]**
+- [x] Transfer safeguard (Vercel Inc., USA, worldwide edge network): the
+      standard contractual clauses in the DPA (2021 SCCs); the Privacy
+      Policy names them.
+- [x] Log retention on Pro: 1 day (Vercel's docs, October 2026; longer only
+      with Observability Plus), in `PRIVACY_DETAILS.vercelLogRetention`.
 - [ ] Deployment Protection for preview and old deployments, or delete the
       deployments from before 12 October 2026 (`breach-register.md`).
 
-## Resend (sign-in and password emails, through Amazon SES in Ireland)
+## Resend (sending emails through Amazon SES in Ireland; receiving hello@ mail)
 
 - [x] Company: Plus Five Five, Inc. (Resend), 2261 Market Street #5039,
       San Francisco, USA (resend.com/legal/dpa).
@@ -69,32 +71,46 @@ include the EU standard contractual clauses.
 - [x] Retention: Resend keeps each email (address, subject, content) and its
       delivery status for 30 days on every self-serve plan (resend.com/pricing,
       October 2026); the Privacy Policy says so.
+- [x] Receiving: Resend receives the mail to hello@nriclub.app (MX of
+      nriclub.app) and calls the Edge Function `forward-email`, which keeps
+      it in our database (the admin panel's Inbox). The same DPA covers it.
+- [ ] How long Resend keeps received emails and their attachments
+      (Emails → Receiving): check Resend's documentation and note it here.
+      If it is longer than the Inbox's 12 months, delete them in Resend
+      by hand. **[fill in]**
 
-## The hello@nriclub.app mailbox (not set up yet)
+## No mailbox provider (since 26 October 2026)
 
-- [ ] Choose a provider with an EU data region that signs a DPA (for
-      example mailbox.org, IONOS, Zoho EU, Google Workspace). Don't forward
-      to a personal Gmail account: consumer Gmail has no DPA.
-- [ ] DPA signed in the provider's customer area, and `mailbox: true` in
-      `PRIVACY_DETAILS.agreements`. **Signed on: [fill in]**
-- [ ] Put the provider's name and country in `PRIVACY_DETAILS.mailProvider`
-      in `src/content/imprint.js` and deploy: the Privacy Policy names it.
-- [ ] DNS (Vercel): the provider's MX records, SPF
-      (`v=spf1 include:<provider> ~all`, later `-all`), DKIM, and
-      `_dmarc` TXT `v=DMARC1; p=none; rua=mailto:hello@nriclub.app` for one
-      or two weeks, then `p=quarantine`, then `p=reject`. Leave the
-      send.nriclub.app records for Resend as they are.
+Mail to hello@nriclub.app goes from Resend to our database only (the admin
+panel's Inbox, `docs/EMAIL-SETUP.md`). There is no Google, Gmail or other
+mailbox provider: until 26 October 2026 a copy went to the founder's
+personal Gmail, which has no DPA. That forwarding is gone from the code.
+
+- [ ] Delete the `FORWARD_TO` (and `FORWARD_FROM`) secret in Supabase →
+      Edge Functions → Secrets. **Done on: [fill in]**
+- [ ] In Gmail, remove "Send mail as hello@nriclub.app" (Settings →
+      Accounts and Import), and delete the forwarded copies (search
+      `subject:[hello@]`), also from Bin. **Done on: [fill in]**
+- [ ] Emails the admin panel prepares go from a mail app on your computer
+      through Resend's SMTP server, not through Gmail (`docs/EMAIL-SETUP.md`,
+      "Emails the panel prepares").
+- [x] `PRIVACY_DETAILS.mailProvider` is empty and `mailbox: false`: the
+      Privacy Policy has no mailbox entry and names Resend and Supabase.
 - [ ] Auto-reply confirming receipt (text: `REPORT_AUTO_REPLY` in
-      `src/content/legal/reporting.js`); it also confirms DSA notices
-      (Art. 16(4) DSA).
-- [ ] Set hello@nriclub.app as the reply-to address in the Supabase Auth
-      email templates and in Resend.
+      `src/content/legal/reporting.js`; it also confirms DSA notices,
+      Art. 16(4) DSA): not possible without a mailbox. The report form at
+      nriclub.app/report gives a reference code at once; for notices by
+      email, send the receipt from the Inbox.
+
+If NRIClub uses a mailbox again, choose an EU provider (or Google
+Workspace) that signs a DPA, put its name in `PRIVACY_DETAILS.mailProvider`,
+set `mailbox: true`, and add it to this list and `records-of-processing.md`.
 
 ## Not processors for member data (no DPA needed), but secure them
 
 - GitHub (code only; the repository must never contain member data or
-  secrets), the domain registrar, the founder's own email account: turn on
-  two-step verification for each.
+  secrets), the domain registrar, the owner's own email account (which
+  must not hold NRIClub mail): turn on two-step verification for each.
 - AI tools: only with access to production data under commercial terms
   that include a DPA, and avoid querying personal data.
 

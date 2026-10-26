@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import LogoMark from "./LogoMark";
 import { INK, MUTED, GREEN, SAFFRON_TEXT, GREEN_TEXT, primaryBtn } from "./PublicShell";
-import { WHY_STATS, WHY_METHOD, WHY_BUBBLES, WHY_CARD, WHY_COMPARE } from "./content/why";
+import { WHY_STATS, WHY_METHOD, WHY_BUBBLES, WHY_CARD, WHY_COMPARE, WHY_COMPARE_HEAD } from "./content/why";
 
 // ============================================================================
 // WHY NRICLUB (homepage, #why): scattered chat groups, many with dead links,
 // flowing into one NRIClub; our own count of WhatsApp group links for
-// Indians in Germany (src/content/why.js); and groups vs NRIClub, side by
-// side. The animation runs once when the section comes into view, and not
+// Indians in Germany (src/content/why.js); and WhatsApp groups vs NRIClub,
+// side by side. The animation runs once when the section comes into view, and not
 // at all for people who ask for less motion; without it everything simply
 // shows.
 // ============================================================================
@@ -147,7 +147,7 @@ export default function WhyNRIClub({ onJoin }) {
             Hundreds of groups.<br />One home.
           </h2>
           <p style={{ fontSize: 17, lineHeight: 1.65, color: MUTED, margin: 0 }}>
-            Finding Indians in a new city usually means hunting through WhatsApp, Telegram and Facebook groups: one for your city, one for flats, one for events, one more for your language. We counted the WhatsApp groups for Indians in Germany.
+            Finding Indians in a new city often means hunting through WhatsApp groups: one for your city, one for flats, one for events, one more for your language. We counted them for Indians in Germany.
           </p>
         </div>
 
@@ -187,17 +187,17 @@ export default function WhyNRIClub({ onJoin }) {
         </ul>
         <p style={{ fontSize: 12.5, color: MUTED, textAlign: "center", maxWidth: 720, margin: "14px auto 0", lineHeight: 1.55 }}>{WHY_METHOD}</p>
 
-        {/* Groups vs NRIClub */}
-        <div className="why-cmp" role="table" aria-label="Chat groups compared with NRIClub">
+        {/* WhatsApp groups vs NRIClub */}
+        <div className="why-cmp" role="table" aria-label={`${WHY_COMPARE_HEAD} compared with NRIClub`}>
           <div className="why-row why-head" role="row">
             <div role="columnheader" style={{ color: MUTED }}>&nbsp;</div>
-            <div role="columnheader" style={{ color: MUTED }}>Chat groups</div>
+            <div role="columnheader" style={{ color: MUTED }}>{WHY_COMPARE_HEAD}</div>
             <div role="columnheader" className="why-club" style={{ color: GREEN_TEXT }}>NRIClub</div>
           </div>
           {WHY_COMPARE.map((r) => (
             <div key={r.topic} className="why-row" role="row">
               <div role="rowheader" style={{ fontWeight: 650 }}>{r.topic}</div>
-              <div role="cell" style={{ color: MUTED }}><Cross /><span><span className="why-label">Chat groups: </span>{r.groups}</span></div>
+              <div role="cell" style={{ color: MUTED }}><Cross /><span><span className="why-label">{WHY_COMPARE_HEAD}: </span>{r.groups}</span></div>
               <div role="cell" className="why-club"><Tick color={GREEN} /><span><span className="why-label">NRIClub: </span>{r.club}</span></div>
             </div>
           ))}

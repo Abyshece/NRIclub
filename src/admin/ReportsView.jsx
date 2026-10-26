@@ -20,6 +20,7 @@ import ModerationDialog from "./ModerationDialog";
 import { Button, ConfirmDialog, EmptyState, ErrorNote, PageHeader, Pill, SectionTitle } from "./ui";
 import { ago, formatDate, friendlyError, firstName } from "./format";
 import { TRAVEL_HELP, TRAVEL_KINDS, tripDates } from "../content/travel";
+import { lookingSummary } from "../content/housing";
 import {
   REPORT_KINDS, SAFETY_CHECKLIST, mailtoLink, noticeDecisionEmail, noticeReceiptEmail, reportReasonLabel,
 } from "../content/legal/reporting";
@@ -83,14 +84,15 @@ const NOTICE_DECISIONS = { removed: "Removed", blocked: "Blocked", warned: "Warn
 const PREFIX_KINDS = {
   MARKETPLACE: "market", MARKET: "market", DOC_COMMENT: "doc_comment", DOC: "doc", EVENT: "event", HELP: "help",
   REVIEW: "review", COMMENT: "comment", ANSWER: "answer", PLACE: "place", MESSAGE: "message", POST: "post",
-  TRAVEL: "travel",
+  TRAVEL: "travel", HOUSING_WANTED: "housing_wanted",
 };
 
 const isProfileReport = (r) => (r.content_type ? r.content_type === "profile"
   : !r.reported_post_id && !!r.reported_user_id) || /^\[(USER|PROFILE)\]/i.test(r.reason || "");
 
 // Which kind of content was reported (post, comment, answer, doc,
-// doc_comment, event, help, market, review, place, travel or message).
+// doc_comment, event, help, market, review, place, travel, housing_wanted or
+// message).
 function kindOf(r) {
   if (r.content_type && r.content_type !== "profile" && r.content_type !== "feedback") return r.content_type;
   const m = /^\[([A-Z_]+)\]/.exec((r.reason || "").toUpperCase());
@@ -106,6 +108,7 @@ const SECTIONS = [
   ["Guides", (r) => kindOf(r) === "doc" || kindOf(r) === "doc_comment"],
   ["Events", (r) => kindOf(r) === "event"],
   ["Marketplace", (r) => kindOf(r) === "market"],
+  ["Looking for a place", (r) => kindOf(r) === "housing_wanted"],
   ["Travel board", (r) => kindOf(r) === "travel"],
   ["Places", (r) => kindOf(r) === "place"],
   ["Messages", (r) => kindOf(r) === "message"],
@@ -147,14 +150,23 @@ export function contentPreview(kind, row) {
     return { type: "travel", content: `${row.from_city} → ${row.to_city}`, date: tripDates(row.date_from, row.date_to), authorId: row.user_id,
       excerpt: [`${TRAVEL_KINDS[row.kind]?.label || row.kind}: ${what}`, row.flight, row.note].filter(Boolean).join(" · ") };
   }
+  // As the listing's author saw it under "Members looking for a place like this".
+  if (kind === "housing_wanted") {
+    return { type: "housing_wanted", content: `Looking for ${lookingSummary(row)}`, city: row.city, authorId: row.user_id,
+      excerpt: [row.furnished && "Furnished", row.anmeldung && "Anmeldung needed", row.note].filter(Boolean).join(" · ") };
+  }
   // Listings keep image_url as a JSON array of URLs; show the first.
   let img = row.image_url;
   try { const a = JSON.parse(img); img = Array.isArray(a) ? a[0] : img; } catch { img = row.image_url; }
   return { type: "marketplace", content: row.title, excerpt: row.description, price: row.price, image: img, authorId: row.user_id };
 }
 
-// How the author sees what is removed: 'your comment "Nobody wants…"'.
-const ownedWhat = (kind, c) => `your ${REPORT_KINDS[kind] || "post"}${c?.content && kind !== "review" ? ` "${snippet(c.content)}"` : c?.excerpt && kind === "review" ? ` "${snippet(c.excerpt)}"` : ""}`;
+// How the author sees what is removed: 'your comment "Nobody wants…"'; a
+// "Looking for a place" post by its city, never its note (as the database
+// says it: 'your "Looking for a place" post in Berlin').
+const ownedWhat = (kind, c) => (kind === "housing_wanted"
+  ? `your ${REPORT_KINDS[kind]}${c?.city ? ` in ${c.city}` : ""}`
+  : `your ${REPORT_KINDS[kind] || "post"}${c?.content && kind !== "review" ? ` "${snippet(c.content)}"` : c?.excerpt && kind === "review" ? ` "${snippet(c.excerpt)}"` : ""}`);
 
 function Note({ children }) {
   return <div className="adm-preview"><div className="adm-preview-text">{children}</div></div>;

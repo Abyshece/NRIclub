@@ -58,6 +58,9 @@ export const COPY = {
   lookingExplain: `We'll send you a notification when someone posts a place in your city that fits your dates, give or take a week. Your post is only shown to members whose listing matches it. It ends after your last date, or after ${OPEN_ENDED_DAYS} days if you don't give one.`,
   matchesExplain: "Members whose \"Looking for a place\" post fits your listing. Only you see this list.",
   anmeldungHint: "You can register your address there (Anmeldung).",
+  // Under the description of a housing listing and the note of a "Looking
+  // for a place" post (Terms of Use, section 7).
+  aggNote: "No requirements about gender, origin, religion, disability, age or sexual identity (Germany's General Equal Treatment Act, AGG).",
   noResults: "No places match your search yet.",
   noResultsTip: "Try other dates, turn on \"flexible ±1 week\", or post what you're looking for and we'll let you know.",
 };

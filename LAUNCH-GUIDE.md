@@ -55,7 +55,9 @@ afterwards). Compliance round 1 is
 `2026-10-21-compliance-round2/run_in_sql_editor.sql` (see "Compliance round
 2: what to do, in order" below); applications to be a city ambassador are
 `2026-10-24-ambassador-applications/run_in_sql_editor.sql` (see
-"Ambassador applications: what to do" below). Since round 1, the site goes
+"Ambassador applications: what to do" below); the compliance fixes of 26
+October 2026 are `2026-11-02-compliance-fixes/run_in_sql_editor.sql` (see
+"Compliance fixes: what to do" below). Since round 1, the site goes
 live first and the SQL runs right after, the same day: the site works with
 the database before and after the update.
 
@@ -107,14 +109,14 @@ In the Supabase dashboard → **Authentication**:
    Below the code in *Confirm signup*, add the contract confirmation
    (wording from the legal review, `docs/compliance/questions-for-the-lawyer.md`):
    "Enter this code to finish signing up. Your membership is then under
-   our Terms of Use (version 2026-10-23), which you accepted on the sign-up
+   our Terms of Use (version 2026-10-26), which you accepted on the sign-up
    form; you can read and save them at https://nriclub.app/terms.
    Provider: <name, address>, hello@nriclub.app. You can withdraw from the
    contract within 14 days by telling us or by deleting your account."
    Change the version in the template only once the database update that
-   makes it current has run on the live database (2026-10-23: the travel
-   board update below): before that, sign-ups still accept the earlier
-   version. Keep the version in step with the Terms. Once the company is
+   makes it current has run on the live database (2026-10-26: the
+   compliance fixes update below): before that, sign-ups still accept the
+   earlier version. Keep the version in step with the Terms. Once the company is
    registered, add its details (§ 35a GmbHG) to every template.
 5. **Attack Protection**: turn on *Leaked password protection* (prevent use of
    leaked passwords). It may need a paid plan (Pro); if yours doesn't offer
@@ -230,24 +232,28 @@ key in the frontend or in a `VITE_` variable.
   reach you, a phone number) and deploy. The Impressum page and its links
   appear, and the Terms and the Privacy Policy name you as provider and
   controller. Until then they say that NRIClub is run by its founder in
-  Germany, and the build only warns. In the same file, `PRIVACY_DETAILS`
-  takes, for the Privacy Policy: the data protection authority of your
-  federal state, the mailbox provider, which providers have a data
-  processing agreement (`agreements`: Vercel's applies only on its Pro and
-  Enterprise plans, so set `vercel: true` only once the project is on one;
-  `mailbox: true` once you have accepted the mailbox provider's), and how
-  long Vercel keeps request logs on your plan.
-- **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` says "23 October
-  2026" (the Terms 2026-10-23, with the travel board's rules in section 7);
-  `PRIVACY_DATE` in `src/content/legal/privacy.js` says "24 October 2026"
-  (the Privacy Policy 2026-10-24, which adds website analytics). When you
-  change a text, set its date to the day the change goes live.
-- **Deleting old data:** the Privacy Policy promises retention periods
-  that, for now, you keep by hand once a month
+  Germany, and the build only warns. (Filled in: the owner runs NRIClub
+  personally, so there is no register entry until the company exists.) In
+  the same file, `PRIVACY_DETAILS` takes, for the Privacy Policy: the data
+  protection authority of your federal state (BayLDA), a mailbox provider
+  (none since 26 October 2026: hello@ mail stays in the admin Inbox),
+  which providers have a data processing agreement (`agreements`: Vercel's
+  applies only on its Pro and Enterprise plans; the project is on Pro), and
+  how long Vercel keeps request logs on your plan.
+- **Dates:** `TERMS_DATE` in `src/content/legal/terms.js` says "26 October
+  2026" (the Terms 2026-10-26, the compliance fixes); `PRIVACY_DATE` in
+  `src/content/legal/privacy.js` says "26 October 2026" (the Privacy Policy
+  2026-10-26); the Art. 9 consent is version 2026-10-26
+  (`src/content/legal/consent.js`). When you change a text, set its date
+  to the day the change goes live.
+- **Deleting old data:** nightly database jobs keep the retention periods
+  the Privacy Policy promises (`RETENTION.byHand` is false). Once a month,
+  check that they ran, delete the accounts whose membership you ended, and
+  delete copies of emails kept longer than the Inbox
   (`docs/compliance/deletion-routine.md`). Photo files nothing uses any
   more are deleted by the admin panel itself, once a day when an admin
   opens it: open it at least once a week. The periods are in `RETENTION`
-  in `privacy.js`; change both together.
+  in `privacy.js`; change it, the job and the routine together.
 - **Who members see:** `VISIBILITY.onlyApprovedListed` in `privacy.js`
   says whether other members see only approved accounts' profiles. It is
   `true` since compliance round 2 (`20261023000000_admin_access.sql` hides
@@ -273,10 +279,18 @@ key in the frontend or in a `VITE_` variable.
   version take part as before and get a "Later" button on the Terms screen
   (asked again each time they open NRIClub); only a consent the law
   requires (the Art. 9 consent) locks them out until given. The database
-  lets only members on the current or the previous version take part, so
-  before `previous_terms_version()` moves on, end the membership (4 weeks'
-  notice) of anyone still on the version it names, or keep that version
-  allowed.
+  lets members on any version in `private.terms_versions_in_force()` take
+  part (since the compliance fixes: 2026-10-19, 2026-10-23 and the current
+  one); add the version that stops being current to that list in the same
+  migration. Features whose rules are only in the newest Terms (the travel
+  board) need the current version (`private.has_current_terms`).
+- **A new Art. 9 consent wording:** change `ART9_CONSENT_TEXT` and
+  `ART9_CONSENT_VERSION` in `src/content/legal/consent.js`, keep the old
+  wording in `ART9_CONSENT_TEXT_BY_VERSION` (Settings shows each member the
+  wording they gave), and change `private.current_art9_version()` in the
+  migration. The Terms screen then asks members who gave an older wording
+  to give the new one when they accept the new Terms (`accept_terms`
+  records it).
 - **A change to the Privacy Policy:** change `privacy.js`, its version and
   date, and the matching entry in `docs/compliance/records-of-processing.md`.
   Members don't accept it, but tell them about important changes in the
@@ -494,8 +508,9 @@ app. No database is involved: the list is `WHATS_ON` in
 Visitors who choose **Accept** on the privacy banner (shown once on every page
 of the site and the app, never on the admin site) are counted: the pages they
 open, the buttons and links they click, the steps of signing up and logging
-in, where each visit came from and where it ended, with a shortened IP
-address and the approximate place. Nothing is recorded for anyone who chooses
+in, where each visit came from and where it ended, with the approximate
+place (no IP address is stored since the compliance fixes; before them, a
+shortened one was). Nothing is recorded for anyone who chooses
 **Decline** or hasn't chosen, and nothing is linked to members' accounts.
 "Privacy settings" at the foot of every page (in the app: Settings → Privacy &
 Safety) opens the banner again. The Privacy Policy 2026-10-24 (section 2,
@@ -556,15 +571,20 @@ days):
 - *Top clicked*: on the public pages, the buttons' and links' own words; in
   the members' area only the menus' names (other buttons can carry members'
   names, so they count as "(button)" or "(link)").
-- *Places* come from the shortened IP address: right for the country,
-  roughly right for the city (a mobile network can place someone in another
-  city).
+- *Places* come from our host's lookup of the visitor's IP address (the
+  address itself isn't stored): right for the country, roughly right for
+  the city (a mobile network can place someone in another city).
 - *Visitor journeys*: single visits with their pages, clicks and steps in
-  order. Use them to understand patterns, never to find out who someone is:
-  the Privacy Policy promises the data isn't linked to members.
+  order, with times to the hour. Use them to understand patterns, never to
+  find out who someone is: the Privacy Policy says the data is
+  pseudonymous, isn't linked to members, and that we don't match visits to
+  members.
 - A visitor who wants their analytics deleted can send the visitor ID that
   Privacy settings shows. To delete it, in the SQL editor:
-  `DELETE FROM private.analytics_events WHERE visitor_id = '<the ID>';`
+  `DELETE FROM private.analytics_events WHERE visitor_id = '<the ID>';`.
+  Without the ID, find the visit from the approximate time and the pages
+  they name (Visitor journeys), and delete its visitor ID's events the same
+  way. Only when the visit clearly matches what they told you.
 - Raw events are deleted after 6 months; the totals for older days go with
   them.
 
@@ -596,6 +616,62 @@ Privacy Policy 2026-10-26 ("Previews of what you share") describes it.
    the kind and city. Turn the preview off: within a minute the link shows
    "for members" and the site's own card. Delete the test listing.
 
+## Compliance fixes: what to do
+
+The update of 26 October 2026: hello@ mail is no longer forwarded to Gmail,
+the UK is paused (`docs/compliance/uk-pause.md`), analytics keep no IP
+address and show visits to the hour, "Download my data" is complete, a
+nightly job deletes the urgent-question log (2 days) and every notice after
+12 months, "Looking for a place" posts can be reported, question previews
+warn and aren't offered for Health and Legal/Visa, and the Terms of Use
+version 2026-10-26 and the Art. 9 consent version 2026-10-26 are published.
+
+1. **Deploy the site, then run the SQL** the same day:
+   `supabase/oneoff/2026-11-02-compliance-fixes/run_in_sql_editor.sql`, the
+   whole file at once (the migration `20261102000000_compliance_fixes.sql`
+   with a check in front). It refuses to run before the admin account
+   deletion update, and a second time ("The compliance fixes update has
+   already run. Nothing to do."). Until it runs, the site keeps working
+   with the Terms 2026-10-23. Its last message says whether the nightly
+   job `nriclub-retention-cleanup` is scheduled; if it says "not
+   scheduled", run `SELECT private.schedule_retention_cleanup();`. Then run
+   `NOTIFY pgrst, 'reload schema';`.
+2. **The Confirm signup email** (Step 2, 4): change the version in it to
+   2026-10-26.
+3. **The new Terms:** the only accounts are your own, so no member needs
+   the 2 weeks' notice. Open NRIClub with each of your accounts: the Terms
+   screen asks for version 2026-10-26, says what's new, and asks for the new
+   consent wording; accept. If anyone else has an account by then, email
+   them the "What's new" summary (`TERMS_CHANGES` in
+   `src/content/legal/terms.js`) on the day the update runs.
+4. **Mail (by hand; the code no longer forwards anything):**
+   - Deploy the new `forward-email` (Supabase → Edge Functions →
+     forward-email → Code: replace it with
+     `supabase/functions/forward-email/index.ts`, Deploy; or
+     `supabase functions deploy forward-email --no-verify-jwt --project-ref uzzkdmybsbwknpsucuvv`).
+   - Supabase → **Edge Functions → Secrets**: delete `FORWARD_TO` (and
+     `FORWARD_FROM` if it's there).
+   - Gmail → Settings → See all settings → **Accounts and Import → Send
+     mail as**: delete `hello@nriclub.app`.
+   - Gmail: delete the forwarded copies (search `subject:"[hello@]"`,
+     select all, delete), then empty the Bin. Also any other NRIClub mail
+     you sent or received there as hello@.
+   - Resend → API Keys: delete the `gmail-smtp` key, and set up a mail app
+     for the emails the panel prepares (`docs/EMAIL-SETUP.md`, "Emails the
+     panel prepares").
+   - Test: email hello@nriclub.app from another address. It shows in the
+     admin Inbox within a minute, and nothing arrives in Gmail.
+5. **Check:** nriclub.app shows no UK city (also not in the city search),
+   nriclub.app/city/london says NRIClub isn't open there, and sign-up has no
+   United Kingdom; admin → Analytics → Visitor journeys shows times to the
+   hour and no IP address; a "Looking for a place" match has a Report flag;
+   a question in Health has no preview switch; `SELECT jobname FROM cron.job
+   WHERE jobname LIKE 'nriclub-%';` lists five jobs.
+6. **Records:** check and sign `docs/compliance/records-of-processing.md`,
+   check the link to BayLDA's breach form (`breach-runbook.md`), and take
+   L-1 to L-8 in `docs/compliance/questions-for-the-lawyer.md` to the next
+   legal review.
+
 ## Before inviting the public
 
 Launch tasks from the Phase 1 review (2026-10-12):
@@ -610,17 +686,16 @@ Launch tasks from the Phase 1 review (2026-10-12):
 - [ ] The approval audit is done: every member the reset marked approved has
       been re-checked (`supabase/oneoff/2026-10-12-phase1-live-reset/`,
       "Approval audit").
-- [ ] The `phase1_backup` copy is dropped **on or before 2026-11-11**:
-      `DROP SCHEMA phase1_backup CASCADE;` in the SQL editor.
-- [ ] `hello@nriclub.app` is a real mailbox, with an EU provider that
-      signs a data processing agreement, that someone reads every working
-      day (the site, the Terms, the Privacy Policy and the Impressum send
-      people there, including reports of illegal content and data
-      requests, which have deadlines). DNS for nriclub.app: the provider's
-      MX records, SPF, DKIM, and DMARC (`p=none` first, then `quarantine`,
-      then `reject`); leave the send.nriclub.app records for Resend alone.
-      Send a test from an outside address
-      (`docs/compliance/processor-agreements.md`).
+- [x] The `phase1_backup` copy is dropped (confirmed on the live project,
+      26 October 2026).
+- [ ] Mail to `hello@nriclub.app` arrives in the admin panel's Inbox
+      (Resend receiving, `docs/EMAIL-SETUP.md`) and someone reads it every
+      working day (the site, the Terms, the Privacy Policy and the
+      Impressum send people there, including reports of illegal content and
+      data requests, which have deadlines). Nothing is forwarded to Gmail:
+      the `FORWARD_TO` secret, Gmail's "Send mail as hello@" and the
+      forwarded copies are deleted ("Compliance fixes: what to do"). Send
+      a test from an outside address.
 - [ ] The Impressum details are filled in (`src/content/imprint.js`, see
       "Legal texts and the Impressum") and deployed: /impressum shows, and
       the Terms and the Privacy Policy name the operator.
@@ -633,20 +708,21 @@ Launch tasks from the Phase 1 review (2026-10-12):
       **before** `20261019000000_access_consent.sql` runs: the lawyer
       advises that an Art. 9 consent given to an unnamed controller is
       hard to defend as informed.
-- [ ] The deletion routine runs once a month
-      (`docs/compliance/deletion-routine.md`), and an admin opens the admin
-      panel at least once a week (its photo clean-up deletes unused photo
-      files). After `20261022000000_storage_images.sql`, run Overview →
+- [ ] The nightly clean-up jobs run (five after the compliance fixes) and
+      the monthly part of `docs/compliance/deletion-routine.md` is done,
+      and an admin opens the admin panel at least once a week (its photo
+      clean-up deletes unused photo files). After `20261022000000_storage_images.sql`, run Overview →
       Photo files → Clean up photo files once: it also removes the files of
       accounts deleted before October 2026. Then check the photos uploaded
       before that update that are still shown for location data
       (`deletion-routine.md`, "Once, after the 2026-10-22 update").
-- [ ] Data processing agreements in place with Supabase, Vercel, Resend and
-      the mailbox provider, and `PRIVACY_DETAILS.agreements` in
-      `src/content/imprint.js` says so (Vercel's agreement applies only on
-      its Pro and Enterprise plans); Supabase's AI options off; Resend
-      tracking off; Vercel on a plan that allows business use
+- [ ] Data processing agreements in place with Supabase, Vercel (on Pro,
+      accepted) and Resend, copies filed, and `PRIVACY_DETAILS.agreements`
+      in `src/content/imprint.js` says so; no mailbox provider; Supabase's
+      AI options off; Resend tracking off
       (`docs/compliance/processor-agreements.md`).
+- [ ] The UK stays paused until NRIClub has a UK representative
+      (`docs/compliance/uk-pause.md`).
 - [ ] The breach record for the exposure before 12 October 2026 is
       complete and the notification decision is made with the lawyer
       (`docs/compliance/breach-register.md`).

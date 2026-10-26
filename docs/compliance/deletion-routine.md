@@ -1,43 +1,57 @@
-# Deletion routine (by hand, until the clean-up jobs exist)
+# Retention and deletion: the scheduled jobs, and what is still by hand
 
-The Privacy Policy promises how long data is kept (section 2) and says that,
-for now, our team deletes it by hand once a month (section 9). This file is
-how. The periods are in `RETENTION` in `src/content/legal/privacy.js`; if
-you change one there, change it here too, and the other way round.
-
-Photo files are no longer deleted by hand (plan C1, since the 2026-10-22
-update): see "Photo files" below. When the database does the rest itself
-(plan C20, clean-up jobs), set `byHand` in `RETENTION` to false and stop
-the monthly part of this routine.
+The Privacy Policy promises how long data is kept (section 2) and says
+(section 9) that the periods are kept automatically every night, except
+for a few things our team does by hand: once a month, the accounts whose
+membership we ended and the copies of emails we keep longer than the admin
+Inbox does; and photo files left behind, when an admin opens the admin
+panel. This file documents the jobs and those steps. The periods are in
+`RETENTION` in `src/content/legal/privacy.js` (`byHand: false` since 26
+October 2026); if you change one there, change it here and in the job too.
 
 A member who asks us to delete their account: see "Deleting an account on
 request" below.
 
-| What | Kept for | How often you run it |
-|---|---|---|
-| Photo files nothing uses any more (deleted posts, listings, events, replaced or removed profile photos, deleted accounts, content our team removed) | deleted within 7 days at most | **automatic** when an admin opens the admin panel (once a day); open it at least once a week |
-| Sign-ups that never confirmed their email address | 30 days | once a month |
-| Accounts that never sent their check details | 90 days | once a month |
-| Accounts our team declined | 6 months after the decision | once a month |
-| Accounts whose membership we ended | 6 months after the decision | once a month (by hand, below) |
-| In-app notices the member has read | 6 months | once a month |
-| Notes of profile reminders our team sent (`private.profile_reminders`) | 12 months | **automatic** every night (pg_cron job `nriclub-profile-reminders-cleanup`, since the update of 28 October 2026); if it isn't scheduled, run `SELECT private.profile_reminders_cleanup();` once a month |
-| Closed reports, and evidence copies kept with them | once closed and 12 months old | once a month |
-| Closed reports from the form at nriclub.app/report | once closed and 12 months old | once a month |
-| Coded addresses behind the report limits (`private.notice_log`) | 24 hours | once a month |
-| Applications to be a city ambassador (`private.ambassador_applications`) | 6 months after our decision (accepted or declined); undecided ones 12 months after they were sent | once a month |
-| Coded addresses behind the application limits (`private.ambassador_application_log`) | 24 hours | once a month |
-| Travel board posts (`public.travel_posts`) | 30 days after their last date | once a month |
-| Housing listings with details (`public.housing_listings`, with their Market listing) and "Looking for a place" posts (`public.housing_wanted`); the counts behind their limits (`private.housing_post_log`) | 30 days after they expired (listings: their "until" date, or 60 days after posting or renewal if open-ended; looking posts: their end date, or 60 days); counts 30 days | **automatic** every night (pg_cron job `nriclub-housing-cleanup`, since the update of 30 October 2026); if it isn't scheduled, run `SELECT private.housing_cleanup();` once a month |
-| What city ambassadors did in their panel (`private.ambassador_log`) and the newcomers they marked as welcomed (`private.ambassador_welcomes`) | 12 months after each entry | once a month |
-| Record of our decisions (`private.moderation_action`) | 24 months; the copy of removed content in it after 6 months | once a month |
-| Record of declined and blocked accounts | 24 months after the decision; its note after 12 months | once a month |
-| Emails about rights and reports of illegal content, with our answers | 3 years after the matter is closed | once a month (mailbox) |
-| All other emails, with our replies | 12 months after the matter is closed | once a month (mailbox) |
+## The scheduled jobs (pg_cron, every night, times in UTC)
 
-Write the date and what you deleted in the log at the end.
+| Job | Function | Since | Deletes |
+|---|---|---|---|
+| `nriclub-daily-cleanup`, 03:17 | `private.daily_cleanup()` | 20 October 2026 (extended by later updates) | Sign-ups never confirmed (30 days); accounts that never sent their check details (90 days); accounts we declined (6 months after the decision); read in-app notices (6 months); closed reports, once 12 months old, unless held; closed reports from the form at nriclub.app/report, once 12 months old, unless held; the record of declined and blocked accounts (24 months; its note after 12); the copy of removed content in our decisions (6 months) and the decisions (24 months), unless held; ambassador applications (6 months after the decision, undecided ones 12 months); the admin Inbox with our replies (12 months after arrival); travel board posts (30 days after their last date); the ambassador log and welcomes (12 months); the limit counters (`private.rate_log`, 1 day, travel board posts 30 days), name changes (30 days), the report and application limit hashes (1 day), the note of decision emails sent (`private.member_email_log`, 30 days) |
+| `nriclub-profile-reminders-cleanup`, 03:29 | `private.profile_reminders_cleanup()` | 28 October 2026 | Notes of profile reminders our team sent (12 months) |
+| `nriclub-analytics-cleanup`, 03:41 | `private.analytics_cleanup()` | 29 October 2026 | Website analytics events (6 months) |
+| `nriclub-housing-cleanup`, 03:53 | `private.housing_cleanup()` | 30 October 2026 | Housing listings with their Market listing and matching notices, and "Looking for a place" posts, 30 days after they expired (listings: their "until" date, or 60 days after posting or renewal if open-ended; looking posts: their end date, or 60 days); the counts behind their limits (30 days) |
+| `nriclub-retention-cleanup`, 04:05 | `private.retention_cleanup()` | 2 November 2026 (`20261102000000_compliance_fixes.sql`) | The urgent-question log (`private.urgent_log`, 2 days); every in-app notice, read or not (12 months) |
 
-All SQL runs in the Supabase dashboard → SQL Editor, on the live project.
+The four jobs before the last were confirmed scheduled on the live project
+(26 October 2026). The database update of 2 November 2026 schedules the
+fifth itself, if pg_cron is there.
+
+### Check the jobs (once a month)
+
+In the Supabase dashboard → SQL Editor (it changes nothing):
+
+```sql
+-- NRIClub: the clean-up jobs, and how their last runs went.
+SELECT jobname, schedule, active FROM cron.job WHERE jobname LIKE 'nriclub-%' ORDER BY jobname;
+SELECT j.jobname, d.status, d.return_message, d.start_time
+FROM cron.job_run_details d JOIN cron.job j USING (jobid)
+WHERE j.jobname LIKE 'nriclub-%' ORDER BY d.start_time DESC LIMIT 20;
+```
+
+Five jobs, all active, and recent runs `succeeded` (the return message says
+how many rows each part deleted). If a job is missing, schedule it again
+(safe to run more than once): `SELECT private.schedule_daily_cleanup();`,
+`private.schedule_profile_reminders_cleanup()`,
+`private.schedule_analytics_cleanup()`, `private.schedule_housing_cleanup()`
+or `private.schedule_retention_cleanup()`. If one failed, run its function
+by hand (for example `SELECT private.retention_cleanup();`), read the
+error, and fix it before the next night.
+
+A report that is part of a legal dispute or a police matter that is still
+open stays: hold it with `private.report_hold`, or set `hold_reason` on a
+report from the form (`moderation-guidelines.md`, step 8). Evidence copies
+you kept outside the database (screenshots) go with their report: delete
+them by hand when the report goes.
 
 ## Photo files (automatic, from the admin panel)
 
@@ -119,140 +133,11 @@ Mac in Preview → Tools → Show Inspector). For each one with a location:
 - note the date and the files in `breach-register.md` (the line marked
   **[fill in]**).
 
-## Once a month: the database
-
-### Step 1: see what will go (changes nothing)
-
-```sql
--- NRIClub monthly, step 1: what the deletion will remove.
-SELECT 'unconfirmed sign-ups, 30 days' AS what, count(*) FROM auth.users u
-  WHERE u.email_confirmed_at IS NULL AND u.created_at < now() - interval '30 days'
-    AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = u.id)
-UNION ALL
-SELECT 'unfinished accounts, 90 days', count(*) FROM public.profile_private pp
-  WHERE pp.verification_status = 'incomplete' AND pp.updated_at < now() - interval '90 days'
-    AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = pp.id)
-UNION ALL
-SELECT 'declined accounts, 6 months', count(*) FROM public.profile_private pp
-  WHERE pp.verification_status = 'rejected' AND COALESCE(pp.reviewed_at, pp.updated_at) < now() - interval '6 months'
-    AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = pp.id)
-UNION ALL
-SELECT 'read in-app notices, 6 months', count(*) FROM public.notifications
-  WHERE read AND created_at < now() - interval '6 months'
-UNION ALL
-SELECT 'closed reports, 12 months', count(*) FROM public.reports
-  WHERE status <> 'pending' AND created_at < now() - interval '12 months'
-UNION ALL
-SELECT 'records of declined and blocked accounts, 24 months', count(*) FROM private.moderation_record
-  WHERE created_at < now() - interval '24 months'
-UNION ALL
-SELECT 'notes in those records, 12 months', count(*) FROM private.moderation_record
-  WHERE admin_note <> '' AND created_at < now() - interval '12 months'
-UNION ALL
-SELECT 'closed reports from the form, 12 months', count(*) FROM private.notices
-  WHERE status = 'closed' AND created_at < now() - interval '12 months' AND hold_reason = ''
-UNION ALL
-SELECT 'report-limit counters, 1 day', count(*) FROM private.notice_log
-  WHERE at < now() - interval '1 day'
-UNION ALL
-SELECT 'copies of removed content, 6 months', count(*) FROM private.moderation_action
-  WHERE snapshot IS NOT NULL AND created_at < now() - interval '6 months'
-UNION ALL
-SELECT 'records of our decisions, 24 months', count(*) FROM private.moderation_action
-  WHERE created_at < now() - interval '24 months'
-UNION ALL
-SELECT 'ambassador applications decided 6 months ago', count(*) FROM private.ambassador_applications
-  WHERE status IN ('accepted', 'declined') AND decided_at < now() - interval '6 months'
-UNION ALL
-SELECT 'ambassador applications undecided after 12 months', count(*) FROM private.ambassador_applications
-  WHERE status IN ('new', 'contacted') AND created_at < now() - interval '12 months'
-UNION ALL
-SELECT 'application-limit counters, 1 day', count(*) FROM private.ambassador_application_log
-  WHERE at < now() - interval '1 day'
-UNION ALL
-SELECT 'travel board posts, 30 days after their last date', count(*) FROM public.travel_posts
-  WHERE date_to < (now() AT TIME ZONE 'Europe/Berlin')::date - 30
-UNION ALL
-SELECT 'ambassador log entries, 12 months', count(*) FROM private.ambassador_log
-  WHERE at < now() - interval '12 months'
-UNION ALL
-SELECT 'ambassador welcomes, 12 months', count(*) FROM private.ambassador_welcomes
-  WHERE at < now() - interval '12 months';
-```
-
-(The four before the ambassador lines exist once the database update of 21
-October 2026 is in, the three ambassador lines once that of 24 October 2026
-is in, the travel board line once that of 26 October 2026 is in, the two
-ambassador panel lines once that of 27 October 2026 is in; before
-them, leave them out.)
-
-The first time, older accounts that never finished signing up go at once.
-If you'd like to warn them first, email them two weeks before.
-
-### Step 2: delete
-
-A report that is part of a legal dispute or a police matter that is still
-open stays: put its id between the braces in `'{}'` below (several ids
-separated by commas, e.g. `'{1b2c..., 3d4e...}'`), or hold it with
-`private.report_hold` (`moderation-guidelines.md`, step 8). A report from
-the form that is held has `hold_reason` set and stays; so do the decisions
-that answered held reports. Evidence copies you kept
-outside the database (screenshots) go with their report: delete them by
-hand when the report goes.
-
-```sql
--- NRIClub monthly, step 2: delete. Deleting the auth.users row deletes an
--- account exactly as Settings > Delete account does.
-BEGIN;
-DELETE FROM auth.users u
-  WHERE u.email_confirmed_at IS NULL AND u.created_at < now() - interval '30 days'
-    AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = u.id);
-DELETE FROM auth.users u USING public.profile_private pp
-  WHERE pp.id = u.id AND pp.verification_status = 'incomplete' AND pp.updated_at < now() - interval '90 days'
-    AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = u.id);
-DELETE FROM auth.users u USING public.profile_private pp
-  WHERE pp.id = u.id AND pp.verification_status = 'rejected'
-    AND COALESCE(pp.reviewed_at, pp.updated_at) < now() - interval '6 months'
-    AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = u.id);
-DELETE FROM public.notifications WHERE read AND created_at < now() - interval '6 months';
-DELETE FROM public.reports
-  WHERE status <> 'pending' AND created_at < now() - interval '12 months'
-    AND NOT (id = ANY ('{}'::uuid[]));
-DELETE FROM private.moderation_record WHERE created_at < now() - interval '24 months';
-UPDATE private.moderation_record SET admin_note = ''
-  WHERE admin_note <> '' AND created_at < now() - interval '12 months';
--- Since the database update of 21 October 2026:
-DELETE FROM private.notices
-  WHERE status = 'closed' AND created_at < now() - interval '12 months' AND hold_reason = '';
-DELETE FROM private.notice_log WHERE at < now() - interval '1 day';
-UPDATE private.moderation_action a SET snapshot = NULL
-  WHERE snapshot IS NOT NULL AND created_at < now() - interval '6 months'
-    AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = ANY (a.report_ids))
-    AND NOT EXISTS (SELECT 1 FROM private.notices n WHERE n.id = a.notice_id AND n.hold_reason <> '');
-DELETE FROM private.moderation_action a
-  WHERE created_at < now() - interval '24 months'
-    AND NOT EXISTS (SELECT 1 FROM private.report_hold h WHERE h.report_id = ANY (a.report_ids))
-    AND NOT EXISTS (SELECT 1 FROM private.notices n WHERE n.id = a.notice_id AND n.hold_reason <> '');
--- Since the database update of 24 October 2026:
-DELETE FROM private.ambassador_applications
-  WHERE status IN ('accepted', 'declined') AND decided_at < now() - interval '6 months';
-DELETE FROM private.ambassador_applications
-  WHERE status IN ('new', 'contacted') AND created_at < now() - interval '12 months';
-DELETE FROM private.ambassador_application_log WHERE at < now() - interval '1 day';
--- Since the database update of 26 October 2026:
-DELETE FROM public.travel_posts WHERE date_to < (now() AT TIME ZONE 'Europe/Berlin')::date - 30;
--- Since the database update of 27 October 2026:
-DELETE FROM private.ambassador_log WHERE at < now() - interval '12 months';
-DELETE FROM private.ambassador_welcomes WHERE at < now() - interval '12 months';
-COMMIT;
-```
-
-Run step 1 again: the counts should now be 0 (except reports you kept).
-
-### Step 3: memberships we ended
+## Once a month: memberships we ended
 
 The database doesn't know whether a block is for a time or ends the
-membership. This lists accounts blocked more than 6 months ago:
+membership, so the jobs leave these accounts alone. This lists accounts
+blocked more than 6 months ago:
 
 ```sql
 SELECT pp.id, p.name, pp.email, r.created_at AS blocked_on
@@ -303,33 +188,43 @@ within one month (Privacy Policy, section 10). Since the database update of
    there.
 4. **The email.** They get "Your NRIClub account has been deleted" from
    `MAIL_FROM`. If the panel says "The email couldn't be sent; please tell
-   the member yourself", reply to their request from hello@ to say it's
+   the member yourself", reply to their request in the Inbox to say it's
    done.
-5. **Close it** in the request log (date answered). Keep the request and
-   our answers in the mailbox for 3 years (below).
+5. **Close it** in the request log (date answered). Keep a copy of the
+   request and our answers with the log for 3 years (below): the Inbox
+   deletes them after 12 months.
 
 If the panel says "Some photo files are left", the photo clean-up deletes
 them within days; nothing to do. The deletion shows in the record of our
 decisions (`private.moderation_action`, action `delete_member`, with the
 account's ID only), which is deleted after 24 months like the rest.
 
-## Once a month: the mailbox
+## Once a month: copies of emails
 
-In the hello@nriclub.app mailbox, delete:
+The admin Inbox deletes every email, with our replies, 12 months after it
+arrived (the daily job). Longer or elsewhere, by hand:
 
-- requests about rights (access, erasure, objection and so on), reports of
-  illegal content, appeals and authority orders, with our answers, whose
-  matter was closed more than 3 years ago;
-- all other emails, with our replies, whose matter was closed more than 12
-  months ago.
+- **Requests about rights** (access, erasure, objection and so on),
+  **reports of illegal content, appeals and authority orders**, with our
+  answers: before the Inbox deletes them, save a copy (for example as PDF)
+  with the request log, outside the repository, and delete it once the
+  matter was closed more than 3 years ago.
+- **Emails sent from your mail app** (the emails the panel prepares,
+  `docs/EMAIL-SETUP.md`): delete those whose matter was closed more than 12
+  months ago, or 3 years for the requests above.
+- **Received emails in Resend** (Emails → Receiving): if Resend keeps them
+  longer than 12 months, delete older ones (`processor-agreements.md`).
+- **Gmail:** nothing should be there. The copies forwarded until 26 October
+  2026 are deleted once (`LAUNCH-GUIDE.md`, "Compliance fixes: what to do").
 
 Keep a request log (date, who, what, deadline, date answered; see
 `moderation-guidelines.md`) and delete its entries on the same schedule.
 
 ## Log
 
-Photo files aren't logged here: the admin panel deletes them by itself.
+Note the monthly check here. The jobs and the photo clean-up aren't logged
+here: they report in `cron.job_run_details` and in the admin panel.
 
-| Date | Accounts deleted | Notices, reports, records | Mailbox | By |
+| Date | Jobs all succeeded? | Ended memberships deleted | Email copies deleted | By |
 |---|---|---|---|---|
 | | | | | |

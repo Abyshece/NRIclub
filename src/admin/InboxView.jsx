@@ -1,5 +1,6 @@
 // Inbox: mail sent to hello@nriclub.app. Resend receives it and the Edge
-// Function forward-email keeps it here (and may forward a copy). Unread
+// Function forward-email keeps it here, and only here (no copy goes to any
+// other mailbox since 26 October 2026). Unread
 // messages first; open one to read it (as plain text: an email's HTML is
 // never put into this page), archive it, or reply from hello@nriclub.app
 // (the Edge Function admin-inbox-reply). Messages are deleted 12 months
@@ -84,7 +85,7 @@ function Message({ id, onBack, onChange, showToast }) {
       showToast({ text: res?.reply ? "Reply sent" : "Reply sent. It couldn't be saved here, so it won't show under the message.", icon: "check" });
     } catch (e) {
       setSendError(e.unreachable
-        ? "The reply couldn't be sent: the server function isn't reachable. It may not be set up yet. Reply from Gmail instead."
+        ? "The reply couldn't be sent: the server function isn't reachable. It may not be set up yet (docs/EMAIL-SETUP.md). Please try again later."
         : friendlyError(e));
     }
     setSending(false);
@@ -121,7 +122,7 @@ function Message({ id, onBack, onChange, showToast }) {
           </div>
           {files.length > 0 && (
             <div style={{ marginTop: 14 }}>
-              <div className="adm-field-label">Attachments (kept with Resend; open them from Gmail or Resend)</div>
+              <div className="adm-field-label">Attachments (kept with Resend; open them in Resend under Emails → Receiving)</div>
               <ul style={{ margin: 0, paddingLeft: 18 }}>
                 {files.map((a, i) => (
                   <li key={i} style={{ overflowWrap: "anywhere" }}>{a.filename}<span className="adm-faint">{[a.content_type, sizeText(a.size)].filter(Boolean).length ? ` · ${[a.content_type, sizeText(a.size)].filter(Boolean).join(" · ")}` : ""}</span></li>
@@ -241,7 +242,7 @@ export default function InboxView({ showToast, onUnread }) {
       </PageHeader>
       {list === null ? (
         <p className="adm-callout" role="note">
-          The Inbox needs the database update of 25 October 2026 and the new version of the forward-email function. Until then, mail to hello@nriclub.app is forwarded to Gmail as before.
+          The Inbox needs the database update of 25 October 2026. Until it's in, mail to hello@nriclub.app can't be kept here: it stays in Resend under Emails → Receiving.
         </p>
       ) : (
         <>

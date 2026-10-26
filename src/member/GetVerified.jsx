@@ -1,20 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
-import { TermsModal, PrivacyModal } from "./LegalModals";
+import { TermsModal, PrivacyModal, TERMS_VERSION, ART9_CONSENT_VERSION } from "./LegalModals";
 import { AccountFooter } from "./AccountActions";
 import { VERIFICATION_BANNER_ID } from "./VerificationBanner";
 import { TermsCheckbox, Art9Checkbox, PrivacyNote, TERMS_ERROR, ART9_ERROR } from "./Consent";
 import { readInvite, forgetInvite, invitedByText, isInvitedByText } from "./invite";
 import { FONT, COLORS, inputStyle, Field, ErrorBox, primaryButtonStyle, linkButtonStyle, describedBy } from "./ui";
 import { trackStep } from "../analytics";
+import { isPausedCity } from "../content/cities";
 import {
   mapProfile, countryName, getCountryOptions, MAJOR_INDIAN_CITIES,
-  cityFromGroupName, linkedinProblem, apiErrorMessage, stillToAccept,
+  cityFromGroupName, linkedinProblem, apiErrorMessage, stillToAccept, consentToRenew, PAUSED_COUNTRIES,
 } from "./profile";
 
 const NOTE_MIN = 20;
 // Shown first in the Country list, above the full A-Z list.
-const COMMON_COUNTRIES = ["IN", "US", "GB", "CA", "AU", "DE", "AE", "SG"];
+// (Not the UK while it's paused: PAUSED_COUNTRIES in profile.js.)
+const COMMON_COUNTRIES = ["IN", "US", "CA", "AU", "DE", "AE", "SG"];
 const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
 // "Get verified": city, country and LinkedIn (or a short note on how the
@@ -44,8 +46,11 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const needs = stillToAccept(user, currentTerms);
+  // With new Terms, the consent too if it was given to an earlier wording.
+  const askArt9 = needs.art9 || (needs.terms && consentToRenew(user, currentTerms, TERMS_VERSION, ART9_CONSENT_VERSION));
 
-  const [country, setCountry] = useState(isIndia ? "IN" : user.countryCode || "");
+  // A paused country (the UK) isn't offered: choose again.
+  const [country, setCountry] = useState(isIndia ? "IN" : PAUSED_COUNTRIES.includes(user.countryCode) ? "" : user.countryCode || "");
   const [city, setCity] = useState(user.city || (user.location || "").split(",")[0].trim());
   const [useLinkedin, setUseLinkedin] = useState(!hasNoteOnly);
   const [linkedin, setLinkedin] = useState(user.linkedinUrl || "");
@@ -89,13 +94,13 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
   const swapped = useRef(false);
 
   // City suggestions from the approved "Indians in X" groups (the member is
-  // signed in now, so groups can be read).
+  // signed in now, so groups can be read), without the paused UK cities.
   useEffect(() => {
     let alive = true;
     api.getGroups()
       .then((groups) => {
         if (!alive) return;
-        const names = (groups || []).map((g) => cityFromGroupName(g.name)).filter(Boolean);
+        const names = (groups || []).map((g) => cityFromGroupName(g.name)).filter((c) => c && !isPausedCity(c));
         setGroupCities([...new Set(names)].sort((a, b) => a.localeCompare(b)));
       })
       .catch(() => {});
@@ -161,7 +166,7 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
       else if (n < NOTE_MIN) e.note = `Please write a little more (at least ${NOTE_MIN} characters, you have ${n}).`;
     }
     if (needs.terms && !agree) e.agree = TERMS_ERROR;
-    if (needs.art9 && !art9) e.art9 = ART9_ERROR;
+    if (askArt9 && !art9) e.art9 = ART9_ERROR;
     return e;
   };
 
@@ -189,9 +194,9 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
     try {
       // The 18+/Terms tick and the Art. 9 consent first (accepting the same
       // again changes nothing, if the details need another try).
-      if (needs.terms || needs.art9) {
+      if (needs.terms || askArt9) {
         version = version || await api.getCurrentTermsVersion();
-        version = (await api.acceptTerms(version, needs.art9)) || version;
+        version = (await api.acceptTerms(version, askArt9)) || version;
       }
       await api.submitVerification(details);
       if (!isUpdate) trackStep("details_sent");
@@ -216,7 +221,7 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
         termsAcceptedAt: (user.termsVersion === version && user.termsAcceptedAt) || now,
         termsVersion: version,
       }),
-      ...(needs.art9 && { art9ConsentAt: now }),
+      ...(askArt9 && { art9ConsentAt: now, ...(version === TERMS_VERSION && { art9ConsentVersion: ART9_CONSENT_VERSION }) }),
     });
   };
 
@@ -340,12 +345,12 @@ export default function GetVerified({ user, mode = "required", termsVersion, onD
             />
           </Field>
 
-          {(needs.terms || needs.art9) && (
+          {(needs.terms || askArt9) && (
             <div style={{ marginBottom: 22 }}>
               {needs.terms && (
                 <TermsCheckbox id="gv-agree" inputRef={refs.agree} checked={agree} onChange={(v) => { setAgree(v); clearError("agree"); }} error={errors.agree} onOpen={setModal} style={{ marginBottom: 14 }} />
               )}
-              {needs.art9 && (
+              {askArt9 && (
                 <Art9Checkbox id="gv-art9" inputRef={refs.art9} checked={art9} onChange={(v) => { setArt9(v); clearError("art9"); }} error={errors.art9} style={{ marginBottom: 14 }} />
               )}
               <PrivacyNote onOpen={setModal} />

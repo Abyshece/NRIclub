@@ -6,7 +6,7 @@ database rule that let the wrong people read data, a lost laptop with an
 export, a mistaken email to many members, or a provider telling us about an
 incident.
 
-**Who decides:** the founder (the controller). Get the lawyer's view when
+**Who decides:** the owner, who runs NRIClub personally (the controller). Get the lawyer's view when
 there is any doubt about notifying, but don't let that stop the 72-hour
 clock.
 
@@ -48,11 +48,17 @@ Then rate the risk to the people concerned:
 
 ## 3. Notify the supervisory authority (Art. 33)
 
-- Authority: the data protection authority of the German federal state where
-  the founder lives (later: where the company has its seat). Most offer an
-  online form for breach notifications ("Meldung einer Datenpanne nach
-  Art. 33 DS-GVO") on their website. **[fill in: authority name, link to its
-  form, phone]**
+- Authority: the **Bayerisches Landesamt für Datenschutzaufsicht (BayLDA)**,
+  Promenade 18, 91522 Ansbach, Germany, www.lda.bayern.de: the authority for
+  private controllers in Bavaria, where the owner lives (as in
+  `PRIVACY_DETAILS.supervisoryAuthority`, `src/content/imprint.js`). Once a
+  company runs NRIClub, it is the authority where the company has its seat:
+  change both.
+- How: BayLDA's **online form for reporting a data breach** (Art. 33 GDPR,
+  "Datenpanne melden"), on its website: https://www.lda.bayern.de/de/datenpanne.html
+  (check the link once and note here that it works: **[fill in: date
+  checked]**). Use the form rather than email; it asks for everything
+  Art. 33(3) needs and gives a reference number.
 - Content (Art. 33(3)): the nature of the breach with categories and
   approximate numbers of people and records; the contact (hello@nriclub.app);
   the likely consequences; the measures taken or planned. If not everything
@@ -91,7 +97,7 @@ would take disproportionate effort). Template:
 
 ## 5. Processors
 
-Supabase, Vercel, Resend and the mailbox provider must tell us without undue
+Supabase, Vercel and Resend must tell us without undue
 delay about a breach on their side (Art. 33(2), in their DPAs). Their
 notice starts our own 72 hours once we know that our data is affected.
 

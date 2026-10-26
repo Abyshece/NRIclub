@@ -16,20 +16,20 @@ import { slug, HOME_TITLE } from "./content/slug";
 import { MentoringPage, MentorsList, BookingModal, MentorProfileCard, MentorBadge } from "./member/Mentoring";
 import TravelBoard from "./member/TravelBoard";
 import HousingSearch, { HousingFields, HousingListingInfo, useHousingStatus, EMPTY_HOUSING } from "./member/HousingSearch";
-import { listingProblem, money } from "./content/housing";
+import { listingProblem, money, COPY as HOUSING_COPY } from "./content/housing";
 import ReportDialog from "./member/ReportDialog";
 import { HostedBadge, sameCity } from "./member/ambassadorBits";
 import { MEETUP_TITLE } from "./content/ambassador";
 import { mapProfile, linkedinProblem, authErrorMessage, apiErrorMessage, isNetworkError, NETWORK_MESSAGE, cityFromGroupName, isWaitingForReview, countryName, getCountryOptions, MAJOR_INDIAN_CITIES } from "./member/profile";
 import { findCity } from "./content/findCity";
-import { ART9_CONSENT_TEXT, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
+import { ART9_CONSENT_TEXT, ART9_CONSENT_TEXT_BY_VERSION, ART9_WITHDRAW_TEXT } from "./content/legal/consent";
 import { WHATS_ON_NOTE, upcoming, todayInGermany, citySlug, eventCitySlug } from "./content/whatson";
 import { CompactEvent } from "./WhatsOnItems";
 import { useWhatsOn } from "./whatsOnLive";
 import { PROFILE_ITEMS, missingItems, reminderKind } from "./content/profileReminders";
 import { PrivacySettingsLink } from "./ConsentBanner";
 import { PreviewSwitch, ShareButton, useShare } from "./member/SharePreview";
-import { LINK_COPIED, SWITCH_FAILED } from "./content/preview";
+import { LINK_COPIED, SWITCH_FAILED, QUESTION_CATEGORIES, questionPreviewAllowed } from "./content/preview";
 
 // The application to be a city ambassador, loaded when it is opened.
 const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
@@ -275,8 +275,9 @@ const GLOBAL_CITIES = [
   "Saarbrücken", "Stuttgart", "Ulm", "Wiesbaden", "Wolfsburg",
 ];
 
-// Shown first in Edit profile's Country list (as in Get verified).
-const COMMON_COUNTRIES = ["IN", "US", "GB", "CA", "AU", "DE", "AE", "SG"];
+// Shown first in Edit profile's Country list (as in Get verified; not the UK
+// while it's paused, PAUSED_COUNTRIES in src/member/profile.js).
+const COMMON_COUNTRIES = ["IN", "US", "CA", "AU", "DE", "AE", "SG"];
 
 const OCCUPATION_TYPES = [
   "Working Professional",
@@ -2429,7 +2430,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     setHelpModal(false);
     try {
       const r = await api.createHelpRequest({ title: draft.title, description: draft.description, category: draft.category, urgency: draft.urgent ? "High" : "Low", urgent: draft.urgent,
-        ...(previewsAvailable && draft.sharePreview ? { share_preview: true } : {}) });
+        ...(previewsAvailable && draft.sharePreview && questionPreviewAllowed(draft.category) ? { share_preview: true } : {}) });
       // Swap the temporary id for the saved one so responses and delete work.
       if (r?.[0]) setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, id: r[0].id, userId: user.id, city: r[0].city ?? x.city, sharePreview: !!r[0].share_preview } : x));
       if (draft.urgent && r?.alertsOff) alert("Your question is posted and marked urgent, but alerts to members in your city aren't switched on yet. If it's an emergency, call the local emergency number, or message members in your city group directly.");
@@ -3521,7 +3522,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   const sorted = [...list].filter(pl => kindFilter === "All" || pl.kind === kindFilter).sort((a, b) => b.recs.length - a.recs.length);
                   return (
                     <div>
-                      <p style={{ fontSize: 13, color: "#6B6A67", fontFamily: font, marginBottom: 12 }}>Indian groceries, restaurants and temples in {city}, and doctors, tax advisers and lawyers who know our needs, recommended by members.</p>
+                      <p style={{ fontSize: 13, color: "#6B6A67", fontFamily: font, marginBottom: 4 }}>Indian groceries, restaurants and temples in {city}, and doctors, tax advisers and lawyers who know our needs, recommended by members.</p>
+                      {/* How recommendations are collected (§ 5b(3) UWG), in the lawyer's words. */}
+                      <p style={{ fontSize: 12, color: "#6B6A67", fontFamily: font, marginBottom: 12, lineHeight: 1.5 }}>Recommendations come from members. We don't check that they were customers, and nobody is paid for them.</p>
                       {kindsHere.length > 1 && (
                         <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 10 }}>
                           {["All", ...kindsHere].map(k => (
@@ -4103,7 +4106,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                       {Icons.message({ size: 14 })} {h.responses === 1 ? "1 answer" : `${h.responses || 0} answers`}
                     </button>
                     {!String(h.id).startsWith("h_") && (
-                      <button type="button" onClick={() => shareThis("question", h, isMine)} aria-label={`Share the question ${h.title}`} title="Share"
+                      <button type="button" onClick={() => shareThis("question", h, isMine && questionPreviewAllowed(h.category))} aria-label={`Share the question ${h.title}`} title="Share"
                         style={{ display: "flex", alignItems: "center", gap: 4, minHeight: 36, padding: "6px 8px", background: "none", border: "none", cursor: "pointer", color: "#6B6A67", fontSize: 12, fontFamily: font }}>
                         {Icons.share({ size: 14 })} Share
                       </button>
@@ -4112,8 +4115,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 </div>
                 {selectedHelp === h.id && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
-                    {/* The asker's switch: a preview for people who aren't members. */}
-                    {isMine && previewsAvailable && !String(h.id).startsWith("h_") && (
+                    {/* The asker's switch: a preview for people who aren't
+                        members (none for Health and Legal/Visa questions). */}
+                    {isMine && previewsAvailable && !String(h.id).startsWith("h_") && questionPreviewAllowed(h.category) && (
                       <PreviewSwitch kind="question" checked={!!h.sharePreview} busy={previewBusy === h.id}
                         onChange={(on) => togglePreview("question", h.id, on)} style={{ marginBottom: 14 }} />
                     )}
@@ -5857,6 +5861,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   author, renewing or changing it and who is looking. */}
               {expandedMarketItem.category === "Housing" && (
                 <HousingListingInfo item={expandedMarketItem} user={user} Avatar={Avatar}
+                  onReport={setReportConfirm} reportedIds={reportedIds}
                   onMessage={async (id, text) => {
                     const problem = id && id !== user.id ? await sendFirstMessage(id, text) : "You can't message this member.";
                     if (!problem) { setExpandedMarketItem(null); setMarketPhotoIdx(0); }
@@ -6225,7 +6230,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "16px 0 0", marginTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <h4 style={{ fontSize: 14, fontWeight: 600, color: "#37352F", fontFamily: font }}>Website analytics</h4>
-                  <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 2, lineHeight: 1.5, fontFamily: font }}>Whether this browser lets us record which pages you visit and which buttons you click. Never linked to your account.</p>
+                  <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 2, lineHeight: 1.5, fontFamily: font }}>Whether this browser lets us record which pages you visit and which buttons you click. Not linked to your account.</p>
                 </div>
                 <PrivacySettingsLink style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #E0E0DE", background: "#fff", color: "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font, flexShrink: 0 }} />
               </div>
@@ -6236,7 +6241,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 4, lineHeight: 1.5, fontFamily: font }}>
                     On {new Date(user.art9ConsentAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })} you agreed:
                   </p>
-                  <blockquote style={{ fontSize: 12, color: "#5F5E5B", margin: "6px 0 0", padding: "6px 10px", borderLeft: "3px solid #E0E0DE", lineHeight: 1.5, fontFamily: font }}>{ART9_CONSENT_TEXT}</blockquote>
+                  <blockquote style={{ fontSize: 12, color: "#5F5E5B", margin: "6px 0 0", padding: "6px 10px", borderLeft: "3px solid #E0E0DE", lineHeight: 1.5, fontFamily: font }}>{ART9_CONSENT_TEXT_BY_VERSION[user.art9ConsentVersion] || ART9_CONSENT_TEXT}</blockquote>
                   <p style={{ fontSize: 12, color: "#6B6A67", marginTop: 6, lineHeight: 1.5, fontFamily: font }}>{ART9_WITHDRAW_TEXT}</p>
                 </div>
               )}
@@ -6710,7 +6715,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               {housingForm && <HousingFields value={newHousing} onChange={(v) => { setNewHousing(v); setHousingError(""); }} today={todayInGermany()} idPrefix="market-housing" />}
               <div style={{ marginBottom: 20 }}>
                 <label htmlFor="market-description" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
-                <textarea id="market-description" style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newMarket.description} onChange={(e) => setNewMarket({...newMarket, description: e.target.value})} placeholder={marketForm(newMarket.category).desc} />
+                <textarea id="market-description" style={{ ...inputStyle, minHeight: 100, resize: "none" }} value={newMarket.description} onChange={(e) => setNewMarket({...newMarket, description: e.target.value})} placeholder={marketForm(newMarket.category).desc}
+                  aria-describedby={newMarket.category === "Housing" ? "market-description-agg" : undefined} />
+                {newMarket.category === "Housing" && <p id="market-description-agg" style={{ fontSize: 12, color: "#6B6A67", lineHeight: 1.5, margin: "6px 0 0", fontFamily: font }}>{HOUSING_COPY.aggNote}</p>}
               </div>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Photos (max 4)</label>
@@ -6992,8 +6999,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               <div style={{ marginBottom: 16 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Category</label>
                 <select style={{ ...inputStyle, cursor: "pointer" }} value={newHelp.category} onChange={(e) => setNewHelp({ ...newHelp, category: e.target.value })}>
-                  {["General", "Housing", "Health", "Legal/Visa", "Education", "Jobs", "Travel", "Money & tax", "Family"].map((c) => <option key={c}>{c}</option>)}
+                  {QUESTION_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
                 </select>
+                {newHelp.category === "Legal/Visa" && <p style={{ fontSize: 12, color: "#6B6A67", lineHeight: 1.5, margin: "6px 0 0", fontFamily: font }}>Members share their own experience. That isn't legal, visa or tax advice; for your own case see a lawyer or tax adviser.</p>}
+                {previewsAvailable && !questionPreviewAllowed(newHelp.category) && <p style={{ fontSize: 12, color: "#6B6A67", lineHeight: 1.5, margin: "6px 0 0", fontFamily: font }}>Questions under {newHelp.category} have no preview for people who aren't members.</p>}
               </div>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8, fontFamily: font }}>Description</label>
@@ -7007,7 +7016,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 </span>
               </label>
               {newHelp.urgent && <div style={{ marginBottom: 20 }}><EmergencyHelp countryCode={user.countryCode} /></div>}
-              {previewsAvailable && (
+              {previewsAvailable && questionPreviewAllowed(newHelp.category) && (
                 <PreviewSwitch kind="question" checked={!!newHelp.sharePreview} onChange={(on) => setNewHelp({ ...newHelp, sharePreview: on })} style={{ marginBottom: 20 }} />
               )}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
@@ -7076,6 +7085,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                     onChange={(e) => setField("countryCode", e.target.value)} autoFocus={profileFocus === "location"} autoComplete="country"
                     aria-invalid={!!profileErrors.countryCode} aria-describedby={profileErrors.countryCode ? "edit-countryCode-error" : undefined}>
                     <option value="">Choose your country</option>
+                    {/* A country chosen before that isn't offered any more (the paused UK) stays shown until changed. */}
+                    {editProfile.countryCode && !getCountryOptions().some((c) => c.code === editProfile.countryCode) && (
+                      <option value={editProfile.countryCode}>{countryName(editProfile.countryCode)}</option>
+                    )}
                     <optgroup label="Common">
                       {COMMON_COUNTRIES.map((code) => <option key={code} value={code}>{countryName(code)}</option>)}
                     </optgroup>

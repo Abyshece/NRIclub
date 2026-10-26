@@ -275,9 +275,11 @@ export default function App() {
   // The version of the Terms members must have accepted, as the database
   // says (api.getCurrentTermsVersion); null until known. And the version
   // before it, which still applies to members who accepted it until they
-  // accept the current one (api.getPreviousTermsVersion; "" if none).
+  // accept the current one (api.getPreviousTermsVersion; "" if none), and
+  // every earlier version still in force (api.getTermsVersionsInForce).
   const [termsVersion, setTermsVersion] = useState(null);
   const [previousTermsVersion, setPreviousTermsVersion] = useState("");
+  const [termsInForce, setTermsInForce] = useState([]);
   // { key: "<member id>:<version>" } once the member answered "Later" on the
   // Terms screen (also kept for the browser session: termsLaterChosen). A new
   // object each time, so the screen updates even when the key doesn't.
@@ -396,9 +398,11 @@ export default function App() {
       try {
         // With the current Terms version, so a tab opened before the Terms
         // changed asks for them again once reloaded.
-        const [dbProfile, version, previous] = await Promise.all([api.getMyProfile(), api.getCurrentTermsVersion(), api.getPreviousTermsVersion()]);
+        const [dbProfile, version, previous, inForce] = await Promise.all([api.getMyProfile(), api.getCurrentTermsVersion(),
+          api.getPreviousTermsVersion(), api.getTermsVersionsInForce()]);
         if (dbProfile) {
           setPreviousTermsVersion(previous);
+          setTermsInForce(inForce);
           setTermsVersion(version);
           setUser(mapProfile(dbProfile));
           setAuthState("authenticated");
@@ -450,8 +454,8 @@ export default function App() {
   useEffect(() => {
     if (authState !== "authenticated" || termsVersion) return;
     let active = true;
-    Promise.all([api.getCurrentTermsVersion(), api.getPreviousTermsVersion()])
-      .then(([version, previous]) => { if (active) { setPreviousTermsVersion(previous); setTermsVersion(version); } })
+    Promise.all([api.getCurrentTermsVersion(), api.getPreviousTermsVersion(), api.getTermsVersionsInForce()])
+      .then(([version, previous, inForce]) => { if (active) { setPreviousTermsVersion(previous); setTermsInForce(inForce); setTermsVersion(version); } })
       .catch(() => { if (active) setAuthState("profile-error"); });
     return () => { active = false; };
   }, [authState, termsVersion]);
@@ -468,14 +472,15 @@ export default function App() {
     let active = true;
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      Promise.all([api.getCurrentTermsVersion({ refresh: true }), api.getPreviousTermsVersion({ refresh: true })]).then(async ([version, previous]) => {
+      Promise.all([api.getCurrentTermsVersion({ refresh: true }), api.getPreviousTermsVersion({ refresh: true }),
+        api.getTermsVersionsInForce({ refresh: true })]).then(async ([version, previous, inForce]) => {
         if (termsVersionRef.current && version !== termsVersionRef.current) {
           try {
             const dbProfile = await api.getMyProfile();
             if (active && dbProfile) setUser(mapProfile(dbProfile));
           } catch {}
         }
-        if (active) { setPreviousTermsVersion(previous); setTermsVersion(version); }
+        if (active) { setPreviousTermsVersion(previous); setTermsInForce(inForce); setTermsVersion(version); }
       }).catch(() => {});
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -622,10 +627,11 @@ export default function App() {
       if (user.status === "blocked") return <Dashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />;
       if (!termsVersion) return <LoadingScreen />;
       if (user.verificationStatus === "incomplete") return <GetVerified user={user} termsVersion={termsVersion} onDone={setUser} onSignOut={handleLogout} />;
-      const toAccept = stillToAccept(user, termsVersion, previousTermsVersion);
-      // A member on the previous version may answer "Later" (the Terms they
-      // accepted still apply, section 14): asked again next time NRIClub is
-      // opened, and from the travel board, which needs the current version.
+      const toAccept = stillToAccept(user, termsVersion, previousTermsVersion, termsInForce);
+      // A member on an earlier version still in force may answer "Later" (the
+      // Terms they accepted still apply, section 14): asked again next time
+      // NRIClub is opened, and from the travel board, which needs the current
+      // version.
       const laterKey = `${user.id}:${termsVersion}`;
       const later = toAccept.later && (termsLater.key === laterKey || termsLaterChosen(user.id, termsVersion));
       if (user.verificationStatus !== "rejected" && (toAccept.terms || toAccept.art9) && !later) {
