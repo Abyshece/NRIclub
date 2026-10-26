@@ -7,7 +7,8 @@ is, but close." The ten must-fix points and the should-fix points that
 concern the texts are now in them (list at the end). This file holds:
 
 1. the lawyer's advice to the owner, to act on;
-2. what the texts and the code couldn't settle, for the next review;
+2. what the texts and the code couldn't settle, for the next review
+   (including L-1 to L-8 from the compliance fixes of 26 October 2026);
 3. what changed after the review.
 
 ## 1. Advice for the owner
@@ -56,7 +57,9 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
 5. **UK members.** NRIClub targets UK cities, so UK GDPR applies
    (Art. 3(2)(a)). Without a UK establishment and processing special
    categories, NRIClub needs a UK representative (Art. 27 UK GDPR); the
-   "occasional processing" exemption doesn't fit. Check Switzerland (nFADP)
+   "occasional processing" exemption doesn't fit. *Since 26 October 2026
+   NRIClub doesn't target the UK until it has a representative
+   (`uk-pause.md`).* Check Switzerland (nFADP)
    if Swiss cities are added. India's DPDP Act 2023 isn't fully in force
    yet: keep it on the watch list.
 6. **Real names** (§ 19(2) TDDDG). The reasons in Terms section 5 make the
@@ -89,7 +92,9 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
     Hobby plan is for non-commercial use only: a contract risk, and on
     Hobby there is no Vercel DPA at all (see 2.4 below). For the mailbox
     choose an EU provider with a DPA, not a forward to a personal Gmail
-    account. Until the MX records exist, the DSA points of contact
+    account. *Done 26 October 2026: Vercel is on Pro with its DPA accepted;
+    nothing is forwarded to Gmail any more, mail stays in the admin Inbox
+    (Resend and Supabase).* Until the MX records exist, the DSA points of contact
     (Art. 11, 12), the Impressum email and every rights request fail.
 11. **Photos public by URL.** The notice is acceptable briefly. For Market
     housing photos and the files of deleted accounts, the public-by-URL
@@ -124,17 +129,17 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
    deleted "once they're closed and 12 months old", which can be sooner
    after closing than the lawyer's wording. Confirm, or add a closing date
    to reports (then the routine can count from it).
-3. **By hand, once a month.** Until clean-up jobs exist (plan C20), the
-   periods are kept by hand monthly, so data can stay up to a month longer
-   than the period given (the Policy says so). Confirm that is acceptable
-   for the interim. (Photo files are no longer by hand: since 2026-10-22
+3. **By hand, once a month.** *Mostly done (26 October 2026):* nightly
+   jobs keep the periods (`deletion-routine.md`), and `RETENTION.byHand`
+   is false. Still by hand, monthly: accounts whose membership we ended
+   (item 10) and copies of emails kept longer than the Inbox's 12 months
+   (requests about rights and DSA notices, 3 years); the Policy says these
+   can stay up to a month longer. Confirm that is acceptable. (Photo files are no longer by hand: since 2026-10-22
    the site deletes them with their content and account, and the admin
    panel's photo clean-up deletes what is left behind within 7 days.)
-4. **Vercel has no DPA on the Hobby plan.** vercel.com/legal/dpa applies
-   only "for Customers who are on Enterprise and Pro plans". The Policy
-   names no agreement and no safeguard for Vercel until
-   `PRIVACY_DETAILS.agreements.vercel` is set to true. Moving to Pro before
-   launch fixes both this and the non-commercial-use limit.
+4. **Vercel has no DPA on the Hobby plan.** *Done:* the project is on Pro
+   and the DPA is accepted (`PRIVACY_DETAILS.agreements.vercel` is true,
+   so the Policy names it and its safeguard).
 5. **Supabase is a Singapore company.** Supabase's terms name Supabase
    Pte. Ltd., Singapore, as the contracting party (not Supabase Inc., USA,
    as our earlier texts said); its DPA is part of the terms and relies on
@@ -165,9 +170,10 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
    in April) still holds; the register now says 24 April for item (4) and
    asks the founder to confirm.
 9. **Dates.** `TERMS_DATE` and `PRIVACY_DATE` say the day the current
-   wording went live (the lawyer's advice): the Terms "17 October 2026"
-   (version `2026-10-19`), the Privacy Policy "18 October 2026" (version
-   `2026-10-24`, items 12 and 13).
+   wording went live (the lawyer's advice). Since the compliance fixes:
+   the Terms "26 October 2026" (version `2026-10-26`; earlier versions
+   2026-10-23, 2026-10-19 and 2026-10 are archived), the Privacy Policy
+   version `2026-10-26`, the Art. 9 consent version `2026-10-26`.
 10. **"Ended" memberships.** The database knows "blocked", not "ended". The
     Policy promises deletion 6 months after we end a membership; the
     routine lists blocked accounts older than 6 months and the admin
@@ -218,6 +224,89 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
     GDPR), as admins sign? Is legitimate interest right for showing
     newcomers to the ambassador, and is 30 days a fair window?
 
+### From the compliance fixes (26 October 2026): L-1 to L-8
+
+The owner decided to stop forwarding hello@ mail to Gmail, to pause the UK,
+to publish Terms version 2026-10-26 at once (while the only accounts are
+the owner's own) and to run NRIClub personally until the company exists.
+These points came up and are for the next review:
+
+- **L-1. Previews of questions and Art. 9.** A question's title can reveal
+  origin, religion or health, and its author can show it to anyone with the
+  link by turning on its preview. We rely on the Art. 9 consent, whose
+  version 2026-10-26 names "the previews I choose to turn on", together
+  with the member's choice for that item (the switch, off by default, warns:
+  "The title will be visible to anyone with the link. Don't turn this on if
+  it shows your health, religion or origin."). Questions in Health and
+  Legal/Visa can't have a preview (site and database). Is Art. 9(2)(a)
+  with the per-item switch the right basis, or is it rather (e), data the
+  member manifestly made public, once they turn it on? Is the warning
+  enough? **Consent-text changes:** version 2026-10-26 changed the examples
+  (city groups only; previews). Members who gave version 2026-10-19 are
+  asked to give the new wording when they accept the Terms 2026-10-26 (one
+  screen, `TermsGate.jsx`); until then the old consent still counts and
+  they can choose "Later". Does a change of examples need a new consent
+  before such a member turns a preview on, or does the old consent cover
+  it?
+- **L-2. § 327(3) BGB and analytics.** The exception in § 327(3) needs data
+  processed only to provide the service or meet legal duties. Website
+  analytics (with consent, to improve the site) are another purpose. Does
+  that bring in §§ 327 ff. BGB in full (updates, § 327r changes, and the
+  withdrawal right of question 14), contrary to the earlier "probably not
+  applicable" (advice point 7)?
+- **L-3. Groups for languages, students and parents removed.** NRIClub
+  once had groups for languages, interests, universities and parents; now
+  there is only a group for each city (Terms section 2 says so since
+  2026-10-26). Was removing them a change "more than slight" to members'
+  disadvantage (§ 327r(3) BGB, if it applies; Terms section 13), which
+  needed notice and a right to end the contract? Do we owe the members of
+  that time anything now?
+- **L-4. Outreach.** `docs/OUTREACH.md` now allows only public posts on our
+  own channels, talking in person, replying when someone writes first,
+  introductions where a mutual contact asked first, and calls to
+  associations and businesses with a presumed interest. Please confirm:
+  (a) a post in someone else's WhatsApp group, with its admin's agreement,
+  isn't advertising by electronic message to each member (§ 7(2) No. 2
+  UWG); (b) a message that only asks for permission is itself advertising
+  (the guide assumes so); (c) calls to associations are covered by § 7(2)
+  No. 1 UWG, also volunteer-run student associations; (d) whether
+  ambassadors' messages are attributed to NRIClub (§ 8(2) UWG); (e) how
+  long to keep the consent notes, and whether the Privacy Policy needs an
+  entry for outreach contacts (Art. 14; section 5 "Where your data comes
+  from").
+- **L-5. Member messaging and telecoms law.** Members can write to each
+  other privately. Is that a number-independent interpersonal
+  communications service (TKG, § 3 definitions), with the secrecy of
+  telecommunications (§ 3 TDDDG) and the notification to the
+  Bundesnetzagentur (§ 5 TKG), or a minor ancillary feature of the
+  network? What follows for admins seeing a single reported message (shown
+  only with its report)?
+- **L-6. Transfer clause** (Terms section 1, version 2026-10-26; comment in
+  `src/content/legal/terms.js`): "We may transfer this contract, with all
+  its rights and duties, to a company we found to run NRIClub (for example
+  a UG). We tell you at least 4 weeks before the transfer, by email and in
+  NRIClub, and name the company. You can end your membership at any time,
+  also before the transfer (section 12)." Does this meet § 309 No. 10 BGB
+  (the company isn't named yet; the member can end the membership at any
+  time)? Does the transfer of the data need more than this and an updated
+  Privacy Policy (Art. 13(3), the new controller)?
+- **L-7. Art. 11 for analytics.** Since the 2026-11-02 update no IP
+  address is stored, and the admin panel shows single visits to the hour
+  only. If we can't identify a visitor without their visitor ID, does
+  Art. 11 apply (no duty to keep more data to identify them; Art. 15 to 20
+  only with the extra information they give)? The Policy offers to find and
+  delete visits by visitor ID or from the approximate time and pages the
+  person names: right, or should it state Art. 11? A search by time and
+  pages can hit someone else's visit: acceptable?
+- **L-8. Previews and "online platform".** With previews, members' content
+  can be shown to anyone with the link and to the apps that build link
+  cards. Does that make NRIClub an online platform (Art. 3(i) DSA:
+  dissemination to the public), and which duties apply beyond those of
+  Art. 11, 12, 14, 16, 17, 18 and 24(3) under the small-enterprise
+  exemption (Art. 19)? **Still open from the first review:** question 14
+  (the withdrawal right, § 312(1a) BGB; see also L-2) and question 24 (the
+  eligibility wording and the AGG).
+
 ### In the code, outside the legal texts (the texts allow for them)
 
 - *Done (2026-10-22):* **photo files deleted with their post or account**
@@ -226,7 +315,10 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
   code instead of the member ID (C19, first part). Private buckets (C19,
   second part) are still open; until then the Policy says photos open for
   anyone with their exact address.
-- **Clean-up jobs** (plan C20), then `RETENTION.byHand = false`.
+- *Done (2026-10-26):* **clean-up jobs** (plan C20): the nightly jobs run
+  on live, plus `nriclub-retention-cleanup` (urgent-question log, all
+  notices after 12 months) from the 2026-11-02 update;
+  `RETENTION.byHand = false`.
 - **City pages** (plan C17): the page shows member counts only from 5, but
   the public API returns any count (live: Forchheim 1), which with Art. 9
   can reveal one person's membership. The Policy's sentence is about the
@@ -234,7 +326,7 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
 - **Report text keeps the reported member's name** (`[USER] <name> — ...`):
   optional, blank it when the reported account is deleted. The Policy
   says the name can stay.
-- **Settings → Your consent** (`src/Dashboard.jsx`): show
+- *Done (2026-10-26):* **Settings → Your consent** (`src/Dashboard.jsx`): show
   `ART9_CONSENT_TEXT` and `ART9_WITHDRAW_TEXT` (both in
   `src/content/legal/consent.js`, re-exported by `LegalModals.jsx`) instead
   of its own summary, which leaves out the membership check and the email
@@ -244,8 +336,11 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
   at /terms; a plain click opens the dialog, which now shows the version
   the database will record, but opening the link in a new tab shows the
   current version even before the migration. Use `termsPath(version)`.
-- **Notes where reviews and advice appear** (§ 5b(3) UWG, RDG/StBerG),
-  wording from the lawyer:
+- *Done (2026-10-26):* **notes where reviews and advice appear** (§ 5b(3)
+  UWG, RDG/StBerG), with the lawyer's wording (`RATINGS_NOTE` in
+  `src/member/Mentoring.jsx`, the places note in `src/Dashboard.jsx`, the
+  booking dialog and the Ask form for Legal/Visa); the topic is now
+  "Moving & visa experiences (no legal advice)":
   - under mentor ratings: "Ratings come from members who booked a session
     with this mentor, one per session, after its time. We don't check that
     the session took place.";
@@ -268,6 +363,33 @@ deploy. Until it runs, what the Privacy Policy (section 4) and the Terms
   (`moderation-guidelines.md`).
 
 ## 3. What changed after the review
+
+### Compliance fixes (26 October 2026)
+
+- **Mail:** nothing is forwarded to Gmail; hello@ mail stays in the admin
+  Inbox (Resend → our database); the Policy no longer names Google.
+- **The UK paused** (`uk-pause.md`).
+- **Analytics:** no IP address stored; single visits to the hour; texts
+  say "pseudonymous" and "not linked", and offer deletion on request.
+- **"Download my data"** also has profile reminders and decision emails.
+- **Clean-up:** the urgent-question log after 2 days, every notice after 12
+  months (new nightly job); `RETENTION.byHand` false.
+- **"Looking for a place" posts** can be reported and removed, with a
+  statement of reasons.
+- **Question previews:** a warning in the switch; none for Health and
+  Legal/Visa.
+- **Terms of Use version 2026-10-26** (section 1 transfer clause, section 2
+  what NRIClub offers, section 3 consent, section 7 housing, previews and
+  ambassadors, section 8 preview licence, sections 9 to 11, section 19);
+  members on any version from 2026-10-19 keep taking part until they
+  accept (`private.terms_versions_in_force`), the travel board needs the
+  current one. **Art. 9 consent version 2026-10-26** (examples: city
+  groups, previews), recorded when a member accepts the new Terms on the
+  Terms screen.
+- **Impressum** without the register line; **Why NRIClub** compares with
+  WhatsApp groups only, qualified, "54 cities"; **Mission** without the
+  unsourced "35 million"; the housing forms say the AGG rule under the
+  description.
 
 - **Art. 9 consent** (`consent.js`): names the membership check as well as
   showing members, says NRIClub can't be used without it, and how to

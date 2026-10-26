@@ -1,7 +1,9 @@
 # Records of processing activities (Art. 30 GDPR)
 
 *Verzeichnis von Verarbeitungstätigkeiten.* Prefilled on 16 October 2026 from
-the code, the database migrations and the October 2026 compliance audit.
+the code, the database migrations and the October 2026 compliance audit;
+updated on 26 October 2026 (no Gmail, the UK paused, analytics without IP
+addresses, the scheduled clean-up jobs).
 Fill in the fields marked **[fill in]**, check every entry once, and update
 it whenever a feature, a provider or a retention period changes (the same
 pull request that changes the Privacy Policy, `src/content/legal/privacy.js`).
@@ -18,12 +20,13 @@ as it holds no secrets.
 
 | | |
 |---|---|
-| Controller (Verantwortlicher) | **[fill in: full name]**, as a private person (later: the company, e.g. NRIClub UG (haftungsbeschränkt)) |
-| Address | **[fill in: street, postcode, city, Germany]** |
-| Contact | hello@nriclub.app, **[fill in: phone]** |
+| Controller (Verantwortlicher) | Abhishek Abhishek, who runs NRIClub personally (later: the company, e.g. NRIClub UG (haftungsbeschränkt)). From `IMPRINT` in `src/content/imprint.js`: change both together |
+| Address | Am Exerzierplatz 3, 97072 Würzburg, Germany |
+| Contact | hello@nriclub.app, +49 176 4733 5005 |
 | Representative in the EU (Art. 27) | Not needed: the controller is established in Germany |
+| Representative in the UK (Art. 27 UK GDPR) | None: NRIClub doesn't target the UK since 26 October 2026 (`uk-pause.md`) |
 | Data protection officer | None appointed. Depends on the DPIA decision (see `dpia-threshold-check.md`; § 38(1) sentence 2 BDSG) |
-| Version of this record | 1, 16 October 2026 (prefilled), **[fill in: date checked and signed]** |
+| Version of this record | 2, 26 October 2026 (updated from the code; version 1: 16 October 2026), **[fill in: date checked and signed]** |
 
 ## Recipients that apply to most activities
 
@@ -48,8 +51,10 @@ as it holds no secrets.
 - **Processors** (Art. 28): Supabase Pte. Ltd., Singapore (database, Auth,
   Storage, Realtime; AWS eu-west-1, Ireland), Vercel Inc., USA (hosting and
   CDN, worldwide edge network), Plus Five Five, Inc. (Resend), USA
-  (transactional email via Amazon SES eu-west-1), the hello@nriclub.app
-  mailbox provider **[fill in]**. See `processor-agreements.md`.
+  (sending email via Amazon SES eu-west-1, and receiving the mail to
+  hello@nriclub.app). No mailbox provider: since 26 October 2026 mail to
+  hello@ goes from Resend to our database only, and nothing is forwarded to
+  Gmail (No. 13). See `processor-agreements.md`.
 - **Lawyers and courts** where we need to establish, exercise or defend
   legal claims (Art. 6(1)(f)).
 - **Authorities** only where a law obliges (court orders; Art. 18 DSA reports
@@ -66,15 +71,22 @@ safeguard is the standard contractual clauses in each provider's DPA
 | Provider | DPA | Safeguard used | Checked on |
 |---|---|---|---|
 | Supabase Pte. Ltd. (Singapore) | Part of the terms of service | SCCs in the DPA (no DPF reliance) | 16 October 2026 (website); **[fill in: signed copy filed]** |
-| Vercel Inc. (USA) | Only on Pro and Enterprise plans | SCCs in the DPA | **[fill in: plan, DPA filed]** |
+| Vercel Inc. (USA) | Pro plan; DPA accepted (it covers only Pro and Enterprise) | SCCs in the DPA | 26 October 2026 (Pro and DPA, as the owner states); **[fill in: copy filed]** |
 | Plus Five Five, Inc. (Resend, USA) | Part of the terms | SCCs in the DPA; Resend states DPF compliance | 16 October 2026 (website) |
-| Mailbox provider | **[fill in]** | **[fill in]** | **[fill in]** |
+
+No other provider: there is no mailbox provider (Google/Gmail was used for
+forwarded copies until 26 October 2026, without a DPA; delete those copies,
+`LAUNCH-GUIDE.md`).
 
 ## Activities
 
-Retention periods marked *(by hand)* are kept with
-`deletion-routine.md` until scheduled clean-up jobs exist (then mark them
-*(job)*). Everything else is deleted when the member deletes their account
+Retention periods marked *(job)* are kept by the nightly pg_cron jobs
+`nriclub-daily-cleanup` (`private.daily_cleanup()`),
+`nriclub-profile-reminders-cleanup`, `nriclub-analytics-cleanup`,
+`nriclub-housing-cleanup` and, since the database update
+`20261102000000_compliance_fixes.sql`, `nriclub-retention-cleanup`
+(`private.retention_cleanup()`). The few marked *(by hand)* are kept with
+`deletion-routine.md`. Everything else is deleted when the member deletes their account
 (`delete_my_account()` deletes the `auth.users` row; every table that
 references the member cascades, except where noted), or when our team
 deletes it for them: at their request (Art. 17), or an account we blocked
@@ -94,7 +106,7 @@ records the deletion in `private.moderation_action` (No. 9).
 | Data | Email address, bcrypt password hash, name, sign-up/confirmation/last sign-in times, signup metadata (`auth.users.raw_user_meta_data`); sessions with IP address and user agent (`auth.sessions`), refresh tokens |
 | Systems | Supabase Auth (`auth.users`, `auth.sessions`, `auth.refresh_tokens`); `public.profiles`, `public.profile_private` |
 | Recipients | Admins (email address); Supabase |
-| Retention | Until account deletion, by the member or by our team (at the member's request, or a blocked account; see above). Sign-ups never confirmed: 30 days *(by hand)*. Sessions until sign-out on that device or account deletion (no time-box set yet: see Supabase Auth → Sessions) |
+| Retention | Until account deletion, by the member or by our team (at the member's request, or a blocked account; see above). Sign-ups never confirmed: 30 days *(job)*. Sessions until sign-out on that device or account deletion (no time-box set yet: see Supabase Auth → Sessions) |
 
 ### 2. Membership check (verification)
 
@@ -105,7 +117,7 @@ records the deletion in `private.moderation_action` (No. 9).
 | Data subjects | Applicants and members |
 | Data | City, country, location, LinkedIn profile link or a note, voucher (member who vouches, or the inviter from an invite link), decision, message to the member, admin notes, dates (`profile_private`, `verification_log`, `private.review_hold`, `private.reviewed_link`). Each member's random invite code (`public.invites`, deleted with the account): an invite link carries the code, and at signup the code is looked up to fill in the inviter (`public.resolve_invite`, for signed-in accounts, 30 lookups a day), so the new member sees the inviter's first name and member ID. Admins also look at the LinkedIn profile itself (data from another source, Art. 14) |
 | Recipients | Admins; the member sees decisions and messages, not admin notes |
-| Retention | Until account deletion. Accounts that never sent their details: 90 days *(by hand)*. Declined accounts, and accounts whose membership we ended: 6 months after the decision *(by hand)* |
+| Retention | Until account deletion. Accounts that never sent their details: 90 days *(job)*. Declined accounts: 6 months after the decision *(job)*. Accounts whose membership we ended: 6 months after we ended it *(by hand, monthly: the database can't tell a block for a time from the end of a membership)* |
 
 ### 3. Record of declined and blocked accounts
 
@@ -115,7 +127,7 @@ records the deletion in `private.moderation_action` (No. 9).
 | Legal basis | Art. 6(1)(f) (protecting members from people removed before) |
 | Data | Keyed SHA-256 hash of the email address (secret `moderation_salt`), LinkedIn profile slug, decision, date, admin note (`private.moderation_record`) |
 | Recipients | Admins (shown when a sign-up matches) |
-| Retention | Kept after account deletion with the account link removed. Deleted 24 months after the decision, the admin note cleared after 12 months *(by hand)* (periods proposed by the lawyer) |
+| Retention | Kept after account deletion with the account link removed. Deleted 24 months after the decision, the admin note cleared after 12 months *(job)* (periods proposed by the lawyer) |
 | Note | Automatic step: a match holds the sign-up until a person decides. No decision is made by the system alone (Art. 22 does not apply) |
 
 ### 4. Member profiles and directory
@@ -132,11 +144,11 @@ records the deletion in `private.moderation_action` (No. 9).
 
 | | |
 |---|---|
-| Purpose | Provide groups, posts, comments, likes, guides (docs) and comments, questions and answers (incl. urgent questions to up to 500 city members), events and RSVPs, Market listings, travel board posts, places and recommendations, Namaste connections, mentoring slots, bookings and reviews, blocks, settings |
+| Purpose | Provide the city groups, posts, comments, likes, guides (docs) and comments, questions and answers (incl. urgent questions to up to 500 city members), events and RSVPs, Market listings, travel board posts, places and recommendations, Namaste connections, mentoring slots, bookings and reviews, blocks, settings |
 | Legal basis | Art. 6(1)(b); Art. 9(2)(a) where content reveals special categories |
-| Data | The content itself, photos (re-encoded as JPEG in the browser before upload, which removes EXIF data such as GPS position; random file names), timestamps, author; for Market listings, events, questions and travel board posts, the author's preview switch (`share_preview`, No. 20) |
+| Data | The content itself, photos (re-encoded as JPEG in the browser before upload, which removes EXIF data such as GPS position; random file names), timestamps, author; for Market listings, events, questions and travel board posts, the author's preview switch (`share_preview`, No. 20). When a member sent an urgent question, for the one-a-day limit (`private.urgent_log`, kept when the question is deleted) |
 | Recipients | Approved members (bookings: only mentor and mentee; blocks and settings: only the member); admins. A Market listing, event, question or travel board post whose author turned its preview on: anyone with its link sees the preview only (No. 20) |
-| Retention | Until deleted by the member or account deletion. Photo files go with their post, listing or event (deleted by the site), or within 7 days at most when left behind (photo clean-up). Places and groups the member created stay without the creator (`created_by` set to NULL) |
+| Retention | Until deleted by the member or account deletion. Photo files go with their post, listing or event (deleted by the site), or within 7 days at most when left behind (photo clean-up). Places and groups the member created stay without the creator (`created_by` set to NULL). Travel board posts: 30 days after their last date *(job)*. Urgent question log: 2 days *(job)* |
 
 ### 6. Private messages
 
@@ -157,7 +169,7 @@ records the deletion in `private.moderation_action` (No. 9).
 | Data | Recipient, actor, short text, reference, read state (`public.notifications`) |
 | Profile reminders | Our team's reminders about missing profile details (type `profile`, Art. 6(1)(f): helping members recognise and find each other), at most one a week per member; a note of which reminder went to whom, from which admin and when (`private.profile_reminders`), deleted after 12 months (automatic) |
 | Recipients | The recipient only |
-| Retention | Until account deletion; read notices after 6 months *(by hand)* |
+| Retention | Until account deletion; read notices after 6 months, every notice (read or not) after 12 months *(job)* |
 
 ### 8. Terms acceptance and Art. 9 consent records
 
@@ -175,9 +187,9 @@ records the deletion in `private.moderation_action` (No. 9).
 |---|---|
 | Purpose | Handle reports from members and notices from anyone (Art. 16 DSA), decide, give statements of reasons (Art. 17), inform the reporter (Art. 16(5)), escalate threats to life or safety (Art. 18), handle bug reports and ideas |
 | Legal basis | Art. 6(1)(c) with Art. 16-18 DSA; otherwise Art. 6(1)(f) (a safe community; defending decisions) |
-| Data | In-app reports: reporter, reported member or content, kind, reason category, the reporter's explanation, good-faith confirmation (`public.reports`; the reason line also names the item). Reports from the form at nriclub.app/report: where, category, explanation, name and email of the sender (may be empty for child sexual abuse material), reference code, decision and when the receipt and decision emails were sent (`private.notices`); keyed SHA-256 hashes of the sender's email and IP address (for IPv6, its /64 network) for the daily limits (`private.notice_log`). Decisions: admin, action, rule or law, facts, urgency, source, the reports answered, a copy of removed content (text; of photos only the file path), the statement sent (`private.moderation_action`); an account our team deleted (`delete_member`: the reason, member's request or blocked account, whether the email went out, the admin's note, and of the account only its ID); block reason on the account (`profile_private.block_reason/block_rule/blocked_at`); admins' notes on reports (`private.report_note`). Evidence copies where needed; bug reports with user agent and screen size; emails to hello@ |
+| Data | In-app reports: reporter, reported member or content, kind, reason category, the reporter's explanation, good-faith confirmation (`public.reports`; the reason line also names the item). Reports from the form at nriclub.app/report: where, category, explanation, name and email of the sender (may be empty for child sexual abuse material), reference code, decision and when the receipt and decision emails were sent (`private.notices`); keyed SHA-256 hashes of the sender's email and IP address (for IPv6, its /64 network) for the daily limits (`private.notice_log`). Decisions: admin, action, rule or law, facts, urgency, source, the reports answered, a copy of removed content (text; of photos only the file path), the statement sent (`private.moderation_action`; content kinds include "Looking for a place" posts, `housing_wanted`, since the 2026-11-02 update); an account our team deleted (`delete_member`: the reason, member's request or blocked account, whether the email went out, the admin's note, and of the account only its ID); block reason on the account (`profile_private.block_reason/block_rule/blocked_at`); admins' notes on reports (`private.report_note`). Evidence copies where needed; bug reports with user agent and screen size; emails to hello@ |
 | Recipients | Admins; the affected member (statement of reasons, in the app) and the reporter (outcome: in the app, or by email from hello@ for the form); police where Art. 18 applies. A reported message is shown to admins (only that message) |
-| Retention | Closed reports and closed reports from the form, with evidence copies, once 12 months old, unless held for a legal dispute or police matter (`private.report_hold`, `notices.hold_reason`). Limit hashes: 1 day. Decisions: 24 months, the copy of removed content 6 months (unless held). Feedback (bug reports, ideas) is deleted with the sender's account; other reports stay without the link to the reporter. Reports and decisions about a deleted member stay without the link to the member (their text can still name them). Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
+| Retention | Closed reports and closed reports from the form, with evidence copies, once 12 months old, unless held for a legal dispute or police matter (`private.report_hold`, `notices.hold_reason`). Limit hashes: 1 day. Decisions: 24 months, the copy of removed content 6 months (unless held). Feedback (bug reports, ideas) is deleted with the sender's account; other reports stay without the link to the reporter. Reports and decisions about a deleted member stay without the link to the member (their text can still name them). *(job: `private.daily_cleanup()`)* |
 
 ### 10. Transactional email
 
@@ -186,8 +198,8 @@ records the deletion in `private.moderation_action` (No. 9).
 | Purpose | Sign-up and sign-in codes, password links, email-change confirmations; emails from our team about the membership (check decisions, changes to the Terms or the service, termination, breach notices; statements of reasons, warnings and report outcomes go in the app and may also be emailed; the email that our team deleted the account, at the member's request or after a block, sent by the Edge Function `admin-delete-member` just before the deletion); receipt and decision emails to senders of reports from the form at nriclub.app/report (sent by hand from hello@, prefilled by the admin panel) |
 | Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5), 17 DSA, Art. 12(3) GDPR (telling a member what we did about their request) and Art. 34 GDPR |
 | Data | Email address, subject and content (incl. code or link), delivery events |
-| Recipients | Resend (Amazon SES eu-west-1) as processor of Supabase Auth's custom SMTP; the mailbox provider for our team's emails |
-| Retention | Resend: 30 days (all self-serve plans). Our team's emails: like No. 13 |
+| Recipients | Resend (Amazon SES eu-west-1): as processor of Supabase Auth's custom SMTP, for the emails the Edge Functions send (`member-email`, `admin-inbox-reply`, `admin-delete-member`), and for the emails the admin panel prepares (report form, ambassador replies), sent from a mail app on the owner's computer through Resend's SMTP server (`docs/EMAIL-SETUP.md`) |
+| Retention | Resend: 30 days (all self-serve plans). Our team's emails: like No. 13. Which decision emails went out (`private.member_email_log`: member, kind, decision time, admin): 30 days *(job)*, and in "Download my data" since the 2026-11-02 update |
 | Note | No newsletters, no marketing, no automatic notification emails. Open and click tracking must stay off for send.nriclub.app |
 
 ### 11. Hosting and server logs
@@ -198,7 +210,7 @@ records the deletion in `private.moderation_action` (No. 9).
 | Legal basis | Art. 6(1)(f) (a secure, working service) |
 | Data | IP address, time, URL or API query, user agent, status |
 | Recipients | Vercel (edge and request logs), Supabase (API, Auth, database logs) |
-| Retention | Supabase about 7 days (Pro plan); Vercel 1 hour (Hobby) or 1 day (Pro) **[fill in: your plan]** |
+| Retention | Supabase about 7 days (Pro plan); Vercel 1 day (Pro plan). The limit counters (`private.rate_log`): 1 day, those for travel board posts 30 days; name changes (`private.name_changes`): 30 days *(job)* |
 
 ### 12. Backups
 
@@ -216,9 +228,10 @@ records the deletion in `private.moderation_action` (No. 9).
 |---|---|
 | Purpose | Answer questions; handle data-subject requests (Art. 12-22; a request to delete an account: `deletion-routine.md`, "Deleting an account on request"), notices of illegal content, authority orders, complaints, redress requests |
 | Legal basis | Art. 6(1)(b), 6(1)(c) (GDPR and DSA duties), 6(1)(f) |
-| Data | Sender, content, attachments, replies; the request log |
-| Recipients | The mailbox provider **[fill in]** |
-| Retention | Requests about rights and DSA notices with the answers: 3 years after closing (proof of compliance; the lawyer ties it to the § 195 BGB limitation period). Other emails: 12 months after closing *(by hand)* |
+| Data | Sender, recipients, subject, text, attachments' names, types and sizes (the files stay in Resend), our replies from the panel (`private.inbox_messages`); the request log |
+| Systems | Resend receives the mail (Receiving, MX of nriclub.app) and calls the Edge Function `forward-email` (webhook signature checked), which reads the email from Resend and stores it with `public.inbox_store`; admins read and answer it in the admin panel's **Inbox** (replies: Edge Function `admin-inbox-reply`, through Resend). Nothing is forwarded to another mailbox since 26 October 2026 |
+| Recipients | Admins; Resend and Supabase as processors |
+| Retention | The Inbox: 12 months after the email arrived, with our replies *(job)*; Resend keeps received emails for its own period (`processor-agreements.md`). Requests about rights and DSA notices with the answers: a copy kept with the request log for 3 years after closing (proof of compliance; the lawyer ties it to the § 195 BGB limitation period), then deleted *(by hand)*. Other emails: at the latest 12 months after closing (the Inbox job) |
 
 ### 14. Device storage
 
@@ -226,7 +239,7 @@ records the deletion in `private.moderation_action` (No. 9).
 |---|---|
 | Purpose | Keep the member signed in; remember dismissed tips and an invite |
 | Legal basis | § 25(2) No. 2 TDDDG (strictly necessary, no consent); Art. 6(1)(b) |
-| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested` (at most 24 hours), `nriclub_invite` (session storage, until the check details are sent; Get verified sends its code to `public.resolve_invite` to fill in the inviter), per-member flags (removed when the account is deleted in that browser); list in the Privacy Policy, section 8. `nriclub_profile_cache` and `nriclub_cookie_consent` are no longer written, and the site deletes them. `nriclub_analytics_consent` (the privacy banner's choice and date: strictly necessary to respect it). No cookies. The analytics items (`nriclub_visitor_id`, `nriclub_analytics_session`) need consent: No. 18 |
+| Data | `nriclub_token`, `nriclub_refresh`, `nriclub_reset_requested` (at most 24 hours), `nriclub_invite` (session storage, until the check details are sent; Get verified sends its code to `public.resolve_invite` to fill in the inviter), `nriclub_terms_later_<member ID>` (session storage, that tab only: the member chose "Later" on the Terms screen), per-member flags (removed when the account is deleted in that browser); list in the Privacy Policy, section 8. `nriclub_profile_cache` and `nriclub_cookie_consent` are no longer written, and the site deletes them. `nriclub_analytics_consent` (the privacy banner's choice and date: strictly necessary to respect it). No cookies. The analytics items (`nriclub_visitor_id`, `nriclub_analytics_session`) need consent: No. 18 |
 | Retention | See the Privacy Policy, section 8 |
 
 ### 15. Compliance records
@@ -249,8 +262,8 @@ by email (No. 13).
 | Legal basis | Art. 6(1)(b) (steps at the applicant's request before agreeing on the volunteer role); Art. 6(1)(f) for keeping decided applications for a while (knowing whom we spoke to, answering questions about a decision) and for the daily limits on the form (protecting it from misuse) |
 | Data subjects | Members and non-members who apply |
 | Data | Name, email address, city, country, optional university or employer and LinkedIn link, motivation, time they could give, reference code, status (new, contacted, accepted, declined), deciding admin and date, admins' note; for members who were signed in, the link to the account (`private.ambassador_applications`). Keyed SHA-256 hashes of the email address and of the IP address (IPv6 by its /64) for the daily limits: 3 a day per email address, 10 per IP address, 50 in all (`private.ambassador_application_log`); a visitor told that an address has already applied uses up one of these too, so the form can't be used to test addresses. Accepting a member who is approved sets `profiles.ambassador_city`, recorded in `private.moderation_action` (No. 9) |
-| Recipients | Admins only (admin panel → Ambassadors; an in-app `alert` notice per new application with the city and reference only, not the applicant's name, No. 7); the applicant's own applications in "Download my data" (without the note). Replies go by email from hello@ (No. 13) |
-| Retention | 6 months after the decision (accepted or declined); undecided ones 12 months after they were sent; limit hashes 1 day. Not deleted with the account: the link to it is removed, and the application stays for these periods. Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
+| Recipients | Admins only (admin panel → Ambassadors; an in-app `alert` notice per new application with the city and reference only, not the applicant's name, No. 7); the applicant's own applications in "Download my data" (without the note). Replies go by email from hello@ (No. 10, 13) |
+| Retention | 6 months after the decision (accepted or declined); undecided ones 12 months after they were sent; limit hashes 1 day *(job)*. Not deleted with the account: the link to it is removed, and the application stays for these periods |
 
 ### 17. City ambassadors' panel
 
@@ -264,22 +277,25 @@ shows "Coming soon" before it).
 | Data subjects | City ambassadors; members of the city group who joined in the last 30 days; askers of open questions from the city |
 | Data | When and which version of the agreement was accepted (`private.ambassador_agreement_ack`); newcomers marked as welcomed, by whom and when (`private.ambassador_welcomes`); the log of the ambassador's actions with the city and details, e.g. the group description before and after (`private.ambassador_log`); `events.ambassador_hosted`; `reports.ambassador_city` on flags (a report like any other, No. 7/8). The panel shows newcomers' id, name, photo and join date only, as members already see them, without blocked pairs or accounts not shown to members |
 | Recipients | The welcomes: the ambassador who made them and admins. The agreement record and the log: admins only (admin panel → Ambassadors, `public.admin_ambassador_activity`), and the ambassador in "Download my data". Every admin gets an in-app `alert` for a flag and when an ambassador steps down |
-| Retention | Log and welcomes: 12 months after each entry; all three deleted with the ambassador's account, welcomes also with the welcomed member's account; the agreement record otherwise until the account is deleted. Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
+| Retention | Log and welcomes: 12 months after each entry; all three deleted with the ambassador's account, welcomes also with the welcomed member's account; the agreement record otherwise until the account is deleted. *(job)* |
 
 ### 18. Website analytics (with consent)
 
 Since the site update with the privacy banner and the database update
-`20261029000000_analytics.sql` (Privacy Policy 2026-10-24).
+`20261029000000_analytics.sql` (Privacy Policy 2026-10-24). Since the
+2026-11-02 update (`20261102000000_compliance_fixes.sql`) no IP address is
+stored, not even shortened, and the admin panel shows visit times to the
+hour.
 
 | | |
 |---|---|
 | Purpose | Improve the site: which pages and features are used, where visitors come from (referrers, campaign links), where sign-up loses people |
 | Legal basis | Art. 6(1)(a) GDPR and § 25(1) TDDDG (consent on the privacy banner: Accept and Decline equally prominent, nothing preselected; asked again after 12 months (Accept) or 6 months (Decline); withdrawn with "Privacy settings", which stops it at once and deletes the visitor ID). The choice and its date stay in the visitor's browser; the browser sends nothing before Accept, and `/api/collect` refuses requests without the consent flag |
 | Data subjects | Visitors of nriclub.app and members using the app, in browsers where Accept was chosen |
-| Data | Random visitor ID and visit ID; page paths (ids replaced by ":id") and titles; clicked buttons' and links' visible text (80 characters; in the members' area only the site's menu names) and link targets; sign-up and log-in steps reached (no values); exit page; first page's referrer domain and utm_source/medium/campaign/content; IP address shortened by `/api/collect` before storing (IPv4 /24, IPv6 /48); country, region and city from Vercel's IP lookup; device class (mobile, tablet, desktop), browser and system family (`private.analytics_events`). Daily counts of Accept and Decline without any identifier (`private.analytics_consent_counts`). Not linked to accounts (no member ID, name or email) |
-| Recipients | Admins (admin panel → Analytics: totals and single visits). Processors: Vercel (Edge Function `/api/collect`, IP lookup; transfer safeguard as for No. 11), Supabase (storage) |
+| Data | Random visitor ID and visit ID; page paths (ids replaced by ":id") and titles; clicked buttons' and links' visible text (80 characters; in the members' area only the site's menu names) and link targets; sign-up and log-in steps reached (no values); exit page; first page's referrer domain and utm_source/medium/campaign/content; country, region and city from Vercel's IP lookup (the IP address itself is neither passed on by `/api/collect` nor stored; the column `ip_truncated` was dropped); device class (mobile, tablet, desktop), browser and system family (`private.analytics_events`). Daily counts of Accept and Decline without any identifier (`private.analytics_consent_counts`). Pseudonymous: not linked to accounts (no member ID, name or email), and our team doesn't match visits to members |
+| Recipients | Admins (admin panel → Analytics: totals, and single visits with times to the hour, no IP address: `admin_analytics_sessions`, `admin_analytics_journey`). Processors: Vercel (Edge Function `/api/collect`, IP lookup; transfer safeguard as for No. 11), Supabase (storage) |
 | Retention | Events: 6 months (`private.analytics_cleanup()`, nightly pg_cron job `nriclub-analytics-cleanup`). Consent counts: kept (no personal data). Visitor ID in the browser: until Decline or the site's data is cleared |
-| Note | Data-subject requests: the data can only be found with the visitor ID (shown in Privacy settings while analytics are on); `DELETE FROM private.analytics_events WHERE visitor_id = '…'` |
+| Note | Data-subject requests: with the visitor ID (shown in Privacy settings while analytics are on), `DELETE FROM private.analytics_events WHERE visitor_id = '…'`; without it, from the approximate time and the pages the person names, find the visit and delete its visitor ID's events. The Privacy Policy offers both. Whether Art. 11 applies now is open (`questions-for-the-lawyer.md`, L-7) |
 
 ### 19. Housing search ("Find a place")
 
@@ -292,7 +308,7 @@ Policy 2026-10-24; the site shows "Coming soon" before it).
 | Legal basis | Art. 6(1)(b); Art. 9(2)(a) where content reveals special categories. The limits: Art. 6(1)(f) (keeping the Market free of misuse) |
 | Data subjects | Members who post housing listings or "Looking for a place" posts |
 | Data | Housing details of a Market listing: kind of place, city, available from and until (or open-ended), warm rent, deposit, size, furnished, Anmeldung possible, when it expires or was renewed (`public.housing_listings`; the listing itself in `public.marketplace`, No. 5). Looking posts: kinds of place, city, dates, highest rent, furnished or Anmeldung needed, note, on/off (`public.housing_wanted`). When a member posted either or changed a listing's details, for the limits (`private.housing_post_log`). Matching notices (type `housing_match`, No. 7). Search terms aren't stored. No fields or filters for gender, religion, caste, origin, nationality, language or diet (AGG) |
-| Recipients | Listing details: approved members and admins; with the listing's preview on, anyone with its link sees the kind of place and city only (No. 20). Looking posts: the author, admins, and the authors of listings they match (`public.housing_matches`, with name and photo). In "Download my data" |
+| Recipients | Listing details: approved members and admins; with the listing's preview on, anyone with its link sees the kind of place and city only (No. 20). Looking posts: the author, admins, and the authors of listings they match (`public.housing_matches`, with name and photo), who can report them (No. 9; since the 2026-11-02 update). In "Download my data" |
 | Retention | Listings: shown until their "until" date, or 60 days after posting or renewal if open-ended; deleted 30 days after that (with their Market listing and matching notices) unless renewed. Looking posts: until their end date, or 60 days without one; deleted 30 days after. Limit counts: 30 days. All deleted with the account. Run by `private.housing_cleanup()` (nightly pg_cron job `nriclub-housing-cleanup`) |
 
 ### 20. Previews of shared items (public link previews)
@@ -304,7 +320,7 @@ what you share"; before the update every shared link shows "for members").
 | | |
 |---|---|
 | Purpose | Let a member show a Market listing, event, question or travel board post they posted to people who aren't members yet (e.g. in a WhatsApp group), with a link card, and invite them to join |
-| Legal basis | Art. 6(1)(b): the author's own choice, per item, as part of the service; off by default (Art. 25(2)), existing items stay members-only. A question's title can reveal special categories: Art. 9(2)(a), the consent of No. 8 |
+| Legal basis | Art. 6(1)(b): the author's own choice, per item, as part of the service; off by default (Art. 25(2)), existing items stay members-only. A question's title can reveal special categories: Art. 9(2)(a), the consent of No. 8 (version 2026-10-26 names the previews) together with the member's choice for that item; the switch warns against titles that show health, religion or origin. No previews for questions in Health and Legal/Visa (`private.question_preview_allowed`; the site hides the switch, the database turns it off and `public_preview` returns nothing). Whether Art. 9(2)(e) fits instead is open (L-1) |
 | Data subjects | Members who turn a preview on |
 | Data | `share_preview` on `public.marketplace`, `public.events`, `public.help_requests`, `public.travel_posts` (set by the author only: the tables' UPDATE policies; admins don't change it, removing the item ends it). What `public.public_preview` gives anyone: Market listing: first photo, kind (e.g. "Housing · WG room"), city; event: photo, "Event", city, day; question: title, city, number of answers; trip: route, month. Never the author's name or photo, price, rent, deposit, description, time, place, flight, note, exact dates, answers, contact details or address. A city only from a city field, or where a part of a listing's free-text location exactly matches an approved city group. Photos only from our Storage buckets, the author's own folder. Only while the item is live and its author is approved and not blocked; otherwise nothing, the same answer as for an item that doesn't exist |
 | Recipients | Anyone with the link, and the apps it's shared in (their crawlers fetch the card). Vercel (Edge Function `/api/preview`, which fetches the preview with the site's public key and caches the page for at most 60 seconds; transfer safeguard as for No. 11). Pages are `noindex`, not linked from public pages or the sitemap |

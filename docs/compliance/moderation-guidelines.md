@@ -77,8 +77,9 @@ else. Admins can no longer edit members' rows or delete content directly.
    reference.
 2. **Confirm receipt.** Members who report in the app see the receipt at
    once. For a report from the form, click **Write to the reporter:
-   receipt**: your email app opens with the message filled in. Send it from
-   the hello@nriclub.app mailbox, then click **Mark as sent**. NRIClub
+   receipt**: your email app opens with the message filled in. Send it as
+   hello@nriclub.app through Resend (`docs/EMAIL-SETUP.md`, "Emails the
+   panel prepares"; never from Gmail), then click **Mark as sent**. NRIClub
    sends no email itself, so this step is by hand; the panel shows which
    reports still need it. A report without an email address (allowed only
    for reports about the sexual abuse of a child) can't be answered.
