@@ -93,9 +93,9 @@ the phase that will handle them.
 - Rejected and blocked members can still file reports (on purpose, so they
   can report bugs); add a per-member rate limit.
 - The client-side rate limiter resets on reload; rely on Supabase Auth limits.
-- `hello@nriclub.app` must be a real mailbox
-  that someone reads: the site, the Terms and the Privacy Policy send people
-  there.
+- `hello@nriclub.app` must be read: the site, the Terms and the Privacy
+  Policy send people there. Its mail arrives in the admin panel's Inbox
+  (`docs/EMAIL-SETUP.md`).
 - Members' LinkedIn URLs are visible to all members; consider an option to
   show them only to admins.
 - Delete rejected or never-completed applications after a set period (and
