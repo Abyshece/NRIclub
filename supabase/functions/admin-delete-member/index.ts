@@ -16,7 +16,7 @@
 //   2. Supabase Auth deletes the account; the database deletes everything
 //      the member owns with it, as when members delete their own account;
 //   3. only then the member gets a short email saying so (Resend; the
-//      address comes from the check in step 0), so nobody is told their
+//      address comes from the database check above), so nobody is told their
 //      account is gone when deleting it failed; if it can't be sent, the
 //      answer says emailed: false, so the panel asks the admin to tell the
 //      member;
