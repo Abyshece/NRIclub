@@ -1,11 +1,12 @@
 // Side peek with everything needed to decide on one member, the automatic
 // checks, and the decision actions (with keyboard shortcuts). Below them:
 // warn or block the member, remove their photo or bio (each with the reasons
-// they're told, through the database), and what our team did about them
-// before.
+// they're told, through the database), delete their account, and what our
+// team did about them before.
 import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import ModerationDialog from "./ModerationDialog";
+import DeleteMemberDialog from "./DeleteMemberDialog";
 import { Avatar, Button, ConfirmDialog, ErrorNote, Icon, Kbd, Pill } from "./ui";
 import {
   VERIFICATION_LABELS, VERIFICATION_TONES, ago, firstName, formatDate, friendlyError, holdNote, holdSummary,
@@ -67,6 +68,8 @@ function historyLine(h) {
     case "group_reject": return "Turned down their community request";
     case "group_delete": return "Deleted their community";
     case "ambassador": return "Ambassador role";
+    case "delete_signup": return "Deleted their unfinished sign-up";
+    case "delete_member": return "Deleted their account";
     default: return h.action;
   }
 }
@@ -130,9 +133,11 @@ function CheckMark({ ok }) {
 // member (the 2026-10-21 update). onModerate: as for MemberModeration.
 // onDeleteSignup(member): deletes an account that never finished signing up
 // (offered only for those); throws so the dialog can say why it didn't work.
+// onDeleteMember(member, { reason, note }): deletes any other account but an
+// admin's or the admin's own (DeleteMemberDialog); throws likewise.
 export default function MemberPeek({
   member, loadingDetails = false, index = 0, total = 1, recorded = true,
-  onClose, onPrev, onNext, onDecision, onModerate, onSetAmbassador, onDeleteSignup,
+  onClose, onPrev, onNext, onDecision, onModerate, onSetAmbassador, onDeleteSignup, onDeleteMember,
 }) {
   const [composer, setComposer] = useState(null); // null | "needs_info" | "rejected"
   const [message, setMessage] = useState("");
@@ -144,6 +149,7 @@ export default function MemberPeek({
   const [moderation, setModeration] = useState(null);
   const [confirmReopen, setConfirmReopen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false); // DeleteMemberDialog open
   const [ambassadorDraft, setAmbassadorDraft] = useState(null); // null = not editing
   // From api.adminMemberOverview: mentoring sessions, earlier warnings, what
   // our team did (null before the 2026-10-21 database update; undefined
@@ -157,7 +163,7 @@ export default function MemberPeek({
   useEffect(() => {
     idRef.current = member.id;
     setComposer(null); setMessage(""); setNote(""); setBusy(""); setError("");
-    setModeration(null); setConfirmReopen(false); setConfirmDelete(false); setAmbassadorDraft(null);
+    setModeration(null); setConfirmReopen(false); setConfirmDelete(false); setDeleting(false); setAmbassadorDraft(null);
     setOverview(undefined);
     loadOverview();
     peekRef.current?.focus({ preventScroll: true });
@@ -242,7 +248,7 @@ export default function MemberPeek({
     const ok = await run("delete", () => onDeleteSignup(member));
     if (ok) setConfirmDelete(false);
   };
-  const dialogOpen = !!moderation || confirmReopen || confirmDelete;
+  const dialogOpen = !!moderation || confirmReopen || confirmDelete || deleting;
 
   // Keyboard shortcuts while the peek is open.
   const keyHandler = useRef(null);
@@ -289,6 +295,12 @@ export default function MemberPeek({
   const heldNote = holdNote(member);
   // Admins can't moderate themselves or each other (the database refuses).
   const protectedAccount = member.id === api.getCurrentUser()?.id || !!overview?.is_admin || !!overview?.is_me;
+  // Any other account can be deleted, at the member's request or because
+  // it's blocked; an unfinished sign-up has its own deletion. Offered once
+  // it's known whether they're an admin (the overview) and, for an
+  // unfinished account, which deletion is theirs (their details).
+  const canDeleteMember = !!onDeleteMember && overview !== undefined && !protectedAccount && !unfinishedSignup
+    && (detailsLoaded || status !== "incomplete" || blocked);
   const sessions = overview?.upcoming_sessions || 0;
   const history = overview?.history || [];
 
@@ -512,6 +524,10 @@ export default function MemberPeek({
                 <Button variant="ghost" size="sm" icon="trash" className="adm-btn-ghost-danger" onClick={() => { setError(""); setConfirmDelete(true); }}
                   disabled={!!busy || overview === undefined}>Delete account…</Button>
               )}
+              {canDeleteMember && (
+                <Button variant="ghost" size="sm" icon="trash" className="adm-btn-ghost-danger" onClick={() => { setError(""); setDeleting(true); }}
+                  disabled={!!busy}>Delete account…</Button>
+              )}
               <div className="adm-peek-hints" aria-hidden="true">
                 <Kbd>J</Kbd><Kbd>K</Kbd><span style={{ marginRight: 10 }}>&nbsp;next / previous</span>
                 <Kbd>Esc</Kbd><span>&nbsp;close</span>
@@ -541,6 +557,12 @@ export default function MemberPeek({
             : "This account never sent its check details."}
           {" "}It is deleted for good, with everything in it, and nobody is told. The person can sign up again. This can't be undone.
         </ConfirmDialog>
+      )}
+
+      {deleting && (
+        <DeleteMemberDialog member={member} overview={overview || null}
+          onConfirm={(choice) => onDeleteMember(member, choice)}
+          onCancel={() => { setDeleting(false); peekRef.current?.focus({ preventScroll: true }); }} />
       )}
 
       {confirmReopen && (
