@@ -2,7 +2,10 @@
 // chose Accept on the privacy banner (src/analytics.js sends them through
 // api/collect.js; supabase/migrations/20261029000000_analytics.sql stores
 // them and gives this page its numbers). Pseudonymous: a random id per
-// browser, never linked to a member's account. Raw events are kept 6 months.
+// browser, not linked to a member's account, and no IP address. Single
+// visits show their times to the hour only (since the 2026-11-02 database
+// update), so they can't easily be matched to what a member did when: never
+// try to. Raw events are kept 6 months.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import { PageHeader, SectionTitle, ErrorNote, SkeletonRows, EmptyState } from "./ui";
@@ -19,8 +22,10 @@ const num = (v) => Number(v || 0).toLocaleString("en-GB");
 const percent = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : null);
 const dayLabel = (day) => new Date(`${day}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 const shortDay = (day) => new Date(`${day}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+// A visit's times come to the hour (the database rounds them down): "26 Oct,
+// 14:00" and "14:00", in the admin's time zone.
 const when = (ts) => new Date(ts).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-const clock = (ts) => new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const clock = (ts) => new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 const deviceName = (d) => ({ mobile: "Mobile", tablet: "Tablet", desktop: "Desktop" }[d] || "Unknown");
 const placeOf = (city, country) => [city, country ? countryName(country) : ""].filter(Boolean).join(", ") || "Unknown place";
 const sourceOf = (s) => (s.utm_source || s.utm_campaign
@@ -309,7 +314,7 @@ function Journeys({ days }) {
                   <span className="an-visit-top"><b>{when(s.started_at)}</b><span>{placeOf(s.city, s.country)}</span>
                     <span>{num(s.pages)} page{s.pages === 1 ? "" : "s"} · {num(s.steps - s.pages)} click{s.steps - s.pages === 1 ? "" : "s"}</span></span>
                   <span className="an-visit-meta" style={{ display: "block" }}>
-                    IP {s.ip || "unknown"} · {deviceName(s.device)}{s.browser ? ` · ${s.browser}` : ""}{s.os ? ` · ${s.os}` : ""} · From {sourceOf(s)}{s.exit ? ` · Left on ${s.exit}` : ""}
+                    {deviceName(s.device)}{s.browser ? ` · ${s.browser}` : ""}{s.os ? ` · ${s.os}` : ""} · From {sourceOf(s)}{s.exit ? ` · Left on ${s.exit}` : ""}
                   </span>
                 </span>
               </button>
@@ -494,7 +499,7 @@ export default function AnalyticsView() {
         </section>
         <section className="an-panel" aria-labelledby="an-cities">
           <h3 id="an-cities">Cities</h3>
-          <p className="an-help">Approximate: looked up from the shortened IP address.</p>
+          <p className="an-help">Approximate: our host looks it up from the visitor's IP address, which isn't stored.</p>
           <DataTable cols={[{ key: "name", label: "City", path: true, render: (r) => placeOf(r.name, r.country) },
             { key: "sessions", label: "Visits", num: true }, { key: "visitors", label: "Visitors", num: true }]}
           rows={data.cities || []} empty="No visits yet." />
@@ -516,7 +521,7 @@ export default function AnalyticsView() {
       </div>
 
       <SectionTitle>Visitor journeys</SectionTitle>
-      <p className="an-help" style={{ marginTop: 4 }}>Recent visits, newest first. Open one to see its pages, clicks and sign-up steps in order. Times are in your time zone.</p>
+      <p className="an-help" style={{ marginTop: 4 }}>Recent visits, newest first. Open one to see its pages, clicks and sign-up steps in order. Times are to the hour, in your time zone. They're for patterns, never for finding out who someone is.</p>
       <Journeys days={days} />
     </>
   );
