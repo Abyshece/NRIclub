@@ -3574,6 +3574,38 @@ export function adminDeleteSignup(memberId) {
   return adminFunction("admin-delete-signup", { member_id: memberId });
 }
 
+// ---- Deleting a member's account (the 2026-11-01 update:
+// supabase/functions/admin-delete-member, 20261101000000_admin_delete_member.sql) ----
+
+// Deletes a member's account (not an admin's, nor the admin's own). reason:
+// "member_request" (they asked us to, Art. 17 GDPR) or "blocked_account";
+// note: for our record of decisions, at most 500 characters. The server
+// checks again, deletes their photo files, emails them and records it.
+// { deleted, emailed, recorded, files: { deleted, failed } }.
+export function adminDeleteMember(memberId, reason, note = "") {
+  return adminFunction("admin-delete-member", { member_id: memberId, reason, note });
+}
+
+// Whether deleting accounts works yet: "ready", "needs_update" (before the
+// database update of 1 November 2026) or "unreachable" (the function isn't
+// deployed yet, or no connection). Other failures throw.
+export async function adminDeleteMemberReady() {
+  try {
+    return (await adminFunction("admin-delete-member?ready=1", null))?.ready ? "ready" : "needs_update";
+  } catch (err) {
+    if (err.unreachable) return "unreachable";
+    throw err;
+  }
+}
+
+// When a blocked member was blocked (profile_private.blocked_at, since the
+// 2026-10-21 update), or null.
+export async function adminMemberBlockedAt(memberId) {
+  if (!UUID.test(memberId || "")) return null;
+  const rows = await restCall("GET", `/rest/v1/profile_private?id=eq.${memberId}&select=blocked_at`);
+  return rows?.[0]?.blocked_at || null;
+}
+
 // What's on events our team added in the admin panel, still to come and not
 // hidden, as items of src/content/whatson.js. Anyone can read them. Throws
 // before the 2026-10-25 database update (no such table): the site then
