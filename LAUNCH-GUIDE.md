@@ -519,6 +519,8 @@ Safety) opens the banner again. The Privacy Policy 2026-10-24 (section 2,
    Then **redeploy** (Deployments → … → Redeploy): Vercel passes new settings
    only to new deployments. Without them the site works the same and
    `/api/collect` quietly drops what it receives.
+   *Done for nriclub.app on 26 October 2026: both settings are in Vercel
+   (Production), and the next deployment picked them up.*
 3. **Check:** open nriclub.app in a private window, choose **Accept**, open a
    few pages and click "Join free". Within a minute the admin panel's
    **Analytics** page shows the visit under *Visitor journeys*. In the
