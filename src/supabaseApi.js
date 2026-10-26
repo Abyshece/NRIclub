@@ -2,6 +2,8 @@
 // supabaseApi.js - Complete Supabase API layer for NRIclub
 // ============================================================================
 
+import { PREVIEW_KINDS, isItemId, cleanPreview } from "./content/preview.js";
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -1759,19 +1761,23 @@ function travelMissing(err) {
 }
 
 const TRAVEL_FIELDS = "id,user_id,kind,from_city,to_city,from_key,to_key,date_from,date_to,flight,help,note,created_at,updated_at";
+// The fields, with the preview switch once the database has it (the
+// 2026-10-31 update, sharePreviewsAvailable).
+const travelFields = async () => ((await sharePreviewsAvailable()) ? `${TRAVEL_FIELDS},share_preview` : TRAVEL_FIELDS);
 
 // The posts whose last date is today (in Germany: from) or later, soonest
 // first (the first 500, plus all of the member's own), with their authors.
 // The database leaves out posts of members who blocked the member or were
 // blocked by them, and of accounts other members don't see. null before the
 // database update.
-const TRAVEL_SELECT = `select=${TRAVEL_FIELDS},profiles:user_id(id,name,avatar_url)`;
+const travelSelect = async () => `select=${await travelFields()},profiles:user_id(id,name,avatar_url)`;
 export async function getTravelPosts(from) {
   const current = `&date_to=gte.${encodeURIComponent(from)}`;
   try {
+    const select = await travelSelect();
     const [board, mine] = await Promise.all([
-      restCall("GET", `/rest/v1/travel_posts?${TRAVEL_SELECT}${current}&order=date_from.asc,created_at.desc&limit=500`),
-      currentUser ? restCall("GET", `/rest/v1/travel_posts?${TRAVEL_SELECT}${current}&user_id=eq.${currentUser.id}`) : [],
+      restCall("GET", `/rest/v1/travel_posts?${select}${current}&order=date_from.asc,created_at.desc&limit=500`),
+      currentUser ? restCall("GET", `/rest/v1/travel_posts?${select}${current}&user_id=eq.${currentUser.id}`) : [],
     ]);
     const ids = new Set((board || []).map((p) => p.id));
     return withPerson([...(board || []), ...(mine || []).filter((p) => !ids.has(p.id))]);
@@ -1784,7 +1790,7 @@ export async function getTravelPosts(from) {
 // One post (e.g. from a notification), if the member may see it; else null.
 export async function getTravelPost(id) {
   if (!UUID.test(id || "")) return null;
-  const rows = withPerson(await restCall("GET", `/rest/v1/travel_posts?${TRAVEL_SELECT}&id=eq.${id}`));
+  const rows = withPerson(await restCall("GET", `/rest/v1/travel_posts?${await travelSelect()}&id=eq.${id}`));
   return rows?.[0] || null;
 }
 
@@ -1805,15 +1811,17 @@ export async function acceptTravelRules(version) {
   return restCall("POST", "/rest/v1/rpc/accept_travel_rules", { p_version: version });
 }
 
+// share_preview only when the form has the switch (the database has it).
 const travelBody = (p) => ({
   from_city: p.from_city, to_city: p.to_city, date_from: p.date_from, date_to: p.date_to,
   flight: p.flight || "", help: p.help, note: p.note || "",
+  ...(typeof p.share_preview === "boolean" ? { share_preview: p.share_preview } : {}),
 });
 
 // A new post (kind "offer" or "request"); returns it as saved.
 export async function createTravelPost(post) {
   if (!currentUser) throw new Error("Not logged in");
-  const rows = await restCall("POST", `/rest/v1/travel_posts?select=${TRAVEL_FIELDS}`,
+  const rows = await restCall("POST", `/rest/v1/travel_posts?select=${await travelFields()}`,
     { ...travelBody(post), kind: post.kind, user_id: currentUser.id }, { Prefer: "return=representation" });
   if (!rows?.[0]) throw userError("Your post couldn't be saved. Please try again.");
   return rows[0];
@@ -1822,7 +1830,7 @@ export async function createTravelPost(post) {
 // The author's changes to their post (not its kind); returns it as saved.
 export async function updateTravelPost(id, post) {
   if (!UUID.test(id || "")) throw new Error("Unknown post");
-  const rows = await restCall("PATCH", `/rest/v1/travel_posts?id=eq.${id}&select=${TRAVEL_FIELDS}`, travelBody(post),
+  const rows = await restCall("PATCH", `/rest/v1/travel_posts?id=eq.${id}&select=${await travelFields()}`, travelBody(post),
     { Prefer: "return=representation" });
   if (!rows?.[0]) throw userError("This post couldn't be saved. It may have been deleted.");
   return rows[0];
@@ -1831,6 +1839,65 @@ export async function updateTravelPost(id, post) {
 export async function deleteTravelPost(id) {
   if (!UUID.test(id || "")) throw new Error("Unknown post");
   return restCall("DELETE", `/rest/v1/travel_posts?id=eq.${id}`);
+}
+
+// ============================================================================
+// SHAREABLE PUBLIC PREVIEWS (src/PreviewPage.jsx, src/member/SharePreview.jsx)
+// ============================================================================
+
+// Since the 2026-10-31 database update, the author of a Market listing, an
+// event, a question or a trip can let people without an account see a
+// small preview of it (share_preview, off until they turn it on). Before
+// that update there is no switch: the forms don't show it, Share shares the
+// link for members only, and every preview page says "for members".
+
+// Whether the database has the switch: asked once (a few minutes later
+// again while it hasn't), true or false, never an error.
+let previewCheck = null;
+export function sharePreviewsAvailable() {
+  if (!previewCheck || (missingSince.share_preview && !knownMissing("share_preview"))) {
+    delete missingSince.share_preview;
+    previewCheck = restCall("GET", "/rest/v1/marketplace?select=share_preview&limit=1")
+      .then(() => true)
+      .catch((err) => {
+        if (isMissingInDatabase(err)) missingSince.share_preview = Date.now();
+        else previewCheck = null; // e.g. no connection: ask again next time
+        return false;
+      });
+  }
+  return previewCheck;
+}
+
+// The preview of one item for anyone, signed out too (kind: "market",
+// "event", "question" or "trip"): { kind, label, city, image, day, month,
+// title, answers } (cleanPreview in src/content/preview.js), or null when
+// it has none (switched off, not there, ended or removed: the database
+// doesn't say which), and before the database update.
+export async function getPublicPreview(kind, id) {
+  if (!PREVIEW_KINDS.includes(kind) || !isItemId(id) || knownMissing("public_preview")) return null;
+  try {
+    const raw = await restCall("POST", "/rest/v1/rpc/public_preview", { p_kind: kind, p_id: String(id).toLowerCase() });
+    delete missingSince.public_preview;
+    return cleanPreview(raw, kind);
+  } catch (err) {
+    if (!isMissingInDatabase(err)) throw err;
+    missingSince.public_preview = Date.now();
+    return null;
+  }
+}
+
+// The author turns their item's preview on or off. Returns the saved value;
+// throws if nothing was saved (not theirs, or gone).
+const PREVIEW_TABLES = { market: ["marketplace", "user_id"], event: ["events", "organizer_id"],
+  question: ["help_requests", "user_id"], trip: ["travel_posts", "user_id"] };
+export async function setSharePreview(kind, id, on) {
+  if (!currentUser) throw new Error("Not logged in");
+  const [table, author] = PREVIEW_TABLES[kind] || [];
+  if (!table || !UUID.test(id || "")) throw userError("This couldn't be changed. Please reload the page.");
+  const rows = await restCall("PATCH", `/rest/v1/${table}?id=eq.${id}&${author}=eq.${currentUser.id}&select=id,share_preview`,
+    { share_preview: !!on }, { Prefer: "return=representation" });
+  if (!rows?.[0]) throw userError("This couldn't be changed. It may have been deleted.");
+  return !!rows[0].share_preview;
 }
 
 // ============================================================================

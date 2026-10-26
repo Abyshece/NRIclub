@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import { apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./profile";
+import { PreviewSwitch, ShareButton } from "./SharePreview";
 import { todayInGermany } from "../content/whatson";
 import {
   TRAVEL_RULES, TRAVEL_RULES_VERSION, CUSTOMS_LINKS, TRAVEL_KINDS, TRAVEL_HELP, TRAVEL_HELP_KEYS, NOTE_LIMIT,
@@ -23,6 +24,9 @@ import {
 // everywhere. The board's rules are in the Terms of Use 2026-10-23
 // (section 7): a member still on the previous version (termsVersion is the
 // current one) accepts them first; onReviewTerms opens the Terms screen.
+// share(item) is the dashboard's Share (src/member/SharePreview.jsx);
+// previewsAvailable: the database has the switch "Show a preview to people
+// who aren't members yet", which the form then shows.
 // ============================================================================
 
 const font = "'DM Sans', sans-serif";
@@ -123,7 +127,7 @@ function HelpChips({ help, kind }) {
 
 // One post. mine: the member's own (Edit, Delete); otherwise Message and
 // Report. compact: a match under one of the member's own posts.
-function TripCard({ post: p, mine, compact, highlight, reported, onEdit, onDelete, onMessage, onReport, openMember, Avatar }) {
+function TripCard({ post: p, mine, compact, highlight, reported, onEdit, onDelete, onMessage, onReport, onShare, openMember, Avatar }) {
   const person = p.profiles || { name: "NRIClub member", unlisted: true };
   const kind = TRAVEL_KINDS[p.kind] || TRAVEL_KINDS.offer;
   return (
@@ -153,6 +157,7 @@ function TripCard({ post: p, mine, compact, highlight, reported, onEdit, onDelet
           </button>
         )}
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {onShare && <ShareButton onClick={() => onShare(p)} style={{ padding: "6px 8px", fontSize: 12, color: MUTED }} size={14} />}
           {mine ? (<>
             <button type="button" onClick={() => onEdit(p)} style={{ ...btnLight, padding: "6px 12px", minHeight: 36 }}>Edit</button>
             <button type="button" onClick={() => onDelete(p)} style={{ ...btnLight, padding: "6px 12px", minHeight: 36, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626" }}>Delete</button>
@@ -215,7 +220,7 @@ function RulesChecklist({ onCancel, onAccepted }) {
 // ---------------------------------------------------------------------------
 // A NEW POST, OR EDITING ONE
 // ---------------------------------------------------------------------------
-function TripForm({ initial, today, onCancel, onSaved, onRefused, onTerms }) {
+function TripForm({ initial, today, onCancel, onSaved, onRefused, onTerms, previewsAvailable = false }) {
   const editing = !!initial.id;
   const [f, setF] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -254,6 +259,8 @@ function TripForm({ initial, today, onCancel, onSaved, onRefused, onTerms }) {
       kind: f.kind, from_city: f.from_city.replace(/\s+/g, " ").trim(), to_city: f.to_city.replace(/\s+/g, " ").trim(),
       date_from: f.date_from, date_to: offer ? f.date_from : f.date_to, flight: offer ? cleanFlight(f.flight) : "",
       help: f.help, note: f.note.trim(),
+      // The preview for people who aren't members (once the database has it).
+      ...(previewsAvailable ? { share_preview: !!f.share_preview } : {}),
     };
     setBusy(true);
     try {
@@ -344,6 +351,7 @@ function TripForm({ initial, today, onCancel, onSaved, onRefused, onTerms }) {
       <p role="note" style={{ ...text, fontSize: 12, background: "#FFF8EC", border: "1px solid #FDE2B8", borderRadius: 8, padding: "8px 10px", marginBottom: 12, color: "#7C4A03" }}>
         Favours only: no payment of any kind. Documents and small open items only, checked in person before the trip. No sealed parcels.
       </p>
+      {previewsAvailable && <PreviewSwitch kind="trip" checked={!!f.share_preview} onChange={(on) => set("share_preview", on)} style={{ marginBottom: 14 }} />}
       {error && <p role="alert" style={{ ...text, color: "#B91C1C", marginBottom: 10 }}>{error}</p>}
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
         <button type="button" onClick={onCancel} disabled={busy} style={btnLight}>Cancel</button>
@@ -393,7 +401,7 @@ function MessageDialog({ post, onCancel, onSend }) {
 // ---------------------------------------------------------------------------
 // THE BOARD
 // ---------------------------------------------------------------------------
-export default function TravelBoard({ user, focusId = null, onFocus, onMessage, onReport, reportedIds, blockedIds, openMember, Avatar, termsVersion = null, onReviewTerms = null }) {
+export default function TravelBoard({ user, focusId = null, onFocus, onMessage, onReport, reportedIds, blockedIds, openMember, Avatar, termsVersion = null, onReviewTerms = null, share = null, previewsAvailable = false }) {
   const today = todayInGermany();
   const [state, setState] = useState("loading"); // loading | ready | missing | error
   const [loadError, setLoadError] = useState("");
@@ -469,8 +477,17 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
   };
   const startPost = (kind) => withRules(() => setForm({
     kind, from_city: kind === "offer" ? (user.city || "") : "", to_city: "", date_from: "", date_to: "", flight: "", help: [], note: "",
+    share_preview: false,
   }));
-  const editPost = (p) => setForm({ ...p, flight: p.flight || "", note: p.note || "", help: [...(p.help || [])] });
+  const editPost = (p) => setForm({ ...p, flight: p.flight || "", note: p.note || "", help: [...(p.help || [])], share_preview: !!p.share_preview });
+  // Share: the author's own trip asks about its preview first, while it's off.
+  const sharePost = (p) => share?.({ kind: "trip", id: p.id, mine: p.user_id === user.id && typeof p.share_preview === "boolean",
+    preview: !!p.share_preview,
+    setPreview: async (on) => {
+      const value = await api.setSharePreview("trip", p.id, on);
+      setPosts((prev) => prev.map((x) => (x.id === p.id ? { ...x, share_preview: value } : x)));
+      return value;
+    } });
   const messagePost = (p) => withRules(() => setMessaging(p));
   const reportPost = (p) => onReport?.({ type: "travel", id: p.id, userId: p.user_id, name: tripTitle(p) });
   const isReported = (p) => !!reportedIds && (reportedIds.has(p.id) || reportedIds.has(`travel:${p.id}`));
@@ -516,7 +533,7 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
     return /rules first/.test(problem || "") ? (await rulesAgain()) || problem : problem;
   };
 
-  const cardProps = { onEdit: editPost, onDelete: remove, onMessage: messagePost, onReport: reportPost, openMember, Avatar };
+  const cardProps = { onEdit: editPost, onDelete: remove, onMessage: messagePost, onReport: reportPost, onShare: share ? sharePost : null, openMember, Avatar };
   const withMatches = (p, highlight) => {
     const matches = others.filter((o) => isMatch(p, o));
     return (
@@ -663,7 +680,8 @@ export default function TravelBoard({ user, focusId = null, onFocus, onMessage, 
         {[...CITIES_ABROAD, ...CITIES_INDIA].map((c) => <option key={c} value={c} />)}
       </datalist>
 
-      {form && <TripForm initial={form} today={today} onCancel={() => setForm(null)} onSaved={saved} onRefused={rulesAgain} onTerms={() => setTermsPrompt(true)} />}
+      {form && <TripForm initial={form} today={today} onCancel={() => setForm(null)} onSaved={saved} onRefused={rulesAgain} onTerms={() => setTermsPrompt(true)}
+        previewsAvailable={previewsAvailable} />}
       {messaging && <MessageDialog post={messaging} onCancel={() => setMessaging(null)} onSend={sendMessage} />}
       {/* Last, so it shows over the form or message it interrupts. */}
       {checklist && (
