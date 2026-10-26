@@ -409,6 +409,11 @@ body { margin:0; background:#fff; }
 .adm-inbox-row { grid-template-columns:minmax(0, 1fr); }
 .adm-radio-row { display:flex; gap:14px; flex-wrap:wrap; }
 .adm-radio { display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:var(--text); }
+.adm-radio-list { display:flex; flex-direction:column; gap:8px; }
+.adm-radio-list .adm-radio { align-items:flex-start; }
+.adm-radio-list .adm-radio input { margin-top:3px; flex-shrink:0; }
+.adm-radio-help { display:block; }
+.adm-confirm-target { color:var(--text); font-weight:600; overflow-wrap:anywhere; }
 .adm-select { width:100%; border:1px solid rgba(55,53,47,0.16); border-radius:6px; padding:7px 8px; background:#fff; font:inherit; color:var(--text); }
 .adm-statement { padding:10px 12px; background:#F7F7F5; border-radius:6px; font-size:13px; line-height:1.55; color:var(--text); white-space:pre-wrap; overflow-wrap:anywhere; }
 .adm-warn-note { padding:8px 10px; border-radius:6px; background:#FBF0E6; color:#7A3E06; font-size:13px; line-height:1.5; }

@@ -244,8 +244,8 @@ export default function AdminPanel({ onLogout }) {
     refreshCounts();
   }, [refreshCounts]);
 
-  // An unfinished sign-up deleted from the Members or Verification page:
-  // before is the member as the page knew them, for the counts.
+  // An account deleted from the Members or Verification page: before is the
+  // member as the page knew them, for the counts.
   const onMemberDeleted = useCallback((id, before = null) => {
     deletedMembers.current.add(id);
     const old = { ...(before || {}), ...(usersRef.current.find((u) => u.id === id) || {}) };
@@ -257,7 +257,8 @@ export default function AdminPanel({ onLogout }) {
     setMemberCounts((c) => {
       if (!c) return c;
       const vs = old.verification_status || "incomplete";
-      return { ...c, total: Math.max(0, c.total - 1), byStatus: { ...c.byStatus, [vs]: Math.max(0, (c.byStatus[vs] || 0) - 1) } };
+      const blocked = old.status === "blocked" ? Math.max(0, c.blocked - 1) : c.blocked;
+      return { ...c, total: Math.max(0, c.total - 1), blocked, byStatus: { ...c.byStatus, [vs]: Math.max(0, (c.byStatus[vs] || 0) - 1) } };
     });
     refreshCounts();
   }, [refreshCounts]);

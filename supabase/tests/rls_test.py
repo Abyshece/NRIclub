@@ -47,6 +47,8 @@ HOUSING_SEARCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", 
                               "20261030000000_housing_search.sql")
 PUBLIC_PREVIEWS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                                "20261031000000_public_previews.sql")
+ADMIN_DELETE_MEMBER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                                   "20261101000000_admin_delete_member.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1358,6 +1360,7 @@ def main():
     analytics()
     housing_search()
     public_previews()
+    admin_delete_member()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -6394,6 +6397,205 @@ def public_previews():
     expect_preview("... and the previews", "market", sofa, sofa_preview)
     check("... and the rules for who may change them", f"UPDATE marketplace SET share_preview = false WHERE id = '{sofa}' RETURNING 1",
           as_user=ben, expect="")
+
+
+def admin_delete_member():
+    """Our team deletes a member's account, because they asked us to or
+    because it is blocked: public.admin_check_member_delete (the Edge
+    Function admin-delete-member asks it as the admin) and
+    public.admin_record_member_delete (service role only): migration
+    20261101000000_admin_delete_member."""
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    with open(ADMIN_DELETE_MEMBER, encoding="utf-8") as f:
+        migration = f.read()
+    ok, _, err = psql(migration)
+    verdict("the update runs after the ones the sections above ran again", ok, err[:300])
+    asha, ben, chitra, dev, ela, farid, gopi = (f"00000000-0000-0000-0000-0000000011{n:02d}" for n in range(1, 8))
+    for uid, name in ((asha, "Asha Rao"), (ben, "Ben B"), (chitra, "Chitra C"), (dev, "Dev D"), (ela, "Ela E"),
+                      (farid, "Farid F"), (gopi, "Gopi G")):
+        approved_member(uid, f"{name.split()[0].lower()}.dm@example.com", name)
+    psql(f"INSERT INTO public.admins (user_id) VALUES ('{ela}')")  # ela is an admin too
+    call = lambda uid, reason="member_request": \
+        f"SELECT public.admin_check_member_delete({sq(uid) if uid else 'NULL'}, {sq(reason) if reason else 'NULL'})"
+    # The answer's fields, "-" for null.
+    field = lambda k: f"COALESCE(r->>{sq(k)}, '-')"
+    fields = lambda uid, reason, *keys: \
+        f"SELECT concat_ws('|', {', '.join(field(k) for k in keys)}) FROM ({call(uid, reason)}) x(r)"
+    rate_count = "SELECT count(*) FROM private.rate_log WHERE action = 'delete_member'"
+    psql("DELETE FROM private.rate_log WHERE action = 'delete_member'")
+
+    # --- who may ask, about whom -------------------------------------------------------------------------------------
+    check("anon can't check an account for deletion", call(asha), role="anon", error_has="permission denied")
+    check("a member can't", call(asha), as_user=ben, error_has="Admins only")
+    check("... nor ask whether the update is in", call(None, None), as_user=ben, error_has="Admins only")
+    check("an admin asks whether the update is in (the panel, before it offers the form)", call(None, None),
+          as_user=ADMIN, expect='{"ready": true}')
+    check("an unknown account is refused", call("6d000000-0000-4000-8000-0000000000ff"), as_user=ADMIN,
+          error_has="Member not found")
+    check("the admin's own account is refused", call(ADMIN), as_user=ADMIN, error_has="your own account")
+    check("another admin's account is refused", call(ela), as_user=ADMIN, error_has="an admin's account")
+    check("... and the other admin can't delete the first one either", call(ADMIN), as_user=ela,
+          error_has="an admin's account")
+    check("an unknown reason is refused", call(asha, "spam"), as_user=ADMIN, error_has="Choose why")
+    check("... and no reason", call(asha, None), as_user=ADMIN, error_has="Choose why")
+    check("'blocked_account' only for a blocked account", call(dev, "blocked_account"), as_user=ADMIN,
+          error_has="isn't blocked")
+    check("... a refused request isn't counted against the admin's limits (the question whether the update is in "
+          "neither)", rate_count, expect="0")
+
+    # --- what the function gets ----------------------------------------------------------------------------------------
+    check("asha asked us: the admin, her sign-in address and first name; not blocked",
+          fields(asha, "member_request", "actor", "member", "reason", "email", "first_name", "blocked", "blocked_at",
+                 "appeal_until"),
+          as_user=ADMIN, expect=f"{ADMIN}|{asha}|member_request|asha.dm@example.com|Asha|false|-|-")
+    check("our team blocks chitra", block(chitra), as_user=ADMIN, expect="blocked")
+    today = psql("SELECT private.long_date(now()) || '|' || private.long_date(now() + interval '6 months')")[1]
+    check("chitra's blocked account: since when, and until when the block can still be challenged",
+          fields(chitra, "blocked_account", "reason", "blocked", "blocked_on", "appeal_until"), as_user=ADMIN,
+          expect=f"blocked_account|true|{today}")
+    check("... a blocked member can also ask us to delete it", fields(chitra, "member_request", "reason", "blocked"),
+          as_user=ADMIN, expect="member_request|true")
+    # farid was blocked before the 2026-10-21 update (no blocked_at), 8 months ago.
+    psql(f"UPDATE profile_private SET status = 'blocked' WHERE id = '{farid}'; "
+         f"UPDATE private.moderation_record SET created_at = now() - interval '8 months' "
+         f"WHERE member_id = '{farid}' AND decision = 'blocked'")
+    long_ago = psql("SELECT private.long_date(now() - interval '8 months')")[1]
+    check("an older block: its date from the record of blocked accounts, and no time left to challenge it",
+          fields(farid, "blocked_account", "blocked", "blocked_on", "appeal_until"), as_user=ADMIN,
+          expect=f"true|{long_ago}|-")
+    check("... each check that went through counted once", rate_count, expect="4")
+
+    # --- the limits -------------------------------------------------------------------------------------------------------
+    psql("DELETE FROM private.rate_log WHERE action = 'delete_member'")
+    check("an admin can check at most 10 deletions a minute", f"""
+          DO $$BEGIN FOR i IN 1..10 LOOP PERFORM private.take_rate('delete_member', ARRAY['10', '1 minute', '50', '1 day']); END LOOP; END$$;
+          {call(gopi)}""", as_user=ADMIN, error_has="doing that too often")
+    check("... and 50 a day",
+          f"INSERT INTO private.rate_log (member_id, action, at) SELECT '{ADMIN}', 'delete_member', now() - interval '2 hours' "
+          f"FROM generate_series(1, 50); " + as_admin(call(gopi)), error_has="doing that too often")
+    check("... 49 earlier today are fine",
+          f"INSERT INTO private.rate_log (member_id, action, at) SELECT '{ADMIN}', 'delete_member', now() - interval '2 hours' "
+          f"FROM generate_series(1, 49); " + as_admin(f"SELECT ({call(gopi)})->>'reason'"), expect="f\nmember_request")
+    psql("DELETE FROM private.rate_log WHERE action = 'delete_member'")
+
+    # --- recording a deletion (service role) ------------------------------------------------------------------------------
+    record = lambda actor, uid, reason="member_request", note="", emailed="true": \
+        f"SELECT public.admin_record_member_delete('{actor}', '{uid}', {sq(reason)}, {sq(note)}, {emailed}) IS NOT NULL"
+    check("an admin can't record a deletion (only the Edge Function, with the service role)", record(ADMIN, asha),
+          as_user=ADMIN, error_has="permission denied")
+    check("... nor anon", record(ADMIN, asha), role="anon", error_has="permission denied")
+    check("... and the service role only once the account is gone", record(ADMIN, asha), role="service_role",
+          error_has="hasn't been deleted")
+
+    # asha's content, then the Edge Function's steps: the check, Supabase
+    # Auth deletes the account (as here), the record.
+    post, convo = "6d000000-0000-4000-8000-000000000001", "6d000000-0000-4000-8000-000000000002"
+    ok, _, err = psql(f"""
+      INSERT INTO posts (id, user_id, content) VALUES ('{post}', '{asha}', 'Hello from Berlin');
+      INSERT INTO comments (post_id, user_id, content) VALUES ('{post}', '{ben}', 'Welcome!');
+      INSERT INTO conversations (id, participant_1, participant_2) VALUES ('{convo}', '{asha}', '{ben}');
+      INSERT INTO messages (conversation_id, sender_id, content) VALUES ('{convo}', '{asha}', 'hi ben'), ('{convo}', '{ben}', 'hi');
+      INSERT INTO marketplace (user_id, title, price) VALUES ('{asha}', 'Lamp', '€5');
+      INSERT INTO help_requests (user_id, title, description) VALUES ('{asha}', 'Where to buy atta?', 'Near Kreuzberg');""")
+    verdict("asha posted, and wrote to ben", ok, err[:300])
+    gone = (f"SELECT concat_ws('|', (SELECT count(*) FROM profiles WHERE id = '{asha}'), "
+            f"(SELECT count(*) FROM profile_private WHERE id = '{asha}'), (SELECT count(*) FROM posts WHERE id = '{post}'), "
+            f"(SELECT count(*) FROM comments WHERE post_id = '{post}'), (SELECT count(*) FROM conversations WHERE id = '{convo}'), "
+            f"(SELECT count(*) FROM messages WHERE conversation_id = '{convo}'), "
+            f"(SELECT count(*) FROM marketplace WHERE user_id = '{asha}'), (SELECT count(*) FROM help_requests WHERE user_id = '{asha}'), "
+            f"(SELECT count(*) FROM profiles WHERE id = '{ben}'))")
+    check("before: all there", gone, expect="1|1|1|1|1|2|1|1|1")
+    check("the check for asha goes through", fields(asha, "member_request", "reason"), as_user=ADMIN, expect="member_request")
+    psql(f"DELETE FROM auth.users WHERE id = '{asha}'")
+    check("deleting the account takes everything of asha's with it, the conversation for ben too (ben stays)", gone,
+          expect="0|0|0|0|0|0|0|0|1")
+    check("... recording it then needs an admin", f"SET ROLE service_role; {record(ben, asha)}", error_has="Admins only")
+    check("... a known reason", f"SET ROLE service_role; {record(ADMIN, asha, 'spam')}", error_has="Unknown reason")
+    check("... and a note of at most 500 characters", f"SET ROLE service_role; {record(ADMIN, asha, note='x' * 501)}",
+          error_has="500 characters")
+    check("the service role records asha's deletion",
+          f"SET ROLE service_role; {record(ADMIN, asha, note='  Asked by email' + chr(10) + ' on 26 October ')}", expect="t")
+    row = f"FROM private.moderation_action a WHERE a.action = 'delete_member' AND a.target_id = '{asha}'"
+    check("... like our team's other decisions: who, about which account, the reason, the email and the note",
+          f"SELECT concat_ws('|', a.target_kind, a.target_id, a.target_user IS NULL, a.source, a.actor_id = '{ADMIN}', "
+          f"a.explanation) {row}",
+          expect=f"member|{asha}|t|own_initiative|t|Account deleted because the member asked us to (Art. 17 GDPR); "
+                 "the member was emailed. Note: Asked by email on 26 October")
+    check("... and nothing else of hers: no name, no email address, no copy, no statement",
+          f"SELECT a.ground IS NULL AND a.rule = '' AND a.snapshot IS NULL AND a.statement = '' AND a.report_ids = '{{}}' "
+          f"AND row_to_json(a)::text !~* '(asha|rao|dm@example)' {row}", expect="t")
+
+    # chitra's blocked account.
+    check("the check for chitra's blocked account goes through", fields(chitra, "blocked_account", "blocked"),
+          as_user=ADMIN, expect="true")
+    psql(f"DELETE FROM auth.users WHERE id = '{chitra}'")
+    check("our team's record of the block stays, no longer linked to her",
+          f"SELECT count(*) || '|' || bool_and(target_user IS NULL) FROM private.moderation_action "
+          f"WHERE action = 'block' AND target_id = '{chitra}'", expect="1|true")
+    check("the deletion of a blocked account whose email couldn't be sent is recorded so",
+          f"SET ROLE service_role; {record(ADMIN, chitra, 'blocked_account', 'Ended the membership', 'false')}; RESET ROLE; "
+          f"SELECT explanation FROM private.moderation_action WHERE action = 'delete_member' AND target_id = '{chitra}'",
+          expect="t\nBlocked account deleted; the email to the member couldn't be sent. Note: Ended the membership")
+
+    # --- who may call what -----------------------------------------------------------------------------------------------
+    check_fn, record_fn = "'public.admin_check_member_delete(uuid, text)'", \
+        "'public.admin_record_member_delete(uuid, uuid, text, text, boolean)'"
+    check("the check is for signed-in accounts (admins only, inside); the record for the service role only; both run "
+          "as their owner with an empty search path",
+          f"SELECT has_function_privilege('authenticated', {check_fn}, 'EXECUTE') "
+          f"AND NOT has_function_privilege('anon', {check_fn}, 'EXECUTE') AND NOT has_function_privilege('public', {check_fn}, 'EXECUTE') "
+          f"AND has_function_privilege('service_role', {record_fn}, 'EXECUTE') "
+          f"AND NOT has_function_privilege('authenticated', {record_fn}, 'EXECUTE') "
+          f"AND NOT has_function_privilege('anon', {record_fn}, 'EXECUTE') AND NOT has_function_privilege('public', {record_fn}, 'EXECUTE') "
+          f"AND (SELECT bool_and(prosecdef AND proconfig = ARRAY['search_path=\"\"']) FROM pg_proc "
+          f"WHERE oid IN ({check_fn}::regprocedure, {record_fn}::regprocedure))", expect="t")
+
+    # --- the list of actions --------------------------------------------------------------------------------------------
+    with open(ADMIN_TOOLS, encoding="utf-8") as f:
+        tools = f.read()
+    m = re.search(r"ADD CONSTRAINT moderation_action_action_check\s+CHECK \(action IN \((.*?)\)\);", tools, re.S)
+    earlier = re.findall(r"'([a-z_]+)'", m.group(1)) if m else []
+    actions = ("SELECT string_agg(x.m[1], ',' ORDER BY x.n) FROM regexp_matches((SELECT pg_get_constraintdef(c.oid) "
+               "FROM pg_constraint c WHERE c.conrelid = 'private.moderation_action'::regclass "
+               "AND c.conname = 'moderation_action_action_check'), '''([a-z_]+)''::text', 'g') WITH ORDINALITY AS x(m, n)")
+    verdict("(the actions of 2026-10-25 read from that migration)", len(earlier) == 12 and earlier[-1] == "delete_signup",
+            str(earlier))
+    check("the record accepts 'delete_member' and still every action it accepted before", actions,
+          expect=",".join(earlier + ["delete_member"]))
+    check("... each of them can be recorded",
+          "BEGIN; INSERT INTO private.moderation_action (action, target_kind, source) SELECT v, 'member', 'own_initiative' "
+          f"FROM unnest(ARRAY[{', '.join(sq(v) for v in earlier + ['delete_member'])}]) v; "
+          "SELECT count(*) FROM private.moderation_action WHERE created_at = now(); ROLLBACK", expect=str(len(earlier) + 1))
+    check("... but not an unknown one", "INSERT INTO private.moderation_action (action, target_kind, source) "
+          "VALUES ('delete_everything', 'member', 'own_initiative')", error_has="moderation_action_action_check")
+    others = ", ".join(sq(v) for v in earlier + ["zz_later"])
+    # (NOT VALID: the deletions recorded above don't fit that list.)
+    check("the update builds the list from the one the database has: an action another update added stays",
+          "BEGIN; ALTER TABLE private.moderation_action DROP CONSTRAINT moderation_action_action_check; "
+          f"ALTER TABLE private.moderation_action ADD CONSTRAINT moderation_action_action_check CHECK (action IN ({others})) NOT VALID; "
+          f"{migration}; {actions}; ROLLBACK", expect=",".join(earlier + ["zz_later", "delete_member"]))
+
+    # --- the one-off file; running the migration again -------------------------------------------------------------------
+    with open(os.path.join(root, "supabase", "oneoff", "2026-11-01-admin-delete-member", "run_in_sql_editor.sql"),
+              encoding="utf-8") as f:
+        oneoff = f.read()
+    marker = "-- ==== 20261101000000_admin_delete_member.sql ====\n"
+    guard = oneoff[:oneoff.index(marker)] if marker in oneoff else ""
+    verdict("the one-off file is its guard (after the previews update, once) and then the migration as it is",
+            marker in oneoff and oneoff[oneoff.index(marker) + len(marker):] == migration
+            and "to_regprocedure('public.public_preview(text, uuid)') IS NULL" in guard
+            and "to_regprocedure('public.admin_check_member_delete(uuid, text)') IS NOT NULL" in guard, "the file differs")
+    check("... it refuses to run a second time, naming the update", oneoff,
+          error_has="The admin account deletion update has already run. Nothing to do.")
+    check("... and before the previews update",
+          f"BEGIN; DROP FUNCTION public.public_preview(text, uuid); {oneoff}; ROLLBACK",
+          error_has="Run the shareable public previews update")
+    ok, _, err = psql(migration)
+    verdict("the migration can be run again", ok, err[:300])
+    check("... 'delete_member' is still listed once", actions, expect=",".join(earlier + ["delete_member"]))
+    check("... and the check still answers", call(None, None), as_user=ADMIN, expect='{"ready": true}')
+    check("... and still refuses members", call(dev), as_user=ben, error_has="Admins only")
+    psql(f"DELETE FROM public.admins WHERE user_id = '{ela}'")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 // Members: everyone who has joined, with search, block / unblock and the
 // same peek as Verification. A block (like a warning, or removing a photo or
-// bio) goes through the database with the reasons the member is told.
+// bio) goes through the database with the reasons the member is told. In the
+// peek, an account can also be deleted (DeleteMemberDialog).
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import MemberPeek, { MemberModeration } from "./MemberPeek";
@@ -348,16 +349,39 @@ export default function MembersView({ users, total = users.length, blockedTotal 
     },
   });
 
-  // Deletes an account that never finished signing up (MemberPeek's
-  // onDeleteSignup; the server checks again). Throws so the dialog can say why.
-  const deleteSignup = async (m) => {
-    const res = await api.adminDeleteSignup(m.id);
+  // A deleted account leaves the list, the search results and the counts.
+  const removeDeleted = (m) => {
     touch(m.id);
     setRemote((r) => (r && r.members.some((x) => x.id === m.id)
       ? { ...r, members: r.members.filter((x) => x.id !== m.id), total: Math.max(0, r.total - 1) } : r));
     setOpenId(null);
     onMemberDeleted?.(m.id, m);
+  };
+
+  // Deletes an account that never finished signing up (MemberPeek's
+  // onDeleteSignup; the server checks again). Throws so the dialog can say why.
+  const deleteSignup = async (m) => {
+    const res = await api.adminDeleteSignup(m.id);
+    removeDeleted(m);
     showToast({ text: `Deleted ${shortName(m.name)}'s unfinished sign-up${res?.recorded === false ? ". It couldn't be recorded in the log" : ""}` });
+  };
+
+  // Deletes a member's account, at their request or because it's blocked
+  // (MemberPeek's onDeleteMember; the server checks again, deletes their
+  // photo files, emails them and records it). Throws so the dialog can say why.
+  const deleteMember = async (m, { reason, note }) => {
+    const res = await api.adminDeleteMember(m.id, reason, note);
+    removeDeleted(m);
+    const more = [
+      res?.emailed === false && "The email couldn't be sent; please tell the member yourself.",
+      res?.recorded === false && "It couldn't be recorded in the log.",
+      res?.files?.failed > 0 && "Some photo files are left; the photo clean-up deletes them.",
+    ].filter(Boolean);
+    showToast({
+      text: `Deleted ${shortName(m.name)}'s account.${more.length ? ` ${more.join(" ")}` : ""}`,
+      tone: res?.emailed === false ? "error" : undefined,
+      duration: more.length ? 12000 : undefined,
+    });
   };
 
   const unblock = async (u) => {
@@ -366,7 +390,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
 
   return (
     <>
-      <PageHeader title="Members" description="Everyone who has joined NRIClub. Search finds any member by name, email or city. Open a member to review them, or block an account." />
+      <PageHeader title="Members" description="Everyone who has joined NRIClub. Search finds any member by name, email or city. Open a member to review them, or to block or delete an account." />
 
       <div className="adm-toolbar">
         <label className="adm-search">
@@ -475,6 +499,7 @@ export default function MembersView({ users, total = users.length, blockedTotal 
           onModerate={moderate}
           onSetAmbassador={setAmbassador}
           onDeleteSignup={deleteSignup}
+          onDeleteMember={deleteMember}
         />
       )}
 

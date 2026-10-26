@@ -25,6 +25,7 @@ Everything is in:
 | `supabase/functions/admin-inbox-reply/index.ts` | Sends a reply from the Inbox |
 | `supabase/functions/forward-email/index.ts` | Stores mail to hello@ in the Inbox; the Gmail copy is now optional |
 | `supabase/functions/admin-handoff/index.ts` | (Added 24 October 2026.) The "Admin panel" button on nriclub.app: a one-time sign-in code for admin accounts, so admin.nriclub.app opens signed in. Deploy with verify JWT off; without it the button opens the admin login as before |
+| `supabase/functions/admin-delete-member/index.ts` | (Added 1 November 2026.) Members → open a member → **Delete account…**: deletes a member's account because they asked us to, or because it is blocked (not an admin's, nor your own). It deletes their photo files, emails them (`RESEND_API_KEY` and `MAIL_FROM`, as `member-email`: nothing new to set), deletes the account and records it. First run `supabase/oneoff/2026-11-01-admin-delete-member/run_in_sql_editor.sql` (after the 2026-10-31 update), then deploy with verify JWT off: `supabase functions deploy admin-delete-member --no-verify-jwt --project-ref uzzkdmybsbwknpsucuvv`. Until both are in, the dialog says which is missing and deletes nothing. How to use it: `docs/compliance/deletion-routine.md`, "Deleting an account on request" |
 | `vercel.json` | Only the app's own addresses go to the app; the rest get `404.html` (status 404) |
 
 The order below is safe: the site works before the database update and

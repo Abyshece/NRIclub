@@ -10,6 +10,9 @@ update): see "Photo files" below. When the database does the rest itself
 (plan C20, clean-up jobs), set `byHand` in `RETENTION` to false and stop
 the monthly part of this routine.
 
+A member who asks us to delete their account: see "Deleting an account on
+request" below.
+
 | What | Kept for | How often you run it |
 |---|---|---|
 | Photo files nothing uses any more (deleted posts, listings, events, replaced or removed profile photos, deleted accounts, content our team removed) | deleted within 7 days at most | **automatic** when an admin opens the admin panel (once a day); open it at least once a week |
@@ -261,11 +264,54 @@ ORDER BY r.created_at;
 ```
 
 For each one whose membership you ended (Terms, section 12; check your
-moderation log), delete the account:
+moderation log), delete the account in the admin panel: Members → search
+for them → open them → **Delete account…** → **Blocked account** (see
+"Deleting an account on request" below for the rest of the form). That also
+deletes their photo files, emails them and records the deletion. Only
+before the database update of 1 November 2026, or if the panel can't be
+used, delete it in the SQL Editor instead (no email, no record; the photo
+clean-up deletes the files within days):
 
 ```sql
 DELETE FROM auth.users WHERE id = '<id>';
 ```
+
+## Deleting an account on request
+
+When a member asks us to delete their account (Art. 17 GDPR), usually by
+email to hello@nriclub.app because they can't sign in any more. Answer
+within one month (Privacy Policy, section 10). Since the database update of
+1 November 2026 and the Edge Function `admin-delete-member`
+(`docs/DEPLOY-ROUND3.md`).
+
+1. **Check it's them.** The request should come from the address of the
+   account. If it doesn't, reply to the account's address and ask them to
+   confirm from there; don't delete until they do.
+2. **Note it** in the request log (date, who, what, deadline; see
+   `moderation-guidelines.md`).
+3. **Delete it:** admin panel → Members → search for their email address →
+   open them → **Delete account…**:
+   - Why: **The member asked us to delete their account**;
+   - Internal note (optional, at most 500 characters): e.g. "Asked by email
+     on 26 October". Don't write their name or email address: the note stays
+     in our record of decisions after the account is gone;
+   - type their email address to confirm → **Delete account**.
+
+   Their photo files, profile, everything they posted and their messages go,
+   as when members delete their own account; our records of decisions stay,
+   without their name. Admins' accounts, and your own, can't be deleted
+   there.
+4. **The email.** They get "Your NRIClub account has been deleted" from
+   `MAIL_FROM`. If the panel says "The email couldn't be sent; please tell
+   the member yourself", reply to their request from hello@ to say it's
+   done.
+5. **Close it** in the request log (date answered). Keep the request and
+   our answers in the mailbox for 3 years (below).
+
+If the panel says "Some photo files are left", the photo clean-up deletes
+them within days; nothing to do. The deletion shows in the record of our
+decisions (`private.moderation_action`, action `delete_member`, with the
+account's ID only), which is deleted after 24 months like the rest.
 
 ## Once a month: the mailbox
 
