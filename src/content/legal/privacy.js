@@ -12,8 +12,8 @@ import { CONTACT_EMAIL, mail, a, strong } from "./doc.js";
 import { IMPRINT, PRIVACY_DETAILS, operatorLines } from "../imprint.js";
 import { ART9_CONSENT_TEXT } from "./consent.js";
 
-export const PRIVACY_VERSION = "2026-10-24";
-export const PRIVACY_DATE = "24 October 2026";
+export const PRIVACY_VERSION = "2026-10-26";
+export const PRIVACY_DATE = "26 October 2026";
 
 // How long data is kept: the periods this Policy promises. Until clean-up
 // jobs run on the database (plan C20), our team deletes by hand once a month
@@ -154,7 +154,8 @@ export function privacyDoc() {
         ["Website analytics only if you choose Accept on our privacy banner, never linked to your account; change your mind at any time with \"Privacy settings\" (",
           a("section 2", "#analytics"), ")."],
         "Our database, with your profile, content and messages, is in the EU (Ireland).",
-        "Only members our team has approved can see your profile and what you post (a photo also opens for anyone who has its exact web address, see section 4). Our admin tools don't show your messages.",
+        ["Only members our team has approved can see your profile and what you post, except a small preview of a listing, event, question or trip that you choose to show to anyone with its link (",
+          a("section 2", "#previews"), "; never your name). A photo also opens for anyone who has its exact web address (section 4). Our admin tools don't show your messages."],
         "You can download your data or delete your account at any time in Settings.",
         ["Questions? Write to ", mail("Privacy"), "."],
       ] }] } },
@@ -201,21 +202,29 @@ export function privacyDoc() {
             ["What", "posts, comments and likes; photos (before uploading one, the site makes it smaller and saves it again, which removes hidden details such as where and when it was taken); guides you write and comments on them; questions and answers, including urgent questions, thanks and best answers; events you create and whether you're going; Market listings; places you add or recommend; groups you create, join or ask for; Namaste requests and connections; your invite code, if you open \"Invite a friend\"; messages; mentoring times and sessions, with the topic, note and meeting link; ratings and reviews; members you block; your settings (for example who can message you); and the in-app notices we show you."],
             ["Why", "to provide the features you use."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
+            ["Who sees it", "approved members and our team (section 4). If you turn on the preview of a Market listing, an event or a question, anyone with its link also sees that preview, and only that (\"Previews of what you share\" below)."],
             ["How long", `until you delete it or your account, with the exceptions in section 9. In-app notices you've read are deleted after ${months(R.readNoticesMonths)}.`],
           ] },
           { id: "travel", title: "The travel board (flying to or from India)", fields: [
             ["What", `if you use the travel board: your posts, each with the city you fly from and the city you fly to, the date of your flight or the earliest and latest dates that suit you, your flight number if you give one, what you can help with or what you need (a travel companion, documents or a small open item) and your note; when you agreed to the board's rules, and which version of them; and, so we can limit how many trips each member posts, when you posted (kept ${R.travelLimitDays} days). A message you send from the board is an ordinary message ("Messages" in section 4) that starts with the trip it's about.`],
             ["Why", "so members flying the same way can find each other and help each other, and to tell you about matching trips. When a member posts a trip on the same route as one of yours, with dates that overlap and help in common, up to 20 members with a matching post get an in-app notice with that member's name, the route, the dates and the help. Members who blocked each other aren't told about each other's trips."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3). The record that you agreed to the rules, and the limit: legitimate interests (keeping the board safe and free of misuse)."],
-            ["Who sees it", "approved members, until the post's last date has passed, but not members you blocked or who blocked you; and our team. Your dates and flight number show where you'll be and when, so share only what you're comfortable with."],
+            ["Who sees it", "approved members, until the post's last date has passed, but not members you blocked or who blocked you; and our team. Your dates and flight number show where you'll be and when, so share only what you're comfortable with. If you turn on a post's preview, anyone with its link sees its route and month, never the dates, flight number, note or your name (\"Previews of what you share\" below)."],
             ["How long", `until you delete the post. A post leaves the board after its last date and is deleted automatically ${R.travelPostDays} days after that date, with the notices about it. The record that you agreed to the rules is kept until you delete your account.`],
           ] },
           { id: "housing", title: "Housing: listings and \"Looking for a place\"", fields: [
             ["What", `if you post a housing listing in the Market: besides the listing itself (title, description and photos, as for any listing), the kind of place (WG room, sublet, whole flat, short stay or house), the city, the day it's free from and until (or that it's open-ended), the warm rent, the deposit, the size if you give it, whether it's furnished and whether registering your address there (Anmeldung) is possible. If you post what you're looking for: the kinds of place, the city, from when and until when, the highest rent, whether it must be furnished or allow Anmeldung, your note, and whether you've turned the post off. What you type into the housing search is used only to answer it and isn't stored. So we can limit how many listings and posts each member makes, and how often a listing's details change, when you posted or changed one (kept ${R.housingLimitDays} days).`],
             ["Why", "so members can find a place for the dates they need, and to tell you about matching listings. When a member posts a listing in the city of your \"Looking for a place\" post, of a kind you chose, within your rent and free for your dates give or take a week, you get an in-app notice with that member's name, the kind of place, the city, the dates and the rent (at most 20 members for each listing). Members who blocked each other aren't told about each other's posts."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3). The limits: legitimate interests (keeping the Market safe and free of misuse)."],
-            ["Who sees it", "your listing and its details: approved members, like any Market listing, and our team. Your \"Looking for a place\" post: only you, our team, and the members whose listing matches it, who see it with your name and photo so they can message you (not members you blocked or who blocked you)."],
+            ["Who sees it", "your listing and its details: approved members, like any Market listing, and our team; if you turn on its preview, anyone with its link sees its photo, kind of place and city, never the rent, deposit, dates, description or your name (\"Previews of what you share\" below). Your \"Looking for a place\" post: only you, our team, and the members whose listing matches it, who see it with your name and photo so they can message you (not members you blocked or who blocked you)."],
             ["How long", `a listing is shown until its "until" date or, if it's open-ended, for ${R.housingOpenDays} days after you post or renew it. It's deleted automatically ${R.housingKeepDays} days after that, with the notices about it, unless you renew it or change its dates. A "Looking for a place" post ends after its last date, or ${R.housingOpenDays} days after you post it if it has no end date, and is deleted ${R.housingKeepDays} days after it ends. You can delete either at any time.`],
+          ] },
+          { id: "previews", title: "Previews of what you share", fields: [
+            ["What", "every Market listing, event, question and travel board post is for members only, unless you turn on \"Show a preview to people who aren't members yet\" for it: when you post it, later on the item, or when you share your own item and choose \"Turn on and share\". Then anyone who has its link can see a small preview of it without an account, and apps such as WhatsApp show that preview as the link's card. It shows exactly this, and nothing else: for a Market listing, its first photo, its kind (for example \"Housing · WG room\") and its city; for an event, its photo, that it's an event, its city and its day; for a question, its title, its city and how many answers it has; for a travel board post, its route and its month. Never your name, photo or profile, the price, rent or deposit, the description, the time, place, flight number, note or exact dates, the answers, contact details or an exact address. A listing's city is shown only from its city field, or if part of its location is exactly the name of a city with an NRIClub group."],
+            ["Why", "so you can show what you've posted to people who aren't members yet, for example in a WhatsApp group, and invite them to join."],
+            ["Legal basis", "your own choice to show it, as part of the service (contract, Art. 6(1)(b) GDPR). A question's title can show your origin, religion or health: for that, your explicit consent in section 3, as for everything you post."],
+            ["Who sees it", "anyone who has the link, and the apps it's shared in, which fetch the preview to show the card. We ask search engines not to list previews (noindex), and our public pages don't link to them."],
+            ["How long", "until you turn the preview off, which you can do at any time on the item (within a minute it's gone). It also stops when the item ends or is removed: a listing sold, expired or deleted, an event or a trip once its day has passed, anything you delete or our team removes; and while our team checks your account again or if it's blocked. An app that already showed the card may keep its copy."],
           ] },
           { title: "Reports, notices of illegal content and moderation", fields: [
             ["What", "reports members send in the app (what was reported, the reason, their explanation, who reported it); reports sent with the form at nriclub.app/report (where the content is, the reason and explanation, the sender's name and email address, and the reference code we give the report) or by email; to limit how many reports can be sent, a coded form of the email address and the internet address (IP address) a report on the form came from, made with a secret key; where we need it as evidence, a copy of the reported content (for example a screenshot) with the account and the time; our decisions and the reasons for them (the rule or law, the facts, whether a report led to them, who on our team decided), a copy of what we removed (its text; of a photo, only the file's name), and the messages we send about them; when you use \"Report a problem\", your description plus your browser type and screen size (the form tells you this)."],
@@ -273,7 +282,7 @@ export function privacyDoc() {
             ["How long", `requests about your rights and reports of illegal content, and our answers, we keep for ${R.requestEmailYears} years after the matter is closed, so we can show we handled them correctly. Other emails, and our replies, we delete ${months(R.otherEmailMonths)} after the matter is closed. Emails to ${CONTACT_EMAIL} also show in our admin panel's inbox, with the replies we send from there (attachments only by name and size); there they are deleted automatically ${months(R.inboxMonths)} after they arrived.`],
           ] },
         ] },
-        { p: "Our public pages (the homepage, the city pages and the guides) contain no personal data. A city page shows how many members its group has only once there are at least 5." },
+        { p: "Our public pages (the homepage, the city pages and the guides) contain no personal data. A city page shows how many members its group has only once there are at least 5. The previews members choose to show open only through their links (\"Previews of what you share\" above)." },
       ] },
 
       { id: "sensitive", title: "3. Information that can show your origin, religion or health", blocks: [
@@ -282,13 +291,13 @@ export function privacyDoc() {
         { box: { blocks: [{ p: `"${ART9_CONSENT_TEXT}"` }] } },
         { p: "We store when you gave it and which wording you agreed to. Without this consent you can't be a member, because membership itself shows a connection to the Indian community." },
         { p: ["You can withdraw your consent at any time, for the future: delete the content in question (for example leave a group or delete a question), or delete your account, which withdraws it completely. You can also write to us at ", mail("Withdraw consent"), "; as membership depends on this consent, we then close your account, and you can download your data first. Withdrawing doesn't make what we did before it unlawful (Art. 7(3) GDPR)."] },
-        { p: "We use this information only to run your membership: for our team's membership check (section 2), to show it to members as described in section 4, and to deal with reports about it. We never use it for advertising and never sell it." },
+        { p: "We use this information only to run your membership: for our team's membership check (section 2), to show it to members as described in section 4 (and, in the preview of a question you choose to show to people who aren't members, its title to anyone with its link: section 2, \"Previews of what you share\"), and to deal with reports about it. We never use it for advertising and never sell it." },
       ] },
 
       { id: "visibility", title: "4. Who can see your data", blocks: [
         { entries: [
           { title: "Anyone, without an account", fields: [
-            ["What", "nothing about you personally: the public pages contain no member data."],
+            ["What", "nothing about you personally: the public pages contain no member data. Only if you turn on the preview of a Market listing, an event, a question or a travel board post, anyone who has its link sees that preview, never your name (section 2, \"Previews of what you share\")."],
             ["Photos", "a photo you upload is stored at a long web address that isn't listed anywhere. New photos get an address with a random code, which can't be guessed. Anyone who has a photo's exact address can open it without signing in, for example if a member copies it."],
           ] },
           { title: "Approved members", fields: [
@@ -346,7 +355,7 @@ export function privacyDoc() {
           ]),
           provider("vercel", "Vercel", [
             ["Company", "Vercel Inc., USA."],
-            ["What for", "hosting the website and delivering its files through a worldwide network of servers, so a request can be answered by a server outside the EU, including in the USA. It logs requests (section 2, \"Server and security logs\"). If you agree to website analytics, its servers receive them, shorten your IP address and look up your approximate location (section 2, \"Website analytics\")."],
+            ["What for", "hosting the website and delivering its files through a worldwide network of servers, so a request can be answered by a server outside the EU, including in the USA. It logs requests (section 2, \"Server and security logs\"). If you agree to website analytics, its servers receive them, shorten your IP address and look up your approximate location (section 2, \"Website analytics\"). When someone opens the link to a listing, event, question or trip, its servers put the item's preview into the page, if its author turned the preview on, and keep it for at most a minute (section 2, \"Previews of what you share\")."],
           ]),
           provider("resend", "Resend", [
             ["Company", "Plus Five Five, Inc. (Resend), USA."],

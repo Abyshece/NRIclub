@@ -568,6 +568,34 @@ days):
 - Raw events are deleted after 6 months; the totals for older days go with
   them.
 
+## Shareable previews: what to do
+
+A member who shares the link to their Market listing, event, question or
+trip (e.g. in WhatsApp) can let people without an account see a small
+preview: the photo, the kind and the city (an event's day, a trip's month,
+a question's title and number of answers), never a price, description or
+name. Off for every item until its author turns it on. People without an
+account see "This is on NRIClub, for members" for everything else. The
+Privacy Policy 2026-10-26 ("Previews of what you share") describes it.
+
+1. **Deploy the site, then run the SQL** the same day:
+   `supabase/oneoff/2026-10-31-public-previews/run_in_sql_editor.sql`, the
+   whole file at once (the migration `20261031000000_public_previews.sql`
+   with a check in front). It refuses to run before the housing search
+   update, and a second time. Until it runs, the forms show no switch and
+   every shared link shows "for members". If the switch still doesn't show
+   a few minutes later, run `NOTIFY pgrst, 'reload schema';`.
+2. **Nothing to add in Vercel:** the link cards come from `api/preview.js`,
+   which uses `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (already
+   set; they must be available to Production, which they are when set for
+   it). Without them every link gets the site's own card.
+3. **Check:** as a member, post a test listing with "Show a preview to
+   people who aren't members yet" on, tap Share, and open the link in a
+   private window: the preview page shows. Paste the link in WhatsApp (or
+   `curl -s https://nriclub.app/market/<id> | grep og:`): the card shows
+   the kind and city. Turn the preview off: within a minute the link shows
+   "for members" and the site's own card. Delete the test listing.
+
 ## Before inviting the public
 
 Launch tasks from the Phase 1 review (2026-10-12):
@@ -649,7 +677,8 @@ python3 supabase/tests/rls_test.py "dbname=nriclub_test"
 ```
 
 The website analytics' collecting function and browser helpers have their
-own tests, without a database: `node --test tests/analytics.test.mjs`.
+own tests, without a database: `node --test tests/analytics.test.mjs`; so
+do the link previews (`api/preview.js`): `node --test tests/preview.test.mjs`.
 
 The migrations run in name order, each in one transaction:
 `20261012000000_nriclub_schema.sql`, `20261013000000_review_fixes.sql`,

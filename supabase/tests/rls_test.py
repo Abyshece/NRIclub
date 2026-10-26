@@ -45,6 +45,8 @@ ANALYTICS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migr
                          "20261029000000_analytics.sql")
 HOUSING_SEARCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                               "20261030000000_housing_search.sql")
+PUBLIC_PREVIEWS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                               "20261031000000_public_previews.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1355,6 +1357,7 @@ def main():
     city_groups_only()
     analytics()
     housing_search()
+    public_previews()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -6096,6 +6099,301 @@ def housing_search():
     check("... and the listings, looking posts, counts and notifications stay", counts, expect=kept)
     check("... and the rules for who may post", hs_looking(["wg_room"], "Munich", 10, 20), as_user=eli,
           error_has="row-level security")
+
+
+def public_previews():
+    """Shareable public previews: the author's switch (share_preview) on
+    Market listings, events, questions and trips, who may change it, and what
+    public.public_preview gives anyone, signed out too, and when it gives
+    nothing: migration 20261031000000_public_previews."""
+    from datetime import date, timedelta
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    with open(PUBLIC_PREVIEWS, encoding="utf-8") as f:
+        migration = f.read()
+    ok, _, err = psql(migration)
+    verdict("the update runs after the ones the sections above ran again", ok, err[:300])
+    ana, ben, cai, dia = (f"00000000-0000-0000-0000-0000000005f{n}" for n in "1234")
+    for uid, name in ((ana, "Ana"), (ben, "Ben"), (cai, "Cai")):
+        approved_member(uid, f"{name.lower()}.pp@example.com", f"{name} P", "Augsburg")
+    # dia sent their details but our team hasn't approved them yet.
+    sign_up(dia, "dia.pp@example.com", {"full_name": "Dia P"}, accept_terms=True)
+    psql(f"UPDATE profile_private SET verification_status = 'pending', submitted_at = now() WHERE id = '{dia}'")
+    today = date.fromisoformat(psql("SELECT private.today_in_germany()")[1])
+    photo = lambda uid, name, bucket="marketplace-images": f"{STORE}/{bucket}/{uid}/{name}"
+
+    def owner(sql):
+        ok, out, err = psql(sql)
+        if not ok:
+            sys.exit(f"setting up failed: {err}")
+        return out.splitlines()[-1] if out else ""
+
+    def post(uid, sql):
+        ok, out, err = psql(sql, "authenticated", uid)
+        if not ok:
+            sys.exit(f"posting failed: {err}")
+        return out.splitlines()[-1]
+
+    def preview(kind, item, uid=None):
+        """public.public_preview as a signed-out visitor (or as a member) gets
+        it: a dict, None for NULL, or ("error", message)."""
+        ok, out, err = psql(f"SELECT public.public_preview({sq(kind)}, {item if item == 'NULL' else sq(item)}::uuid)",
+                            "authenticated" if uid else "anon", uid)
+        if not ok:
+            return ("error", err[:200])
+        return json.loads(out) if out else None
+
+    def expect_preview(name, kind, item, expected, uid=None):
+        got = preview(kind, item, uid)
+        verdict(name, got == expected, f"expected {expected!r}, got {got!r}")
+
+    # City groups: Augsburg's is approved; Kassel's has only been asked for.
+    owner("INSERT INTO groups (name, category, is_approved) VALUES ('Indians in Augsburg', 'City', true), "
+          "('Indians in Kassel', 'City', false) ON CONFLICT (name) DO NOTHING; "
+          "UPDATE groups SET is_approved = (name = 'Indians in Augsburg') WHERE name IN ('Indians in Augsburg', 'Indians in Kassel')")
+
+    # --- a Market listing ---------------------------------------------------------------------------------------------
+    sofa_photo = photo(ana, "3f2a9c1e.jpg")
+    sofa = post(ana, f"""INSERT INTO marketplace (user_id, title, description, price, category, location, image_url, share_preview)
+          VALUES (auth.uid(), 'Sofa, barely used', 'Grey three-seater. Call 0151 1234567.', '€120', 'Items',
+            'Haunstetter Str. 5, Augsburg', {sq(json.dumps([sofa_photo, photo(ana, '77aa.jpg')]))}, true) RETURNING id""")
+    sofa_preview = {"kind": "market", "label": "Item for sale", "city": "Augsburg", "image": sofa_photo}
+    expect_preview("a signed-out visitor gets the preview of a listing whose author turned it on: only the kind, the city "
+                   "and the first photo (no title, price, description, address or name)", "market", sofa, sofa_preview)
+    expect_preview("... and so does a member", "market", sofa, sofa_preview, uid=ben)
+    check("a new listing is members-only unless its author turns the preview on",
+          "INSERT INTO marketplace (user_id, title, price, category, location) VALUES (auth.uid(), 'Bike', '€80', 'Vehicles', "
+          "'Augsburg') RETURNING share_preview", as_user=ana, expect="f")
+
+    # The city of a free-text location: only a part that is exactly the city
+    # of an approved city group.
+    van = owner(f"INSERT INTO marketplace (user_id, title, price, category, location, share_preview) VALUES ('{ana}', "
+                "'Van', '€9,000', 'Vehicles', 'Augsburg', true) RETURNING id")
+    for location, city in (("Augsburg", "Augsburg"), ("  augsburg ,Bavaria", "Augsburg"), ("Bavaria, AUGSBURG", "Augsburg"),
+                           ("Hauptstraße 5 Augsburg", None), ("Augsburger Allee 3", None), ("Kassel", None),
+                           ("Nowhereville", None), ("", None)):
+        owner(f"UPDATE marketplace SET location = {sq(location)} WHERE id = '{van}'")
+        expect_preview(f"the location {location!r} gives the city {city!r}", "market", van,
+                       {"kind": "market", "label": "Vehicle", "city": city, "image": None})
+
+    # A housing listing: the kind of place, and the city from its details.
+    room = post(ana, "SELECT public.post_housing_listing('Room in a WG', 'Near the Dom. 450 € warm.', '', 'wg_room', "
+                     "'Munich ', private.today_in_germany() + 5, private.today_in_germany() + 90, 450, 900) ->> 'listing_id'")
+    check("ana turns on the preview of their housing listing",
+          f"UPDATE marketplace SET share_preview = true WHERE id = '{room}' RETURNING share_preview", as_user=ana, expect="t")
+    expect_preview("a housing listing: 'Housing · WG room' and the city of its details, without a photo",
+                   "market", room, {"kind": "market", "label": "Housing · WG room", "city": "Munich", "image": None})
+    old_room = owner(f"INSERT INTO marketplace (user_id, title, price, category, location, share_preview) VALUES ('{ana}', "
+                     "'Room from before', '€500', 'Housing', 'Augsburg', true) RETURNING id")
+    expect_preview("a housing listing from before the housing details: just 'Housing'", "market", old_room,
+                   {"kind": "market", "label": "Housing", "city": "Augsburg", "image": None})
+    owner(f"UPDATE housing_listings SET available_from = private.today_in_germany() - 30, "
+          f"available_until = private.today_in_germany() - 1 WHERE listing_id = '{room}'")
+    expect_preview("a housing listing past its last day has no preview (before the clean-up marks it expired)",
+                   "market", room, None)
+    owner(f"UPDATE housing_listings SET available_until = private.today_in_germany() + 30 WHERE listing_id = '{room}'")
+    for status in ("sold", "expired"):
+        owner(f"UPDATE marketplace SET status = '{status}' WHERE id = '{sofa}'")
+        expect_preview(f"a {status} listing has no preview", "market", sofa, None)
+    owner(f"UPDATE marketplace SET status = 'active' WHERE id = '{sofa}'")
+
+    # --- an event -------------------------------------------------------------------------------------------------------
+    ev_photo = photo(ana, "a1b2c3.jpg", "post-images")
+    party = post(ana, f"""INSERT INTO events (title, description, date, time, location, city, image_url, organizer_id, share_preview)
+          VALUES ('Diwali night', 'Dinner and dance, €15 at the door.', (private.today_in_germany() + 12)::text, '19:00',
+            'Kulturhaus, Maximilianstr. 1', 'Augsburg', {sq(ev_photo)}, auth.uid(), true) RETURNING id""")
+    day = lambda d: f"{d.strftime('%a')} {d.day} {d.strftime('%b %Y')}"
+    expect_preview("an event: 'Event', the city, the day and its photo (no time, place, organiser or who's going)",
+                   "event", party, {"kind": "event", "label": "Event", "city": "Augsburg", "day": day(today + timedelta(days=12)),
+                                    "image": ev_photo})
+    owner(f"UPDATE events SET date = private.today_in_germany()::text WHERE id = '{party}'")
+    expect_preview("... still on its day", "event", party,
+                   {"kind": "event", "label": "Event", "city": "Augsburg", "day": day(today), "image": ev_photo})
+    for when, name in (("(private.today_in_germany() - 1)::text", "a past event"),
+                       ("'Mar 25, 2027 • 10:00 AM'", "an event with an older, free-text date"),
+                       ("'2027-02-30'", "an event whose date isn't a real day")):
+        owner(f"UPDATE events SET date = {when} WHERE id = '{party}'")
+        expect_preview(f"{name} has no preview", "event", party, None)
+    owner(f"UPDATE events SET date = (private.today_in_germany() + 12)::text, city = 'Maximilianstr. 1' WHERE id = '{party}'")
+    verdict("an event's city field that isn't a city's name isn't shown",
+            (preview("event", party) or {}).get("city", "missing") is None, str(preview("event", party)))
+    owner(f"UPDATE events SET city = 'Augsburg' WHERE id = '{party}'")
+
+    # --- a question -------------------------------------------------------------------------------------------------------
+    ask = post(ana, """INSERT INTO help_requests (user_id, title, description, category, share_preview)
+          VALUES (auth.uid(), 'Which  dentist in Augsburg speaks Hindi?', 'My tooth hurts since Monday. I live near the station.',
+            'Health', true) RETURNING id""")
+    expect_preview("a question without answers: its title and city", "question", ask,
+                   {"kind": "question", "label": "Question", "city": "Augsburg", "image": None,
+                    "title": "Which dentist in Augsburg speaks Hindi?", "answers": 0})
+    for text in ("Dr. Rao near Königsplatz.", "Try the clinic in Haunstetten."):
+        post(ben, f"INSERT INTO help_responses (request_id, user_id, content) VALUES ('{ask}', auth.uid(), {sq(text)}) RETURNING id")
+    expect_preview("... and how many answers it has (not the answers, the description or the asker)", "question", ask,
+                   {"kind": "question", "label": "Question", "city": "Augsburg", "image": None,
+                    "title": "Which dentist in Augsburg speaks Hindi?", "answers": 2})
+    owner(f"UPDATE help_requests SET city = '' WHERE id = '{ask}'")
+    verdict("a question without a city: no city",
+            (preview("question", ask) or {}).get("city", "missing") is None, str(preview("question", ask)))
+    owner(f"UPDATE help_requests SET city = 'Augsburg' WHERE id = '{ask}'")
+
+    # --- a trip -------------------------------------------------------------------------------------------------------------
+    post(ana, "SELECT public.accept_travel_rules('2026-10-26') ->> 'accepted'")
+    flight = post(ana, "INSERT INTO travel_posts (user_id, kind, from_city, to_city, date_from, date_to, flight, help, note, "
+                       "share_preview) VALUES (auth.uid(), 'offer', 'Frankfurt', 'Delhi', private.today_in_germany() + 20, "
+                       "private.today_in_germany() + 20, 'LH 760', ARRAY['documents']::text[], 'Window seat, happy to help.', "
+                       "true) RETURNING id")
+    when = today + timedelta(days=20)
+    expect_preview("a trip: the route and the month (no dates, flight, note or person)", "trip", flight,
+                   {"kind": "trip", "label": "Trip Frankfurt → Delhi", "city": None, "image": None,
+                    "month": when.strftime("%B %Y")})
+    check("a request's window over two months, or two years: both months, never the days",
+          "SELECT private.preview_month('2026-11-25', '2026-12-03') || '|' || private.preview_month('2026-12-25', '2027-01-03')",
+          expect="November–December 2026|December 2026–January 2027")
+    owner(f"UPDATE travel_posts SET date_from = private.today_in_germany() - 2, date_to = private.today_in_germany() - 2 "
+          f"WHERE id = '{flight}'")
+    expect_preview("a trip whose last date has passed has no preview", "trip", flight, None)
+    owner(f"UPDATE travel_posts SET date_from = private.today_in_germany() + 20, date_to = private.today_in_germany() + 20 "
+          f"WHERE id = '{flight}'")
+
+    # --- the switch: only the author --------------------------------------------------------------------------------------
+    items = (("marketplace", "market", sofa), ("events", "event", party), ("help_requests", "question", ask),
+             ("travel_posts", "trip", flight))
+    for table, kind, item in items:
+        check(f"ana turns off the preview of their {kind} item", f"UPDATE {table} SET share_preview = false WHERE id = '{item}' "
+              "RETURNING share_preview", as_user=ana, expect="f")
+        expect_preview(f"... then it has none: {kind}", kind, item, None)
+        check(f"another member can't turn it on ({table})", f"UPDATE {table} SET share_preview = true WHERE id = '{item}' "
+              "RETURNING 1", as_user=ben, expect="")
+        check(f"... nor can an admin directly (they remove content with admin_moderate, C23) ({table})",
+              f"UPDATE {table} SET share_preview = true WHERE id = '{item}' RETURNING 1", as_user=ADMIN, expect="")
+        check(f"... nor a signed-out visitor ({table})", f"UPDATE {table} SET share_preview = true WHERE id = '{item}'",
+              role="anon", error_has="permission denied")
+        check(f"... it's still off ({table})", f"SELECT share_preview FROM {table} WHERE id = '{item}'", expect="f")
+        check(f"ana turns it on again ({table})", f"UPDATE {table} SET share_preview = true WHERE id = '{item}' "
+              "RETURNING share_preview", as_user=ana, expect="t")
+    check("another member can't post an item with a preview in the author's name",
+          f"INSERT INTO marketplace (user_id, title, price, share_preview) VALUES ('{ana}', 'Fake', '€1', true)",
+          as_user=ben, error_has="row-level security")
+    check("an item with the preview on, as its author edits other things: the switch stays",
+          f"UPDATE events SET title = 'Diwali night 2026' WHERE id = '{party}' RETURNING share_preview", as_user=ana, expect="t")
+
+    # --- the author must be a member other members see --------------------------------------------------------------------
+    cai_bike = post(cai, "INSERT INTO marketplace (user_id, title, price, category, location, share_preview) VALUES "
+                         "(auth.uid(), 'Bike', '€90', 'Vehicles', 'Augsburg', true) RETURNING id")
+    expect_preview("an approved member's listing has its preview", "market", cai_bike,
+                   {"kind": "market", "label": "Vehicle", "city": "Augsburg", "image": None})
+    check("our team blocks cai", block(cai), as_user=ADMIN, expect="blocked")
+    expect_preview("... then cai's listing has no preview", "market", cai_bike, None)
+    check("a member waiting for our check can't post", "INSERT INTO marketplace (user_id, title, price, share_preview) VALUES "
+          "(auth.uid(), 'Desk', '€30', true)", as_user=dia, error_has="row-level security")
+    dia_desk = owner(f"INSERT INTO marketplace (user_id, title, price, category, location, share_preview) VALUES ('{dia}', "
+                     "'Desk', '€30', 'Items', 'Augsburg', true) RETURNING id")
+    expect_preview("... and a listing of theirs has no preview", "market", dia_desk, None)
+    check("... nor can they change the switch", f"UPDATE marketplace SET share_preview = false WHERE id = '{dia_desk}' RETURNING 1",
+          as_user=dia, expect="")
+    owner(f"UPDATE profile_private SET verification_status = 'pending' WHERE id = '{ana}'")
+    expect_preview("ana sent back for our check (e.g. a new name): no previews of theirs", "market", sofa, None)
+    owner(f"UPDATE profile_private SET verification_status = 'approved' WHERE id = '{ana}'")
+    expect_preview("... approved again: they're back", "market", sofa, sofa_preview)
+
+    # --- removed, missing, or not a kind ----------------------------------------------------------------------------------
+    gone = owner(f"INSERT INTO marketplace (user_id, title, price, category, location, share_preview) VALUES ('{ana}', "
+                 "'Fake designer bags', '€20', 'Items', 'Augsburg', true) RETURNING id")
+    check("our team removes a listing", f"SELECT {moderate('market', gone, 'remove', facts='it sold counterfeit bags')} IS NOT NULL",
+          as_user=ADMIN, expect="t")
+    expect_preview("... then it has no preview", "market", gone, None)
+    expect_preview("... the same answer as for an id that was never there", "market", "6e1f0000-0000-4000-8000-0000000000ff", None)
+    for kind, item, name in (("listing", sofa, "an unknown kind"), ("MARKET", sofa, "a kind in capitals"),
+                             ("", sofa, "an empty kind"), ("event", sofa, "a listing asked for as an event"),
+                             ("trip", ask, "a question asked for as a trip"), ("market", "NULL", "no id")):
+        expect_preview(f"{name}: nothing", kind, item, None)
+
+    # --- photos ---------------------------------------------------------------------------------------------------------------
+    for url, name in (("data:image/png;base64,iVBORw0KGgo=", "a data: link"), ("javascript:alert(1)", "a javascript: link"),
+                      ("https://evil.example.com/x.jpg", "another site's link"),
+                      (photo(ana, "x.jpg").replace("https://", "http://"), "a link without https"),
+                      (photo(ben, "x.jpg"), "a file in another member's folder"),
+                      (photo(ana, "x.jpg", "avatars"), "a profile photo"),
+                      (f"{STORE}/marketplace-images/{ana}/../{ben}/x.jpg", "a path that climbs out of the folder"),
+                      (photo(ana, 'x".jpg'), "a file name with a quote"),
+                      (photo(ana, "x.jpg") + "?<script>", "a link with more after it")):
+        owner(f"UPDATE marketplace SET image_url = {sq(json.dumps([url]))} WHERE id = '{sofa}'")
+        got = preview("market", sofa)
+        verdict(f"never shown as its photo: {name}", isinstance(got, dict) and got.get("image", "missing") is None
+                and got.get("label") == "Item for sale", str(got))
+    owner(f"UPDATE marketplace SET image_url = {sq(photo(ana, 'single.jpg'))} WHERE id = '{sofa}'")
+    verdict("a listing from before the photo lists (a single link) shows it",
+            (preview("market", sofa) or {}).get("image") == photo(ana, "single.jpg"), str(preview("market", sofa)))
+    own_store = "https://myproject.supabase.co/storage/v1/object/public"
+    owner("INSERT INTO private.app_config (key, value) VALUES ('storage_public_url', 'https://myproject.supabase.co/storage/v1/object/public/')")
+    verdict("with the project's Storage address set, another project's link isn't shown",
+            (preview("market", sofa) or {}).get("image", "missing") is None, str(preview("market", sofa)))
+    owner(f"UPDATE marketplace SET image_url = {sq(json.dumps([f'{own_store}/marketplace-images/{ana}/mine.jpg']))} WHERE id = '{sofa}'")
+    verdict("... and the project's own is", (preview("market", sofa) or {}).get("image") == f"{own_store}/marketplace-images/{ana}/mine.jpg",
+            str(preview("market", sofa)))
+    owner("DELETE FROM private.app_config WHERE key = 'storage_public_url'")
+    owner(f"UPDATE marketplace SET image_url = {sq(json.dumps([sofa_photo]))} WHERE id = '{sofa}'")
+
+    # --- signed-out visitors read nothing else ---------------------------------------------------------------------------
+    for table in ("marketplace", "events", "help_requests", "help_responses", "travel_posts", "housing_listings"):
+        check(f"signed-out visitors can't read {table}", f"SELECT count(*) FROM {table}", role="anon", error_has="permission denied")
+    for call in ("private.preview_image('x', NULL)", "private.preview_city_from_location('Augsburg')",
+                 "private.preview_market_label('Items', NULL)"):
+        check(f"... nor call {call.split('(')[0]}", f"SELECT {call}", role="anon", error_has="permission denied")
+    check("public.public_preview is for anyone, and runs as its owner",
+          "SELECT has_function_privilege('anon', 'public.public_preview(text, uuid)', 'EXECUTE') "
+          "AND has_function_privilege('authenticated', 'public.public_preview(text, uuid)', 'EXECUTE') "
+          "AND NOT has_function_privilege('public', 'public.public_preview(text, uuid)', 'EXECUTE') "
+          "AND (SELECT prosecdef AND provolatile = 's' AND proconfig = ARRAY['search_path=\"\"'] FROM pg_proc "
+          "WHERE oid = 'public.public_preview(text, uuid)'::regprocedure)", expect="t")
+
+    # --- "Download my data" -----------------------------------------------------------------------------------------------
+    check("'Download my data' has the switch of each of the member's items", f"""
+          SELECT concat_ws('|', (SELECT bool_and(x->>'share_preview' IS NOT NULL) FROM jsonb_array_elements(d->'marketplace_listings') x)::text,
+            (SELECT x->>'share_preview' FROM jsonb_array_elements(d->'events_organised') x WHERE x->>'id' = '{party}'),
+            (SELECT x->>'share_preview' FROM jsonb_array_elements(d->'help_requests') x WHERE x->>'id' = '{ask}'),
+            (SELECT x->>'share_preview' FROM jsonb_array_elements(d->'travel_posts') x WHERE x->>'id' = '{flight}'))
+          FROM (SELECT public.export_my_data() d) y""", as_user=ana, expect="true|true|true|true")
+    verdict("... through the whole rows it already gives (the update doesn't change it)",
+            "export_my_data" not in re.sub(r"--[^\n]*", "", migration), "the migration redefines export_my_data")
+
+    # --- the site and the database ----------------------------------------------------------------------------------------
+    proc = subprocess.run(["node", "--input-type=module", "-e",
+                           "import { PREVIEW_MARKET_LABELS } from './src/content/preview.js';"
+                           "import { HOUSING_KINDS, HOUSING_KIND_KEYS } from './src/content/housing.js';"
+                           "const pairs = [...Object.keys(PREVIEW_MARKET_LABELS).map((c) => [c, null, PREVIEW_MARKET_LABELS[c]]), "
+                           "...HOUSING_KIND_KEYS.map((k) => ['Housing', k, `Housing · ${HOUSING_KINDS[k].label}`])];"
+                           "console.log(JSON.stringify(pairs))"],
+                          cwd=root, capture_output=True, text=True)
+    pairs = json.loads(proc.stdout) if proc.returncode == 0 else []
+    sql = " UNION ALL ".join(f"SELECT {sq(c)} || '|' || COALESCE({sq(k) if k else 'NULL'}, '') || '|' || "
+                             f"private.preview_market_label({sq(c)}, {sq(k) if k else 'NULL'})" for c, k, _ in pairs)
+    ok, out, err = psql(sql) if pairs else (False, "", proc.stderr)
+    verdict("the site and the database say each Market kind the same way",
+            ok and len(pairs) == 12 and out.splitlines() == [f"{c}|{k or ''}|{label}" for c, k, label in pairs],
+            f"node: {proc.stderr[:200]} db: {out} {err[:200]}")
+
+    # --- the one-off file; running the migration again -------------------------------------------------------------------
+    with open(os.path.join(root, "supabase", "oneoff", "2026-10-31-public-previews", "run_in_sql_editor.sql"),
+              encoding="utf-8") as f:
+        oneoff = f.read()
+    marker = "-- ==== 20261031000000_public_previews.sql ====\n"
+    guard = oneoff[:oneoff.index(marker)] if marker in oneoff else ""
+    verdict("the one-off file is its guard (after the housing search, once) and then the migration as it is",
+            marker in oneoff and oneoff[oneoff.index(marker) + len(marker):] == migration
+            and "to_regclass('public.housing_listings') IS NULL" in guard
+            and "to_regprocedure('public.public_preview(text, uuid)') IS NOT NULL" in guard, "the file differs")
+    check("... and refuses to run a second time", oneoff, error_has="This update has already run")
+    switched = "SELECT (SELECT count(*) FILTER (WHERE share_preview) FROM marketplace) || '|' || " \
+               "(SELECT count(*) FILTER (WHERE share_preview) FROM events) || '|' || " \
+               "(SELECT count(*) FILTER (WHERE share_preview) FROM help_requests) || '|' || " \
+               "(SELECT count(*) FILTER (WHERE share_preview) FROM travel_posts)"
+    kept = psql(switched)[1]
+    ok, _, err = psql(migration)
+    verdict("the migration can be run again", ok, err[:300])
+    check("... and keeps every switch as it was", switched, expect=kept)
+    expect_preview("... and the previews", "market", sofa, sofa_preview)
+    check("... and the rules for who may change them", f"UPDATE marketplace SET share_preview = false WHERE id = '{sofa}' RETURNING 1",
+          as_user=ben, expect="")
 
 
 if __name__ == "__main__":
