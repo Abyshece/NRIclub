@@ -90,6 +90,18 @@ export const previewLine = (p) => [p.label, p.city, p.day || p.month].filter(Boo
 // "12 answers, join to read them".
 export const answersText = (n) => (n === 1 ? "1 answer, join to read it" : n ? `${n} answers, join to read them` : "No answers yet, join to answer it");
 
+// ---- Questions: their categories, and which have no preview ---------------
+
+// The categories of a question in Ask (the form in src/Dashboard.jsx).
+export const QUESTION_CATEGORIES = ["General", "Housing", "Health", "Legal/Visa", "Education", "Jobs", "Travel", "Money & tax", "Family"];
+// A question's title in these can show someone's health or origin (Art. 9
+// GDPR), so they get no preview: no switch, and the database gives none
+// (private.question_preview_allowed). Like the database, any category naming
+// health, legal matters or visas counts (supabase/tests/rls_test.py
+// compares them).
+export const NO_PREVIEW_CATEGORIES = ["Health", "Legal/Visa"];
+export const questionPreviewAllowed = (category) => !/(health|legal|visa)/i.test(String(category ?? ""));
+
 // ---- The author's switch, in each post form and on their own items -------
 
 export const SWITCH_LABEL = "Show a preview to people who aren't members yet";
@@ -99,10 +111,17 @@ export const SWITCH_HELP = {
   question: "People who open the link without an account see the title, your city and how many answers it has. Never the description, the answers or your name.",
   trip: "People who open the link without an account see the route and the month. Never the dates, flight, note or your name.",
 };
+// A line of its own under a question's switch and in its "Turn on the
+// preview?": a question's title can say more about the asker than they mean
+// to show.
+export const PREVIEW_WARNING = {
+  question: "The title will be visible to anyone with the link. Don't turn this on if it shows your health, religion or origin.",
+};
 
 // ---- Share ---------------------------------------------------------------
 
-// When the author shares their own item while its preview is off.
+// When the author shares their own item while its preview is off (with
+// PREVIEW_WARNING under it, for a question).
 export const CONFIRM_TITLE = "Share the link";
 export const CONFIRM_TEXT = {
   market: "People without an account will see the photo, kind and city. Turn on the preview?",

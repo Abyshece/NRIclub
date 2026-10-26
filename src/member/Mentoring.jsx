@@ -20,7 +20,15 @@ const input = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1
 const label = { display: "block", fontSize: 11, fontWeight: 700, color: "#5F5E5B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontFamily: font };
 const h3 = { fontSize: 16, fontWeight: 700, color: INK, fontFamily: font, marginBottom: 4 };
 
-export const MENTOR_AREAS = ["Job search", "CV & LinkedIn review", "Interview practice", "Moving here", "Studying abroad", "Visas & residence", "Starting a business", "Career change"];
+// "Moving & visa experiences (no legal advice)" replaced "Visas & residence"
+// (October 2026): mentors share their own experience, never legal advice
+// (Terms of Use, section 7; the German Legal Services Act, RDG). Members who
+// chose the old topic keep it until they change their topics.
+export const MENTOR_AREAS = ["Job search", "CV & LinkedIn review", "Interview practice", "Moving here", "Studying abroad", "Moving & visa experiences (no legal advice)", "Starting a business", "Career change"];
+
+// Where mentor ratings show (§ 5b(3) UWG: how reviews are collected and
+// whether they're checked), in the lawyer's words.
+export const RATINGS_NOTE = "Ratings come from members who booked a session with this mentor, one per session, after its time. We don't check that the session took place.";
 
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
@@ -199,6 +207,7 @@ export function BookingModal({ mentor, onClose, onMessage, Avatar }) {
                 <label htmlFor="book-topic" style={label}>What would you like help with?</label>
                 {areas.length > 0 && <div style={{ marginBottom: 8 }}><Chips items={areas} selected={[topic]} onPick={(t) => setTopic(topic === t ? "" : t)} /></div>}
                 <input id="book-topic" style={input} value={topic} maxLength={200} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. Finding a job as a software engineer" />
+                <p style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, margin: "6px 0 0", fontFamily: font }}>Mentors share their own experience. That isn't legal, visa or tax advice; for your own case see a lawyer or tax adviser.</p>
               </div>
               <div style={{ marginBottom: 16 }}>
                 <label htmlFor="book-note" style={label}>A short note for {first} (optional)</label>
@@ -235,6 +244,7 @@ export function MentorProfileCard({ member, rating, onBook, isSelf, Avatar, me, 
         <div style={{ flex: 1, minWidth: 200 }}>
           <h3 style={h3}>🤝 Free mentoring</h3>
           <RatingLine rating={rating} />
+          {rating?.reviews > 0 && <p style={{ fontSize: 11.5, color: MUTED, lineHeight: 1.45, margin: "4px 0 0", fontFamily: font }}>{RATINGS_NOTE}</p>}
           {member.mentorAreas && <div style={{ marginTop: 10 }}><AreaChips text={member.mentorAreas} /></div>}
         </div>
         {!isSelf && <button onClick={onBook} style={btn}>Book a session</button>}
@@ -286,6 +296,7 @@ export function MentorsList({ user, people, ready = true, ratings, onBook, openM
           <button key={a || "all"} onClick={() => setArea(a)} aria-pressed={area === a} style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 20, border: `1px solid ${area === a ? INK : "#E0E0DE"}`, background: area === a ? INK : "#fff", color: area === a ? "#fff" : "#5F5E5B", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{a || "All mentors"}</button>
         ))}
       </div>
+      <p style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, margin: "0 0 12px", fontFamily: font }}>{RATINGS_NOTE}</p>
       {!ready ? (
         <p role="status" style={{ fontSize: 13, color: FAINT, fontFamily: font }}>Loading mentors…</p>
       ) : mentors.length === 0 ? (

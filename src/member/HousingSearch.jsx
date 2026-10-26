@@ -3,6 +3,7 @@ import * as api from "../supabaseApi";
 import { apiErrorMessage, isNetworkError, NETWORK_MESSAGE } from "./profile";
 import { todayInGermany } from "../content/whatson";
 import { CITIES_ABROAD } from "../content/travel";
+import { isPausedCity } from "../content/cities";
 import {
   HOUSING_KINDS, HOUSING_KIND_KEYS, FLEX_DAYS, AHEAD_DAYS, NOTE_LIMIT, MAX_RENT, MAX_DEPOSIT, MAX_SIZE, SAFETY_TITLE,
   SAFETY_POINTS, COPY, addDays, availability, money, kindLabel, fitLabel, lookingSummary, lookingState, listingState,
@@ -32,6 +33,8 @@ const INK = "#37352F";
 const MUTED = "#6B6A67";
 const FAINT = "#9B9A97";
 const MESSAGE_LIMIT = 5000;
+// City suggestions (members can type any city), without the paused UK ones.
+const HOUSING_CITIES = CITIES_ABROAD.filter((c) => !isPausedCity(c));
 const card = { background: "#fff", borderRadius: 14, border: "1px solid #E8E7E4", padding: "16px 18px", marginBottom: 12, fontFamily: font, boxSizing: "border-box" };
 const btn = { padding: "9px 16px", minHeight: 40, borderRadius: 8, border: "none", background: INK, color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 };
 const btnLight = { ...btn, border: "1px solid #E0E0DE", background: "#fff", color: INK };
@@ -295,9 +298,12 @@ function MessageDialog({ match, title, onCancel, onSend }) {
 
 // item: the Market listing. onMessage(userId, text) sends the first message
 // and resolves to why it couldn't ("" when sent). onChanged(details) after
-// a change or renewal. Shows nothing for a listing without details (from
-// before, or before the database update).
-export function HousingListingInfo({ item, user, Avatar, onMessage, onChanged }) {
+// a change or renewal. onReport(target) opens the report dialog for a
+// "Looking for a place" post the listing's author sees (reportedIds: what
+// the member already reported, which has no Report button). Shows nothing
+// for a listing without details (from before, or before the database
+// update).
+export function HousingListingInfo({ item, user, Avatar, onMessage, onChanged, onReport = null, reportedIds = null }) {
   const today = todayInGermany();
   const [h, setH] = useState(undefined);
   const [editing, setEditing] = useState(null);
@@ -360,7 +366,7 @@ export function HousingListingInfo({ item, user, Avatar, onMessage, onChanged })
           <h3 id="housing-edit-title" style={{ fontSize: 15, fontWeight: 700, color: INK, margin: "0 0 10px", fontFamily: font }}>Change the details</h3>
           <HousingFields value={editing} onChange={(v) => { setEditing(v); setError(""); }} today={today} withCity listId="housing-edit-cities"
             minFrom={h.available_from < today ? h.available_from : today} idPrefix="housing-edit" error={error} />
-          <datalist id="housing-edit-cities">{CITIES_ABROAD.map((c) => <option key={c} value={c} />)}</datalist>
+          <datalist id="housing-edit-cities">{HOUSING_CITIES.map((c) => <option key={c} value={c} />)}</datalist>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
             <button type="button" onClick={() => { setEditing(null); setError(""); }} disabled={busy} style={btnLight}>Cancel</button>
             <button type="button" onClick={save} disabled={busy} style={btn}>{busy ? "Saving…" : "Save changes"}</button>
@@ -398,7 +404,16 @@ export function HousingListingInfo({ item, user, Avatar, onMessage, onChanged })
                 {(m.furnished || m.anmeldung) && <p style={{ ...text, fontSize: 12 }}>{[m.furnished && "Furnished", m.anmeldung && "Anmeldung needed"].filter(Boolean).join(" · ")}</p>}
                 {m.note && <p style={{ ...text, fontSize: 12, color: INK, whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 4 }}>{m.note}</p>}
               </div>
-              <button type="button" onClick={() => setMessaging(m)} style={{ ...btn, ...btnSmall }}>Message</button>
+              <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <button type="button" onClick={() => setMessaging(m)} style={{ ...btn, ...btnSmall }}>Message</button>
+                {onReport && !reportedIds?.has(m.id) && (
+                  <button type="button" onClick={() => onReport({ type: "housing_wanted", id: m.id, userId: m.user_id, name: lookingSummary(m) })}
+                    aria-label={`Report ${m.name}'s "Looking for a place" post`} title="Report"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 8, minWidth: 36, minHeight: 36, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><path d="M4 22v-7" /></svg>
+                  </button>
+                )}
+              </span>
             </article>
           ))}
         </section>
@@ -469,8 +484,11 @@ function LookingForm({ initial, today, onCancel, onSaved }) {
       </label>
       <label htmlFor="looking-note" style={label}>A short note (optional)</label>
       <textarea id="looking-note" value={f.note} maxLength={NOTE_LIMIT} onChange={(e) => set("note", e.target.value)} placeholder={COPY.lookingNoteHint}
-        style={{ ...input, minHeight: 80, resize: "vertical" }} />
-      <p style={{ ...text, fontSize: 11, textAlign: "right", margin: "2px 0 10px" }}>{f.note.length} / {NOTE_LIMIT}</p>
+        aria-describedby="looking-note-agg" style={{ ...input, minHeight: 80, resize: "vertical" }} />
+      <p style={{ display: "flex", justifyContent: "space-between", gap: 10, margin: "2px 0 10px" }}>
+        <span id="looking-note-agg" style={{ ...text, fontSize: 11 }}>{COPY.aggNote}</span>
+        <span style={{ ...text, fontSize: 11, flexShrink: 0 }}>{f.note.length} / {NOTE_LIMIT}</span>
+      </p>
       <SafetyNote style={{ marginBottom: 12 }} />
       {error && <p role="alert" style={{ ...text, color: "#B91C1C", marginBottom: 10 }}>{error}</p>}
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
@@ -830,7 +848,7 @@ export default function HousingSearch({ user, onOpen, onContact, onReport, repor
         </section>
       )}
 
-      <datalist id="housing-cities">{CITIES_ABROAD.map((c) => <option key={c} value={c} />)}</datalist>
+      <datalist id="housing-cities">{HOUSING_CITIES.map((c) => <option key={c} value={c} />)}</datalist>
       {lookingForm && <LookingForm initial={lookingForm} today={today} onCancel={() => setLookingForm(null)} onSaved={savedLooking} />}
     </div>
   );

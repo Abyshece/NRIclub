@@ -141,6 +141,7 @@ export const REPORT_KINDS = {
   event: "event",
   help: "question",
   market: "Market listing",
+  housing_wanted: "\"Looking for a place\" post",
   travel: "travel post",
   review: "mentoring review",
   place: "place",
