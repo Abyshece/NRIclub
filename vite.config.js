@@ -19,7 +19,7 @@ import { docToHtml, CONTACT_EMAIL } from './src/content/legal/doc.js';
 import { privacyDoc } from './src/content/legal/privacy.js';
 import { termsDoc, TERMS_VERSION, TERMS_ARCHIVE } from './src/content/legal/terms.js';
 import { REPORT_HREF, REPORT_LINK_TEXT, REPORT_MAILTO, REPORT_PAGE } from './src/content/legal/reporting.js';
-import { APP_REWRITE_SOURCE, APP_SECTIONS } from './src/content/routes.js';
+import { APP_REWRITE_SOURCE, APP_SECTIONS, PREVIEW_REWRITES, PREVIEW_FUNCTION } from './src/content/routes.js';
 
 const SITE = 'https://nriclub.app';
 
@@ -168,10 +168,34 @@ function publicPages() {
       if (!rewrites.some((r) => r.source === '/(.*)' && r.destination === '/app.html' && r.has?.[0]?.value === 'admin.nriclub.app')) {
         throw new Error('vercel.json must send every address on admin.nriclub.app to the app (a rewrite with "has" the host admin.nriclub.app).');
       }
-      // /api/collect (api/collect.js) receives the website analytics: no
+      // /api/collect (api/collect.js) receives the website analytics and
+      // /api/preview (api/preview.js) answers with the link previews: no
       // rewrite of the main site may claim /api/.
       if (APP_SECTIONS.includes('api') || rewrites.some((r) => !r.has && /^\/\(?api\b/.test(r.source))) {
-        throw new Error('vercel.json and src/content/routes.js must leave /api/ to the site\'s functions (api/collect.js): take "api" out of APP_SECTIONS and the rewrites.');
+        throw new Error('vercel.json and src/content/routes.js must leave /api/ to the site\'s functions (api/collect.js, api/preview.js): take "api" out of APP_SECTIONS and the rewrites.');
+      }
+      // A shared item's address (/market/<id> …) goes to api/preview.js:
+      // after the admin site's rule (and never on its host), before the
+      // app's own rule, which would otherwise answer it without a preview.
+      const adminAt = rewrites.findIndex((r) => r.source === '/(.*)' && r.has?.[0]?.value === 'admin.nriclub.app');
+      const appAt = rewrites.findIndex((r) => r.source === APP_REWRITE_SOURCE && !r.has);
+      const same = (r, w) => r.source === w.source && r.destination === w.destination && !r.has
+        && JSON.stringify((r.missing || []).map((m) => [m.type, m.value])) === JSON.stringify(w.missing.map((m) => [m.type, m.value]));
+      for (const want of PREVIEW_REWRITES) {
+        const at = rewrites.findIndex((r) => same(r, want));
+        if (at < 0 || at < adminAt || at > appAt) {
+          throw new Error(`vercel.json must have the rewrite ${JSON.stringify(want)} after the admin site's rule and before the app's (PREVIEW_REWRITES in src/content/routes.js).`);
+        }
+        if (!APP_SECTIONS.includes(want.source.split('/')[1])) {
+          throw new Error(`${want.source}: the app must have this page too (APP_SECTIONS in src/content/routes.js).`);
+        }
+      }
+      if (!fs.existsSync(path.join(root, `${PREVIEW_FUNCTION.slice(1)}.js`))) {
+        throw new Error(`vercel.json sends shared items to ${PREVIEW_FUNCTION}, but ${PREVIEW_FUNCTION.slice(1)}.js is missing.`);
+      }
+      const extra = rewrites.filter((r) => /^\/api\//.test(r.destination || '') && !PREVIEW_REWRITES.some((w) => same(r, w)));
+      if (extra.length) {
+        throw new Error(`vercel.json sends these to a function, but src/content/routes.js doesn't list them: ${JSON.stringify(extra)}.`);
       }
       if (!hasImprint()) {
         this.warn('src/content/imprint.js has no name and address yet: no Impressum page, and the Terms and Privacy Policy say NRIClub is run by its founder in Germany.');
