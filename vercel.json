@@ -1,6 +1,10 @@
 {
   "rewrites": [
     { "source": "/(.*)", "has": [{ "type": "host", "value": "admin.nriclub.app" }], "destination": "/app.html" },
+    { "source": "/market/:id", "missing": [{ "type": "host", "value": "admin.nriclub.app" }], "destination": "/api/preview?kind=market&id=:id" },
+    { "source": "/events/:id", "missing": [{ "type": "host", "value": "admin.nriclub.app" }], "destination": "/api/preview?kind=event&id=:id" },
+    { "source": "/help/:id", "missing": [{ "type": "host", "value": "admin.nriclub.app" }], "destination": "/api/preview?kind=question&id=:id" },
+    { "source": "/travel/:id", "missing": [{ "type": "host", "value": "admin.nriclub.app" }], "destination": "/api/preview?kind=trip&id=:id" },
     { "source": "/(find|groups|events|help|docs|market|messages|profile|u|post|mentoring|mentors|city|guides|whats-on|travel|ambassador|impressum|terms|privacy|report)(/.*)?", "destination": "/app.html" }
   ],
   "headers": [

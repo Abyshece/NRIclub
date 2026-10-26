@@ -126,10 +126,10 @@ references the member cascades, except where noted).
 
 | | |
 |---|---|
-| Purpose | Provide groups, posts, comments, likes, guides (docs) and comments, questions and answers (incl. urgent questions to up to 500 city members), events and RSVPs, Market listings, places and recommendations, Namaste connections, mentoring slots, bookings and reviews, blocks, settings |
+| Purpose | Provide groups, posts, comments, likes, guides (docs) and comments, questions and answers (incl. urgent questions to up to 500 city members), events and RSVPs, Market listings, travel board posts, places and recommendations, Namaste connections, mentoring slots, bookings and reviews, blocks, settings |
 | Legal basis | Art. 6(1)(b); Art. 9(2)(a) where content reveals special categories |
-| Data | The content itself, photos (re-encoded as JPEG in the browser before upload, which removes EXIF data such as GPS position; random file names), timestamps, author |
-| Recipients | Approved members (bookings: only mentor and mentee; blocks and settings: only the member); admins |
+| Data | The content itself, photos (re-encoded as JPEG in the browser before upload, which removes EXIF data such as GPS position; random file names), timestamps, author; for Market listings, events, questions and travel board posts, the author's preview switch (`share_preview`, No. 20) |
+| Recipients | Approved members (bookings: only mentor and mentee; blocks and settings: only the member); admins. A Market listing, event, question or travel board post whose author turned its preview on: anyone with its link sees the preview only (No. 20) |
 | Retention | Until deleted by the member or account deletion. Photo files go with their post, listing or event (deleted by the site), or within 7 days at most when left behind (photo clean-up). Places and groups the member created stay without the creator (`created_by` set to NULL) |
 
 ### 6. Private messages
@@ -286,8 +286,23 @@ Policy 2026-10-24; the site shows "Coming soon" before it).
 | Legal basis | Art. 6(1)(b); Art. 9(2)(a) where content reveals special categories. The limits: Art. 6(1)(f) (keeping the Market free of misuse) |
 | Data subjects | Members who post housing listings or "Looking for a place" posts |
 | Data | Housing details of a Market listing: kind of place, city, available from and until (or open-ended), warm rent, deposit, size, furnished, Anmeldung possible, when it expires or was renewed (`public.housing_listings`; the listing itself in `public.marketplace`, No. 5). Looking posts: kinds of place, city, dates, highest rent, furnished or Anmeldung needed, note, on/off (`public.housing_wanted`). When a member posted either or changed a listing's details, for the limits (`private.housing_post_log`). Matching notices (type `housing_match`, No. 7). Search terms aren't stored. No fields or filters for gender, religion, caste, origin, nationality, language or diet (AGG) |
-| Recipients | Listing details: approved members and admins. Looking posts: the author, admins, and the authors of listings they match (`public.housing_matches`, with name and photo). In "Download my data" |
+| Recipients | Listing details: approved members and admins; with the listing's preview on, anyone with its link sees the kind of place and city only (No. 20). Looking posts: the author, admins, and the authors of listings they match (`public.housing_matches`, with name and photo). In "Download my data" |
 | Retention | Listings: shown until their "until" date, or 60 days after posting or renewal if open-ended; deleted 30 days after that (with their Market listing and matching notices) unless renewed. Looking posts: until their end date, or 60 days without one; deleted 30 days after. Limit counts: 30 days. All deleted with the account. Run by `private.housing_cleanup()` (nightly pg_cron job `nriclub-housing-cleanup`) |
+
+### 20. Previews of shared items (public link previews)
+
+Since the database update `20261031000000_public_previews.sql` and the
+Edge Function `api/preview.js` (Privacy Policy 2026-10-26, "Previews of
+what you share"; before the update every shared link shows "for members").
+
+| | |
+|---|---|
+| Purpose | Let a member show a Market listing, event, question or travel board post they posted to people who aren't members yet (e.g. in a WhatsApp group), with a link card, and invite them to join |
+| Legal basis | Art. 6(1)(b): the author's own choice, per item, as part of the service; off by default (Art. 25(2)), existing items stay members-only. A question's title can reveal special categories: Art. 9(2)(a), the consent of No. 8 |
+| Data subjects | Members who turn a preview on |
+| Data | `share_preview` on `public.marketplace`, `public.events`, `public.help_requests`, `public.travel_posts` (set by the author only: the tables' UPDATE policies; admins don't change it, removing the item ends it). What `public.public_preview` gives anyone: Market listing: first photo, kind (e.g. "Housing · WG room"), city; event: photo, "Event", city, day; question: title, city, number of answers; trip: route, month. Never the author's name or photo, price, rent, deposit, description, time, place, flight, note, exact dates, answers, contact details or address. A city only from a city field, or where a part of a listing's free-text location exactly matches an approved city group. Photos only from our Storage buckets, the author's own folder. Only while the item is live and its author is approved and not blocked; otherwise nothing, the same answer as for an item that doesn't exist |
+| Recipients | Anyone with the link, and the apps it's shared in (their crawlers fetch the card). Vercel (Edge Function `/api/preview`, which fetches the preview with the site's public key and caches the page for at most 60 seconds; transfer safeguard as for No. 11). Pages are `noindex`, not linked from public pages or the sitemap |
+| Retention | Not stored separately: the preview is read from the item each time. It ends when the author turns it off (within 60 seconds), when the item ends, is deleted or removed, or while the author isn't approved or is blocked. Copies the apps made of a card are outside our control. The switch is in "Download my data" (with the items) and goes with the item |
 
 ## Technical and organisational measures
 

@@ -28,6 +28,8 @@ import { CompactEvent } from "./WhatsOnItems";
 import { useWhatsOn } from "./whatsOnLive";
 import { PROFILE_ITEMS, missingItems, reminderKind } from "./content/profileReminders";
 import { PrivacySettingsLink } from "./ConsentBanner";
+import { PreviewSwitch, ShareButton, useShare } from "./member/SharePreview";
+import { LINK_COPIED, SWITCH_FAILED } from "./content/preview";
 
 // The application to be a city ambassador, loaded when it is opened.
 const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
@@ -158,6 +160,7 @@ const eventForm = (e) => {
   return {
     title: e.title || "", date: day === null ? "" : dateValue(new Date(day)), time,
     location: e.location === "TBD" ? "" : e.location || "", city: e.city || "", description: e.description || "", link: e.link || "",
+    sharePreview: !!e.sharePreview,
   };
 };
 const isPastEvent = (e) => {
@@ -190,6 +193,7 @@ const toMarketItem = (m) => ({
   id: m.id, user_id: m.user_id, title: m.title, description: m.description, price: m.price, category: m.category, location: m.location,
   seller: m.profiles?.name || "User", sellerHidden: !!m.profiles?.unlisted, date: new Date(m.created_at).toLocaleDateString(),
   photos: listingPhotos(m.image_url), color: ["#2D1B4E","#1B3A4E","#3A2E1B","#1B4E3A"][Math.floor(Math.random()*4)],
+  sharePreview: !!m.share_preview,
 });
 
 // The tags stored with a post: its hashtags, each once, plus the
@@ -711,7 +715,7 @@ const toHelp = (h, responses) => ({
   id: h.id, userId: h.user_id, title: h.title, description: h.description, category: h.category, urgency: h.urgency, status: h.status,
   city: h.city || "", urgent: !!h.urgent || h.urgency === "High", bestResponseId: h.best_response_id || null,
   user: h.profiles?.name || "User", avatar: h.profiles?.avatar_url || "", userHidden: !!h.profiles?.unlisted, timestamp: new Date(h.created_at).getTime(),
-  responses: responses ?? (h.responses_count || 0),
+  responses: responses ?? (h.responses_count || 0), sharePreview: !!h.share_preview,
 });
 
 // The small sign on a notification's avatar, by type.
@@ -789,7 +793,7 @@ const EmptyCard = ({ text, action, onAction }) => (
 // ============================================================================
 // The page an address points at. Every page has its own address, so links
 // can be shared and the browser's Back and Forward buttons work.
-//   /  /find  /groups[/id]  /events[/id]  /help  /docs[/id]  /market[/id]
+//   /  /find  /groups[/id]  /events[/id]  /help[/id]  /docs[/id]  /market[/id]
 //   /messages[/conversation id]  /profile  /u/<member id>  /post/<post id>
 //   /city/<city> (the public city page's address; members get its group)
 //   /guides[/<slug>] (the public guides; members get them in Guides)
@@ -806,7 +810,7 @@ const parsePath = (path, selfId) => {
     case "find": return { view: "network" };
     case "groups": return { view: "groups", pending: id ? { kind: "group", id } : null };
     case "events": return { view: "events", pending: id ? { kind: "event", id } : null };
-    case "help": return { view: "help" };
+    case "help": return { view: "help", pending: id ? { kind: "question", id } : null };
     case "docs": return { view: "docs", pending: id ? { kind: "doc", id } : null };
     case "market": return { view: "market", pending: id ? { kind: "market", id } : null };
     case "messages": return { view: "messages", convo: id || null };
@@ -1859,7 +1863,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       case "ambassador": return "/ambassador";
       case "groups": return selectedGroup ? `/groups/${selectedGroup.id}` : "/groups";
       case "events": return "/events";
-      case "help": return "/help";
+      case "help": return selectedHelp ? `/help/${selectedHelp}` : "/help";
       case "docs": return selectedDoc ? `/docs/${selectedDoc.id}` : "/docs";
       case "market": return "/market";
       case "messages": return selectedConvo ? `/messages/${selectedConvo}` : "/messages";
@@ -1899,6 +1903,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       setExpandedMarketItem(null);
       setSelectedGroup(null);
       setSelectedDoc(null);
+      setSelectedHelp(null);
       setSelectedConvo(r.convo || null);
       if (r.member) setMemberId(r.member);
       setFindTab(r.findTab || "people");
@@ -1914,6 +1919,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   useEffect(() => {
     if (!pendingRoute || !canBrowse) return;
     const { kind, id } = pendingRoute;
+    // A question (/help/<id>): Ask opens at it, read again (it may be newer
+    // than the list), once the list is there to scroll to.
+    if (kind === "question") {
+      if (!listsLoaded) return;
+      setPendingRoute(null);
+      setSelectedHelp(id.toLowerCase());
+      openQuestion(id.toLowerCase());
+      return;
+    }
     const list = kind === "group" || kind === "city" ? groups : kind === "event" ? events : kind === "doc" || kind === "guide" ? docs : marketItems;
     const item = kind === "city" ? list.find(x => x.category === "City" && slug(x.name) === slug(`Indians in ${id}`))
       : kind === "guide" ? list.find(x => x.category === "Essentials" && slug(x.title) === id)
@@ -2190,10 +2204,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     }
   };
 
-  const EMPTY_EVENT = { title: "", date: "", time: "", location: "", city: "", description: "", link: "" };
+  const EMPTY_EVENT = { title: "", date: "", time: "", location: "", city: "", description: "", link: "", sharePreview: false };
   // An events row as the Events page uses it. ambassadorHosted: marked
   // "Hosted by the city ambassador" (since the 2026-10-27 database update).
-  const toEvent = (e) => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name || (e.organizer_id === user.id ? user.name : api.UNLISTED_NAME), description: e.description, link: e.link || "", image: e.image_url || "", ambassadorHosted: !!e.ambassador_hosted });
+  const toEvent = (e) => ({ id: e.id, organizerId: e.organizer_id, title: e.title, date: e.date, time: e.time, location: e.location, city: e.city || "", attendees: e.attendees_count, organizer: e.organizer_name || (e.organizer_id === user.id ? user.name : api.UNLISTED_NAME), description: e.description, link: e.link || "", image: e.image_url || "", ambassadorHosted: !!e.ambassador_hosted, sharePreview: !!e.share_preview });
 
   // Host Event, or Save for an event its author is editing. The form stays
   // open until the event is saved, and says what went wrong if it isn't.
@@ -2231,6 +2245,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       link: newEvent.link || "", image_url: eventPhoto?.url || "",
       // An edit leaves the date (in older events, with its time) as it was unless it changed.
       ...(dateChanged ? { date: newEvent.date, time: newEvent.time || "TBD" } : {}),
+      // The preview for people who aren't members (once the database has it).
+      ...(previewsAvailable && (editingEvent || newEvent.sharePreview) ? { share_preview: !!newEvent.sharePreview } : {}),
     };
     setEventSaving(true);
     setEventError("");
@@ -2412,9 +2428,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
     setNewHelp({ title: "", description: "", category: "General", urgent: false });
     setHelpModal(false);
     try {
-      const r = await api.createHelpRequest({ title: draft.title, description: draft.description, category: draft.category, urgency: draft.urgent ? "High" : "Low", urgent: draft.urgent });
+      const r = await api.createHelpRequest({ title: draft.title, description: draft.description, category: draft.category, urgency: draft.urgent ? "High" : "Low", urgent: draft.urgent,
+        ...(previewsAvailable && draft.sharePreview ? { share_preview: true } : {}) });
       // Swap the temporary id for the saved one so responses and delete work.
-      if (r?.[0]) setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, id: r[0].id, userId: user.id, city: r[0].city ?? x.city } : x));
+      if (r?.[0]) setHelpRequests(prev => prev.map(x => x.id === h.id ? { ...x, id: r[0].id, userId: user.id, city: r[0].city ?? x.city, sharePreview: !!r[0].share_preview } : x));
       if (draft.urgent && r?.alertsOff) alert("Your question is posted and marked urgent, but alerts to members in your city aren't switched on yet. If it's an emergency, call the local emergency number, or message members in your city group directly.");
     } catch (e) {
       setHelpRequests(prev => prev.filter(x => x.id !== h.id));
@@ -2464,7 +2481,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
         setHelpRequests(prev => prev.some(x => x.id === id) ? prev.map(x => x.id === id ? { ...x, ...h } : x) : [h, ...prev]);
       }
     } catch (e) {}
-    if (!h) { alert("This question isn't available any more."); return; }
+    if (!h) { setSelectedHelp(null); alert("This question isn't available any more."); return; }
     openHelp(h, { force: true });
     setTimeout(() => document.querySelector(`[data-help-id="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
   };
@@ -3959,12 +3976,10 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                       {!reportedIds.has(e.id) && e.organizerId !== user.id && <button onClick={() => setReportConfirm({ type: "event", id: e.id, userId: e.organizerId, name: e.title })} aria-label="Report" title="Report" style={{ background: "none", border: "none", cursor: "pointer", color: "#8F8E8A", padding: 8, display: "flex" }}>{Icons.flag({ size: 14 })}</button>}
                       {e.organizerId === user.id && !String(e.id).startsWith("e_") && <button onClick={() => openEventForm(e)} aria-label="Edit event" title="Edit event" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 8, display: "flex" }}>{Icons.edit({ size: 14 })}</button>}
                       {e.organizerId === user.id && <button onClick={() => { if (confirm("Delete this event?")) removeOwn(events, setEvents, e.id, () => api.deleteEvent(e.id), "Couldn't delete the event. Please try again."); }} aria-label="Delete event" title="Delete event" style={{ background: "none", border: "none", cursor: "pointer", color: "#9B9A97", padding: 8, display: "flex" }}>{Icons.trash({ size: 14 })}</button>}
-                      <button onClick={() => {
-                        const shareUrl = `${window.location.origin}/events/${e.id}`;
-                        const shareText = `${e.title}\n${eventDate(e)} at ${eventTime(e)}\n📍 ${e.location}\n\n${e.description}\n\n${e.link || shareUrl}`;
-                        if (navigator.share) navigator.share({ title: e.title, text: shareText, url: e.link || shareUrl }).catch(() => {});
-                        else { navigator.clipboard.writeText(shareText); alert("Event details copied to clipboard!"); }
-                      }} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "#9B9A97", fontSize: 12, fontFamily: font, marginLeft: "auto" }}>{Icons.share({ size: 15 })} Share</button>
+                      {/* The event's link (its preview, if its host turned it on, is what people without an account see). */}
+                      {!String(e.id).startsWith("e_") && (
+                        <button onClick={() => shareThis("event", e, e.organizerId === user.id)} style={{ display: "flex", alignItems: "center", gap: 5, minHeight: 36, background: "none", border: "none", cursor: "pointer", color: "#6B6A67", fontSize: 12, fontFamily: font, marginLeft: "auto" }}>{Icons.share({ size: 15 })} Share</button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -4083,12 +4098,25 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                     <Avatar name={h.user} size={24} url={h.avatar} />
                     <span style={{ fontSize: 12, color: "#9B9A97", fontFamily: font }}>{h.user} · {timeAgo(h.timestamp)}</span>
                   </button>
-                  <button onClick={() => { if (selectedHelp === h.id) setSelectedHelp(null); else openHelp(h); }} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>
-                    {Icons.message({ size: 14 })} {h.responses === 1 ? "1 answer" : `${h.responses || 0} answers`}
-                  </button>
+                  <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <button onClick={() => { if (selectedHelp === h.id) setSelectedHelp(null); else openHelp(h); }} style={{ fontSize: 12, color: selectedHelp === h.id ? "#37352F" : "#9B9A97", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: "none", border: "none", fontFamily: font, fontWeight: selectedHelp === h.id ? 600 : 400 }}>
+                      {Icons.message({ size: 14 })} {h.responses === 1 ? "1 answer" : `${h.responses || 0} answers`}
+                    </button>
+                    {!String(h.id).startsWith("h_") && (
+                      <button type="button" onClick={() => shareThis("question", h, isMine)} aria-label={`Share the question ${h.title}`} title="Share"
+                        style={{ display: "flex", alignItems: "center", gap: 4, minHeight: 36, padding: "6px 8px", background: "none", border: "none", cursor: "pointer", color: "#6B6A67", fontSize: 12, fontFamily: font }}>
+                        {Icons.share({ size: 14 })} Share
+                      </button>
+                    )}
+                  </span>
                 </div>
                 {selectedHelp === h.id && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
+                    {/* The asker's switch: a preview for people who aren't members. */}
+                    {isMine && previewsAvailable && !String(h.id).startsWith("h_") && (
+                      <PreviewSwitch kind="question" checked={!!h.sharePreview} busy={previewBusy === h.id}
+                        onChange={(on) => togglePreview("question", h.id, on)} style={{ marginBottom: 14 }} />
+                    )}
                     {isMine && answers.length > 0 && !h.bestResponseId && <p style={{ fontSize: 12, color: "#6B6A67", marginBottom: 10, fontFamily: font }}>Did an answer help? Mark it as the best answer, so others find it too.</p>}
                     {answers.map((r, ri) => {
                       const best = r.id === h.bestResponseId;
@@ -4369,7 +4397,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 update it says it's coming soon). The listings below stay. */}
             {marketCategory === "Housing" && (
               <HousingSearch key={housingKey} user={user} Avatar={Avatar} reportedIds={reportedIds} blockedIds={blockedIds}
-                onOpen={(item) => { setMarketPhotoIdx(0); setExpandedMarketItem(item); }}
+                onOpen={(item) => { setMarketPhotoIdx(0); setExpandedMarketItem({ ...item, sharePreview: marketItems.find(i => i.id === item.id)?.sharePreview }); }}
                 onContact={(item) => { setSelectedMarketItem(item); setContactMsg(contactGreeting(item)); }}
                 onReport={setReportConfirm}
                 onPost={() => { setNewMarket(prev => ({ ...prev, category: "Housing" })); setMarketModal(true); }} />
@@ -4598,7 +4626,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       case "travel":
         return <TravelBoard user={user} focusId={travelFocus} onFocus={setTravelFocus} onReport={setReportConfirm}
           onMessage={(post, text) => (post?.user_id && post.user_id !== user.id ? sendFirstMessage(post.user_id, text) : "You can't message the author of this post.")}
-          termsVersion={termsVersion} onReviewTerms={onReviewTerms}
+          termsVersion={termsVersion} onReviewTerms={onReviewTerms} share={shareItem} previewsAvailable={previewsAvailable}
           reportedIds={reportedIds} blockedIds={blockedIds} openMember={openMember} Avatar={Avatar} />;
 
       case "ambassador":
@@ -4942,6 +4970,34 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   const handledNoticesRef = useRef(new Set()); // notifications already shown as a notice (the next poll may still say unread)
   const pushToast = (t) => setToasts(prev => [...prev.filter(x => x.id !== t.id), t].slice(-3));
   const dismissToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
+
+  // Share (src/member/SharePreview.jsx): the share sheet, or the link
+  // copied with a "Link copied" toast. The author of a listing, an event or
+  // a question turns its preview for people who aren't members on and off
+  // here (trips: on the travel board).
+  const { share: shareItem, dialog: shareDialog, available: previewsAvailable } = useShare({
+    onCopied: () => pushToast({ id: "link-copied", icon: "🔗", text: LINK_COPIED }),
+    onError: (text) => alert(text),
+  });
+  const [previewBusy, setPreviewBusy] = useState(null); // the item whose switch is being saved
+  const setItemPreview = async (kind, id, on) => {
+    const value = await api.setSharePreview(kind, id, on);
+    const mark = (x) => (x && x.id === id ? { ...x, sharePreview: value } : x);
+    if (kind === "market") { setMarketItems(prev => prev.map(mark)); setExpandedMarketItem(mark); }
+    if (kind === "event") { setEvents(prev => prev.map(mark)); setExpandedEvent(mark); }
+    if (kind === "question") setHelpRequests(prev => prev.map(mark));
+    return value;
+  };
+  const togglePreview = async (kind, id, on) => {
+    setPreviewBusy(id);
+    try { await setItemPreview(kind, id, on); }
+    catch (e) { alert(apiErrorMessage(e, SWITCH_FAILED)); }
+    setPreviewBusy(null);
+  };
+  // Shares a listing, an event or a question as the site shows it (mine:
+  // the member's own; without its switch known, it's just shared).
+  const shareThis = (kind, item, mine) => shareItem({ kind, id: item.id, mine: mine && typeof item.sharePreview === "boolean",
+    preview: !!item.sharePreview, setPreview: (on) => setItemPreview(kind, item.id, on) });
 
   // Before going somewhere from a notice or a toast: close what only shows
   // something (nothing typed is lost), so the place it opens is in view.
@@ -5833,15 +5889,25 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 </div>
               </div>
 
+              {/* The author's switch: a preview for people who aren't members. */}
+              {expandedMarketItem.user_id === user.id && previewsAvailable && typeof expandedMarketItem.sharePreview === "boolean" && !String(expandedMarketItem.id).startsWith("m_") && (
+                <PreviewSwitch kind="market" checked={!!expandedMarketItem.sharePreview} busy={previewBusy === expandedMarketItem.id}
+                  onChange={(on) => togglePreview("market", expandedMarketItem.id, on)} style={{ marginBottom: 16 }} />
+              )}
+
               {/* Action row, kept in view at the bottom (no Contact Seller on your own listing) */}
-              <div style={{ display: "flex", gap: 12, justifyContent: "space-between", alignItems: "center", position: "sticky", bottom: 0, background: "#fff", padding: "12px 0", borderTop: "1px solid #F0EFED" }}>
+              <div style={{ display: "flex", gap: 12, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", position: "sticky", bottom: 0, background: "#fff", padding: "12px 0", borderTop: "1px solid #F0EFED" }}>
                 {expandedMarketItem.user_id !== user.id ? (
-                  <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(contactGreeting(expandedMarketItem)); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
-                    {Icons.send({ size: 15 })} Contact Seller
-                  </button>
+                  <>
+                    <button onClick={() => { setSelectedMarketItem(expandedMarketItem); setContactMsg(contactGreeting(expandedMarketItem)); setExpandedMarketItem(null); }} style={{ ...btnPrimary, flex: 1, justifyContent: "center", padding: "12px", fontSize: 14 }}>
+                      {Icons.send({ size: 15 })} Contact Seller
+                    </button>
+                    <ShareButton onClick={() => shareThis("market", expandedMarketItem, false)} />
+                  </>
                 ) : (
                   <>
                     <span style={{ fontSize: 13, color: "#9B9A97", fontFamily: font }}>This is your listing</span>
+                    {!String(expandedMarketItem.id).startsWith("m_") && <ShareButton onClick={() => shareThis("market", expandedMarketItem, true)} style={{ marginLeft: "auto" }} />}
                     <button onClick={async () => { const item = expandedMarketItem; if (confirm("Delete this listing?") && await removeOwn(marketItems, setMarketItems, item.id, () => api.deleteMarketItem(item.id), "Couldn't delete the listing. Please try again.")) { setExpandedMarketItem(null); setMarketPhotoIdx(0); } }} style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", fontSize: 13, fontWeight: 600, padding: "10px 0", fontFamily: font }}>
                       Delete listing
                     </button>
@@ -5910,11 +5976,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   {Icons.link({ size: 15 })} Get Tickets / More Info
                 </a>
               )}
+              {/* The host's switch: a preview for people who aren't members. */}
+              {expandedEvent.organizerId === user.id && previewsAvailable && !String(expandedEvent.id).startsWith("e_") && (
+                <PreviewSwitch kind="event" checked={!!expandedEvent.sharePreview} busy={previewBusy === expandedEvent.id}
+                  onChange={(on) => togglePreview("event", expandedEvent.id, on)} style={{ marginBottom: 16 }} />
+              )}
               {expandedEvent.organizer && <div style={{ fontSize: 12, color: "#9B9A97", paddingTop: 14, borderTop: "1px solid #F0EFED", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                 <span>Hosted by <strong style={{ color: "#37352F" }}>{expandedEvent.organizer}</strong></span>
-                {expandedEvent.organizerId === user.id && !String(expandedEvent.id).startsWith("e_") && (
-                  <button type="button" onClick={() => openEventForm(expandedEvent)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{Icons.edit({ size: 13 })} Edit event</button>
-                )}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  {!String(expandedEvent.id).startsWith("e_") && <ShareButton onClick={() => shareThis("event", expandedEvent, expandedEvent.organizerId === user.id)} />}
+                  {expandedEvent.organizerId === user.id && !String(expandedEvent.id).startsWith("e_") && (
+                    <button type="button" onClick={() => openEventForm(expandedEvent)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DE", background: "#fff", color: "#37352F", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font }}>{Icons.edit({ size: 13 })} Edit event</button>
+                  )}
+                </span>
               </div>}
             </div>
           </div>
@@ -6662,6 +6736,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   )}
                 </div>
               </div>
+              {previewsAvailable && (
+                <PreviewSwitch kind="market" checked={!!newMarket.sharePreview} onChange={(on) => setNewMarket({ ...newMarket, sharePreview: on })} style={{ marginBottom: 20 }} />
+              )}
               {housingForm && housingError && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", lineHeight: 1.5, margin: "0 0 12px", fontFamily: font }}>{housingError}</p>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => { setMarketModal(false); setMarketPhotos([]); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
@@ -6690,18 +6767,26 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                       return;
                     }
                   }
+                  // The preview for people who aren't members: only if the member turned it on.
+                  const withPreview = previewsAvailable && !!newMarket.sharePreview;
                   try {
                     if (housing) {
                       // The listing and its details in one go; members looking for such a place hear about it.
                       const posted = await api.postHousingListing({ ...housing, title: newMarket.title, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
-                      setMarketItems(prev => [{ id: posted?.listing_id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: `${money(housing.rent)}/month warm`, category: "Housing", location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
+                      // (The preview is switched on once the listing is up.)
+                      let preview = false;
+                      if (withPreview && posted?.listing_id) {
+                        try { preview = await api.setSharePreview("market", posted.listing_id, true); }
+                        catch (pe) { setTimeout(() => alert("Your listing is up, but its preview couldn't be turned on. Open the listing to try again."), 0); }
+                      }
+                      setMarketItems(prev => [{ id: posted?.listing_id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: `${money(housing.rent)}/month warm`, category: "Housing", location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E", sharePreview: preview }, ...prev]);
                       setNewHousing(EMPTY_HOUSING);
                       setHousingKey(k => k + 1);
                       pushToast({ id: "housing-posted", icon: "🏠", text: "Your housing listing is up. Members looking for a place like it get a notification." });
                     } else {
-                      const created = await api.createMarketItem({ title: newMarket.title, price: marketForm(newMarket.category).price ? newMarket.price : "", category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls) });
+                      const created = await api.createMarketItem({ title: newMarket.title, price: marketForm(newMarket.category).price ? newMarket.price : "", category: newMarket.category, location: newMarket.city, description: newMarket.description, image_url: JSON.stringify(imageUrls), ...(withPreview ? { share_preview: true } : {}) });
                       // Add to local state immediately
-                      setMarketItems(prev => [{ id: created?.[0]?.id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E" }, ...prev]);
+                      setMarketItems(prev => [{ id: created?.[0]?.id || "m_" + Date.now(), user_id: user.id, title: newMarket.title, price: newMarket.price, category: newMarket.category, location: newMarket.city, description: newMarket.description, seller: user.name, date: new Date().toLocaleDateString(), photos: imageUrls, color: "#2D1B4E", sharePreview: !!created?.[0]?.share_preview }, ...prev]);
                     }
                   } catch(e) {
                     api.deleteOwnImages(imageUrls);
@@ -6878,6 +6963,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                   </label>
                 )}
               </div>
+              {previewsAvailable && (
+                <PreviewSwitch kind="event" checked={!!newEvent.sharePreview} onChange={(on) => setNewEvent({ ...newEvent, sharePreview: on })} style={{ marginBottom: 20 }} />
+              )}
               {eventError && <p role="alert" style={{ fontSize: 13, color: "#B91C1C", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "10px 12px", margin: "0 0 16px", lineHeight: 1.5, fontFamily: font }}>{eventError}</p>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, paddingTop: 16, borderTop: "1px solid #F0EFED" }}>
                 <button onClick={() => closeEventForm()} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer", fontFamily: font }}>Cancel</button>
@@ -6919,6 +7007,9 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 </span>
               </label>
               {newHelp.urgent && <div style={{ marginBottom: 20 }}><EmergencyHelp countryCode={user.countryCode} /></div>}
+              {previewsAvailable && (
+                <PreviewSwitch kind="question" checked={!!newHelp.sharePreview} onChange={(on) => setNewHelp({ ...newHelp, sharePreview: on })} style={{ marginBottom: 20 }} />
+              )}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                 <button onClick={() => setHelpModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, color: "#5F5E5B", background: "transparent", cursor: "pointer" }}>Cancel</button>
                 <button onClick={createHelp} disabled={!newHelp.title || !newHelp.description} style={{ ...btnPrimary, opacity: newHelp.title && newHelp.description ? 1 : 0.4 }}>Post question</button>
@@ -6939,6 +7030,8 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
           {notice?.kind === "info" && <NeedsInfoNotice user={user} onClose={closeNotice} onUpdate={() => { closeNotice(); leaveOverlays(); setVerifyOpen(true); }} />}
           {notice?.kind === "catchup" && <CatchUpNotice user={user} items={notice.items} onClose={closeNotice} />}
           <ToastStack toasts={toasts} onDismiss={dismissToast} />
+          {/* Share's "Turn on the preview?", over the window it was opened from. */}
+          {shareDialog}
         </>
       )}
 

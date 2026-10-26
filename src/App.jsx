@@ -7,6 +7,7 @@ import { mapProfile, authErrorMessage, isNetworkError, NETWORK_MESSAGE, stillToA
 import { hasImprint } from "./content/imprint";
 import { moveOldInvite, rememberInvite } from "./member/invite";
 import { isAppPath } from "./content/routes";
+import { previewTarget } from "./content/preview";
 import { startAnalytics, setTrackingArea, trackStep } from "./analytics";
 
 // NRIClub sets no cookies. Website analytics run only for visitors who
@@ -34,15 +35,21 @@ const LegalPage = lazy(() => import("./LegalPage"));
 const ReportPage = lazy(() => import("./ReportPage"));
 const WhatsOnPage = lazy(() => import("./WhatsOnPage"));
 const NotFoundPage = lazy(() => import("./NotFoundPage"));
+const PreviewPage = lazy(() => import("./PreviewPage"));
 
 // An address the site has no page for (see src/content/routes.js); never on
 // the admin site, which answers every address.
 const unknownPath = () => !isAdminRoute() && !isAppPath(window.location.pathname);
 
 // A public page's address: /city/<city>, /guides, /guides/<slug> or
-// /whats-on (members who open it get Events, see Dashboard.jsx).
+// /whats-on (members who open it get Events, see Dashboard.jsx); and a
+// shared item's (/market/<id>, /events/<id>, /help/<id>, /travel/<id>),
+// whose preview page people without an account see (PreviewPage.jsx;
+// members get the item in the app).
 const publicPage = () => {
   const path = window.location.pathname;
+  const item = previewTarget(path);
+  if (item) return { kind: "preview", item };
   const city = /^\/city\/([^/]+)/.exec(path);
   if (city) {
     try {
@@ -593,6 +600,9 @@ export default function App() {
       if (page?.kind === "guide") return <GuidePage slug={page.slug} onJoin={join} onLogin={login} />;
       if (page?.kind === "whats-on") return <WhatsOnPage onJoin={join} onLogin={login} />;
       if (page?.kind === "impressum") return <ImpressumPage onJoin={join} onLogin={login} />;
+      // Join free and Log in keep the item's address, so once logged in, an
+      // approved member lands on it (Dashboard.jsx).
+      if (page?.kind === "preview") return <PreviewPage kind={page.item.kind} id={page.item.id} onJoin={join} onLogin={login} />;
       return <LandingPage onJoin={join} onLogin={login} />;
     };
     if (authState === "landing") return landing();
