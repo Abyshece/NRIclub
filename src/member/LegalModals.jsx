@@ -71,10 +71,10 @@ const h4 = { fontSize: 15, fontWeight: 700, color: "#37352F", margin: "0 0 6px" 
 // rather than comparing with this constant, so deploying a new text before
 // the database knows it never locks members out. Change both together, the
 // database one in a new migration.
-export const TERMS_VERSION = "2026-10-23";
+export const TERMS_VERSION = "2026-10-26";
 
-export { TERMS_CHANGES, TERMS_NEEDED_FOR, PREVIOUS_TERMS_VERSION, TERMS_DATE } from "../content/legal/terms";
-export { ART9_CONSENT_TEXT, ART9_CONSENT_VERSION, ART9_WITHDRAW_TEXT } from "../content/legal/consent";
+export { TERMS_CHANGES, TERMS_EARLIER_CHANGES, TERMS_NEEDED_FOR, PREVIOUS_TERMS_VERSION, TERMS_ARCHIVE, TERMS_DATE } from "../content/legal/terms";
+export { ART9_CONSENT_TEXT, ART9_CONSENT_VERSION, ART9_CHANGES, ART9_WITHDRAW_TEXT } from "../content/legal/consent";
 export { REPORT_HREF, REPORT_LINK_LABEL, REPORT_LINK_TEXT } from "../content/legal/reporting";
 
 const INK = "#37352F";

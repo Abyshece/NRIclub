@@ -1142,6 +1142,28 @@ export function getPreviousTermsVersion({ refresh = false } = {}) {
   return previousTermsRequest;
 }
 
+// Every version of the Terms still in force (public.terms_versions_in_force,
+// since the 2026-11-02 database update): members who accepted one of them
+// keep taking part until they accept the current one (Terms section 14), so
+// they may answer "Later" too, not only those on the previous version. []
+// if it can't be asked (before that update: then only the previous version
+// counts). Remembered and refreshed like the current version.
+let inForceRequest = null;
+let inForceAskedAt = 0;
+export function getTermsVersionsInForce({ refresh = false } = {}) {
+  if (refresh && Date.now() - inForceAskedAt > 60000) inForceRequest = null;
+  if (!inForceRequest) {
+    inForceAskedAt = Date.now();
+    inForceRequest = restCall("POST", "/rest/v1/rpc/terms_versions_in_force", {})
+      .then((list) => (Array.isArray(list) ? list.filter((v) => typeof v === "string") : []))
+      .catch((err) => {
+        if (!isMissingInDatabase(err)) inForceRequest = null;
+        return [];
+      });
+  }
+  return inForceRequest;
+}
+
 // Records "18 or older" and the Terms: at signup once the email code is
 // confirmed, and for members who haven't accepted the current version.
 // version must be the current one (getCurrentTermsVersion); returns it.
@@ -3018,6 +3040,7 @@ const REPORTED_ITEMS = {
   review: ["mentor_reviews", "id,rating,comment,mentee_id,mentor_id,created_at"],
   place: ["places", "id,name,kind,city,address,note,created_by,created_at"],
   travel: ["travel_posts", "id,kind,from_city,to_city,date_from,date_to,flight,help,note,user_id,created_at"],
+  housing_wanted: ["housing_wanted", "id,kinds,city,date_from,date_to,max_rent,furnished,anmeldung,note,user_id,created_at"],
 };
 REPORTED_ITEMS.marketplace = REPORTED_ITEMS.market;
 

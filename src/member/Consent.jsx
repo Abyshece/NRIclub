@@ -1,4 +1,7 @@
-import { ART9_CONSENT_TEXT } from "./LegalModals";
+import { useEffect, useState } from "react";
+import * as api from "../supabaseApi";
+import { ART9_CONSENT_TEXT, TERMS_VERSION } from "./LegalModals";
+import { ART9_CONSENT_TEXT_BY_VERSION } from "../content/legal/consent";
 import { COLORS, linkButtonStyle, helperStyle, fieldErrorStyle } from "./ui";
 
 // The two separate checkboxes a member ticks before they can take part, on
@@ -54,9 +57,20 @@ export function TermsCheckbox({ onOpen, ...props }) {
   );
 }
 
-// The separate Art. 9 consent.
+// The separate Art. 9 consent, in the wording the database will record: the
+// current one once the database knows this site's Terms (the 2026-11-02
+// update makes both current), until then the earlier one, so someone who
+// signs up in between agrees to the words that are recorded (as TermsModal
+// does for the Terms). If the version can't be fetched, the current wording.
 export function Art9Checkbox(props) {
-  return <Checkbox {...props} label={ART9_CONSENT_TEXT} />;
+  const [dbTerms, setDbTerms] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api.getCurrentTermsVersion().then((v) => { if (live) setDbTerms(v || null); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const label = dbTerms && dbTerms !== TERMS_VERSION ? ART9_CONSENT_TEXT_BY_VERSION["2026-10-19"] : ART9_CONSENT_TEXT;
+  return <Checkbox {...props} label={label} />;
 }
 
 // The Privacy Policy, for information. onOpen("privacy") shows it.

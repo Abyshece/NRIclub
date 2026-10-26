@@ -6,8 +6,9 @@
 // A new version: copy the current one into its own file in this folder, add
 // it to TERMS_ARCHIVE, change the text here, and change TERMS_VERSION here,
 // in src/member/LegalModals.jsx (the build checks they're the same) and in
-// private.current_terms_version() in a new migration. Members accept the new
-// version on the Terms screen once the database says it is current.
+// private.current_terms_version() (and private.previous_terms_version(),
+// private.terms_versions_in_force()) in a new migration. Members accept the
+// new version on the Terms screen once the database says it is current.
 //
 // Written for German and EU consumer, platform and anti-discrimination law,
 // and reviewed by a German IT lawyer in October 2026; the changes from that
@@ -17,24 +18,35 @@ import { IMPRINT, operatorLines } from "../imprint.js";
 import { REPORT_HREF } from "./reporting.js";
 import { termsDoc20261010 } from "./terms-2026-10.js";
 import { termsDoc20261019 } from "./terms-2026-10-19.js";
+import { termsDoc20261023 } from "./terms-2026-10-23.js";
 import { RETENTION } from "./privacy.js";
 
-export const TERMS_VERSION = "2026-10-23";
-export const TERMS_DATE = "23 October 2026";
+export const TERMS_VERSION = "2026-10-26";
+export const TERMS_DATE = "26 October 2026";
 
 // Earlier versions, by version, for nriclub.app/terms/<version>.
-export const TERMS_ARCHIVE = { "2026-10-19": termsDoc20261019, "2026-10": termsDoc20261010 };
-export const PREVIOUS_TERMS_VERSION = "2026-10-19";
+export const TERMS_ARCHIVE = { "2026-10-23": termsDoc20261023, "2026-10-19": termsDoc20261019, "2026-10": termsDoc20261010 };
+export const PREVIOUS_TERMS_VERSION = "2026-10-23";
+// Members on any version the database names in private.
+// terms_versions_in_force() (2026-10-19, 2026-10-23 and this one) keep taking
+// part until they accept this version (section 14) and get "Later" on the
+// Terms screen; each of those versions must be in TERMS_ARCHIVE
+// (supabase/tests/rls_test.py checks).
 
-// For the Terms screen ("We've updated our Terms"): what changed in this
-// version, in a few lines.
+// For the Terms screen ("We've updated our Terms"): what's new in this
+// version, in one or two sentences.
 export const TERMS_CHANGES = [
-  "A section on the new travel board (flying to or from India) replaces \"Travel companions\": favours only, no payment; only documents and small open items, checked in person; you're responsible for your own luggage at customs; and we may remove posts that break these rules (section 7).",
-  "You can report travel posts like other content (section 9).",
+  "Sections 2 and 7 now cover the housing search with \"Looking for a place\" posts (which you can report, section 9), city ambassadors, and previews of your listings, events, questions and trips that you can choose to show to people who aren't members (also section 8).",
+  "We may hand NRIClub over to a company we set up to run it; we'd tell you at least 4 weeks before (section 1).",
 ];
-// For members on the previous version, who may answer "Later" (section 14:
-// the Terms they accepted still apply): what they need this version for
-// (the database checks it: private.has_current_terms).
+// What also changed for members on an even earlier version, by the version
+// they accepted (shown under TERMS_CHANGES).
+export const TERMS_EARLIER_CHANGES = {
+  "2026-10-19": "Since version 2026-10-19, the Terms also have the travel board's rules (section 7).",
+};
+// For members on an earlier version still in force, who may answer "Later"
+// (section 14: the Terms they accepted still apply): what they need this
+// version for (the database checks it: private.has_current_terms).
 export const TERMS_NEEDED_FOR = "posting or messaging on the travel board";
 
 // Who the contract is with: the operator from src/content/imprint.js once it
@@ -46,6 +58,12 @@ function providerBlocks() {
       ? { p: ["NRIClub (nriclub.app) is provided by ", strong(lines[0]), ...lines.slice(1).map((l) => `, ${l}`), ` ("we", "us"). Email: `, mail(), ...(IMPRINT.phone.trim() ? [`, phone: ${IMPRINT.phone.trim()}`] : []), "."] }
       : { p: ["NRIClub (nriclub.app) is provided by its founder, who runs it in Germany (\"we\", \"us\"). Email: ", mail(), "."] },
     { p: "These Terms of Use are the contract between you, as a member, and us for using NRIClub." },
+    // Transfer of the contract (§ 309 No. 10 BGB: in consumer terms, valid
+    // if it names the new party or lets the consumer end the contract; here,
+    // members can end their membership at any time, section 12). A lawyer
+    // should confirm this wording before the transfer is used
+    // (docs/compliance/questions-for-the-lawyer.md, L-6).
+    { p: "We may transfer this contract, with all its rights and duties, to a company we found to run NRIClub (for example a UG). We tell you at least 4 weeks before the transfer, by email and in NRIClub, and name the company. You can end your membership at any time, also before the transfer (section 12)." },
     { p: ["Our ", a("Privacy Policy", "/privacy"), " explains how we handle your data. It is information for you, not part of this contract."] },
   ];
 }
@@ -65,12 +83,9 @@ export function termsDoc(version = TERMS_VERSION) {
     sections: [
       { id: "provider", title: "1. Who we are", blocks: providerBlocks() },
 
-      // For the next version: since 24 October 2026 there are only city
-      // groups (language, interest and university groups were removed), so
-      // "groups for cities, languages, interests and universities" becomes
-      // "a group for each city". Changing the text needs a new version.
       { id: "service", title: "2. What NRIClub is", blocks: [
-        { p: "NRIClub is an online community for Indians abroad and people connected with the Indian community. Members can join groups for cities, languages, interests and universities; post and comment; ask and answer questions; organise and join events; offer and find things in the Market; recommend places; connect with each other (Namaste) and send messages; offer or book free mentoring; and read our guides." },
+        { p: "NRIClub is an online community for Indians abroad and people connected with the Indian community. Members can join a group for each city; post and comment; ask and answer questions; organise and join events; offer and find things in the Market, including housing, with a search by city and dates and \"Looking for a place\" posts; find a travel companion or help on the travel board, for flights to or from India; recommend places; connect with each other (Namaste) and send messages; offer or book free mentoring; and read our guides." },
+        { p: "City ambassadors, members who volunteer, welcome newcomers in their city's group. If you like, you can show a preview of a Market listing, event, question or travel board post of yours to people who aren't members yet (section 7)." },
         { p: "NRIClub is free. There are no fees, no paid features and no advertising." },
         { p: "We work to keep NRIClub available and working well, but we can't promise that it will always be available without interruption, for example during maintenance or updates or because of faults outside our control." },
       ] },
@@ -78,7 +93,7 @@ export function termsDoc(version = TERMS_VERSION) {
       { id: "joining", title: "3. How you join", blocks: [
         { ol: [
           "You enter your full name, your email address and a password.",
-          "You confirm that you're 18 or older and accept these Terms. With a separate checkbox you agree that we may process what you share that can show your ethnic origin, religion or health, for our membership check and to show it to members, as the Privacy Policy explains. Neither box is ticked in advance.",
+          "You confirm that you're 18 or older and accept these Terms. With a separate checkbox you agree that we may process what you share that can show your ethnic origin, religion or health, for our membership check, to show it to members, and in the previews you choose to turn on, as the Privacy Policy explains. Neither box is ticked in advance.",
           "You continue, and we email you a 6-digit code. When you enter it, your account is created: that is when the contract between you and us is made.",
           "You tell us your city and country and give us your LinkedIn profile link or a short note on how you're connected to the community, so our team can check your membership (section 5).",
         ] },
@@ -129,6 +144,14 @@ export function termsDoc(version = TERMS_VERSION) {
           "Housing and job posts must not exclude anyone because of ethnic origin, religion or belief, sex, disability, age or sexual identity (Germany's General Equal Treatment Act, AGG), except where the law allows it, for example when you choose a flatmate for the home you live in yourself.",
           "Deals are between the members involved. NRIClub isn't a party to them and doesn't check items, offers or payments. Never pay in advance to someone you don't know, and meet in a public place.",
         ] },
+        { h: "Housing" },
+        { ul: [
+          "A housing listing gives the kind of place, the city, the day it's free from and until (or that it's open-ended), the warm rent and the deposit, and if you like its size, whether it's furnished and whether you can register your address there (Anmeldung). Keep these true and up to date.",
+          `A listing is shown until its "until" date or, if it's open-ended, for ${RETENTION.housingOpenDays} days after you post it; you can renew it. It's deleted ${RETENTION.housingKeepDays} days after it ends.`,
+          `A "Looking for a place" post is seen only by you, our team and the members whose listing matches it. It ends after its last date, or ${RETENTION.housingOpenDays} days after you post it if it has none, and is deleted ${RETENTION.housingKeepDays} days after it ends.`,
+          "Offer a sublet (Untervermietung) only with your landlord's permission.",
+          "Say that registering your address (Anmeldung) is possible only if it really is.",
+        ] },
         { h: "Jobs and referrals" },
         { p: "Offer referrals only at your own employer, and never ask for or pay a fee for a referral." },
         { h: "Travel board (flying to or from India)" },
@@ -142,6 +165,17 @@ export function termsDoc(version = TERMS_VERSION) {
         ] },
         { h: "Events and meetups" },
         { p: "Events are organised by members, not by NRIClub, and the organiser is responsible for them. Take the usual care when you meet people you don't know." },
+        { h: "Previews" },
+        { ul: [
+          "You can show a preview of your own Market listing, event, question or travel board post to people who aren't members yet, for example when you share its link. It's off for every item until you turn it on for that item, and you can turn it off at any time.",
+          "A preview shows only this: for a Market listing, its first photo, its kind and its city; for an event, its photo, its city and its day; for a question, its title, its city and how many answers it has; for a travel board post, its route and its month. Never your name.",
+          "Turn it on only for your own content, and only if you're happy for anyone with the link to see that. Questions under Health or Legal/Visa have no preview.",
+        ] },
+        { h: "City ambassadors" },
+        { ul: [
+          "City ambassadors are members who volunteer to welcome newcomers in their city's group. They don't moderate: they can't remove or hide anything, and they flag content to our team, who decide (section 10).",
+          "An event marked \"Hosted by the city ambassador\" is organised by that member, not by NRIClub.",
+        ] },
         { h: "Mentoring" },
         { ul: [
           "Mentoring is free: mentors must not ask for money or anything else in return. Only approved members can offer mentoring.",
@@ -172,6 +206,7 @@ export function termsDoc(version = TERMS_VERSION) {
           "You keep all rights to what you post.",
           "Post only what you're allowed to: your own texts and photos, or ones you have permission to use. Don't copy articles, guides or photos from elsewhere; link to them instead. Before you post a photo or video in which other people can be recognised, get their consent.",
           "So that we can run NRIClub, you give us a free, non-exclusive right, limited to running NRIClub, to store your content (including in backups), copy it, make smaller versions of photos, and show it to members where the feature you used shows it (for example in a group, in questions or in the Market). We use it for nothing else.",
+          "If you turn on the preview of an item (section 7), this right also lets us show that preview to anyone who has its link, and to apps that make a card from the link (for example WhatsApp), which may keep a copy. Turning the preview off ends it for the future.",
           `This right ends when you delete the content or your account. The exceptions: places you added to a city's list and groups you created stay, without your name, because other members use and add to them (you can ask us to remove a place you added); content we must keep because of a report or a legal dispute stays for that purpose only; ${RETENTION.photoFilesDeleted ? `photo files left behind are deleted within ${RETENTION.photoCleanupDays} days; ` : `photo files are deleted within ${RETENTION.photoFilesByHandDays} days; `}and backup copies are overwritten within 7 days.`,
           "A photo you upload is stored at a long web address that isn't listed anywhere. Anyone who has that exact address can open the photo without signing in, so only post photos you're comfortable with on that basis.",
         ] },
@@ -180,8 +215,9 @@ export function termsDoc(version = TERMS_VERSION) {
       { id: "reporting", title: "9. Reporting content", blocks: [
         { p: "Anyone, member or not, can tell us about content on NRIClub they believe is illegal or against these Terms:" },
         { ul: [
-          "Members: use Report on the item itself: a post, comment, answer, question, guide or comment on a guide, event, Market listing, travel post, place, mentoring review, profile, or a message you received.",
+          "Members: use Report on the item itself: a post, comment, answer, question, guide or comment on a guide, event, Market listing, travel post, \"Looking for a place\" post, place, mentoring review, profile, or a message you received.",
           ["Everyone: use the form at ", a("nriclub.app/report", REPORT_HREF), ", or write to ", mail("Report illegal content"), "."],
+          "City ambassadors can also flag content in their city to our team.",
         ] },
         { p: "Please tell us: where the content is (a link, or the group, member, title and date); why you believe it is illegal or against our rules; your name and email address (not needed if your report is about the sexual abuse of a child); and that your report is accurate and complete to the best of your knowledge." },
         { p: "We confirm that we've received your report, a person on our team looks at it, and we tell you our decision and how you can challenge it: in NRIClub if you reported in the app, otherwise by email. We don't tell the person you reported who you are, unless the law requires it." },
@@ -190,7 +226,7 @@ export function termsDoc(version = TERMS_VERSION) {
 
       { id: "moderation", title: "10. How we moderate", blocks: [
         { ul: [
-          "A person on our team looks at every report and makes every decision. We don't use automated moderation. The only automatic steps are the hold on sign-ups in section 5 and the limits in section 11.",
+          "A person on our team looks at every report and makes every decision. We don't use automated moderation. The only automatic steps are the hold on sign-ups in section 5; the limits in section 11; travel board posts, housing listings and \"Looking for a place\" posts ending after their dates (section 7); and previews pausing while our team checks your account again (section 5) or while it is blocked.",
           "We act when content is illegal or breaks these Terms, or when an account puts other members at risk. Depending on how serious it is, we may remove content, warn you, limit what you can do, block your account for a time or until further notice, or end your membership (section 12).",
           "We decide carefully, objectively and in proportion, and consider the rights of everyone involved, including freedom of expression.",
           "When we remove your content, warn you or restrict your account, we tell you in NRIClub what we did and for how long, the rule or law it is based on, the facts, whether it followed a report or our own check, and how you can challenge it. If your account is blocked, you see the reason when you sign in.",
@@ -207,6 +243,9 @@ export function termsDoc(version = TERMS_VERSION) {
         { ul: [
           "one urgent question a day;",
           "the mentoring limits in section 7; only approved members can offer mentoring;",
+          "5 travel board posts a day and 20 in 30 days;",
+          "5 housing listings a day and 10 in 30 days, and 3 \"Looking for a place\" posts a day and 5 in 30 days;",
+          "20 reports a day;",
           "repeated sign-in attempts.",
         ] },
         { p: "We may also limit how often other actions, such as messages or Namaste requests, can be done in a short time, to stop spam. If you reach a limit, wait a little and try again." },
@@ -283,7 +322,8 @@ export function termsDoc(version = TERMS_VERSION) {
 
       { id: "versions", title: "19. Earlier versions", blocks: [
         { ul: [
-          [a(`Version ${PREVIOUS_TERMS_VERSION}`, `/terms/${PREVIOUS_TERMS_VERSION}`), " (17 October 2026)"],
+          [a("Version 2026-10-23", "/terms/2026-10-23"), " (23 October 2026)"],
+          [a("Version 2026-10-19", "/terms/2026-10-19"), " (17 October 2026)"],
           [a("Version 2026-10", "/terms/2026-10"), " (October 2026)"],
         ] },
       ] },
@@ -295,8 +335,8 @@ export const termsPath = (version) => (version && version !== TERMS_VERSION && T
 
 // The Terms a member is about to accept (signup, Get verified, the Terms
 // screen): the version the database will record. Until the database knows
-// the current version (for 2026-10-23, the travel board's database update),
-// that is still the earlier one, shown without the "earlier version" note,
+// the current version (for 2026-10-26, the compliance fixes' database
+// update), that is still the earlier one, shown without the "earlier version" note,
 // so a member never accepts one version while reading another.
 export function termsDocToAccept(version) {
   if (!version || version === TERMS_VERSION || !TERMS_ARCHIVE[version]) return termsDoc();
