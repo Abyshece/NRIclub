@@ -5,8 +5,8 @@ import { REPORT_FIELDS, REPORT_KINDS, REPORT_REASONS, REPORT_RECEIVED, REPORT_PA
 
 // The one report dialog for everything a member can report: posts,
 // comments, answers, guides and their comments, events, questions, Market
-// listings, travel posts, places, mentoring reviews, messages and members
-// (Art. 16 DSA).
+// listings, "Looking for a place" posts, travel posts, places, mentoring
+// reviews, messages and members (Art. 16 DSA).
 // The member picks a reason from the two groups (illegal, against our
 // rules), says why in their own words and confirms good faith.
 // target: { type (reports.content_type), id, userId (who wrote it, if

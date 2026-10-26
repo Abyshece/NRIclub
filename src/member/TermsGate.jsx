@@ -1,26 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../supabaseApi";
-import { TermsModal, PrivacyModal, TERMS_CHANGES, TERMS_NEEDED_FOR, PREVIOUS_TERMS_VERSION, TERMS_VERSION } from "./LegalModals";
+import {
+  TermsModal, PrivacyModal, TERMS_CHANGES, TERMS_EARLIER_CHANGES, TERMS_NEEDED_FOR, TERMS_ARCHIVE, TERMS_VERSION,
+  ART9_CHANGES, ART9_CONSENT_VERSION,
+} from "./LegalModals";
 import { AccountFooter } from "./AccountActions";
 import { TermsCheckbox, Art9Checkbox, PrivacyNote, LegalLink, TERMS_ERROR, ART9_ERROR } from "./Consent";
 import { FONT, COLORS, ErrorBox, primaryButtonStyle, ArrowRight } from "./ui";
-import { mapProfile, apiErrorMessage, stillToAccept } from "./profile";
+import { mapProfile, apiErrorMessage, stillToAccept, consentToRenew } from "./profile";
 
 // Screen before the dashboard for members who still have to confirm they're
 // 18 or older and accept the current version of the Terms of Use
 // (termsVersion, from the database), or give the separate Art. 9 consent
 // (asked once of members who joined before it existed). The database doesn't
 // let them take part until they have. Members who accepted an earlier
-// version see what changed. Same look as Get verified; they can also sign
-// out, download their data or delete their account from here.
+// version see what's new; if they gave the consent to an earlier wording,
+// the screen asks for it in the new one along with the Terms (their earlier
+// consent still counts until they accept). Same look as Get verified; they
+// can also sign out, download their data or delete their account from here.
 // Calls onDone(updatedUser) once the server has recorded it. onLater: for a
-// member on the previous version, whose Terms still apply until they accept
-// the new ones (section 14 of the Terms): they may answer "Later" and go on
-// (App asks again the next time NRIClub is opened).
+// member on an earlier version still in force, whose Terms still apply until
+// they accept the new ones (section 14 of the Terms): they may answer
+// "Later" and go on (App asks again the next time NRIClub is opened).
 export default function TermsGate({ user, termsVersion, onDone, onSignOut, onLater = null }) {
   const needs = stillToAccept(user, termsVersion);
   // Accepted before, but an earlier version: the Terms have changed since.
   const termsChanged = needs.terms && !!user.ageConfirmedAt && !!user.termsAcceptedAt;
+  // The consent again, in its new wording, with the new Terms.
+  const renew = needs.terms && !needs.art9 && consentToRenew(user, termsVersion, TERMS_VERSION, ART9_CONSENT_VERSION);
+  const askArt9 = needs.art9 || renew;
   const [agree, setAgree] = useState(false);
   const [art9, setArt9] = useState(false);
   const [errors, setErrors] = useState({});
@@ -41,14 +49,14 @@ export default function TermsGate({ user, termsVersion, onDone, onSignOut, onLat
     setSubmitError("");
     const found = {};
     if (needs.terms && !agree) found.agree = TERMS_ERROR;
-    if (needs.art9 && !art9) found.art9 = ART9_ERROR;
+    if (askArt9 && !art9) found.art9 = ART9_ERROR;
     setErrors(found);
     const first = ["agree", "art9"].find((k) => found[k]);
     if (first) { refs[first].current?.focus(); return; }
     setSubmitting(true);
     let version = termsVersion;
     try {
-      version = (await api.acceptTerms(termsVersion, needs.art9)) || termsVersion;
+      version = (await api.acceptTerms(termsVersion, askArt9)) || termsVersion;
     } catch (err) {
       setSubmitError(apiErrorMessage(err, "We couldn't save that. Please try again."));
       setSubmitting(false);
@@ -67,14 +75,22 @@ export default function TermsGate({ user, termsVersion, onDone, onSignOut, onLat
       ageConfirmedAt: base.ageConfirmedAt || now,
       termsAcceptedAt: base.termsVersion === version && base.termsAcceptedAt ? base.termsAcceptedAt : now,
       termsVersion: version,
-      ...(needs.art9 && !base.art9ConsentAt && { art9ConsentAt: now }),
+      // The wording the consent box showed: the current one once the
+      // database knows this site's Terms (Art9Checkbox).
+      ...(askArt9 && (!base.art9ConsentAt || (renew && base.art9ConsentVersion !== ART9_CONSENT_VERSION)) && {
+        art9ConsentAt: now, ...(version === TERMS_VERSION && { art9ConsentVersion: ART9_CONSENT_VERSION }),
+      }),
     });
     setSubmitting(false);
   };
 
-  // What changed in the version this site shows (not while the database still asks for an earlier one).
+  // What's new in the version this site shows (not while the database still
+  // asks for an earlier one), what changed before it for a member on an even
+  // earlier version, and the consent's new wording.
   const showChanges = termsChanged && termsVersion === TERMS_VERSION && TERMS_CHANGES?.length > 0;
-  const readChanges = showChanges ? "read what changed and " : "";
+  const changes = showChanges
+    ? [...TERMS_CHANGES, TERMS_EARLIER_CHANGES?.[user.termsVersion], renew && ART9_CHANGES].filter(Boolean) : [];
+  const readChanges = showChanges ? "read what's new and " : "";
   const intro = onLater
     ? `We've updated our Terms of Use. Please ${readChanges}accept the new version.`
     : termsChanged
@@ -98,14 +114,14 @@ export default function TermsGate({ user, termsVersion, onDone, onSignOut, onLat
 
         {showChanges && (
           <section aria-labelledby="tg-changes-title" style={{ background: "#fff", border: "1px solid #E8E7E4", borderRadius: 12, padding: "16px 18px", marginBottom: 24 }}>
-            <h3 id="tg-changes-title" style={{ fontSize: 15, fontWeight: 700, color: COLORS.text, margin: "0 0 8px" }}>What changed</h3>
+            <h3 id="tg-changes-title" style={{ fontSize: 15, fontWeight: 700, color: COLORS.text, margin: "0 0 8px" }}>What's new</h3>
             <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, lineHeight: 1.55, color: COLORS.text }}>
-              {TERMS_CHANGES.map((change) => <li key={change} style={{ marginBottom: 6 }}>{change}</li>)}
+              {changes.map((change) => <li key={change} style={{ marginBottom: 6 }}>{change}</li>)}
             </ul>
             <p style={{ fontSize: 13, color: COLORS.helper, lineHeight: 1.5, margin: "8px 0 0" }}>
               Read the <LegalLink href="/terms" onOpen={() => setModal("terms")}>new Terms of Use</LegalLink>
-              {user.termsVersion && user.termsVersion === PREVIOUS_TERMS_VERSION && (
-                <> or the <a href={`/terms/${PREVIOUS_TERMS_VERSION}`} target="_blank" rel="noopener noreferrer" style={{ color: "#3D5A9F", fontWeight: 500 }}>version you accepted before</a></>
+              {user.termsVersion && TERMS_ARCHIVE[user.termsVersion] && (
+                <> or the <a href={`/terms/${user.termsVersion}`} target="_blank" rel="noopener noreferrer" style={{ color: "#3D5A9F", fontWeight: 500 }}>version you accepted before</a></>
               )}.
             </p>
           </section>
@@ -115,7 +131,7 @@ export default function TermsGate({ user, termsVersion, onDone, onSignOut, onLat
           {needs.terms && (
             <TermsCheckbox id="tg-agree" inputRef={refs.agree} checked={agree} onChange={tick("agree", setAgree)} error={errors.agree} onOpen={setModal} style={{ marginBottom: 16 }} />
           )}
-          {needs.art9 && (
+          {askArt9 && (
             <Art9Checkbox id="tg-art9" inputRef={refs.art9} checked={art9} onChange={tick("art9", setArt9)} error={errors.art9} style={{ marginBottom: 16 }} />
           )}
           <PrivacyNote onOpen={setModal} style={{ marginBottom: 22 }} />

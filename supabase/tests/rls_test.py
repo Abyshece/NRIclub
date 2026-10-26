@@ -49,6 +49,8 @@ PUBLIC_PREVIEWS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                                "20261031000000_public_previews.sql")
 ADMIN_DELETE_MEMBER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                                    "20261101000000_admin_delete_member.sql")
+COMPLIANCE_FIXES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                                "20261102000000_compliance_fixes.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -88,8 +90,9 @@ JOSE1 = "00000000-0000-0000-0000-000000000201"
 JOSE2 = "00000000-0000-0000-0000-000000000202"
 JOSE3 = "00000000-0000-0000-0000-000000000203"
 CONVO2 = "30000000-0000-0000-0000-000000000002"
-TERMS_VERSION = "2026-10-23"
-ART9_VERSION = "2026-10-19"  # of the Art. 9 consent wording
+TERMS_VERSION = "2026-10-26"
+PREVIOUS_TERMS_VERSION = "2026-10-23"
+ART9_VERSION = "2026-10-26"  # of the Art. 9 consent wording
 WAIT = "00000000-0000-0000-0000-000000000301"
 WAIT2 = "00000000-0000-0000-0000-000000000302"
 AMBA = "00000000-0000-0000-0000-000000000303"
@@ -1285,13 +1288,13 @@ def main():
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=ALICE,
           expect="account,ambassador_agreement,ambassador_applications,ambassador_log,ambassador_welcomes_given,"
                  "answer_thanks,blocks,comments,connections,conversations,"
-                 "conversations_hidden,doc_comments,docs,"
+                 "conversations_hidden,decision_emails_sent,doc_comments,docs,"
                  "event_rsvps,events_organised,exported_at,files,group_memberships,groups_requested,help_requests,"
                  "help_responses,housing_listings,housing_looking_posts,housing_post_log,"
                  "invite_code,likes,marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
                  "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,place_recommendations,"
                  "places_added,posts,profile,"
-                 "profile_private,rate_limit_log,readme,reports_about_me,reports_filed,sessions,terms_acceptances,"
+                 "profile_private,profile_reminders,rate_limit_log,readme,reports_about_me,reports_filed,sessions,terms_acceptances,"
                  "travel_posts,travel_rules_accepted,urgent_questions_sent,user_settings,verification_log,"
                  "welcomed_by_your_city_ambassador")
     check("... with the member's profile, private details, consent and rows of each kind",
@@ -1302,7 +1305,7 @@ def main():
           "'place_recommendations', 'answer_thanks', 'mentor_reviews_written', 'mentor_reviews_received', 'sessions', "
           "'files', 'urgent_questions_sent', 'reports_about_me', 'ambassador_applications', 'travel_posts', "
           "'ambassador_agreement', 'ambassador_welcomes_given', 'welcomed_by_your_city_ambassador', 'ambassador_log', "
-          "'housing_listings', 'housing_looking_posts', 'housing_post_log'))) "
+          "'housing_listings', 'housing_looking_posts', 'housing_post_log', 'profile_reminders', 'decision_emails_sent'))) "
           "FROM (SELECT public.export_my_data() d) x",
           as_user=ALICE, expect=f"Alice Updated|alice@example.com|{TERMS_VERSION}|{ART9_VERSION}|art9|true")
     check("... and only the member's own rows",
@@ -1361,6 +1364,7 @@ def main():
     housing_search()
     public_previews()
     admin_delete_member()
+    compliance_fixes()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -3639,16 +3643,16 @@ def ambassador_applications():
                 f"({len(added)} added, {len(removed)} changed)", removed == allowed and added,
                 f"removed: {removed}")
     check("... and the database runs the migration's versions (the same keys in \"Download my data\" as before, plus one, "
-          "since 2026-10-26 the travel board's two, since 2026-10-27 the ambassador panel's four and since 2026-10-30 the "
-          "housing search's three)",
+          "since 2026-10-26 the travel board's two, since 2026-10-27 the ambassador panel's four, since 2026-10-30 the "
+          "housing search's three and since 2026-11-02 the compliance fixes' two)",
           "SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(public.export_my_data()) k", as_user=asha,
           expect="account,ambassador_agreement,ambassador_applications,ambassador_log,ambassador_welcomes_given,answer_thanks,blocks,comments,connections,conversations,"
-                 "conversations_hidden,doc_comments,docs,event_rsvps,events_organised,exported_at,files,"
+                 "conversations_hidden,decision_emails_sent,doc_comments,docs,event_rsvps,events_organised,exported_at,files,"
                  "group_memberships,groups_requested,help_requests,help_responses,housing_listings,"
                  "housing_looking_posts,housing_post_log,invite_code,likes,"
                  "marketplace_listings,mentor_reviews_received,mentor_reviews_written,mentor_times,"
                  "mentoring_sessions,messages,moderation_actions_about_me,name_changes,notifications,"
-                 "place_recommendations,places_added,posts,profile,profile_private,rate_limit_log,readme,"
+                 "place_recommendations,places_added,posts,profile,profile_private,profile_reminders,rate_limit_log,readme,"
                  "reports_about_me,reports_filed,sessions,terms_acceptances,travel_posts,travel_rules_accepted,"
                  "urgent_questions_sent,user_settings,"
                  "verification_log,welcomed_by_your_city_ambassador")
@@ -4132,12 +4136,12 @@ def travel_board():
             sys.exit(f"posting a trip failed: {err}")
         return out.splitlines()[-1]
 
-    # --- the Terms of Use 2026-10-23 ---------------------------------------------------
+    # --- the Terms of Use (2026-10-23 with the board; 2026-10-26 since the 2026-11-02 update) ---------
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src", "content", "legal", "terms.js"),
               encoding="utf-8") as f:
         terms_js = f.read()
     site_terms = re.search(r'export const TERMS_VERSION = "([^"]+)"', terms_js).group(1)
-    check("the database asks for the Terms version the site shows (TERMS_VERSION, 2026-10-23)",
+    check("the database asks for the Terms version the site shows (TERMS_VERSION)",
           "SELECT public.current_terms_version()", role="anon", expect=site_terms)
     check("... and the version before it is the site's PREVIOUS_TERMS_VERSION",
           "SELECT public.previous_terms_version()", role="anon",
@@ -4366,7 +4370,8 @@ def travel_board():
     # --- members still on the Terms 2026-10-19 -------------------------------------------------------
     # Section 14: new Terms apply once accepted; until then the previous ones
     # do. Only the travel board (its rules are in the new section 7) needs
-    # the new version.
+    # the new version. (Since the 2026-11-02 update the current version is
+    # 2026-10-26 and 2026-10-19 is two versions back: still in force.)
     pita, quin, ravi = (f"00000000-0000-0000-0000-000000000c{n}" for n in ("0a", "0b", "0c"))
     for uid, mail, name in ((pita, "pita@example.com", "Pita P"), (quin, "quin@example.com", "Quin Q"),
                             (ravi, "ravi@example.com", "Ravi R")):
@@ -4378,8 +4383,8 @@ def travel_board():
     psql(f"UPDATE profile_private SET art9_consent_at = NULL, art9_consent_version = NULL WHERE id = '{ravi}'; "
          f"INSERT INTO private.travel_rules_ack (user_id, rules_version) VALUES ('{pita}', '2026-10-26')")
     takes_part = "SELECT private.is_active_member()::text || '|' || private.can_browse()::text"
-    check("the version before the current one is 2026-10-19 (anyone may ask, as the site does)",
-          "SELECT public.previous_terms_version()", role="anon", expect="2026-10-19")
+    check(f"the version before the current one is {PREVIOUS_TERMS_VERSION} (anyone may ask, as the site does)",
+          "SELECT public.previous_terms_version()", role="anon", expect=PREVIOUS_TERMS_VERSION)
     check("a member who accepted 2026-10-19 still takes part", takes_part, as_user=pita, expect="true|true")
     check("... sees other members", f"SELECT count(*) FROM profiles WHERE id = '{uma}'", as_user=pita, expect="1")
     check("... and the trips on the board", "SELECT count(*) > 0 FROM travel_posts WHERE user_id <> auth.uid()",
@@ -4413,17 +4418,18 @@ def travel_board():
     psql(f"UPDATE profile_private SET art9_consent_at = now(), art9_consent_version = '2026-10-19' WHERE id = '{ola}'")
     check("accepting 2026-10-19 again is refused", "SELECT public.accept_terms('2026-10-19')", as_user=pita,
           error_has="The Terms of Use have been updated")
-    check("pita accepts 2026-10-23: recorded, with both acceptances kept",
-          "SELECT public.accept_terms('2026-10-23'); SELECT terms_version FROM profile_private WHERE id = auth.uid(); "
+    check(f"pita accepts {TERMS_VERSION}: recorded, with both acceptances kept",
+          f"SELECT public.accept_terms('{TERMS_VERSION}'); SELECT terms_version FROM profile_private WHERE id = auth.uid(); "
           "SELECT string_agg(version, ',' ORDER BY version) FROM terms_acceptances WHERE member_id = auth.uid() AND kind = 'terms'",
-          as_user=pita, expect="2026-10-23\n2026-10-23\n2026-10-19,2026-10-23")
+          as_user=pita, expect=f"{TERMS_VERSION}\n{TERMS_VERSION}\n2026-10-19,{TERMS_VERSION}")
     check("... now she posts a trip", trip("offer", "Berlin", "Delhi", 12).replace("RETURNING id", "RETURNING 1"),
           as_user=pita, expect="1")
     check("... and sends a message about one", pita_tagged, as_user=pita, expect="1")
     check("ravi gives the Art. 9 consent (with the current Terms): he takes part again",
-          f"SELECT public.accept_terms('2026-10-23', true); {takes_part}", as_user=ravi, expect="2026-10-23\ntrue|true")
+          f"SELECT public.accept_terms('{TERMS_VERSION}', true); {takes_part}", as_user=ravi,
+          expect=f"{TERMS_VERSION}\ntrue|true")
     check("quin accepts the current Terms: she takes part again",
-          f"SELECT public.accept_terms('2026-10-23'); {takes_part}", as_user=quin, expect="2026-10-23\ntrue|true")
+          f"SELECT public.accept_terms('{TERMS_VERSION}'); {takes_part}", as_user=quin, expect=f"{TERMS_VERSION}\ntrue|true")
 
     # --- reports and our team ------------------------------------------------------------------------
     report = (f"INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith) "
@@ -4539,6 +4545,12 @@ def travel_board():
     verdict("the migration can be run again", ok, err[:300])
     check("... and still asks for the rules before a post", trip("offer", "Berlin", "Mumbai", 10), as_user=yash,
           error_has="row-level security")
+    # Running it again made 2026-10-23 current once more: back to the Terms,
+    # the consent and who takes part as the 2026-11-02 update has them, for
+    # the sections below.
+    ok, _, err = psql(migration_part("TERMS OF USE 2026-10-26", "WEBSITE ANALYTICS", COMPLIANCE_FIXES))
+    verdict("(the Terms 2026-10-26 current again, as the 2026-11-02 update left them)",
+            ok and psql("SELECT public.current_terms_version()")[1] == TERMS_VERSION, err[:300])
 
 
 def ambassador_panel():
@@ -5367,6 +5379,8 @@ def analytics():
     approved_member(member, "analytics.member@example.com", "Asha A")
     v1, v2, v3 = (f"a0000000-0000-4000-8000-00000000000{n}" for n in (1, 2, 3))
     s1, s2, s3, s4 = (f"b0000000-0000-4000-8000-00000000000{n}" for n in (1, 2, 3, 4))
+    # As an /api/collect from before the 2026-11-02 update sends it: with a
+    # shortened IP address, which isn't stored any more.
     meta = {"visitor_id": v1, "session_id": s1, "device": "mobile", "browser": "Chrome", "os": "Android",
             "country": "de", "region": "BY", "city": "München", "ip_truncated": "203.0.113.0"}
 
@@ -5396,13 +5410,14 @@ def analytics():
         {"type": "funnel", "path": "/", "label": "member_email_was_x"},
         {"type": "profile", "path": "/u/:id", "label": "Priya"},
         "not an event"]), role="service_role", expect="3")
-    check("... with the visit's details as sent: the country in capitals, the referrer in small letters", f"""
+    check("... with the visit's details as sent: the country in capitals, the referrer in small letters, and no IP "
+          "address (since the 2026-11-02 update)", f"""
           SELECT string_agg(concat_ws('|', type, path, label, referrer_domain, utm_source, utm_campaign, country, region, city,
-            ip_truncated, device, browser, os), ';' ORDER BY id)
-          FROM private.analytics_events WHERE session_id = '{s1}'""",
-          expect="pageview|/||google.com|whatsapp|munich|DE|BY|München|203.0.113.0|mobile|Chrome|Android;"
-                 "click|/|Join free||||DE|BY|München|203.0.113.0|mobile|Chrome|Android;"
-                 "funnel|/|signup_open||||DE|BY|München|203.0.113.0|mobile|Chrome|Android")
+            device, browser, os), ';' ORDER BY id) || '|' || (position('203.0.113' IN string_agg(row_to_json(e)::text, '')) = 0)
+          FROM private.analytics_events e WHERE session_id = '{s1}'""",
+          expect="pageview|/||google.com|whatsapp|munich|DE|BY|München|mobile|Chrome|Android;"
+                 "click|/|Join free||||DE|BY|München|mobile|Chrome|Android;"
+                 "funnel|/|signup_open||||DE|BY|München|mobile|Chrome|Android|true")
     now_ms = int(time.time() * 1000)
     check("texts are cut to their length, unknown devices and countries left empty, and the time kept within the hour "
           "before it arrived (minutes ago)", f"""
@@ -5457,12 +5472,12 @@ def analytics():
         check(f"anon can't call {call.split('(')[0]}", f"SELECT {call}", role="anon", error_has="permission denied")
         check("... members get \"Admins only\"", f"SELECT {call}", as_user=member, error_has="Admins only")
     ev = ("INSERT INTO private.analytics_events (at, visitor_id, session_id, type, path, title, label, target, "
-          "referrer_domain, utm_source, utm_medium, utm_campaign, country, city, ip_truncated, device, browser, os) VALUES ")
+          "referrer_domain, utm_source, utm_medium, utm_campaign, country, city, device, browser, os) VALUES ")
 
     def row(ago, v, s, typ, path, label="", target="", ref="", utm=("", "", ""), place=("DE", "München"),
             dev=("mobile", "Chrome", "Android"), title=""):
         return (f"(now() - interval '{ago}', '{v}', '{s}', '{typ}', '{path}', '{title}', '{label}', '{target}', '{ref}', "
-                f"'{utm[0]}', '{utm[1]}', '{utm[2]}', '{place[0]}', '{place[1]}', '203.0.113.0', '{dev[0]}', '{dev[1]}', '{dev[2]}')")
+                f"'{utm[0]}', '{utm[1]}', '{utm[2]}', '{place[0]}', '{place[1]}', '{dev[0]}', '{dev[1]}', '{dev[2]}')")
     seed = (f"DELETE FROM private.analytics_events; DELETE FROM private.analytics_consent_counts; " + ev + ", ".join([
         row("3 days 10 minutes", v1, s1, "pageview", "/", ref="google.com", utm=("whatsapp", "social", "munich"), title="NRIClub"),
         row("3 days 9 minutes", v1, s1, "click", "/", label="Join free"),
@@ -5505,13 +5520,13 @@ def analytics():
                  "signup_password=0,details_open=0,details_sent=0,login_start=0,login_ok=0 ; -=1,google.com=1 ; "
                  "whatsapp/social/munich=1 ; München=2 ; mobile=2")
     visits = """SELECT (r->>'total') || ' ; ' || (SELECT string_agg(concat_ws('|', s->>'id', s->>'steps', s->>'pages', s->>'exit',
-        s->>'city', s->>'ip', s->>'device', s->>'referrer_domain', s->>'utm_campaign'), ',') FROM jsonb_array_elements(r->'sessions') s)
+        s->>'city', s ? 'ip', s->>'device', s->>'referrer_domain', s->>'utm_campaign'), ',') FROM jsonb_array_elements(r->'sessions') s)
       FROM (SELECT public.admin_analytics_sessions(30, %s, %s) r) x"""
-    check("the visits, newest first, with place, shortened IP, device, source and steps",
+    check("the visits, newest first, with place, device, source and steps (no IP address since the 2026-11-02 update)",
           f"BEGIN; {seed}; {as_admin(visits % (25, 0))}; ROLLBACK;",
-          expect=f"f\n2 ; {s2}|1|1|/guides|München|203.0.113.0|mobile||,{s1}|4|2|/city/munich|München|203.0.113.0|mobile|google.com|munich")
+          expect=f"f\n2 ; {s2}|1|1|/guides|München|f|mobile||,{s1}|4|2|/city/munich|München|f|mobile|google.com|munich")
     check("... a page at a time", f"BEGIN; {seed}; {as_admin(visits % (1, 1))}; ROLLBACK;",
-          expect=f"f\n2 ; {s1}|4|2|/city/munich|München|203.0.113.0|mobile|google.com|munich")
+          expect=f"f\n2 ; {s1}|4|2|/city/munich|München|f|mobile|google.com|munich")
     check("one visit's journey, in order", f"""BEGIN; {seed}; {as_admin(f'''SELECT string_agg((e->>'type') || ':' || (e->>'path')
           || coalesce(':' || nullif(e->>'label', ''), ''), ', ') FROM jsonb_array_elements(public.admin_analytics_journey('{s1}')) e''')};
           ROLLBACK;""", expect="f\npageview:/, click:/:Join free, funnel:/:signup_open, funnel:/:signup_email, "
@@ -6222,17 +6237,19 @@ def public_previews():
     owner(f"UPDATE events SET city = 'Augsburg' WHERE id = '{party}'")
 
     # --- a question -------------------------------------------------------------------------------------------------------
+    # (A General question: since the 2026-11-02 update, questions under Health
+    # or Legal/Visa have no preview; compliance_fixes() checks that.)
     ask = post(ana, """INSERT INTO help_requests (user_id, title, description, category, share_preview)
-          VALUES (auth.uid(), 'Which  dentist in Augsburg speaks Hindi?', 'My tooth hurts since Monday. I live near the station.',
-            'Health', true) RETURNING id""")
+          VALUES (auth.uid(), 'Which  grocery in Augsburg sells fresh curry leaves?', 'I need them for Sunday. I live near the station.',
+            'General', true) RETURNING id""")
     expect_preview("a question without answers: its title and city", "question", ask,
                    {"kind": "question", "label": "Question", "city": "Augsburg", "image": None,
-                    "title": "Which dentist in Augsburg speaks Hindi?", "answers": 0})
-    for text in ("Dr. Rao near Königsplatz.", "Try the clinic in Haunstetten."):
+                    "title": "Which grocery in Augsburg sells fresh curry leaves?", "answers": 0})
+    for text in ("The shop near Königsplatz.", "Try the market in Haunstetten."):
         post(ben, f"INSERT INTO help_responses (request_id, user_id, content) VALUES ('{ask}', auth.uid(), {sq(text)}) RETURNING id")
     expect_preview("... and how many answers it has (not the answers, the description or the asker)", "question", ask,
                    {"kind": "question", "label": "Question", "city": "Augsburg", "image": None,
-                    "title": "Which dentist in Augsburg speaks Hindi?", "answers": 2})
+                    "title": "Which grocery in Augsburg sells fresh curry leaves?", "answers": 2})
     owner(f"UPDATE help_requests SET city = '' WHERE id = '{ask}'")
     verdict("a question without a city: no city",
             (preview("question", ask) or {}).get("city", "missing") is None, str(preview("question", ask)))
@@ -6596,6 +6613,396 @@ def admin_delete_member():
     check("... and the check still answers", call(None, None), as_user=ADMIN, expect='{"ready": true}')
     check("... and still refuses members", call(dev), as_user=ben, error_has="Admins only")
     psql(f"DELETE FROM public.admins WHERE user_id = '{ela}'")
+
+
+def node_json(code):
+    """Runs a small ES module in the repository (its src/content files) and
+    returns what it printed as JSON, or None."""
+    proc = subprocess.run(["node", "--input-type=module", "-e", code],
+                          cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
+                          capture_output=True, text=True)
+    return json.loads(proc.stdout) if proc.returncode == 0 and proc.stdout.strip() else None
+
+
+def compliance_fixes():
+    """Compliance fixes and the Terms of Use 2026-10-26: the Terms and the
+    Art. 9 consent versions and who takes part under earlier Terms, website
+    analytics without IP addresses and with times to the hour, "Download my
+    data", the nightly clean-up of the urgent-question log and old
+    notifications, reports and removals of "Looking for a place" posts, and
+    no previews for questions about health or legal and visa matters:
+    migration 20261102000000_compliance_fixes."""
+    import difflib
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    with open(COMPLIANCE_FIXES, encoding="utf-8") as f:
+        migration = f.read()
+    ok, _, err = psql(migration)
+    verdict("the update runs after the ones the sections above ran again", ok, err[:300])
+    asha, ben, chen, dina, eko, fara = (f"00000000-0000-0000-0000-0000000012{n:02d}" for n in range(1, 7))
+    for uid, name in ((asha, "Asha C"), (ben, "Ben C"), (chen, "Chen C"), (dina, "Dina C"), (eko, "Eko C"),
+                      (fara, "Fara C")):
+        approved_member(uid, f"{name.split()[0].lower()}.cf@example.com", name)
+
+    def owner(sql):
+        ok, out, err = psql(sql)
+        if not ok:
+            sys.exit(f"setting up failed: {err}")
+        return out.splitlines()[-1] if out else ""
+
+    def post(uid, sql):
+        ok, out, err = psql(sql, "authenticated", uid)
+        if not ok:
+            sys.exit(f"posting failed: {err}")
+        return out.splitlines()[-1]
+
+    def unchanged_but(header, old_path, new_header=None, allowed=()):
+        """The function in this update is the one of an earlier migration with
+        lines added only, except the lines in allowed (old lines that may
+        change)."""
+        old = function_source(old_path, header).replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1).splitlines()
+        new = function_source(COMPLIANCE_FIXES, new_header or header.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)).splitlines()
+        diff = list(difflib.ndiff(old, new))
+        removed = [l[2:] for l in diff if l.startswith("- ")]
+        added = [l[2:] for l in diff if l.startswith("+ ")]
+        verdict(f"{header.split('FUNCTION ')[1].split('(')[0]} is its earlier version ({os.path.basename(old_path)[:8]}) "
+                f"with {len(added)} lines added or changed, and nothing else removed",
+                set(removed) <= set(allowed) and added, f"removed: {removed}")
+
+    # --- the Terms 2026-10-26 and the consent 2026-10-26: site and database ------------------------------------------
+    site = node_json("import { TERMS_VERSION, PREVIOUS_TERMS_VERSION, TERMS_ARCHIVE } from './src/content/legal/terms.js';"
+                     "import { ART9_CONSENT_VERSION, ART9_CONSENT_TEXT_BY_VERSION } from './src/content/legal/consent.js';"
+                     "console.log(JSON.stringify({ current: TERMS_VERSION, previous: PREVIOUS_TERMS_VERSION, "
+                     "archive: Object.keys(TERMS_ARCHIVE), art9: ART9_CONSENT_VERSION, "
+                     "wordings: Object.keys(ART9_CONSENT_TEXT_BY_VERSION) }))") or {}
+    verdict("the site shows the Terms 2026-10-26 (after 2026-10-23) and the consent 2026-10-26, as the tests expect",
+            site.get("current") == TERMS_VERSION == "2026-10-26" and site.get("previous") == PREVIOUS_TERMS_VERSION == "2026-10-23"
+            and site.get("art9") == ART9_VERSION == "2026-10-26", str(site))
+    check("the database asks for the same version (anyone may ask)", "SELECT public.current_terms_version() || '|' || "
+          "public.previous_terms_version()", role="anon", expect=f"{TERMS_VERSION}|{PREVIOUS_TERMS_VERSION}")
+    check("... records consents to the same wording", "SELECT private.current_art9_version()", expect=ART9_VERSION)
+    check("... and keeps the Terms 2026-10-19, 2026-10-23 and 2026-10-26 in force (anyone may ask, as the site does)",
+          "SELECT array_to_string(public.terms_versions_in_force(), ',')", role="anon",
+          expect="2026-10-19,2026-10-23,2026-10-26")
+    in_force = psql("SELECT array_to_string(private.terms_versions_in_force(), ',')")[1].split(",")
+    verdict("the site has the text of every version in force (earlier ones at nriclub.app/terms/<version>)",
+            in_force and all(v == site.get("current") or v in (site.get("archive") or []) for v in in_force),
+            f"{in_force} {site.get('archive')}")
+    verdict("... and every wording of the consent a member can have agreed to (2026-10-19 and 2026-10-26), for Settings",
+            site.get("wordings") == ["2026-10-19", "2026-10-26"], str(site.get("wordings")))
+
+    # Who takes part, by the version of the Terms they accepted (section 14).
+    takes_part = ("SELECT private.is_verified_member()::text || '|' || private.is_active_member()::text || '|' || "
+                  "private.can_browse()::text || '|' || private.has_current_terms()::text")
+    for version, expected in (("2026-10-19", "true|true|true|false"), ("2026-10-23", "true|true|true|false"),
+                              ("2026-10-26", "true|true|true|true"), ("2026-10", "false|false|false|false"),
+                              ("2026-11-99", "false|false|false|false")):
+        owner(f"UPDATE profile_private SET terms_version = '{version}' WHERE id = '{asha}'; SELECT 1")
+        check(f"a member on the Terms {version}: takes part {expected.split('|')[0]}, current Terms {expected.split('|')[3]}",
+              takes_part, as_user=asha, expect=expected)
+    owner(f"UPDATE profile_private SET terms_version = '2026-10-19' WHERE id = '{asha}'; SELECT 1")
+    check("... on 2026-10-19 she sees other members", f"SELECT count(*) FROM profiles WHERE id = '{ben}'", as_user=asha,
+          expect="1")
+    check("... and posts in the feed", "INSERT INTO posts (user_id, content) VALUES (auth.uid(), 'Hello from Asha') RETURNING 1",
+          as_user=asha, expect="1")
+    owner(f"INSERT INTO private.travel_rules_ack (user_id, rules_version) VALUES ('{asha}', private.travel_rules_version()) "
+          "ON CONFLICT DO NOTHING; SELECT 1")
+    check("... but the travel board still needs the current Terms", trip("offer", "Berlin", "Delhi", 12), as_user=asha,
+          error_has="Please accept the updated Terms of Use to use the travel board.")
+    owner(f"UPDATE profile_private SET terms_version = '2026-10-23' WHERE id = '{asha}'; SELECT 1")
+    check("... also on 2026-10-23, the version before", trip("offer", "Berlin", "Delhi", 12), as_user=asha,
+          error_has="Please accept the updated Terms of Use to use the travel board.")
+    owner(f"UPDATE profile_private SET art9_consent_at = NULL WHERE id = '{asha}'; SELECT 1")
+    check("the Art. 9 consent is still required: on 2026-10-23 without it, no taking part", takes_part, as_user=asha,
+          expect="false|false|false|false")
+    owner(f"UPDATE profile_private SET art9_consent_at = now() - interval '5 days', art9_consent_version = '2026-10-19' "
+          f"WHERE id = '{asha}'; SELECT 1")
+    check("... a consent to the earlier wording (2026-10-19) still counts", takes_part, as_user=asha,
+          expect="true|true|true|false")
+    check("accepting an earlier version is refused", f"SELECT public.accept_terms('{PREVIOUS_TERMS_VERSION}')", as_user=asha,
+          error_has="The Terms of Use have been updated")
+    # Her history as if she had accepted 2026-10-23 with the consent 2026-10-19.
+    owner(f"DELETE FROM terms_acceptances WHERE member_id = '{asha}'; "
+          f"INSERT INTO terms_acceptances (member_id, kind, version, accepted_at) VALUES "
+          f"('{asha}', 'terms', '2026-10-23', now() - interval '5 days'), ('{asha}', 'art9', '2026-10-19', now() - interval '5 days'); "
+          "SELECT 1")
+    consent = ("SELECT concat_ws('|', terms_version, art9_consent_version, art9_consent_at > now() - interval '1 minute', "
+               "(SELECT string_agg(kind || ':' || version, ',' ORDER BY accepted_at, kind) FROM terms_acceptances "
+               "WHERE member_id = auth.uid() AND accepted_at > now() - interval '1 minute')) FROM profile_private WHERE id = auth.uid()")
+    check("accepting the new Terms without the consent records the Terms only (the earlier consent stays)",
+          f"BEGIN; SELECT public.accept_terms('{TERMS_VERSION}'); {consent}; ROLLBACK",
+          as_user=asha, expect=f"{TERMS_VERSION}\n{TERMS_VERSION}|2026-10-19|f|terms:{TERMS_VERSION}")
+    check("accepting the new Terms with the consent in its new wording records both, with an entry each",
+          f"SELECT public.accept_terms('{TERMS_VERSION}', true); {consent}",
+          as_user=asha, expect=f"{TERMS_VERSION}\n{TERMS_VERSION}|{ART9_VERSION}|t|art9:{ART9_VERSION},terms:{TERMS_VERSION}")
+    check("... the consent to the earlier wording stays in the history",
+          "SELECT count(*) FROM terms_acceptances WHERE member_id = auth.uid() AND kind = 'art9'", as_user=asha, expect="2")
+    check("... and accepting again adds nothing", f"SELECT public.accept_terms('{TERMS_VERSION}', true); "
+          "SELECT count(*) FROM terms_acceptances WHERE member_id = auth.uid()", as_user=asha, expect=f"{TERMS_VERSION}\n4")
+    check("... now she takes part with the current Terms", takes_part, as_user=asha, expect="true|true|true|true")
+    unchanged_but("CREATE FUNCTION public.accept_terms(p_version TEXT, p_art9 BOOLEAN DEFAULT FALSE)", ACCESS_CONSENT,
+                  allowed=["         COALESCE(p_art9, FALSE) AND art9_consent_at IS NULL"])
+
+    # --- website analytics: no IP address, times to the hour ---------------------------------------------------------
+    check("the shortened IP addresses are gone, with their column",
+          "SELECT count(*) FROM pg_attribute WHERE attrelid = 'private.analytics_events'::regclass "
+          "AND attname = 'ip_truncated' AND NOT attisdropped", expect="0")
+    va, sa = "7c000000-0000-4000-8000-000000000001", "7c000000-0000-4000-8000-000000000002"
+    meta = {"visitor_id": va, "session_id": sa, "device": "desktop", "browser": "Firefox", "os": "Linux",
+            "country": "DE", "region": "BE", "city": "Berlin", "ip_truncated": "198.51.100.0"}
+    check("an /api/collect from before this update still sends one (the service role stores)", f"""
+          SELECT public.analytics_ingest($j${json.dumps([{"type": "pageview", "path": "/"}, {"type": "click", "path": "/", "label": "Join free"}])}$j$::jsonb,
+            $j${json.dumps(meta)}$j$::jsonb)""", role="service_role", expect="2")
+    check("... the events are stored without it", "SELECT count(*) || '|' || bool_and(position('198.51.100' IN "
+          f"row_to_json(e)::text) = 0) FROM private.analytics_events e WHERE e.session_id = '{sa}'", expect="2|true")
+    hour = "date_trunc('hour', now()) - interval '3 hours'"
+    seed = (f"DELETE FROM private.analytics_events WHERE session_id = '{sa}'; "
+            "INSERT INTO private.analytics_events (at, visitor_id, session_id, type, path, label, country, city) VALUES "
+            f"({hour} + interval '17 minutes 23 seconds', '{va}', '{sa}', 'pageview', '/', '', 'DE', 'Berlin'), "
+            f"({hour} + interval '41 minutes 5 seconds', '{va}', '{sa}', 'funnel', '/', 'login_start', 'DE', 'Berlin'), "
+            f"({hour} + interval '42 minutes', '{va}', '{sa}', 'funnel', '/', 'login_ok', 'DE', 'Berlin'), "
+            f"({hour} + interval '1 hour 2 minutes', '{va}', '{sa}', 'pageview', '/guides', '', 'DE', 'Berlin')")
+    visit = (f"SELECT concat_ws('|', (s->>'started_at')::timestamptz = {hour}, (s->>'ended_at')::timestamptz = {hour} + interval '1 hour', "
+             "s ? 'ip', s->>'city') FROM jsonb_array_elements(public.admin_analytics_sessions(2, 100, 0)->'sessions') s "
+             f"WHERE s->>'id' = '{sa}'")
+    check("our team sees a visit's start and end to the hour only, and no IP address",
+          f"BEGIN; {seed}; {as_admin(visit)}; ROLLBACK", expect="f\nt|t|f|Berlin")
+    steps = ("SELECT string_agg(concat_ws(':', (e->>'at')::timestamptz - (" + hour + "), e->>'type', NULLIF(e->>'label', '')), ', ') "
+             f"FROM jsonb_array_elements(public.admin_analytics_journey('{sa}')) e")
+    check("... and its steps in order, each to the hour only (login_ok at 14:42 shows as 14:00)",
+          f"BEGIN; {seed}; {as_admin(steps)}; ROLLBACK",
+          expect="f\n00:00:00:pageview, 00:00:00:funnel:login_start, 00:00:00:funnel:login_ok, 01:00:00:pageview")
+    owner(f"DELETE FROM private.analytics_events WHERE session_id = '{sa}'")
+    unchanged_but("CREATE OR REPLACE FUNCTION public.analytics_ingest(p_events JSONB, p_meta JSONB)", ANALYTICS,
+                  allowed=["    referrer_domain, utm_source, utm_medium, utm_campaign, utm_content, country, region, city, ip_truncated,",
+                           "    v_region, LEFT(COALESCE(m ->> 'city', ''), 100), LEFT(COALESCE(m ->> 'ip_truncated', ''), 45),"])
+    unchanged_but("CREATE OR REPLACE FUNCTION public.admin_analytics_sessions(", ANALYTICS,
+                  allowed=["      SELECT jsonb_agg(jsonb_build_object('id', s.session_id, 'started_at', s.started_at, 'ended_at', s.ended_at,",
+                           "        'country', f.country, 'region', f.region, 'city', f.city, 'ip', f.ip_truncated, 'device', f.device,"])
+    unchanged_but("CREATE OR REPLACE FUNCTION public.admin_analytics_journey(p_session UUID)", ANALYTICS,
+                  allowed=["    SELECT jsonb_agg(jsonb_build_object('at', j.at, 'type', j.type, 'path', j.path, 'title', j.title,"])
+
+    # --- "Download my data": profile reminders and decision emails -------------------------------------------------
+    owner(f"""INSERT INTO private.profile_reminders (member_id, admin_id, kind, sent_at) VALUES
+            ('{ben}', '{ADMIN}', 'photo', now() - interval '3 days'), ('{ben}', '{ADMIN}', 'general', now() - interval '1 day'),
+            ('{chen}', '{ADMIN}', 'bio', now());
+          INSERT INTO private.member_email_log (member_id, kind, decided_at, actor_id, created_at) VALUES
+            ('{ben}', 'approved', now() - interval '2 days 1 hour', '{ADMIN}', now() - interval '2 days'),
+            ('{chen}', 'needs_info', now(), '{ADMIN}', now()); SELECT 1""")
+    check("the export has the profile reminders our team sent the member and the decision emails sent to them", """
+          SELECT concat_ws('|', jsonb_array_length(d->'profile_reminders'), d->'profile_reminders'->0->>'kind',
+            d->'profile_reminders'->1->>'kind',
+            (SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(d->'profile_reminders'->0) k),
+            jsonb_array_length(d->'decision_emails_sent'), d->'decision_emails_sent'->0->>'kind',
+            (SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(d->'decision_emails_sent'->0) k),
+            d->'readme' ? 'reminders_and_decision_emails')
+          FROM (SELECT public.export_my_data() d) x""", as_user=ben,
+          expect="2|photo|general|kind,sent_at|1|approved|decided_at,emailed_at,kind|t")
+    check("... never which admin sent them", f"SELECT position('{ADMIN}' IN (public.export_my_data()->'profile_reminders')::text "
+          f"|| (public.export_my_data()->'decision_emails_sent')::text) = 0", as_user=ben, expect="t")
+    check("... and only the member's own", "SELECT jsonb_array_length(d->'profile_reminders') || '|' || "
+          "jsonb_array_length(d->'decision_emails_sent') || '|' || (d->'decision_emails_sent'->0->>'kind') "
+          "FROM (SELECT public.export_my_data() d) x", as_user=chen, expect="1|1|needs_info")
+    unchanged_but("CREATE OR REPLACE FUNCTION public.export_my_data()", HOUSING_SEARCH)
+
+    # --- the nightly clean-up: the urgent-question log after 2 days, notifications after 12 months -----------------
+    cleanup = f"""
+          BEGIN;
+          DELETE FROM private.urgent_log WHERE user_id = '{dina}' OR sent_at < now() - interval '2 days';
+          INSERT INTO private.urgent_log (user_id, sent_at) VALUES ('{dina}', now() - interval '3 days'),
+            ('{dina}', now() - interval '2 days 1 minute'), ('{dina}', now() - interval '20 hours');
+          DELETE FROM notifications WHERE user_id = '{dina}' OR created_at < now() - interval '12 months';
+          INSERT INTO notifications (user_id, type, text, read, created_at) VALUES
+            ('{dina}', 'like', 'old, read', true, now() - interval '13 months'),
+            ('{dina}', 'like', 'old, unread', false, now() - interval '12 months 1 day'),
+            ('{dina}', 'like', 'eleven months, unread', false, now() - interval '11 months'),
+            ('{dina}', 'like', 'seven months, read', true, now() - interval '7 months');
+          SELECT r->>'urgent_log' || '|' || (r->>'notifications') FROM (SELECT private.retention_cleanup() r) x;
+          SELECT (SELECT count(*) FROM private.urgent_log WHERE user_id = '{dina}') || '|' ||
+            (SELECT string_agg(text, ',' ORDER BY created_at) FROM notifications WHERE user_id = '{dina}');
+          %s
+          ROLLBACK;"""
+    check("the clean-up deletes the urgent-question log after 2 days, and every notification after 12 months, read or not "
+          "(read ones after 6 months stay the daily clean-up's)", cleanup % "",
+          expect="2|2\n1|eleven months, unread,seven months, read")
+    claims = json.dumps({"sub": dina, "role": "authenticated"})
+    check("... the log of the last day stays, so one urgent question a day still holds", cleanup % (
+          f"SET LOCAL ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims}', true) IS NOT NULL; "
+          "INSERT INTO help_requests (user_id, title, description, urgent) VALUES (auth.uid(), 'Lost passport', "
+          "'At the station.', true);"), error_has="one urgent question a day")
+    check("members can't run the clean-up", "SELECT private.retention_cleanup()", as_user=dina, error_has="permission denied")
+    check("... nor can anon", "SELECT private.retention_cleanup()", role="anon", error_has="permission denied")
+    check("... the service role can, by hand", "BEGIN; SELECT private.retention_cleanup() ? 'notifications'; ROLLBACK",
+          role="service_role", expect="t")
+    check("its nightly job is scheduled when the database has pg_cron (this test database hasn't)",
+          "SELECT private.schedule_retention_cleanup() ~ '^(scheduled: private.retention_cleanup\\(\\) runs every night at 04:05 UTC "
+          "\\(pg_cron job nriclub-retention-cleanup\\)|not scheduled)'", expect="t")
+    verdict("the update leaves private.daily_cleanup alone (its own job instead)",
+            "FUNCTION private.daily_cleanup" not in migration and "'nriclub-daily-cleanup'" not in migration)
+
+    # --- "Looking for a place" posts: reports and our team's removals ---------------------------------------------
+    listing = post(dina, hs_post("Room in Kreuzberg", "wg_room", "Berlin", 10, 120, rent=550))
+    wanted = post(eko, hs_looking(["wg_room", "flat"], "Berlin", 12, 90, max_rent=700,
+                                  note="Female flatmates only, no Muslims. Call 0151 9876543."))
+    check("dina's listing fits eko's \"Looking for a place\" post: she sees it, with eko's name",
+          f"SELECT string_agg(m->>'name', ',') FROM jsonb_array_elements(public.housing_matches('{listing}')) m "
+          f"WHERE m->>'id' = '{wanted}'", as_user=dina, expect="Eko C")
+    report = (f"INSERT INTO reports (reporter_id, reported_post_id, reason, content_type, category, explanation, good_faith) "
+              f"VALUES (auth.uid(), '{wanted}', '[HOUSING_WANTED] Berlin — Illegal: Hate or discrimination', 'housing_wanted', "
+              "'hate', 'It excludes Muslims and men.', true) RETURNING reported_user_id")
+    check("dina reports eko's post: the report knows its author", report, as_user=dina, expect=eko)
+    check("... a report sent the old way (the \"[HOUSING_WANTED]\" prefix) is about such a post too",
+          f"INSERT INTO reports (reporter_id, reported_post_id, reason) VALUES (auth.uid(), '{wanted}', "
+          "'[HOUSING_WANTED] Berlin — Something else') RETURNING content_type || '|' || reported_user_id", as_user=fara,
+          expect=f"housing_wanted|{eko}")
+    check("... the same member's second report while the first waits is kept once", report, as_user=dina, expect="")
+    check("our team can read the reported post (the admin panel shows it before anything is done)",
+          f"SELECT city || '|' || array_to_string(kinds, ',') FROM housing_wanted WHERE id = '{wanted}'", as_user=ADMIN,
+          expect="Berlin|wg_room,flat")
+    check("\"Download my data\": eko sees that his post was reported, not by whom",
+          "SELECT count(*) || '|' || bool_and(position('" + dina + "' IN r::text) = 0) FROM "
+          "jsonb_array_elements(public.export_my_data()->'reports_about_me') r WHERE r->>'about' = 'housing_wanted'",
+          as_user=eko, expect="2|true")
+    check("members can't remove it with admin_moderate", f"SELECT {moderate('housing_wanted', wanted, 'remove')}",
+          as_user=dina, error_has="Admins only")
+    check("our team removes it: gone, recorded with a copy, and both reports closed", f"""
+          SELECT cardinality(ARRAY(SELECT jsonb_array_elements_text(r->'closed_reports'))) FROM (SELECT {moderate('housing_wanted', wanted,
+            'remove', ground='illegal', rule='§ 19 AGG (discrimination in housing)',
+            facts='it excludes people because of their religion and sex')} r) x;
+          SET ROLE postgres;
+          SELECT concat_ws('|', (SELECT count(*) FROM housing_wanted WHERE id = '{wanted}'),
+            (SELECT concat_ws(':', target_kind, target_user, ground, rule, snapshot->'row'->>'city',
+                    position('no Muslims' IN snapshot->'row'->>'note') > 0, source)
+             FROM private.moderation_action WHERE target_id = '{wanted}' AND action = 'remove'),
+            (SELECT count(*) FROM reports WHERE reported_post_id = '{wanted}' AND status = 'resolved'))""",
+          as_user=ADMIN, expect=f"2\n0|housing_wanted:{eko}:illegal:§ 19 AGG (discrimination in housing):Berlin:t:report|2")
+    statement = (f"SELECT text FROM notifications WHERE user_id = '{eko}' AND type = 'moderation' "
+                 "ORDER BY created_at DESC LIMIT 1")
+    ok, text, _ = psql(statement)
+    verdict("... eko gets the statement of reasons: what was removed, the law, the facts, that it followed a report, how "
+            "to challenge it", ok and all(s in text for s in (
+                'We removed your "Looking for a place" post in Berlin on ', "§ 19 AGG (discrimination in housing)",
+                "it excludes people because of their religion and sex", "This followed a report",
+                "Think we got it wrong?")), text[:300])
+    check("... and dina and fara hear the outcome of their reports",
+          "SELECT count(*) FROM notifications WHERE type = 'report' AND user_id IN ('" + dina + "', '" + fara + "') "
+          "AND position('the \"Looking for a place\" post in Berlin: we removed it' IN text) > 0", expect="2")
+    check("... removing it again: it's gone", f"SELECT {moderate('housing_wanted', wanted, 'remove')}", as_user=ADMIN,
+          error_has="Not found")
+    second = post(eko, hs_looking(["flat"], "Munich", 12, note="Quiet, non-smoker."))
+    check("our team can warn about a post instead (it stays)", f"""
+          SELECT r->>'statement' FROM (SELECT {moderate('housing_wanted', second, 'warn', rule='Market rules (§ 7)',
+            facts='its note asks members to pay a fee for a viewing')} r) x;
+          SET ROLE postgres; SELECT count(*) FROM housing_wanted WHERE id = '{second}'""", as_user=ADMIN,
+          expect="We're writing about your \"Looking for a place\" post in Munich. Please read this warning. Reason: it breaks "
+                 "our Terms of Use, Market rules (§ 7), because its note asks members to pay a fee for a viewing. This followed "
+                 "our own check. No automated tools were used: a person on our team decided. If this happens again we may block "
+                 "your account. Please reply to hello@nriclub.app within 14 days if you want to tell us your side. Think we got "
+                 "it wrong? Write to hello@nriclub.app within 6 months, and a person on our team will look at it again. You can "
+                 "also go to court.\n1")
+    for name in ("private.content_noun(", "private.report_kind_from_reason(", "private.content_author(", "private.report_item("):
+        unchanged_but(f"CREATE OR REPLACE FUNCTION {name}", TRAVEL_BOARD)
+    unchanged_but("CREATE OR REPLACE FUNCTION public.admin_moderate(", TRAVEL_BOARD, allowed=[
+        "     'review', 'place', 'travel', 'message', 'place_recommendation', 'profile_photo', 'profile_bio', 'member') THEN",
+        "      || COALESCE(' \"' || NULLIF(private.snippet(COALESCE(",
+        "           row_json ->> 'title', row_json ->> 'name', row_json ->> 'content', row_json ->> 'comment', '')), '') || '\"', '');"])
+    kinds = ("SELECT string_agg(x.m[1], ',' ORDER BY x.n) FROM regexp_matches((SELECT pg_get_constraintdef(c.oid) "
+             "FROM pg_constraint c WHERE c.conrelid = 'public.reports'::regclass AND c.conname = 'reports_content_type_check'), "
+             "'''([a-z_]+)''::text', 'g') WITH ORDINALITY AS x(m, n)")
+    earlier = "post,comment,answer,doc,doc_comment,event,help,market,review,place,message,profile,feedback,travel"
+    check("reports accept 'housing_wanted' and every kind they accepted before", kinds, expect=f"{earlier},housing_wanted")
+    check("the update builds the list from the one the database has: a kind another update added stays",
+          "BEGIN; ALTER TABLE public.reports DROP CONSTRAINT reports_content_type_check; "
+          f"ALTER TABLE public.reports ADD CONSTRAINT reports_content_type_check CHECK (content_type IN "
+          f"({', '.join(sq(k) for k in earlier.split(','))}, 'zz_later')) NOT VALID; {migration}; {kinds}; ROLLBACK",
+          expect=f"{earlier},zz_later,housing_wanted")
+
+    # --- no previews for questions about health or legal and visa matters ----------------------------------------
+    samples = ["General", "Health", "Legal/Visa", "health", " Legal/Visa ", "Visa", "Mental health", "Legal", "Housing",
+               "Family", "Money & tax", "", None]
+    js = node_json("import { questionPreviewAllowed, QUESTION_CATEGORIES, NO_PREVIEW_CATEGORIES } from './src/content/preview.js';"
+                   f"console.log(JSON.stringify({{ ok: {json.dumps(samples)}.map(questionPreviewAllowed), "
+                   "cats: QUESTION_CATEGORIES, none: NO_PREVIEW_CATEGORIES }))") or {}
+    ok, out, err = psql("SELECT string_agg(private.question_preview_allowed(c)::text, ',' ORDER BY i) FROM unnest(ARRAY["
+                        + ", ".join("NULL::text" if c is None else sq(c) for c in samples) + "]) WITH ORDINALITY AS t(c, i)")
+    db_ok = [v == "true" for v in out.split(",")] if ok else []
+    verdict("the site and the database allow previews for the same categories (not Health, Legal/Visa or anything "
+            "naming health, legal matters or visas)", db_ok == js.get("ok") and db_ok == [
+                True, False, False, False, False, False, False, False, True, True, True, True, True], f"{js} {out} {err[:200]}")
+    verdict("... and the site's own categories without a preview are Health and Legal/Visa",
+            js.get("none") == ["Health", "Legal/Visa"]
+            and [c for c in (js.get("cats") or []) if c not in js.get("none", [])] == [
+                "General", "Housing", "Education", "Jobs", "Travel", "Money & tax", "Family"], str(js))
+    ask = lambda category, title: post(asha, "INSERT INTO help_requests (user_id, title, description, category, share_preview) "
+                                             f"VALUES (auth.uid(), {sq(title)}, 'Details.', {sq(category)}, true) RETURNING id")
+    general = ask("General", "Where to buy atta in Berlin?")
+    health = ask("Health", "Which doctor treats diabetes in Berlin?")
+    visa = ask("Legal/Visa", "My residence permit was refused")
+    check("a question under Health or Legal/Visa can't have its preview switched on",
+          f"SELECT string_agg(category || ':' || share_preview, ',' ORDER BY category) FROM help_requests "
+          f"WHERE id IN ('{general}', '{health}', '{visa}')", expect="General:true,Health:false,Legal/Visa:false")
+    preview = lambda item: psql(f"SELECT public.public_preview('question', '{item}')", "anon")[1]
+    verdict("a General question's preview shows (its title)", "Where to buy atta in Berlin?" in preview(general), preview(general))
+    owner(f"ALTER TABLE public.help_requests DISABLE TRIGGER no_sensitive_question_preview; "
+          f"UPDATE help_requests SET share_preview = true WHERE id IN ('{health}', '{visa}'); "
+          f"ALTER TABLE public.help_requests ENABLE TRIGGER no_sensitive_question_preview; SELECT 1")
+    check("... a Health or Legal/Visa question with its switch on (from before this update) has none: NULL, like any "
+          "item without a preview", f"SELECT (public.public_preview('question', '{health}') IS NULL)::text || '|' || "
+          f"(public.public_preview('question', '{visa}') IS NULL)::text", role="anon", expect="true|true")
+    check("... also for members", f"SELECT public.public_preview('question', '{health}') IS NULL", as_user=ben, expect="t")
+    check("moving a question with a preview to Legal/Visa switches it off",
+          f"UPDATE help_requests SET category = 'Legal/Visa' WHERE id = '{general}' RETURNING share_preview", expect="f")
+    check("... and trying to switch it on again changes nothing",
+          f"UPDATE help_requests SET share_preview = true WHERE id = '{general}' RETURNING share_preview", as_user=asha,
+          expect="f")
+    check("the trigger and its check run for members (they may call them, as the trigger does)",
+          "SELECT has_function_privilege('authenticated', 'private.question_preview_allowed(text)', 'EXECUTE') "
+          "AND has_function_privilege('authenticated', 'private.no_sensitive_question_preview()', 'EXECUTE')", expect="t")
+    unchanged_but("CREATE OR REPLACE FUNCTION public.public_preview(p_kind TEXT, p_id UUID)", PUBLIC_PREVIEWS,
+                  allowed=["    IF q.id IS NULL OR NOT q.share_preview OR NOT private.is_listed_member(q.user_id) THEN"])
+
+    # --- who may call what -----------------------------------------------------------------------------------------
+    check("the new functions run with an empty search path; the clean-up as the database (SECURITY DEFINER)",
+          "SELECT bool_and(proconfig = ARRAY['search_path=\"\"']) AND bool_or(proname = 'retention_cleanup' AND prosecdef) "
+          "FROM pg_proc WHERE oid IN ('private.terms_versions_in_force()'::regprocedure, 'private.retention_cleanup()'::regprocedure, "
+          "'private.schedule_retention_cleanup()'::regprocedure, 'private.question_preview_allowed(text)'::regprocedure, "
+          "'private.no_sensitive_question_preview()'::regprocedure)", expect="t")
+    check("the replaced functions keep their permissions: accept_terms and admin_moderate for signed-in accounts, "
+          "public_preview for anyone, analytics_ingest for the service role only",
+          "SELECT has_function_privilege('authenticated', 'public.accept_terms(text, boolean)', 'EXECUTE') "
+          "AND NOT has_function_privilege('anon', 'public.accept_terms(text, boolean)', 'EXECUTE') "
+          "AND has_function_privilege('anon', 'public.public_preview(text, uuid)', 'EXECUTE') "
+          "AND NOT has_function_privilege('authenticated', 'public.analytics_ingest(jsonb, jsonb)', 'EXECUTE') "
+          "AND has_function_privilege('service_role', 'public.analytics_ingest(jsonb, jsonb)', 'EXECUTE') "
+          "AND NOT has_function_privilege('anon', 'public.export_my_data()', 'EXECUTE')", expect="t")
+
+    # --- the one-off file; running the migration again -------------------------------------------------------------
+    with open(os.path.join(root, "supabase", "oneoff", "2026-11-02-compliance-fixes", "run_in_sql_editor.sql"),
+              encoding="utf-8") as f:
+        oneoff = f.read()
+    marker = "-- ==== 20261102000000_compliance_fixes.sql ====\n"
+    guard = oneoff[:oneoff.index(marker)] if marker in oneoff else ""
+    verdict("the one-off file is its guard (after the admin account deletion update, once) and then the migration as it is",
+            marker in oneoff and oneoff[oneoff.index(marker) + len(marker):] == migration
+            and "to_regprocedure('public.admin_check_member_delete(uuid, text)') IS NULL" in guard
+            and "to_regprocedure('private.terms_versions_in_force()') IS NOT NULL" in guard, "the file differs")
+    check("... it refuses to run a second time, naming the update", oneoff,
+          error_has="The compliance fixes update has already run. Nothing to do.")
+    check("... and before the admin account deletion update",
+          f"BEGIN; DROP FUNCTION public.admin_check_member_delete(uuid, text); {oneoff}; ROLLBACK",
+          error_has="Run the admin account deletion update")
+    owner(f"ALTER TABLE public.help_requests DISABLE TRIGGER no_sensitive_question_preview; "
+          f"UPDATE help_requests SET share_preview = true WHERE id = '{health}'; "
+          f"ALTER TABLE public.help_requests ENABLE TRIGGER no_sensitive_question_preview; SELECT 1")
+    ok, _, err = psql(migration)
+    verdict("the migration can be run again", ok, err[:300])
+    check("... it switches off the preview of a Health question that has one",
+          f"SELECT share_preview FROM help_requests WHERE id = '{health}'", expect="f")
+    check("... 'housing_wanted' is still listed once", kinds, expect=f"{earlier},housing_wanted")
+    check("... the versions are the same", "SELECT public.current_terms_version() || '|' || public.previous_terms_version() "
+          "|| '|' || private.current_art9_version() || '|' || array_to_string(private.terms_versions_in_force(), ',')",
+          expect=f"{TERMS_VERSION}|{PREVIOUS_TERMS_VERSION}|{ART9_VERSION}|2026-10-19,2026-10-23,2026-10-26")
+    owner(f"UPDATE profile_private SET terms_version = '2026-10-23' WHERE id = '{ben}'; SELECT 1")
+    check("... and a member on 2026-10-23 still takes part", takes_part, as_user=ben, expect="true|true|true|false")
 
 
 if __name__ == "__main__":

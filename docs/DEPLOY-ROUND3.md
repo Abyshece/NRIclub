@@ -23,7 +23,7 @@ Everything is in:
 | `supabase/functions/member-email/index.ts` | Decision emails; `GET ?quota=1` refreshes "Emails this month" |
 | `supabase/functions/admin-delete-signup/index.ts` | Deletes an unfinished sign-up |
 | `supabase/functions/admin-inbox-reply/index.ts` | Sends a reply from the Inbox |
-| `supabase/functions/forward-email/index.ts` | Stores mail to hello@ in the Inbox; the Gmail copy is now optional |
+| `supabase/functions/forward-email/index.ts` | Stores mail to hello@ in the Inbox (since 26 October 2026 only there: no Gmail copy) |
 | `supabase/functions/admin-handoff/index.ts` | (Added 24 October 2026.) The "Admin panel" button on nriclub.app: a one-time sign-in code for admin accounts, so admin.nriclub.app opens signed in. Deploy with verify JWT off; without it the button opens the admin login as before |
 | `supabase/functions/admin-delete-member/index.ts` | (Added 1 November 2026.) Members → open a member → **Delete account…**: deletes a member's account because they asked us to, or because it is blocked (not an admin's, nor your own). It deletes their photo files, emails them (`RESEND_API_KEY` and `MAIL_FROM`, as `member-email`: nothing new to set), deletes the account and records it. First run `supabase/oneoff/2026-11-01-admin-delete-member/run_in_sql_editor.sql` (after the 2026-10-31 update), then deploy with verify JWT off: `supabase functions deploy admin-delete-member --no-verify-jwt --project-ref uzzkdmybsbwknpsucuvv`. Until both are in, the dialog says which is missing and deletes nothing. How to use it: `docs/compliance/deletion-routine.md`, "Deleting an account on request" |
 | `vercel.json` | Only the app's own addresses go to the app; the rest get `404.html` (status 404) |
@@ -52,8 +52,7 @@ never the values):
 | `RESEND_API_KEY` | all four | Already set for `forward-email`. Keep it a **Full access** key: receiving and the "Emails this month" refresh need it. |
 | `MAIL_FROM` | `member-email` | The sender of decision emails, e.g. `NRIClub <hello@nriclub.app>` (any address on a domain verified in Resend; `hello@send.nriclub.app` needs `send.nriclub.app` verified first). |
 | `RESEND_WEBHOOK_SECRET` | `forward-email` | Already set. |
-| `FORWARD_TO` | `forward-email` | Now optional: leave it set to keep the Gmail copies; delete it to keep mail in the admin Inbox only. |
-| `FORWARD_FROM` | `forward-email` | Optional, as before. |
+| `FORWARD_TO`, `FORWARD_FROM` | none | Not used since 26 October 2026 (no Gmail copies): delete them. |
 | `INBOX_FROM` | `admin-inbox-reply` | Optional; default `NRIClub <hello@nriclub.app>`. |
 
 `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are
@@ -117,8 +116,7 @@ have them too.
    Users no longer has it. Approved, waiting, declined and blocked accounts
    have no such button, and the server refuses them anyway.
 5. **Inbox:** send an email to hello@nriclub.app from another address. Within
-   a minute it is in **Inbox** (bold, counted in the nav), and in Gmail if
-   `FORWARD_TO` is set. Open it, write a reply, **Send reply**: it arrives
+   a minute it is in **Inbox** (bold, counted in the nav). Open it, write a reply, **Send reply**: it arrives
    from hello@nriclub.app in the same thread and shows under the message.
    Archive it.
 6. **Emails this month:** the box at the top of the Inbox shows Resend's

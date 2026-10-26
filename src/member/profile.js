@@ -56,6 +56,8 @@ export function mapProfile(p) {
     // database update there's no such field (hasArt9Consent false), and
     // nobody is asked for it yet.
     art9ConsentAt: p.art9_consent_at || null,
+    // Which wording of that consent they agreed to (ART9_CONSENT_VERSION).
+    art9ConsentVersion: p.art9_consent_version || "",
     hasArt9Consent: Object.prototype.hasOwnProperty.call(p, "art9_consent_at"),
     // "held" (set by the server) while an admin checks the member before
     // they can take part; "" otherwise. It says nothing about why, and the
@@ -79,16 +81,29 @@ export const firstName = (name) => (name || "").trim().split(/\s+/)[0] || "there
 // current version of the Terms (currentVersion, from
 // api.getCurrentTermsVersion; unknown counts as accepted, the database checks
 // anyway), art9: the Art. 9 consent, once the database records it, later:
-// only the Terms, and the member is on the previous version
-// (previousVersion, from api.getPreviousTermsVersion), which still applies
+// only the Terms, and the member is on an earlier version still in force:
+// the previous one (previousVersion, from api.getPreviousTermsVersion) or
+// another in inForce (api.getTermsVersionsInForce), which still applies
 // until they accept the current one (Terms section 14). Then they can take
 // part and may answer "Later"; otherwise they can't until they accept }.
-export function stillToAccept(user, currentVersion, previousVersion = "") {
+export function stillToAccept(user, currentVersion, previousVersion = "", inForce = []) {
   const terms = !user.ageConfirmedAt || !user.termsAcceptedAt || (!!currentVersion && user.termsVersion !== currentVersion);
   const art9 = !!user.hasArt9Consent && !user.art9ConsentAt;
-  const later = terms && !art9 && !!user.ageConfirmedAt && !!user.termsAcceptedAt
-    && !!previousVersion && user.termsVersion === previousVersion;
+  const later = terms && !art9 && !!user.ageConfirmedAt && !!user.termsAcceptedAt && !!user.termsVersion
+    && user.termsVersion !== currentVersion
+    && ((!!previousVersion && user.termsVersion === previousVersion) || (inForce || []).includes(user.termsVersion));
   return { terms, art9, later };
+}
+
+// Whether the screen that asks for the current Terms (termsVersion, the
+// database's) should also ask again for the Art. 9 consent: the member gave
+// it to an earlier wording than the one this site shows (art9Version,
+// ART9_CONSENT_VERSION), and the database already knows this site's Terms
+// (siteTermsVersion, TERMS_VERSION), and with them that wording. Ticked, it's
+// recorded with the Terms (accept_terms with the consent).
+export function consentToRenew(user, termsVersion, siteTermsVersion, art9Version) {
+  return !!user.art9ConsentAt && !!termsVersion && termsVersion === siteTermsVersion
+    && !!user.art9ConsentVersion && user.art9ConsentVersion !== art9Version;
 }
 
 // "Later" on the Terms screen (stillToAccept(...).later only) lasts for this
@@ -135,11 +150,17 @@ export function countryName(code) {
   try { return regionNames?.of(code) || code; } catch { return code; }
 }
 
+// Countries members can't choose while NRIClub doesn't target them: the UK
+// is paused (docs/compliance/uk-pause.md; its city groups stay, members-only).
+// A member who chose it before keeps it until they change it.
+export const PAUSED_COUNTRIES = ["GB"];
+
 let countryOptions = null;
-// [{ code, name }] sorted by name.
+// [{ code, name }] sorted by name, without PAUSED_COUNTRIES.
 export function getCountryOptions() {
   if (!countryOptions) {
     countryOptions = COUNTRY_CODES
+      .filter((code) => !PAUSED_COUNTRIES.includes(code))
       .map((code) => ({ code, name: countryName(code) }))
       .sort((a, b) => a.name.localeCompare(b.name, "en"));
   }

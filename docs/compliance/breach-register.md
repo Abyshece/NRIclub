@@ -36,7 +36,7 @@ October 2026: no notification** (see below).
 | **[fill in]** | Admin password changed everywhere it or a variant was used; two-step verification on the admin's email, Supabase, GitHub, Vercel accounts |
 | **[fill in]** | Vercel deployments from before 12 October 2026 deleted, or Deployment Protection switched on for them |
 | **[fill in]** | Repository made private, or the admin email removed from `supabase/oneoff/2026-10-12-phase1-live-reset/README.md` and `3_restore_and_admin.sql` (the history stays public) |
-| **[fill in]** | `phase1_backup` schema dropped (due by 11 November 2026) |
+| 26 October 2026 (checked) | `phase1_backup` schema confirmed dropped on the live project |
 
 ### Decision on notification
 

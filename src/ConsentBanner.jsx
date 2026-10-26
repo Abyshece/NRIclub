@@ -102,7 +102,7 @@ export default function ConsentBanner() {
       <div className="nri-consent-box" ref={boxRef}>
         <h2 id="nri-consent-title" ref={titleRef} tabIndex={-1}>Help us improve NRIClub?</h2>
         <p>
-          With your OK we record which pages you visit and which buttons you click, with a shortened IP address and your approximate location.
+          With your OK we record which pages you visit and which buttons you click, with your approximate location (not your IP address). Not linked to your account.
           {" "}No ads, no other companies' trackers. <a href="/privacy#analytics">Privacy Policy</a>
         </p>
         {changing && (

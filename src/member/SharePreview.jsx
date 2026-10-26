@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import * as api from "../supabaseApi";
 import {
-  SWITCH_LABEL, SWITCH_HELP, CONFIRM_TITLE, CONFIRM_TEXT, TURN_ON_AND_SHARE, MEMBERS_ONLY, PREVIEW_FAILED, itemPath,
+  SWITCH_LABEL, SWITCH_HELP, PREVIEW_WARNING, CONFIRM_TITLE, CONFIRM_TEXT, TURN_ON_AND_SHARE, MEMBERS_ONLY, PREVIEW_FAILED, itemPath,
 } from "../content/preview";
 
 // ============================================================================
@@ -47,13 +47,16 @@ export function shareLink(url, onCopied) {
 
 // The author's switch. In a post form (checked, onChange), and on the
 // author's own item (busy while the change is saved). The text says what a
-// preview of this kind of item shows, and never.
+// preview of this kind of item shows, and never; for a question, also that
+// its title is shown (PREVIEW_WARNING). Questions under Health or
+// Legal/Visa get no switch (questionPreviewAllowed, where it's used).
 export function PreviewSwitch({ kind, checked, onChange, busy = false, style }) {
   const id = useId();
   const on = !!checked;
+  const warning = PREVIEW_WARNING[kind];
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "flex-start", fontFamily: font, ...style }}>
-      <button type="button" id={id} role="switch" aria-checked={on} aria-describedby={`${id}-help`} disabled={busy}
+      <button type="button" id={id} role="switch" aria-checked={on} aria-describedby={`${id}-help${warning ? ` ${id}-warning` : ""}`} disabled={busy}
         onClick={() => onChange(!on)}
         style={{ flexShrink: 0, width: 44, height: 26, marginTop: 1, borderRadius: 13, border: "none", padding: 3, cursor: busy ? "default" : "pointer",
           background: on ? "#1A7F52" : "#C9C8C5", opacity: busy ? 0.6 : 1, transition: "background 0.15s", display: "flex",
@@ -65,6 +68,7 @@ export function PreviewSwitch({ kind, checked, onChange, busy = false, style }) 
           {SWITCH_LABEL}
         </label>
         <p id={`${id}-help`} style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, margin: "2px 0 0" }}>{SWITCH_HELP[kind]}</p>
+        {warning && <p id={`${id}-warning`} style={{ fontSize: 12, color: "#9A3412", lineHeight: 1.5, margin: "4px 0 0" }}>{warning}</p>}
       </div>
     </div>
   );
@@ -97,10 +101,11 @@ function ShareConfirm({ kind, onTurnOn, onMembersOnly, onClose }) {
   return (
     <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div ref={box} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-text`}
+      <div ref={box} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-text${PREVIEW_WARNING[kind] ? ` ${id}-warning` : ""}`}
         style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 400, padding: "22px 20px 18px", boxSizing: "border-box", fontFamily: font }}>
         <h3 id={`${id}-title`} style={{ fontSize: 17, fontWeight: 700, color: INK, margin: "0 0 8px" }}>{CONFIRM_TITLE}</h3>
         <p id={`${id}-text`} style={{ fontSize: 14, color: MUTED, lineHeight: 1.55, margin: "0 0 16px" }}>{CONFIRM_TEXT[kind]}</p>
+        {PREVIEW_WARNING[kind] && <p id={`${id}-warning`} style={{ fontSize: 13, color: "#9A3412", lineHeight: 1.5, margin: "-8px 0 16px" }}>{PREVIEW_WARNING[kind]}</p>}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button type="button" onClick={onTurnOn} style={{ ...btn, border: "none", background: INK, color: "#fff" }}>{TURN_ON_AND_SHARE}</button>
           <button type="button" onClick={onMembersOnly} style={{ ...btn, border: "1px solid #E0E0DE", background: "#fff", color: INK }}>{MEMBERS_ONLY}</button>

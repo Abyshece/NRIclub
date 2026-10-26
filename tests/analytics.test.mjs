@@ -4,7 +4,8 @@
 //     node --test tests/analytics.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { truncateIp, clientIp, geoFrom, validatePayload, cleanText, handle } from "../api/collect.js";
+import * as collect from "../api/collect.js";
+import { geoFrom, validatePayload, cleanText, handle } from "../api/collect.js";
 import { clip, cleanPath, deviceInfo, readConsent } from "../src/analytics.js";
 import { MAX_EVENTS, FUNNEL_STEPS } from "../src/content/analytics.js";
 
@@ -13,37 +14,11 @@ const S = "6f1d2a7e-1c2b-4f0e-8a51-22c0e6c1d9a4";
 const payload = (events, extra = {}) => ({ consent: true, visitor: V, session: S, device: "mobile", browser: "Chrome", os: "Android", events, ...extra });
 const headers = (h) => new Headers(h);
 
-// ---- IP addresses ------------------------------------------------------------
+// ---- No IP address ---------------------------------------------------------------
 
-test("IPv4: the last part becomes 0", () => {
-  assert.equal(truncateIp("203.0.113.42"), "203.0.113.0");
-  assert.equal(truncateIp(" 8.8.4.4 "), "8.8.4.0");
-  assert.equal(truncateIp("203.0.113.42:5555"), "203.0.113.0");
-  assert.equal(truncateIp("::ffff:198.51.100.7"), "198.51.100.0");
-  assert.equal(truncateIp("0:0:0:0:0:ffff:198.51.100.7"), "198.51.100.0");
-});
-
-test("IPv6: only the first 48 bits are kept", () => {
-  assert.equal(truncateIp("2001:0db8:85a3:08d3:1319:8a2e:0370:7348"), "2001:db8:85a3::");
-  assert.equal(truncateIp("2001:db8:abcd:12::1"), "2001:db8:abcd::");
-  assert.equal(truncateIp("[2001:db8:abcd:12::1]:443"), "2001:db8:abcd::");
-  assert.equal(truncateIp("2001:DB8::1"), "2001:db8:0::");
-  assert.equal(truncateIp("fe80::1%eth0"), "fe80:0:0::");
-  assert.equal(truncateIp("::1"), "0:0:0::");
-  assert.equal(truncateIp("64:ff9b::192.0.2.1"), "64:ff9b:0::");
-});
-
-test("anything else isn't an IP address", () => {
-  for (const bad of ["", null, undefined, "999.1.1.1", "1.2.3", "not an ip", "1:2:3:4:5:6:7:8:9", "1::2::3", "12345::1",
-    "g::1", "1.2.3.4.5", "::ffff:300.1.1.1", "x".repeat(200)]) {
-    assert.equal(truncateIp(bad), "", String(bad));
-  }
-});
-
-test("the visitor's IP: x-real-ip first, then the first of x-forwarded-for", () => {
-  assert.equal(clientIp(headers({ "x-real-ip": "203.0.113.9", "x-forwarded-for": "198.51.100.1, 10.0.0.1" })), "203.0.113.9");
-  assert.equal(clientIp(headers({ "x-forwarded-for": "198.51.100.1, 10.0.0.1" })), "198.51.100.1");
-  assert.equal(clientIp(headers({})), "");
+test("the function has no way to shorten or pass on an IP address any more (since 26 October 2026)", () => {
+  assert.equal(collect.truncateIp, undefined);
+  assert.equal(collect.clientIp, undefined);
 });
 
 // ---- Vercel's place headers ------------------------------------------------------
@@ -156,9 +131,10 @@ async function withFetch(fake, fn) {
   try { await fn(calls); } finally { globalThis.fetch = real; }
 }
 
-test("stores the events with the shortened IP and the place, and answers 204", async () => {
+test("stores the events with the place and no IP address, and answers 204", async () => {
   await withFetch(async () => new Response(null, { status: 200 }), async (calls) => {
-    const res = await handle(request(payload([{ type: "pageview", path: "/" }])), ENV);
+    const res = await handle(request(payload([{ type: "pageview", path: "/" }]), {
+      "x-forwarded-for": "198.51.100.7, 10.0.0.1", "x-vercel-forwarded-for": "198.51.100.7" }), ENV);
     assert.equal(res.status, 204);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, "https://example.supabase.co/rest/v1/rpc/analytics_ingest");
@@ -166,9 +142,12 @@ test("stores the events with the shortened IP and the place, and answers 204", a
     assert.equal(calls[0].init.headers.Authorization, `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}`);
     const body = JSON.parse(calls[0].init.body);
     assert.deepEqual(body.p_meta, { visitor_id: V, session_id: S, device: "mobile", browser: "Chrome", os: "Android",
-      ip_truncated: "203.0.113.0", country: "DE", region: "BE", city: "Berlin" });
+      country: "DE", region: "BE", city: "Berlin" });
     assert.equal(body.p_events[0].path, "/");
-    assert.ok(!JSON.stringify(body).includes("203.0.113.42"), "the full IP address is never passed on");
+    const sent = JSON.stringify(body);
+    for (const part of ["203.0.113", "198.51.100", "10.0.0"]) {
+      assert.ok(!sent.includes(part), `no IP address, not even shortened, is passed on (${part})`);
+    }
   });
 });
 
@@ -213,7 +192,8 @@ test("a request without an Origin header (not from another site's page) is taken
     const r = new Request("https://nriclub.app/api/collect", { method: "POST", headers: { host: "nriclub.app" }, body: JSON.stringify(payload([{ type: "pageview" }])) });
     assert.equal((await handle(r, ENV)).status, 204);
     assert.equal(calls.length, 1);
-    assert.equal(JSON.parse(calls[0].init.body).p_meta.ip_truncated, "");
+    assert.deepEqual(JSON.parse(calls[0].init.body).p_meta, { visitor_id: V, session_id: S, device: "mobile", browser: "Chrome",
+      os: "Android", country: "", region: "", city: "" });
   });
 });
 

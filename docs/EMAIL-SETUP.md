@@ -1,13 +1,15 @@
-# hello@nriclub.app: receive in Gmail, reply as hello@
+# hello@nriclub.app: receive in the admin Inbox, reply from the panel
 
 Mail to `hello@nriclub.app` is received by **Resend**. The Edge Function
 `forward-email` (`supabase/functions/forward-email/index.ts`, deployed
 without JWT checks; it checks Resend's webhook signature instead) keeps each
 email in the admin panel's **Inbox** (from the 2026-10-25 update, see
-`docs/DEPLOY-ROUND3.md`) and forwards a copy to the founder's Gmail if
-`FORWARD_TO` is set. Replies go out from the admin panel (Edge Function
-`admin-inbox-reply`), or from Gmail as `hello@nriclub.app` through Resend's
-SMTP server (section 3).
+`docs/DEPLOY-ROUND3.md`). Replies go out from the admin panel (Edge Function
+`admin-inbox-reply`), as `hello@nriclub.app`.
+
+Since 26 October 2026 nothing is forwarded to Gmail: a private Gmail
+account has no data processing agreement (Art. 28 GDPR). The function keeps
+its old name because Resend's webhook calls it by that address.
 
 ## 1. Domain and receiving in Resend
 
@@ -19,7 +21,7 @@ SMTP server (section 3).
 4. Vercel: TXT `_dmarc` → `v=DMARC1; p=quarantine; rua=mailto:hello@nriclub.app`.
 5. Resend: **Verify**, until the domain and receiving are both *Verified*.
 
-## 2. Forwarding to Gmail
+## 2. Into the admin Inbox
 
 1. Resend → **API Keys → Create** → name `forward-email`, permission
    **Full access** (it must read received emails). Copy the key.
@@ -31,41 +33,59 @@ SMTP server (section 3).
    Functions), add:
    - `RESEND_API_KEY` = the key from step 1
    - `RESEND_WEBHOOK_SECRET` = the signing secret from step 2
-   - `FORWARD_TO` = the Gmail address the copies go to (optional since the
-     admin Inbox: without it, mail is kept in the admin panel only)
+
+   `FORWARD_TO` and `FORWARD_FROM` aren't used any more: if they are there,
+   delete them.
 4. Test: from another address, send an email to `hello@nriclub.app`. Within
-   a minute it arrives in Gmail with the subject starting `[hello@]`, and,
-   after the 2026-10-25 update, in the admin panel's **Inbox**.
-   If not: Supabase → Edge Functions → forward-email → **Logs**, and
-   Resend → Webhooks → the webhook's deliveries.
+   a minute it is in the admin panel's **Inbox**. If not: Supabase → Edge
+   Functions → forward-email → **Logs**, and Resend → Webhooks → the
+   webhook's deliveries. If storing fails, the function answers with an
+   error, Resend tries again later, and the email stays in Resend under
+   **Emails → Receiving** meanwhile.
 
 The admin Inbox keeps each email (its text; attachments only by name and
-size) and our replies from the panel for 12 months after it arrived, then
-the daily clean-up deletes them. Storing and forwarding work independently:
-if one fails, the other still happens. The Inbox also shows "Emails this
-month" from Resend's own counter: sign-in codes count too, and the free plan
-allows 3,000 a month and 100 a day.
+size, the files stay in Resend) and our replies from the panel for 12
+months after it arrived, then the daily clean-up deletes them. The Inbox
+also shows "Emails this month" from Resend's own counter: sign-in codes
+count too, and the free plan allows 3,000 a month and 100 a day.
 
-## 3. Replying as hello@nriclub.app from Gmail
+## 3. Replying
 
-1. Resend → **API Keys → Create** → name `gmail-smtp`, permission
-   **Sending access**, domain `nriclub.app`. Copy the key.
-2. Gmail (on a computer) → ⚙ → **See all settings → Accounts and Import →
-   Send mail as → Add another email address**:
-   - Name `NRIClub`, address `hello@nriclub.app`, untick "Treat as an alias".
-   - SMTP server `smtp.resend.com`, port `465`, username `resend`,
-     password = the key from step 1, **Secured connection using SSL**.
-   - Gmail sends a confirmation email to hello@nriclub.app: it is forwarded
-     to Gmail; click the link in it.
-3. In the same settings, choose **"Reply from the same address the message
-   was sent to"**. Forwarded emails have the sender as Reply-To, so
-   pressing Reply answers the sender; check the From line shows
-   `hello@nriclub.app` before sending.
+Open the email in the admin panel's **Inbox**, write the reply and press
+**Send reply**. It goes out from `hello@nriclub.app` through Resend and is
+kept with the email. Don't answer from a private mailbox.
+
+### Emails the panel prepares
+
+A few emails aren't replies to an Inbox email: the receipt and the decision
+for a report sent with the form at nriclub.app/report (Reports), and the
+answer to an application to be a city ambassador (Ambassadors). The panel
+opens them, filled in, in your computer's mail app. Send them as
+`hello@nriclub.app` through Resend, not from Gmail:
+
+1. Resend → **API Keys → Create** → name `mail-app`, permission **Sending
+   access**, domain `nriclub.app`. Copy the key. (Delete the old
+   `gmail-smtp` key if there is one: Gmail doesn't send for NRIClub any
+   more.)
+2. In a mail app on your own computer (for example Thunderbird), add an
+   account with only the outgoing server: name `NRIClub`, address
+   `hello@nriclub.app`, SMTP server `smtp.resend.com`, port `465`, SSL/TLS,
+   username `resend`, password = the key from step 1. No incoming server:
+   replies arrive in the admin Inbox.
+3. Make that app your computer's default for email links, so the panel's
+   "Write to the reporter" and "Reply by email" open it.
+
+Sent copies stay in that app on your computer only. Delete them with the
+same periods as the Inbox: 12 months, or 3 years for requests about rights
+and DSA notices (`compliance/deletion-routine.md`).
 
 ## Data protection
 
-The Privacy Policy (section 7, "Our mailbox") names Resend and Google.
-Resend's data processing agreement is part of its terms. A private Gmail
-account has no data processing agreement; once NRIClub has a company,
-move the inbox to Google Workspace (which has one) or an EU mailbox
-provider and update `PRIVACY_DETAILS.mailProvider` in `src/content/imprint.js`.
+The Privacy Policy (section 7) names Resend for sending and receiving mail;
+received mail is kept in our database at Supabase. Resend's and Supabase's
+data processing agreements are part of their terms
+(`compliance/processor-agreements.md`). There is no separate mailbox
+provider: `PRIVACY_DETAILS.mailProvider` in `src/content/imprint.js` is
+empty, and `agreements.mailbox` is false. If NRIClub ever uses a mailbox
+again (an EU provider or Google Workspace, with a data processing
+agreement), fill in both and the Policy names it.
