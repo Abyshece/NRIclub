@@ -21,7 +21,9 @@ export const IMPRINT = {
   // format, e.g. "+49 89 1234 5678" (with the country code, no leading 0).
   phone: "+49 176 4733 5005",
   // Companies only: the register entry (e.g. "Amtsgericht München, HRB 123456").
-  register: "Not yet registered: registration of the company is in progress.",
+  // Empty while the owner runs NRIClub personally: then no register section
+  // is shown. Fill it in once the company is registered, with its name above.
+  register: "",
   // Your VAT ID (USt-IdNr., e.g. "DE123456789"), if you have one.
   vatId: "",
   // Your business ID (Wirtschafts-Identifikationsnummer, e.g.
@@ -48,19 +50,24 @@ export const PRIVACY_DETAILS = {
   supervisoryAuthority: "Bayerisches Landesamt für Datenschutzaufsicht (BayLDA), Promenade 18, 91522 Ansbach, Germany",
   // The authority's website, e.g. "https://www.lda.bayern.de".
   supervisoryAuthorityUrl: "https://www.lda.bayern.de",
-  // Who hosts the hello@nriclub.app mailbox: the company and its country,
-  // e.g. "Example Mail GmbH, Germany". While empty, the Policy says "the
-  // provider that hosts our mailbox".
-  mailProvider: "Plus Five Five, Inc. (Resend), USA, which receives the emails, and Google (Gmail), whose inbox they are forwarded to.",
+  // Who hosts a hello@nriclub.app mailbox, if you ever use one besides the
+  // admin panel: the company and its country, e.g. "Example Mail GmbH,
+  // Germany", and set agreements.mailbox below once its data processing
+  // agreement is in place. Empty since 26 October 2026: Resend receives the
+  // mail and the Edge Function forward-email keeps it in our database (the
+  // admin panel's Inbox) only, which the Policy says under Resend and
+  // Supabase; no copy goes to Gmail or any other mailbox. While it's empty,
+  // the Policy has no "Our mailbox" entry.
+  mailProvider: "",
   // Which providers have a data processing agreement (Auftragsverarbeitungs-
   // vertrag, Art. 28 GDPR) with NRIClub. The Policy says a provider works
   // under one, and names the transfer safeguard in it, only where this is
   // true. Supabase's and Resend's agreements are part of their terms of
   // service, so they apply since you accepted those terms (checked October
-  // 2026). Vercel's applies only on its Pro and Enterprise plans: set vercel
-  // to true once the project is on one of them. Set mailbox to true once you
-  // have accepted the mailbox provider's agreement. File a copy of each
-  // (docs/compliance/processor-agreements.md).
+  // 2026). Vercel's applies only on its Pro and Enterprise plans: the
+  // project is on Pro and its DPA is accepted. Set mailbox to true once you
+  // have accepted a mailbox provider's agreement (mailProvider above). File
+  // a copy of each (docs/compliance/processor-agreements.md).
   agreements: { supabase: true, resend: true, vercel: true, mailbox: false },
   // How long Vercel keeps the request logs of your plan, as its
   // documentation says (October 2026: "1 hour" on Hobby, "1 day" on Pro).

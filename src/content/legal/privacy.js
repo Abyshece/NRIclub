@@ -15,17 +15,26 @@ import { ART9_CONSENT_TEXT } from "./consent.js";
 export const PRIVACY_VERSION = "2026-10-26";
 export const PRIVACY_DATE = "26 October 2026";
 
-// How long data is kept: the periods this Policy promises. Until clean-up
-// jobs run on the database (plan C20), our team deletes by hand once a month
-// with the queries in docs/compliance/deletion-routine.md, and byHand says
-// so in section 9. When the jobs are live, set byHand to false in the same
-// pull request, and keep the periods here equal to the jobs'.
+// How long data is kept: the periods this Policy promises. Scheduled jobs on
+// the database delete what has reached its period every night (pg_cron jobs
+// nriclub-daily-cleanup, nriclub-profile-reminders-cleanup,
+// nriclub-analytics-cleanup, nriclub-housing-cleanup and
+// nriclub-retention-cleanup; checked on the live project), so byHand is
+// false. What our team still does by hand (ended memberships and the emails
+// kept beyond the admin panel's inbox, monthly; the photo clean-up when an
+// admin opens the panel) section 9 says, and docs/compliance/
+// deletion-routine.md says how. Keep the periods here equal to the jobs'.
 export const RETENTION = {
-  byHand: true,
+  byHand: false,
   unconfirmedSignupDays: 30, // sign-ups that never confirmed their email address
   unfinishedSignupDays: 90, // accounts that never sent their check details
   endedAccountMonths: 6, // accounts our team declined, or whose membership we ended, from the decision
   readNoticesMonths: 6, // in-app notices the member has read
+  noticesMonths: 12, // every in-app notice, read or not (private.retention_cleanup)
+  urgentLogDays: 2, // the note that a member posted an urgent question, for the one-a-day limit (private.urgent_log; private.retention_cleanup)
+  rateLogDays: 1, // when a member did something with a limit, e.g. a message or a report (private.rate_log; travel board posts: travelLimitDays)
+  nameChangeDays: 30, // when a member changed their name, for the limit of 3 changes in 30 days (private.name_changes)
+  decisionEmailDays: 30, // which decision emails our team sent a member (private.member_email_log)
   closedReportsMonths: 12, // closed reports (and evidence kept with them), from when they were sent
   closedNoticesMonths: 12, // reports from nriclub.app/report once closed, from when they were sent
   noticeLimitHours: 24, // the coded email and internet addresses behind the daily report limits
@@ -152,7 +161,7 @@ export function privacyDoc() {
       { box: { title: "In short", blocks: [{ ul: [
         "NRIClub is a members-only community for Indians abroad. We use your data to run it for you, and for nothing else.",
         "No advertising, no cookies and no other companies' trackers. We never sell or rent your data.",
-        ["Website analytics only if you choose Accept on our privacy banner, never linked to your account; change your mind at any time with \"Privacy settings\" (",
+        ["Website analytics only if you choose Accept on our privacy banner, not linked to your account; change your mind at any time with \"Privacy settings\" (",
           a("section 2", "#analytics"), ")."],
         "Our database, with your profile, content and messages, is in the EU (Ireland).",
         ["Only members our team has approved can see your profile and what you post, except a small preview of a listing, event, question or trip that you choose to show to anyone with its link (",
@@ -196,7 +205,7 @@ export function privacyDoc() {
             ["What", "required: your name, city and country. Optional: a photo, your hometown, profession and what you do, how long you've lived abroad, a short bio, what people can ask you about, your LinkedIn link, and whether you offer mentoring or look for a mentor, with your topics. We also show your Verified badge and whether you're a city ambassador."],
             ["Why", "so members can find, recognise and contact each other."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
-            ["How long", "until you change it or delete your account."],
+            ["How long", `until you change it or delete your account. You can change your name at most 3 times in 30 days, so we note when you changed it, for ${R.nameChangeDays} days.`],
             ["Reminders", `our team may send you a reminder in the app about profile details you haven't added yet, at most once a week (legitimate interests: helping members recognise and find each other). We keep a note of which reminder we sent you and when for ${months(R.profileReminderMonths)}.`],
           ] },
           { title: "What you post and do on NRIClub", fields: [
@@ -204,7 +213,8 @@ export function privacyDoc() {
             ["Why", "to provide the features you use."],
             ["Legal basis", "contract; where it can show your origin, religion or health, your explicit consent (section 3)."],
             ["Who sees it", "approved members and our team (section 4). If you turn on the preview of a Market listing, an event or a question, anyone with its link also sees that preview, and only that (\"Previews of what you share\" below)."],
-            ["How long", `until you delete it or your account, with the exceptions in section 9. In-app notices you've read are deleted after ${months(R.readNoticesMonths)}.`],
+            ["Limits", `so we can limit how often things can be done in a short time (for example messages, Namaste requests or reports), we note when you did them, for ${R.rateLogDays} day; that you posted an urgent question (one a day), for ${R.urgentLogDays} days. Legitimate interests: keeping NRIClub free of spam and misuse.`],
+            ["How long", `until you delete it or your account, with the exceptions in section 9. In-app notices you've read are deleted after ${months(R.readNoticesMonths)}, and all in-app notices after ${months(R.noticesMonths)}, read or not.`],
           ] },
           { id: "travel", title: "The travel board (flying to or from India)", fields: [
             ["What", `if you use the travel board: your posts, each with the city you fly from and the city you fly to, the date of your flight or the earliest and latest dates that suit you, your flight number if you give one, what you can help with or what you need (a travel companion, documents or a small open item) and your note; when you agreed to the board's rules, and which version of them; and, so we can limit how many trips each member posts, when you posted (kept ${R.travelLimitDays} days). A message you send from the board is an ordinary message ("Messages" in section 4) that starts with the trip it's about.`],
@@ -221,9 +231,9 @@ export function privacyDoc() {
             ["How long", `a listing is shown until its "until" date or, if it's open-ended, for ${R.housingOpenDays} days after you post or renew it. It's deleted automatically ${R.housingKeepDays} days after that, with the notices about it, unless you renew it or change its dates. A "Looking for a place" post ends after its last date, or ${R.housingOpenDays} days after you post it if it has no end date, and is deleted ${R.housingKeepDays} days after it ends. You can delete either at any time.`],
           ] },
           { id: "previews", title: "Previews of what you share", fields: [
-            ["What", "every Market listing, event, question and travel board post is for members only, unless you turn on \"Show a preview to people who aren't members yet\" for it: when you post it, later on the item, or when you share your own item and choose \"Turn on and share\". Then anyone who has its link can see a small preview of it without an account, and apps such as WhatsApp show that preview as the link's card. It shows exactly this, and nothing else: for a Market listing, its first photo, its kind (for example \"Housing · WG room\") and its city; for an event, its photo, that it's an event, its city and its day; for a question, its title, its city and how many answers it has; for a travel board post, its route and its month. Never your name, photo or profile, the price, rent or deposit, the description, the time, place, flight number, note or exact dates, the answers, contact details or an exact address. A listing's city is shown only from its city field, or if part of its location is exactly the name of a city with an NRIClub group."],
+            ["What", "every Market listing, event, question and travel board post is for members only, unless you turn on \"Show a preview to people who aren't members yet\" for it: when you post it, later on the item, or when you share your own item and choose \"Turn on and share\". Then anyone who has its link can see a small preview of it without an account, and apps such as WhatsApp show that preview as the link's card. It shows exactly this, and nothing else: for a Market listing, its first photo, its kind (for example \"Housing · WG room\") and its city; for an event, its photo, that it's an event, its city and its day; for a question, its title, its city and how many answers it has; for a travel board post, its route and its month. Never your name, photo or profile, the price, rent or deposit, the description, the time, place, flight number, note or exact dates, the answers, contact details or an exact address. A listing's city is shown only from its city field, or if part of its location is exactly the name of a city with an NRIClub group. Questions under Health or Legal/Visa have no preview."],
             ["Why", "so you can show what you've posted to people who aren't members yet, for example in a WhatsApp group, and invite them to join."],
-            ["Legal basis", "your own choice to show it, as part of the service (contract, Art. 6(1)(b) GDPR). A question's title can show your origin, religion or health: for that, your explicit consent in section 3, as for everything you post."],
+            ["Legal basis", "your own choice, made for each item when you turn its preview on, as part of the service (contract, Art. 6(1)(b) GDPR). Where a preview can show your origin, religion or health (for example a question's title), your explicit consent in section 3, which covers the previews you choose to turn on; so only turn it on if you're happy for anyone with the link to see that."],
             ["Who sees it", "anyone who has the link, and the apps it's shared in, which fetch the preview to show the card. We ask search engines not to list previews (noindex), and our public pages don't link to them."],
             ["How long", "until you turn the preview off, which you can do at any time on the item (within a minute it's gone). It also stops when the item ends or is removed: a listing sold, expired or deleted, an event or a trip once its day has passed, anything you delete or our team removes; and while our team checks your account again or if it's blocked. An app that already showed the card may keep its copy."],
           ] },
@@ -260,13 +270,13 @@ export function privacyDoc() {
             ["How long", `Supabase keeps these logs for about 7 days, Vercel for ${vercelLogs}.`],
           ] },
           { id: "analytics", title: "Website analytics (only if you agree)", fields: [
-            ["What", "only if you choose Accept on our privacy banner, and only in that browser: which pages of NRIClub you open (the address, with ids such as a member's or a post's left out, and the page's title); which buttons and links you click (their visible text, at most 80 characters, and where a link goes; in the members' area only the names of the site's own menus, otherwise just \"button\" or \"link\"); which steps of signing up and logging in you reach (for example \"code sent\", never what you typed); the page you were on when you left; for the first page of a visit, the website you came from (only its domain) and the campaign details in the link you followed (utm_source, utm_medium, utm_campaign and utm_content); your IP address, shortened (IPv4: the last of its four parts set to 0; IPv6: only its first 48 bits); your approximate location, which our host Vercel looks up from your IP address (country, region and city); and whether you use a phone, a tablet or a computer, with your browser's and system's family (for example Chrome on Android). Your browser gets a random visitor ID, and each visit a random visit ID (section 8). Never what you type into forms, never your posts or messages, never your name or email address."],
+            ["What", "only if you choose Accept on our privacy banner, and only in that browser: which pages of NRIClub you open (the address, with ids such as a member's or a post's left out, and the page's title); which buttons and links you click (their visible text, at most 80 characters, and where a link goes; in the members' area only the names of the site's own menus, otherwise just \"button\" or \"link\"); which steps of signing up and logging in you reach (for example \"code sent\", never what you typed); the page you were on when you left; for the first page of a visit, the website you came from (only its domain) and the campaign details in the link you followed (utm_source, utm_medium, utm_campaign and utm_content); your approximate location, which our host Vercel looks up from your IP address (country, region and city; your IP address itself isn't stored with the analytics); and whether you use a phone, a tablet or a computer, with your browser's and system's family (for example Chrome on Android). Your browser gets a random visitor ID, and each visit a random visit ID (section 8). Never what you type into forms, never your posts or messages, never your name or email address."],
             ["Why", "to see which pages and features help people, where visitors come from (for example which link shared in a WhatsApp group worked) and where signing up is too hard, so we can improve NRIClub."],
             ["Legal basis", "your consent (Art. 6(1)(a) GDPR; for storing the visitor ID in your browser and reading it, § 25(1) TDDDG). Without it nothing is recorded or stored. We also count how many people choose Accept and Decline each day, with nothing about who chose."],
-            ["Not linked to you", "we don't link it to your account: it holds no member ID, name or email address, and we don't combine it with your membership data. Our team sees it in the admin panel as totals, and as single visits (the pages, clicks and steps in order, with the time, approximate location, shortened IP address, device and where the visit came from)."],
-            ["Who receives it", "Vercel, whose servers receive it, shorten the IP address and look up the location (the full IP address isn't stored with the analytics), and Supabase, which stores it (section 7)."],
+            ["Pseudonymous", "the analytics hold no member ID, name or email address, and aren't linked to your account; our team doesn't match visits to members and doesn't combine them with membership data. Our team sees them in the admin panel as totals, and as single visits: the pages, clicks and steps in order, with the time to the hour, the approximate location, the device and where the visit came from. Because a single visit could in principle be matched to a person by its time and pages, we treat it as personal data."],
+            ["Who receives it", "Vercel, whose servers receive it and look up the location from your IP address, and Supabase, which stores it (section 7)."],
             ["How long", `what was recorded is deleted automatically ${months(R.analyticsMonths)} after it was recorded. The visitor ID stays in your browser until you choose Decline or clear the site's data; 12 months after your Accept we ask again.`],
-            ["Your choice", ["change it at any time with \"Privacy settings\" at the foot of our pages, or in the app under Settings → Privacy & Safety (or here: ", a("Privacy settings", "#privacy-settings"), "). Decline stops it straight away and deletes the visitor ID from your browser; what was recorded before stays lawful (Art. 7(3) GDPR). After a Decline we ask again in 6 months. As we can't tell which visits are yours, we can only find or delete them if you send us your visitor ID, which Privacy settings shows while analytics are on."]],
+            ["Your choice", ["change it at any time with \"Privacy settings\" at the foot of our pages, or in the app under Settings → Privacy & Safety (or here: ", a("Privacy settings", "#privacy-settings"), "). Decline stops it straight away and deletes the visitor ID from your browser; what was recorded before stays lawful (Art. 7(3) GDPR). After a Decline we ask again in 6 months. As we don't link visits to members, we look for yours only if you ask us: send us your visitor ID, which Privacy settings shows while analytics are on, or tell us roughly when you visited and which pages you opened, and we'll look for those visits and delete them."]],
           ] },
           { title: "Emails we send you", fields: [
             // Resend keeps each email for 30 days on all its plans
@@ -274,24 +284,24 @@ export function privacyDoc() {
             ["What", "from our sign-in system: sign-up codes, sign-in codes, password links and email-change confirmations. Our email service keeps each of these emails (your address, the subject and the content, including the code or link) and whether it was delivered. From our team: messages about your membership: decisions on your membership check (approved, more information needed, not approved) and a block of your account, each with what the app also tells you, that our team deleted your account (at your request, or after a block), notice of changes to the Terms of Use or to NRIClub, the end of your membership and, if it ever happened, a data breach that affects you; and, to whoever reports content with the form at nriclub.app/report, confirmation that we received it and our decision. Moderation decisions with their reasons, warnings and the outcome of a report you sent in the app come as in-app notices; we may also email them."],
             ["Why", "to run your account and to give you information our Terms of Use or the law require. We send no newsletters, no advertising and no automatic notification emails: everything else shows inside NRIClub."],
             ["Legal basis", "contract; legal obligation for statements of reasons and report outcomes (Art. 16(5) and 17 DSA) and breach notices (Art. 34 GDPR)."],
-            ["How long", "our email service keeps each email it sends for 30 days. Copies of what our team sends are kept like the emails you send us (below). Which decision emails we sent (the account, the decision and when; not the text) we note for 30 days, so none goes out twice."],
+            ["How long", `our email service keeps each email it sends for 30 days. Copies of what our team sends are kept like the emails you send us (below). Which decision emails we sent (the account, the decision and when; not the text) we note for ${R.decisionEmailDays} days, so none goes out twice.`],
           ] },
           { title: "Emails you send us", fields: [
-            ["What", "your message, your email address and anything you include, and our reply."],
+            ["What", `your message, your email address and anything you include, and our reply. Emails to ${CONTACT_EMAIL} are received by our email service and kept in our database, where our team reads and answers them in our admin panel's inbox (attachments only by name and size; the files themselves stay with our email service). They aren't forwarded to any other mailbox.`],
             ["Why", "to answer you and to deal with requests about your data and reports."],
             ["Legal basis", "contract for questions about your membership; legal obligation for requests under the GDPR and reports under the DSA; otherwise legitimate interests (answering people who write to us)."],
-            ["How long", `requests about your rights and reports of illegal content, and our answers, we keep for ${R.requestEmailYears} years after the matter is closed, so we can show we handled them correctly. Other emails, and our replies, we delete ${months(R.otherEmailMonths)} after the matter is closed. Emails to ${CONTACT_EMAIL} also show in our admin panel's inbox, with the replies we send from there (attachments only by name and size); there they are deleted automatically ${months(R.inboxMonths)} after they arrived.`],
+            ["How long", `the admin panel's inbox deletes each email, with our replies, automatically ${months(R.inboxMonths)} after it arrived. Requests about your rights and reports of illegal content, and our answers, we keep for ${R.requestEmailYears} years after the matter is closed, so we can show we handled them correctly: our team keeps a copy of these with our record of such requests and deletes it after those ${R.requestEmailYears} years. Other emails, and our replies, are deleted at the latest ${months(R.otherEmailMonths)} after the matter is closed.`],
           ] },
         ] },
-        { p: "Our public pages (the homepage, the city pages and the guides) contain no personal data. A city page shows how many members its group has only once there are at least 5. The previews members choose to show open only through their links (\"Previews of what you share\" above)." },
+        { p: "Our public pages (the homepage, the city pages, the guides and What's on) contain no personal data of members. What's on lists public events in Germany by other organisers (section 5). A city page shows how many members its group has only once there are at least 5. The previews members choose to show open only through their links (\"Previews of what you share\" above)." },
       ] },
 
       { id: "sensitive", title: "3. Information that can show your origin, religion or health", blocks: [
-        { p: "NRIClub is a community for Indians abroad. Being a member, and some of what you share, can show your ethnic origin, your religion or your health. For example: that you belong to the Indian community; your hometown; the language, faith or support groups you join; temples you recommend; the festivals and events you go to; questions you ask under Health or Legal/Visa." },
+        { p: "NRIClub is a community for Indians abroad. Being a member, and some of what you share, can show your ethnic origin, your religion or your health. For example: that you belong to the Indian community; your hometown; the city group you join; temples you recommend; the festivals and events you go to; questions you ask under Health or Legal/Visa; and, if you turn on the preview of a question, its title." },
         { p: "The GDPR treats this as special categories of personal data (Art. 9 GDPR). We process it only with your explicit consent (Art. 9(2)(a) GDPR), which you give with its own checkbox when you sign up, or once on the \"Before you continue\" screen if you joined before we asked for it. It is never ticked in advance. The checkbox says:" },
         { box: { blocks: [{ p: `"${ART9_CONSENT_TEXT}"` }] } },
-        { p: "We store when you gave it and which wording you agreed to. Without this consent you can't be a member, because membership itself shows a connection to the Indian community." },
-        { p: ["You can withdraw your consent at any time, for the future: delete the content in question (for example leave a group or delete a question), or delete your account, which withdraws it completely. You can also write to us at ", mail("Withdraw consent"), "; as membership depends on this consent, we then close your account, and you can download your data first. Withdrawing doesn't make what we did before it unlawful (Art. 7(3) GDPR)."] },
+        { p: "We store when you gave it and which wording you agreed to. Without this consent you can't be a member, because membership itself shows a connection to the Indian community. If you gave it to an earlier wording (which didn't name the previews), we ask you for this one when you accept our new Terms of Use; until then your earlier consent still applies, and only to what it named." },
+        { p: ["You can withdraw your consent at any time, for the future: delete the content in question (for example delete a question, turn off a preview or leave your city group), or delete your account, which withdraws it completely. You can also write to us at ", mail("Withdraw consent"), "; as membership depends on this consent, we then close your account, and you can download your data first. Withdrawing doesn't make what we did before it unlawful (Art. 7(3) GDPR)."] },
         { p: "We use this information only to run your membership: for our team's membership check (section 2), to show it to members as described in section 4 (and, in the preview of a question you choose to show to people who aren't members, its title to anyone with its link: section 2, \"Previews of what you share\"), and to deal with reports about it. We never use it for advertising and never sell it." },
       ] },
 
@@ -339,6 +349,7 @@ export function privacyDoc() {
       { id: "sources", title: "5. Where your data comes from", blocks: [
         { p: "Mostly from you. Some comes from other members: when they invite you or vouch for you, report something, or rate a mentoring session with you. Our team looks at the LinkedIn profile you link to (section 2, \"The membership check\"). Our systems add technical data such as dates and logs." },
         { p: ["If you're not a member: when you report content to us or apply to be a city ambassador, we process what you send us (section 2). If you run a business or practice that a member added to Places, we show its name and the details the member entered, because members recommend places to each other (legitimate interests). You can ask us to correct or remove it, or object, at ", mail("Places entry"), "."] },
+        { p: ["What's on (nriclub.app/whats-on) lists public events by other organisers, such as festivals, concerts and meetups, from what they announced publicly: the event, its date, time and place, its price and language, the organiser's name and a link to the organiser's own page. We list them so members and visitors find Indian events near them (legitimate interests). Organisers can ask us to correct or remove an entry, or object, at ", mail("What's on"), "."] },
       ] },
 
       { id: "automated", title: "6. No automated decisions", blocks: [
@@ -356,27 +367,28 @@ export function privacyDoc() {
           ]),
           provider("vercel", "Vercel", [
             ["Company", "Vercel Inc., USA."],
-            ["What for", "hosting the website and delivering its files through a worldwide network of servers, so a request can be answered by a server outside the EU, including in the USA. It logs requests (section 2, \"Server and security logs\"). If you agree to website analytics, its servers receive them, shorten your IP address and look up your approximate location (section 2, \"Website analytics\"). When someone opens the link to a listing, event, question or trip, its servers put the item's preview into the page, if its author turned the preview on, and keep it for at most a minute (section 2, \"Previews of what you share\")."],
+            ["What for", "hosting the website and delivering its files through a worldwide network of servers, so a request can be answered by a server outside the EU, including in the USA. It logs requests (section 2, \"Server and security logs\"). If you agree to website analytics, its servers receive them and look up your approximate location from your IP address (section 2, \"Website analytics\"). When someone opens the link to a listing, event, question or trip, its servers put the item's preview into the page, if its author turned the preview on, and keep it for at most a minute (section 2, \"Previews of what you share\")."],
           ]),
           provider("resend", "Resend", [
             ["Company", "Plus Five Five, Inc. (Resend), USA."],
-            ["What for", "sending our sign-in and password emails and our team's emails (decisions about your membership, replies to your emails), through Amazon Web Services' email service in Ireland (EU); receiving the emails sent to us (\"Our mailbox\", below)."],
+            ["What for", `sending our sign-in and password emails and our team's emails (decisions about your membership, replies to your emails), through Amazon Web Services' email service in Ireland (EU); and receiving the emails sent to ${CONTACT_EMAIL}, which it passes to our database (Supabase), where our team reads them in our admin panel's inbox. Received emails are handled with Amazon Web Services in the USA and the EU.`],
           ]),
-          provider("mailbox", "Our mailbox", [
-            ["Company", mailProvider() || "the provider that hosts our mailbox."],
-            ["What for", `receiving the emails you send to ${CONTACT_EMAIL}, forwarding them to the inbox our team reads, and sending our replies.`],
-            ["Where", "Resend uses Amazon Web Services in the USA and the EU; Google's servers can be anywhere in the world, including the USA."],
-            ["Safeguard", "for Resend, the EU standard contractual clauses in its data processing agreement (Art. 46(2)(c) GDPR); Google LLC is certified under the EU–US Data Privacy Framework (adequacy decision, Art. 45 GDPR)."],
-          ]),
+          // Only while PRIVACY_DETAILS.mailProvider names a mailbox provider
+          // (none since 26 October 2026: hello@ mail goes from Resend to our
+          // database only).
+          ...(mailProvider() ? [provider("mailbox", "Our mailbox", [
+            ["Company", mailProvider()],
+            ["What for", `keeping the emails you send to ${CONTACT_EMAIL} and our replies.`],
+          ])] : []),
         ] },
-        { p: "Supabase is a company in Singapore, Vercel, Resend and Google are companies in the USA, and Vercel also answers requests from outside the EU, so personal data can be accessed from or sent to countries outside the EU. For each provider, the safeguard for this is named above. You can ask us for a copy of these safeguards." },
+        { p: "Supabase is a company in Singapore, Vercel and Resend are companies in the USA, and Vercel also answers requests from outside the EU, so personal data can be accessed from or sent to countries outside the EU. For each provider, the safeguard for this is named above. You can ask us for a copy of these safeguards." },
         { p: "We don't sell or rent personal data and don't share it with advertisers or data brokers." },
         { p: "Some links take you to other services when you tap them, for example Google Maps, Google Calendar and Google Meet, WhatsApp, LinkedIn, Eventbrite or websites members share. Nothing is loaded from them before you tap. Once you're there, their own privacy policies apply." },
       ] },
 
       { id: "storage", title: "8. Cookies and storage on your device", blocks: [
         { p: "NRIClub sets no cookies, and uses no advertising tools and no other companies' trackers. Website analytics run only if you choose Accept on our privacy banner (section 2, \"Website analytics\"). The site's own files, including its fonts, come from our server; member photos come from our database provider. Nothing is loaded from other websites." },
-        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for signing up and the invite). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device, with two exceptions: the sign-in items are sent to our servers to sign you in, and the invite code to look up who invited you. The visitor and visit IDs for website analytics are different: they are stored only after you choose Accept (§ 25(1) TDDDG), and sent with the analytics." },
+        { p: "To work, the site keeps a few items in your browser's storage (local storage, and session storage for signing up, the invite and \"Later\" on new Terms). They are strictly necessary for the service you asked for, so no consent is needed (§ 25(2) No. 2 TDDDG, Germany's Telecommunications Digital Services Data Protection Act). They stay on your device, with two exceptions: the sign-in items are sent to our servers to sign you in, and the invite code to look up who invited you. The visitor and visit IDs for website analytics are different: they are stored only after you choose Accept (§ 25(1) TDDDG), and sent with the analytics." },
         { entries: [
           { title: "nriclub_token, nriclub_refresh", fields: [
             ["Purpose", "your sign-in: a short-lived access key and a key to renew it."],
@@ -393,6 +405,10 @@ export function privacyDoc() {
           { title: "nriclub_visitor_id, nriclub_analytics_session", fields: [
             ["Purpose", "only after you choose Accept: a random visitor ID (local storage), and a random visit ID with when it was last used (session storage, so a visit ends after 30 minutes without activity). Both are sent with the website analytics (section 2)."],
             ["Kept", "the visitor ID until you choose Decline (which deletes both at once) or clear the site's data; the visit ID until you close the tab."],
+          ] },
+          { title: "nriclub_terms_later_… (ending in your member ID)", fields: [
+            ["Purpose", "if you answer \"Later\" when we ask you to accept new Terms of Use: the version you put off, so we don't ask again until you next open NRIClub."],
+            ["Kept", "in session storage, only in that browser tab: until you close the tab or sign out."],
           ] },
           { title: "nriclub_signup", fields: [
             ["Purpose", "while you sign up and we wait for the 6-digit code from your email: the email address and name you typed and where you are in signing up, so the code step is still there if the page reloads. Not your password."],
@@ -419,7 +435,9 @@ export function privacyDoc() {
           [strong("Deleting your account"), " (Settings → Delete account) at once deletes your profile and everything linked to it: posts, comments and likes, listings (with their housing details), \"Looking for a place\" posts, travel board posts and your agreement to the board's rules, the record of the ambassador agreement and the ambassador log and welcomes (also welcomes about you), the events you created and your replies to events, questions and answers, guides you wrote, group memberships, Namaste connections, messages and conversations (they also disappear for the other member), mentoring times and sessions, ratings and reviews, in-app notices, settings and the record of your membership check."],
           photoFilesText(),
           [strong("What stays after you delete your account:"), ` places you added to a city's list and groups you created, without your name, because other members use them; reports you sent about content or members, and reports other members made about you, no longer linked to your account (their text can still contain your name); the record of our decisions about your content and account, no longer linked to it; copies of reported content we keep as evidence (section 2); the record in section 2 if we declined or blocked you; an application to be a city ambassador, no longer linked to your account, until it is deleted (section 2); emails you sent us (section 2); website analytics, which aren't linked to your account, until they are deleted after ${months(R.analyticsMonths)} (section 2); copies in our database provider's daily backups, which are overwritten after 7 days; and server logs (section 2).`],
-          ...(R.byHand ? [`Until these deletions run automatically, our team carries them out by hand${R.photoFilesDeleted ? " once a month" : ": photo files every week, everything else once a month"}, so data can stay up to a month longer than the period given.`] : []),
+          R.byHand
+            ? `Until these deletions run automatically, our team carries them out by hand${R.photoFilesDeleted ? " once a month" : ": photo files every week, everything else once a month"}, so data can stay up to a month longer than the period given.`
+            : `The periods in section 2 are kept automatically, every night. Our team still deletes by hand, once a month, the accounts whose membership we ended and the copies of emails we keep longer than our inbox does (section 2, "Emails you send us"), so these can stay up to a month longer than the period given; and photo files left behind are deleted when someone on our team opens our admin panel (at least every ${R.photoCleanupDays} days).`,
         ] },
       ] },
 
