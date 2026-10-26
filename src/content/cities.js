@@ -1,7 +1,34 @@
-// Cities with an NRIClub group (October 2026). The build writes a public
-// page for each (nriclub.app/city/<slug>, see vite.config.js); new groups
-// still get a working city page, just without their own link preview.
-export const CITIES = [
+// Cities with an NRIClub group (October 2026) that NRIClub shows publicly.
+// The build writes a public page for each (nriclub.app/city/<slug>) and lists
+// it in the sitemap (vite.config.js); new groups still get a working city
+// page, just without their own link preview.
+//
+// The UK is paused (docs/compliance/uk-pause.md): while NRIClub has no UK
+// representative (Art. 27 UK GDPR), it doesn't target people in the UK. The
+// cities in UK_CITIES have groups in the database, which stay members-only,
+// but no public page, no place in the sitemap, the homepage or the city
+// search, and a city page at their address says NRIClub isn't open there.
+// UK_CITIES also holds names that are as likely to mean a UK place as one
+// elsewhere (UK_CITIES_UNSURE): take one out of both lists, and put it back
+// into CITIES, once you know its group is for a city outside the UK.
+export const UK_CITIES_UNSURE = ["Cambridge", "Chesterfield", "East London", "Halifax", "Kingston", "Morley", "Newport",
+  "Richmond", "Southport", "Windsor"];
+export const UK_CITIES = [
+  "Aberdeen", "Barnet", "Belfast", "Birmingham", "Bolton", "Bradford", "Brent", "Cardiff", "Coventry", "Croydon",
+  "Derby", "Dudley", "Dundee", "Ealing", "East Ham", "Edinburgh", "Enfield", "Glasgow", "Harrow", "Hounslow",
+  "Ilford", "Kirklees", "Leeds", "Leicester", "Liverpool", "London", "Manchester", "Milton Keynes", "Northampton",
+  "Nottingham", "Oldham", "Reading", "Redbridge", "Sandwell", "Sheffield", "Slough", "Solihull", "Southall",
+  "Stockport", "Swansea", "Tooting", "Trafford", "Walsall", "Wembley", "Wokingham", "Wolverhampton",
+  ...UK_CITIES_UNSURE,
+];
+const ukKeys = new Set(UK_CITIES.map((c) => c.toLowerCase()));
+// Whether a city's name (as a group or a visitor writes it) is a paused UK
+// city: "London", " london ", "Indians in London" (the group's name).
+export const isPausedCity = (name) =>
+  ukKeys.has(String(name || "").replace(/^\s*indians in\s+/i, "").trim().replace(/\s+/g, " ").toLowerCase());
+
+// Every city with a group, UK ones included (CITIES leaves those out).
+const CITY_GROUPS = [
   "Abbotsford", "Aberdeen", "Abha", "Abidjan", "Abu Dhabi", "Abuja", "Accra", "Adelaide", "Ahmadi", "Ajman",
   "Al Ain", "Al Khobar", "Al Khor", "Al Rayyan", "Al Wakrah", "Alicante", "Alor Setar", "Alpharetta",
   "Amstelveen", "Amsterdam", "Anaheim", "Ann Arbor", "Anna Regina", "Antwerp", "Arima", "Artesia", "Arusha",
@@ -58,3 +85,5 @@ export const CITIES = [
   "West Chester", "Westmead", "Windsor", "Winnipeg", "Wokingham", "Wolverhampton", "Woodbridge", "Yanbu",
   "Yangon", "Yokohama", "Zurich"
 ];
+
+export const CITIES = CITY_GROUPS.filter((c) => !isPausedCity(c));

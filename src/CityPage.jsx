@@ -3,7 +3,7 @@ import * as api from "./supabaseApi";
 import LogoMark from "./LogoMark";
 import PublicShell, { Phrases, useCanonical, INK, MUTED, SAFFRON_TEXT, GREEN_TEXT, section, primaryBtn, whatsappShare } from "./PublicShell";
 import { ESSENTIALS } from "./content/essentials";
-import { CITIES } from "./content/cities";
+import { CITIES, isPausedCity } from "./content/cities";
 import { findCity } from "./content/findCity";
 import { TRUST_LINE } from "./content/home";
 import { slug, HOME_TITLE } from "./content/slug";
@@ -15,7 +15,9 @@ import { useWhatsOn } from "./whatsOnLive";
 // PUBLIC CITY PAGE (nriclub.app/city/<city>): what NRIClub has in one city,
 // for people who aren't members yet. It shows counts only, never names or
 // posts; members who open the same address get the city's group. Until a
-// group has a few members it says so, instead of showing zeros.
+// group has a few members it says so, instead of showing zeros. A paused UK
+// city (UK_CITIES in src/content/cities.js) gets only a short note that
+// NRIClub isn't open there, and nothing that invites people to join.
 // ============================================================================
 
 const titleCase = (s) => s.replace(/(^|[\s-])(\p{L})/gu, (_, p, c) => p + (c === "ß" ? c : c.toLocaleUpperCase()));
@@ -50,16 +52,19 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
   const city = known || titleCase(rawCity);
   const citySlug = slug(city);
   const cityPath = `/city/${citySlug || encodeURIComponent(city)}`;
+  const paused = isPausedCity(city);
 
   useEffect(() => {
-    api.getPublicCities().then(setCities).catch(() => {});
+    // Without the paused UK cities (their groups stay, members-only).
+    api.getPublicCities().then((rows) => setCities((rows || []).filter((c) => !isPausedCity(c.city)))).catch(() => {});
   }, []);
   useEffect(() => {
+    if (paused) return undefined;
     let gone = false;
     setSummary(null);
     api.getCitySummary(city).then((s) => { if (!gone) setSummary(s); }).catch(() => { if (!gone) setSummary({ error: true }); });
     return () => { gone = true; };
-  }, [city]);
+  }, [city, paused]);
 
   // Another spelling of a known city: show the city's own address, so a
   // shared link is the one with the city's link preview.
@@ -77,9 +82,23 @@ export default function CityPage({ city: rawCity, onJoin, onLogin }) {
   const eventsPath = `${WHATS_ON_PATH}?city=${encodeURIComponent(citySlug)}`;
 
   useEffect(() => {
-    document.title = `Indians in ${city} · NRIClub`;
+    document.title = paused ? HOME_TITLE : `Indians in ${city} · NRIClub`;
     return () => { document.title = HOME_TITLE; };
-  }, [city]);
+  }, [city, paused]);
+
+  if (paused) {
+    return (
+      <PublicShell onLogin={onLogin} onJoin={onJoin} hero={(
+        <div style={{ ...section, paddingTop: "clamp(24px, 6vh, 56px)", paddingBottom: 48, textAlign: "center" }}>
+          <h1 style={{ fontSize: "clamp(30px, 5vw, 44px)", fontWeight: 800, lineHeight: 1.1, letterSpacing: "-0.03em", margin: "0 0 16px", overflowWrap: "anywhere" }}>NRIClub isn't open in {city} at the moment</h1>
+          <p style={{ fontSize: 16, lineHeight: 1.65, color: MUTED, maxWidth: 520, margin: "0 auto 22px" }}>
+            Members who already have an account can still sign in.
+          </p>
+          <a href="/" style={{ display: "inline-block", padding: "10px 8px", fontSize: 15, fontWeight: 600, color: INK }}>NRIClub home</a>
+        </div>
+      )} />
+    );
+  }
 
   const members = summary?.members || 0;
   const hasGroup = !!summary?.group;

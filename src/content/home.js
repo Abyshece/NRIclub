@@ -11,8 +11,9 @@ export const HOME_LEAD = "Ask anything, find a room or a job referral, discover 
 export const TRUST_LINE = "Free · Our team checks every new member · Your phone number stays private";
 
 // The city buttons under "Find your city's group": big cities around the
-// world (a city with 5 or more members moves to the front).
-export const POPULAR_CITIES = ["London", "Toronto", "New York City", "Dubai", "Singapore", "Sydney", "San Francisco", "Melbourne", "Doha", "Frankfurt", "Berlin", "Auckland"];
+// world (a city with 5 or more members moves to the front). No UK city while
+// the UK is paused (UK_CITIES in src/content/cities.js).
+export const POPULAR_CITIES = ["Toronto", "New York City", "Dubai", "Singapore", "Sydney", "San Francisco", "Melbourne", "Doha", "Munich", "Frankfurt", "Berlin", "Auckland"];
 
 // Under the city buttons: the way to What's on (Indian events in Germany by
 // other organisers, /whats-on). The second part is the link.
@@ -35,12 +36,14 @@ export const FOUNDER = null;
 
 export const SHARE_TEXT = "NRIClub: a free community for Indians abroad, with city groups around the world and free guides on passports, OCI, NRE/NRO accounts and taxes. Our team checks every new member. https://nriclub.app";
 
-// "Our mission" on the homepage (MissionSection.jsx, #mission). The 35
-// million: India's Ministry of External Affairs counts about 35 million
-// NRIs and people of Indian origin.
+// "Our mission" on the homepage (MissionSection.jsx, #mission). No number:
+// a figure here needs its source and year next to it (§ 5 UWG), and none is
+// kept in the repository. To give one, add the publication (e.g. the
+// Ministry of External Affairs' count of NRIs and people of Indian origin)
+// and its year to the sentence.
 export const MISSION = {
   title: "Every Indian abroad, one community.",
-  lead: "More than 35 million Indians and people of Indian origin live outside India. Today we're split across thousands of chat groups: many go quiet, links stop working, and last year's best answer is lost in the scroll. Our goal is one place where every Indian abroad can find their city, get help from people who've been there, and pass it on.",
+  lead: "Millions of Indians and people of Indian origin live outside India. Today we're split across thousands of chat groups: many go quiet, links stop working, and last year's best answer is lost in the scroll. Our goal is one place where every Indian abroad can find their city, get help from people who've been there, and pass it on.",
   goals: [
     { title: "Connect every NRI", text: "One account for every city where Indians live. When you move, your community moves with you." },
     { title: "Real people, a safe space", text: "A person on our team checks every new member, and your phone number stays private." },

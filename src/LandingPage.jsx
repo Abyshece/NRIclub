@@ -4,7 +4,7 @@ import LogoMark from "./LogoMark";
 import WhyNRIClub from "./WhyNRIClub";
 import MissionSection from "./MissionSection";
 import { slug } from "./content/slug";
-import { CITIES } from "./content/cities";
+import { CITIES, isPausedCity } from "./content/cities";
 import { findCity } from "./content/findCity";
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT, WHATS_ON_TEASER } from "./content/home";
 import { hasImprint } from "./content/imprint";
@@ -25,7 +25,7 @@ const MAP_CITIES = [
   { name: "San Francisco", x: 40, y: 150 },
   { name: "Toronto", x: 95, y: 82 },
   { name: "New York", x: 120, y: 130 },
-  { name: "London", x: 220, y: 60 },
+  { name: "Paris", x: 220, y: 60 },
   { name: "Berlin", x: 290, y: 44 },
   { name: "Dubai", x: 368, y: 150 },
   { name: "Singapore", x: 470, y: 250 },
@@ -155,7 +155,8 @@ export default function LandingPage({ onJoin, onLogin }) {
     if (id) document.getElementById(id)?.scrollIntoView();
   }, []);
   useEffect(() => {
-    api.getPublicCities().then((rows) => { if (Array.isArray(rows)) setGroups(rows); }).catch(() => {});
+    // Without the paused UK cities (their groups stay, members-only).
+    api.getPublicCities().then((rows) => { if (Array.isArray(rows)) setGroups(rows.filter((g) => !isPausedCity(g.city))); }).catch(() => {});
     import("./content/essentials").then((m) => setGuides(m.ESSENTIALS)).catch(() => {});
   }, []);
   const featured = (guides || []).length ? FEATURED_GUIDES.map((s) => guides.find((g) => g.slug === s)).filter(Boolean) : [];
