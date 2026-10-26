@@ -76,7 +76,13 @@ Retention periods marked *(by hand)* are kept with
 `deletion-routine.md` until scheduled clean-up jobs exist (then mark them
 *(job)*). Everything else is deleted when the member deletes their account
 (`delete_my_account()` deletes the `auth.users` row; every table that
-references the member cascades, except where noted).
+references the member cascades, except where noted), or when our team
+deletes it for them: at their request (Art. 17), or an account we blocked
+(admin panel → Members → Delete account…, Edge Function
+`admin-delete-member`, since the database update
+`20261101000000_admin_delete_member.sql`). That deletes the member's photo
+files and the `auth.users` row the same way, emails the member first, and
+records the deletion in `private.moderation_action` (No. 9).
 
 ### 1. Member accounts and sign-in
 
@@ -88,7 +94,7 @@ references the member cascades, except where noted).
 | Data | Email address, bcrypt password hash, name, sign-up/confirmation/last sign-in times, signup metadata (`auth.users.raw_user_meta_data`); sessions with IP address and user agent (`auth.sessions`), refresh tokens |
 | Systems | Supabase Auth (`auth.users`, `auth.sessions`, `auth.refresh_tokens`); `public.profiles`, `public.profile_private` |
 | Recipients | Admins (email address); Supabase |
-| Retention | Until account deletion. Sign-ups never confirmed: 30 days *(by hand)*. Sessions until sign-out on that device or account deletion (no time-box set yet: see Supabase Auth → Sessions) |
+| Retention | Until account deletion, by the member or by our team (at the member's request, or a blocked account; see above). Sign-ups never confirmed: 30 days *(by hand)*. Sessions until sign-out on that device or account deletion (no time-box set yet: see Supabase Auth → Sessions) |
 
 ### 2. Membership check (verification)
 
@@ -169,7 +175,7 @@ references the member cascades, except where noted).
 |---|---|
 | Purpose | Handle reports from members and notices from anyone (Art. 16 DSA), decide, give statements of reasons (Art. 17), inform the reporter (Art. 16(5)), escalate threats to life or safety (Art. 18), handle bug reports and ideas |
 | Legal basis | Art. 6(1)(c) with Art. 16-18 DSA; otherwise Art. 6(1)(f) (a safe community; defending decisions) |
-| Data | In-app reports: reporter, reported member or content, kind, reason category, the reporter's explanation, good-faith confirmation (`public.reports`; the reason line also names the item). Reports from the form at nriclub.app/report: where, category, explanation, name and email of the sender (may be empty for child sexual abuse material), reference code, decision and when the receipt and decision emails were sent (`private.notices`); keyed SHA-256 hashes of the sender's email and IP address (for IPv6, its /64 network) for the daily limits (`private.notice_log`). Decisions: admin, action, rule or law, facts, urgency, source, the reports answered, a copy of removed content (text; of photos only the file path), the statement sent (`private.moderation_action`); block reason on the account (`profile_private.block_reason/block_rule/blocked_at`); admins' notes on reports (`private.report_note`). Evidence copies where needed; bug reports with user agent and screen size; emails to hello@ |
+| Data | In-app reports: reporter, reported member or content, kind, reason category, the reporter's explanation, good-faith confirmation (`public.reports`; the reason line also names the item). Reports from the form at nriclub.app/report: where, category, explanation, name and email of the sender (may be empty for child sexual abuse material), reference code, decision and when the receipt and decision emails were sent (`private.notices`); keyed SHA-256 hashes of the sender's email and IP address (for IPv6, its /64 network) for the daily limits (`private.notice_log`). Decisions: admin, action, rule or law, facts, urgency, source, the reports answered, a copy of removed content (text; of photos only the file path), the statement sent (`private.moderation_action`); an account our team deleted (`delete_member`: the reason, member's request or blocked account, whether the email went out, the admin's note, and of the account only its ID); block reason on the account (`profile_private.block_reason/block_rule/blocked_at`); admins' notes on reports (`private.report_note`). Evidence copies where needed; bug reports with user agent and screen size; emails to hello@ |
 | Recipients | Admins; the affected member (statement of reasons, in the app) and the reporter (outcome: in the app, or by email from hello@ for the form); police where Art. 18 applies. A reported message is shown to admins (only that message) |
 | Retention | Closed reports and closed reports from the form, with evidence copies, once 12 months old, unless held for a legal dispute or police matter (`private.report_hold`, `notices.hold_reason`). Limit hashes: 1 day. Decisions: 24 months, the copy of removed content 6 months (unless held). Feedback (bug reports, ideas) is deleted with the sender's account; other reports stay without the link to the reporter. Reports and decisions about a deleted member stay without the link to the member (their text can still name them). Run by `private.daily_cleanup()` *(by hand until it is scheduled)* |
 
@@ -177,8 +183,8 @@ references the member cascades, except where noted).
 
 | | |
 |---|---|
-| Purpose | Sign-up and sign-in codes, password links, email-change confirmations; emails from our team about the membership (check decisions, changes to the Terms or the service, termination, breach notices; statements of reasons, warnings and report outcomes go in the app and may also be emailed); receipt and decision emails to senders of reports from the form at nriclub.app/report (sent by hand from hello@, prefilled by the admin panel) |
-| Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5), 17 DSA and Art. 34 GDPR |
+| Purpose | Sign-up and sign-in codes, password links, email-change confirmations; emails from our team about the membership (check decisions, changes to the Terms or the service, termination, breach notices; statements of reasons, warnings and report outcomes go in the app and may also be emailed; the email that our team deleted the account, at the member's request or after a block, sent by the Edge Function `admin-delete-member` just before the deletion); receipt and decision emails to senders of reports from the form at nriclub.app/report (sent by hand from hello@, prefilled by the admin panel) |
+| Legal basis | Art. 6(1)(b); Art. 6(1)(c) with Art. 16(5), 17 DSA, Art. 12(3) GDPR (telling a member what we did about their request) and Art. 34 GDPR |
 | Data | Email address, subject and content (incl. code or link), delivery events |
 | Recipients | Resend (Amazon SES eu-west-1) as processor of Supabase Auth's custom SMTP; the mailbox provider for our team's emails |
 | Retention | Resend: 30 days (all self-serve plans). Our team's emails: like No. 13 |
@@ -208,7 +214,7 @@ references the member cascades, except where noted).
 
 | | |
 |---|---|
-| Purpose | Answer questions; handle data-subject requests (Art. 12-22), notices of illegal content, authority orders, complaints, redress requests |
+| Purpose | Answer questions; handle data-subject requests (Art. 12-22; a request to delete an account: `deletion-routine.md`, "Deleting an account on request"), notices of illegal content, authority orders, complaints, redress requests |
 | Legal basis | Art. 6(1)(b), 6(1)(c) (GDPR and DSA duties), 6(1)(f) |
 | Data | Sender, content, attachments, replies; the request log |
 | Recipients | The mailbox provider **[fill in]** |
