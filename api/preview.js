@@ -48,13 +48,19 @@ export function escapeHtml(value) {
 // The <head> tags of a page: { title, description, image, url } for the
 // link preview; pageTitle for the browser's tab (the site's own: a page's
 // title is what website analytics record, and never a member's words).
-export function headTags({ title, description, image, url, pageTitle = SITE_TITLE }) {
+// api/news.js also gives robots (null: search engines may list the page),
+// type ("article"), canonical (the page's own address) and published /
+// modified (ISO dates of an article).
+export function headTags({ title, description, image, url, pageTitle = SITE_TITLE, robots = "noindex", type = "website", canonical, published, modified }) {
   const meta = (attr, key, value) => `<meta ${attr}="${key}" content="${escapeHtml(value)}" />`;
   return [
     `<title>${escapeHtml(pageTitle)}</title>`,
     meta("name", "description", description),
-    meta("name", "robots", "noindex"),
-    meta("property", "og:type", "website"),
+    ...(robots ? [meta("name", "robots", robots)] : []),
+    ...(canonical ? [`<link rel="canonical" href="${escapeHtml(canonical)}" />`] : []),
+    meta("property", "og:type", type),
+    ...(published ? [meta("property", "article:published_time", published)] : []),
+    ...(modified ? [meta("property", "article:modified_time", modified)] : []),
     meta("property", "og:site_name", "NRIClub"),
     meta("property", "og:title", title),
     meta("property", "og:description", description),

@@ -7,8 +7,8 @@
 // (vite.config.js), so add a new page's path here and there together.
 //   /find  /groups[/id]  /events[/id]  /help[/id]  /docs[/id]  /market[/id]
 //   /messages[/id]  /profile  /u/<id>  /post/<id>  /mentoring  /mentors
-//   /city/<city>  /guides[/<slug>]  /whats-on  /travel[/<id>]  /ambassador
-//   /impressum  /terms[/<version>]  /privacy  /report
+//   /city/<city>  /guides[/<slug>]  /whats-on  /news[/<slug>]  /travel[/<id>]
+//   /ambassador  /impressum  /terms[/<version>]  /privacy  /report
 // The admin site (admin.nriclub.app) answers every path.
 // /api/... belongs to Vercel's functions (api/collect.js, the website
 // analytics; api/preview.js, the link previews), which Vercel answers before
@@ -18,14 +18,16 @@
 // /events/<id>, /help/<id>, /travel/<id>) goes to api/preview.js instead,
 // which answers with the app plus that item's link preview
 // (PREVIEW_REWRITES, below; the build checks vercel.json has them, in their
-// place: after the admin site's rule, before the app's).
+// place: after the admin site's rule, before the app's). The news (/news and
+// /news/<slug>) goes to api/news.js the same way (NEWS_REWRITES), which
+// answers with the app plus the page's link preview and text.
 // ============================================================================
 
 import { PREVIEW_KINDS, PREVIEW_PATHS } from "./preview.js";
 
 export const APP_SECTIONS = [
   "find", "groups", "events", "help", "docs", "market", "messages", "profile", "u", "post", "mentoring", "mentors",
-  "city", "guides", "whats-on", "travel", "ambassador", "impressum", "terms", "privacy", "report",
+  "city", "guides", "whats-on", "news", "travel", "ambassador", "impressum", "terms", "privacy", "report",
 ];
 
 // The rewrite in vercel.json that sends them to the app.
@@ -40,6 +42,14 @@ export const PREVIEW_REWRITES = PREVIEW_KINDS.map((kind) => ({
   missing: [{ type: "host", value: ADMIN_HOST }],
   destination: `${PREVIEW_FUNCTION}?kind=${kind}&id=:id`,
 }));
+
+// The rewrites in vercel.json that send the news to api/news.js, never on
+// the admin site: the list, and one post by its slug.
+export const NEWS_FUNCTION = "/api/news";
+export const NEWS_REWRITES = [
+  { source: "/news", missing: [{ type: "host", value: ADMIN_HOST }], destination: NEWS_FUNCTION },
+  { source: "/news/:slug", missing: [{ type: "host", value: ADMIN_HOST }], destination: `${NEWS_FUNCTION}?slug=:slug` },
+];
 
 // Whether the app has a page at this path ("/" and the files the homepage is
 // served as count too).

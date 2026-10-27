@@ -19,7 +19,8 @@ import { docToHtml, CONTACT_EMAIL } from './src/content/legal/doc.js';
 import { privacyDoc } from './src/content/legal/privacy.js';
 import { termsDoc, TERMS_VERSION, TERMS_ARCHIVE } from './src/content/legal/terms.js';
 import { REPORT_HREF, REPORT_LINK_TEXT, REPORT_MAILTO, REPORT_PAGE } from './src/content/legal/reporting.js';
-import { APP_REWRITE_SOURCE, APP_SECTIONS, PREVIEW_REWRITES, PREVIEW_FUNCTION } from './src/content/routes.js';
+import { APP_REWRITE_SOURCE, APP_SECTIONS, PREVIEW_REWRITES, PREVIEW_FUNCTION, NEWS_REWRITES, NEWS_FUNCTION } from './src/content/routes.js';
+import { NEWS_PATH, NEWS_TITLE } from './src/content/news.js';
 
 const SITE = 'https://nriclub.app';
 
@@ -168,32 +169,35 @@ function publicPages() {
       if (!rewrites.some((r) => r.source === '/(.*)' && r.destination === '/app.html' && r.has?.[0]?.value === 'admin.nriclub.app')) {
         throw new Error('vercel.json must send every address on admin.nriclub.app to the app (a rewrite with "has" the host admin.nriclub.app).');
       }
-      // /api/collect (api/collect.js) receives the website analytics and
-      // /api/preview (api/preview.js) answers with the link previews: no
-      // rewrite of the main site may claim /api/.
+      // /api/collect (api/collect.js) receives the website analytics, and
+      // /api/preview (api/preview.js) and /api/news (api/news.js) answer
+      // with the link previews: no rewrite of the main site may claim /api/.
       if (APP_SECTIONS.includes('api') || rewrites.some((r) => !r.has && /^\/\(?api\b/.test(r.source))) {
-        throw new Error('vercel.json and src/content/routes.js must leave /api/ to the site\'s functions (api/collect.js, api/preview.js): take "api" out of APP_SECTIONS and the rewrites.');
+        throw new Error('vercel.json and src/content/routes.js must leave /api/ to the site\'s functions (api/collect.js, api/preview.js, api/news.js): take "api" out of APP_SECTIONS and the rewrites.');
       }
-      // A shared item's address (/market/<id> …) goes to api/preview.js:
-      // after the admin site's rule (and never on its host), before the
-      // app's own rule, which would otherwise answer it without a preview.
+      // A shared item's address (/market/<id> …) goes to api/preview.js, and
+      // the news (/news, /news/<slug>) to api/news.js: after the admin
+      // site's rule (and never on its host), before the app's own rule,
+      // which would otherwise answer them without a preview.
       const adminAt = rewrites.findIndex((r) => r.source === '/(.*)' && r.has?.[0]?.value === 'admin.nriclub.app');
       const appAt = rewrites.findIndex((r) => r.source === APP_REWRITE_SOURCE && !r.has);
       const same = (r, w) => r.source === w.source && r.destination === w.destination && !r.has
         && JSON.stringify((r.missing || []).map((m) => [m.type, m.value])) === JSON.stringify(w.missing.map((m) => [m.type, m.value]));
-      for (const want of PREVIEW_REWRITES) {
+      for (const want of [...PREVIEW_REWRITES, ...NEWS_REWRITES]) {
         const at = rewrites.findIndex((r) => same(r, want));
         if (at < 0 || at < adminAt || at > appAt) {
-          throw new Error(`vercel.json must have the rewrite ${JSON.stringify(want)} after the admin site's rule and before the app's (PREVIEW_REWRITES in src/content/routes.js).`);
+          throw new Error(`vercel.json must have the rewrite ${JSON.stringify(want)} after the admin site's rule and before the app's (PREVIEW_REWRITES and NEWS_REWRITES in src/content/routes.js).`);
         }
         if (!APP_SECTIONS.includes(want.source.split('/')[1])) {
           throw new Error(`${want.source}: the app must have this page too (APP_SECTIONS in src/content/routes.js).`);
         }
       }
-      if (!fs.existsSync(path.join(root, `${PREVIEW_FUNCTION.slice(1)}.js`))) {
-        throw new Error(`vercel.json sends shared items to ${PREVIEW_FUNCTION}, but ${PREVIEW_FUNCTION.slice(1)}.js is missing.`);
+      for (const fn of [PREVIEW_FUNCTION, NEWS_FUNCTION]) {
+        if (!fs.existsSync(path.join(root, `${fn.slice(1)}.js`))) {
+          throw new Error(`vercel.json sends addresses to ${fn}, but ${fn.slice(1)}.js is missing.`);
+        }
       }
-      const extra = rewrites.filter((r) => /^\/api\//.test(r.destination || '') && !PREVIEW_REWRITES.some((w) => same(r, w)));
+      const extra = rewrites.filter((r) => /^\/api\//.test(r.destination || '') && ![...PREVIEW_REWRITES, ...NEWS_REWRITES].some((w) => same(r, w)));
       if (extra.length) {
         throw new Error(`vercel.json sends these to a function, but src/content/routes.js doesn't list them: ${JSON.stringify(extra)}.`);
       }
@@ -328,7 +332,7 @@ function publicPages() {
         .replace('</head>', '  <meta name="robots" content="noindex" />\n</head>')
         .replace('<div id="root"></div>', () => `<div id="root"><main style="max-width:720px;margin:0 auto;padding:32px 20px;font-family:system-ui,sans-serif;color:#37352F;line-height:1.6">`
           + `<h1>Page not found</h1><p>This page doesn't exist, or it has moved. Check the address, or try one of these:</p>`
-          + `<ul><li><a href="/">NRIClub home</a></li><li><a href="${WHATS_ON_PATH}">What's on in Germany</a></li><li><a href="/guides">NRI guides</a></li></ul>${legalLinks}</main></div>`));
+          + `<ul><li><a href="/">NRIClub home</a></li><li><a href="${WHATS_ON_PATH}">What's on in Germany</a></li><li><a href="${NEWS_PATH}">${esc(NEWS_TITLE)}</a></li><li><a href="/guides">NRI guides</a></li></ul>${legalLinks}</main></div>`));
 
       // The homepage, last: the pages above are copies of the plain
       // index.html, and only the homepage gets this text and this canonical.
@@ -338,7 +342,9 @@ function publicPages() {
         .replace('</head>', () => `  <link rel="canonical" href="${SITE}/" />\n  <script>${HOME_GUARD}</script>\n</head>`)
         .replace('<div id="root"></div>', () => `<div id="root">${homeStatic()}</div>`));
 
-      const urls = ['/', '/guides', WHATS_ON_PATH, ...ESSENTIALS.map((g) => `/guides/${g.slug}`), ...CITIES.map((c) => `/city/${slug(c)}`), REPORT_HREF];
+      // The news pages come from api/news.js (the posts change without a
+      // deploy); the list is here, and it links every post.
+      const urls = ['/', '/guides', WHATS_ON_PATH, NEWS_PATH, ...ESSENTIALS.map((g) => `/guides/${g.slug}`), ...CITIES.map((c) => `/city/${slug(c)}`), REPORT_HREF];
       fs.writeFileSync(path.join(outDir, 'sitemap.xml'),
         `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${SITE}${u}</loc></url>`).join('\n')}\n</urlset>\n`);
     },

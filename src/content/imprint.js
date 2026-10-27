@@ -30,7 +30,7 @@ export const IMPRINT = {
   // "DE123456789-00001"), if the tax office gave you one. Fill in whichever
   // of the two you have; never your plain tax number (Steuernummer).
   businessId: "",
-  // The person responsible for the content (the guides and the site's texts)
+  // The person responsible for the content (the guides, the news and the site's texts)
   // under § 18 (2) MStV: a person, not a company, who lives in Germany. Name
   // and postal address on one line. A private person can leave this empty to
   // name themselves; a company must fill it in (the build stops otherwise).

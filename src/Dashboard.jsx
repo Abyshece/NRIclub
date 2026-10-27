@@ -26,6 +26,8 @@ import { ART9_CONSENT_TEXT, ART9_CONSENT_TEXT_BY_VERSION, ART9_WITHDRAW_TEXT } f
 import { WHATS_ON_NOTE, upcoming, todayInGermany, citySlug, eventCitySlug } from "./content/whatson";
 import { CompactEvent } from "./WhatsOnItems";
 import { useWhatsOn } from "./whatsOnLive";
+import { useNews } from "./newsLive";
+import { NEWS_TOPICS, newsDate, newsPath } from "./content/news";
 import { PROFILE_ITEMS, missingItems, reminderKind } from "./content/profileReminders";
 import { PrivacySettingsLink } from "./ConsentBanner";
 import { PreviewSwitch, ShareButton, useShare } from "./member/SharePreview";
@@ -35,6 +37,8 @@ import { LINK_COPIED, SWITCH_FAILED, QUESTION_CATEGORIES, questionPreviewAllowed
 const AmbassadorApply = lazy(() => import("./AmbassadorApply"));
 // A city ambassador's panel (/ambassador), loaded when it is opened.
 const AmbassadorPanel = lazy(() => import("./member/AmbassadorPanel"));
+// News (/news[/<slug>]), the same posts as the public pages, loaded when opened.
+const NewsReader = lazy(() => import("./NewsPage").then((m) => ({ default: m.NewsReader })));
 
 
 // ============================================================================
@@ -337,6 +341,7 @@ const Icons = {
   plane: (p) => <Icon {...p} d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />,
   help: (p) => <Icon {...p} d={["M12 22a10 10 0 100-20 10 10 0 000 20z", "M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3", "M12 17h.01"]} />,
   file: (p) => <Icon {...p} d={["M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z", "M14 2v6h6", "M16 13H8", "M16 17H8", "M10 9H8"]} />,
+  news: (p) => <Icon {...p} d={["M4 22h16a2 2 0 002-2V4a2 2 0 00-2-2H8a2 2 0 00-2 2v16a2 2 0 01-2 2zm0 0a2 2 0 01-2-2v-9c0-1.1.9-2 2-2h2", "M18 14h-8", "M15 18h-5", "M10 6h8v4h-8z"]} />,
   link: (p) => <Icon {...p} d={["M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71", "M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"]} />,
   eye: (p) => <Icon {...p} d={["M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z", "M12 9a3 3 0 100 6 3 3 0 000-6z"]} />,
   filter: (p) => <Icon {...p} d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />,
@@ -802,6 +807,7 @@ const EmptyCard = ({ text, action, onAction }) => (
 //     get Events, with the same list under "Also on in Germany")
 //   /mentoring (your sessions and settings)  /mentors (Find → Mentors)
 //   /travel[/<post id>] (the travel board, at that post)
+//   /news[/<slug>] (our team's news, as on the public pages)
 //   /ambassador (a city ambassador's panel)
 const parsePath = (path, selfId) => {
   const [, a = "", b = ""] = (path || "/").split("/");
@@ -824,6 +830,7 @@ const parsePath = (path, selfId) => {
     case "mentoring": return { view: "mentoring" };
     case "mentors": return { view: "network", findTab: "mentors" };
     case "travel": return { view: "travel", travel: id || null };
+    case "news": return { view: "news", news: id ? id.toLowerCase() : null };
     case "ambassador": return { view: "ambassador" };
     case "impressum": return { view: "home", legal: hasImprint() ? "impressum" : null };
     default: return { view: "home" };
@@ -1262,6 +1269,19 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   const [view, setView] = useState(startRoute.view);
   // The travel board's post an address or a notification points at.
   const [travelFocus, setTravelFocus] = useState(startRoute.travel || null);
+  // News: the post open (its slug), or null for the list; the latest posts
+  // for Home and the side column.
+  const [newsSlug, setNewsSlug] = useState(startRoute.news || null);
+  const { posts: newsPosts } = useNews();
+  const recentNews = newsPosts.filter((n) => Date.now() - new Date(n.published_at).getTime() < 30 * 86400000).slice(0, 2);
+  // A link to a post (or the list, slug null) that opens it here, unless
+  // it's opened in a new tab.
+  const openNews = (slug) => (e) => {
+    if (e && (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) return;
+    e?.preventDefault();
+    setNewsSlug(slug || null);
+    setView("news");
+  };
   // A group, event, doc or listing the address points at, opened once the
   // lists have loaded.
   const [pendingRoute, setPendingRoute] = useState(startRoute.pending || null);
@@ -1352,7 +1372,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
   // They also get a smaller menu, matching what they can use: Home (the
   // waiting page), Guides (the NRI essentials), their profile and settings.
   // shownView is the page the menu marks: for them, one of those three.
-  const shownView = !waiting ? view : view === "profile" ? "profile" : (view === "help" || view === "docs") ? "help" : "home";
+  const shownView = !waiting ? view : view === "profile" || view === "news" ? view : (view === "help" || view === "docs") ? "help" : "home";
   // Whether the database lets this member see other members and what they
   // post (private.can_browse()): only approved members (and not while
   // locked). Nothing is loaded until then.
@@ -1861,6 +1881,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       case "network": return findTab === "mentors" ? "/mentors" : "/find";
       case "mentoring": return "/mentoring";
       case "travel": return travelFocus ? `/travel/${travelFocus}` : "/travel";
+      case "news": return newsSlug ? `/news/${newsSlug}` : "/news";
       case "ambassador": return "/ambassador";
       case "groups": return selectedGroup ? `/groups/${selectedGroup.id}` : "/groups";
       case "events": return "/events";
@@ -1909,6 +1930,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
       if (r.member) setMemberId(r.member);
       setFindTab(r.findTab || "people");
       setTravelFocus(r.travel || null);
+      setNewsSlug(r.news || null);
       setPendingRoute(r.pending || null);
       if (r.post) setSharedLink({ kind: "post", id: r.post });
       if (r.legal) { setLegalTab(r.legal); setSettingsModal("terms"); }
@@ -2899,6 +2921,21 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 <button onClick={() => { openEventForm(); setNewEvent(prev => ({ ...prev, title: `${festival.name} celebration`, date: festival.date < dateValue() ? "" : festival.date })); }} style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: "#37352F", fontSize: 12, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: font }}>Host one</button>
                 <button onClick={hideFestival} aria-label="Hide" style={{ padding: 4, background: "none", border: "none", cursor: "pointer", color: "#9B9A97" }}>{Icons.x({ size: 14 })}</button>
               </div>
+            )}
+            {/* Latest news from our team (the last 30 days), as at nriclub.app/news */}
+            {recentNews.length > 0 && (
+              <section aria-label="Latest news" style={{ border: "1px solid #ECEBE8", borderRadius: 14, padding: "12px 14px", marginBottom: 16, background: "#fff", fontFamily: font }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+                  <h2 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em" }}>Latest news</h2>
+                  <a href="/news" onClick={openNews(null)} style={{ fontSize: 12, fontWeight: 600, color: "#37352F", padding: "4px 0" }}>All news</a>
+                </div>
+                {recentNews.map((n) => (
+                  <a key={n.slug} href={newsPath(n.slug)} onClick={openNews(n.slug)} style={{ display: "block", padding: "7px 0", textDecoration: "none", color: "#37352F" }}>
+                    <span style={{ display: "block", fontSize: 14, fontWeight: 600, lineHeight: 1.35 }}>{n.title}</span>
+                    <span style={{ display: "block", fontSize: 12, color: "#6B6A67", marginTop: 2 }}>{NEWS_TOPICS[n.topic]} · {newsDate(n.published_at)}</span>
+                  </a>
+                ))}
+              </section>
             )}
             {/* Welcome: a new member's first steps */}
             {!welcomeDone && (myFollowing.length === 0 || !introDone) && (
@@ -4627,6 +4664,15 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
           </div>
         );
 
+      case "news":
+        return (
+          <Suspense fallback={<p role="status" style={{ maxWidth: 700, margin: "0 auto", textAlign: "center", padding: 32, color: "#6B6A67", fontSize: 13, fontFamily: font }}>Loading the news…</p>}>
+            <div style={{ maxWidth: 700, margin: "0 auto", fontFamily: font }}>
+              <NewsReader slug={newsSlug} onOpen={(slug) => { setNewsSlug(slug || null); setView("news"); }} onAsk={() => setView("help")} />
+            </div>
+          </Suspense>
+        );
+
       case "travel":
         return <TravelBoard user={user} focusId={travelFocus} onFocus={setTravelFocus} onReport={setReportConfirm}
           onMessage={(post, text) => (post?.user_id && post.user_id !== user.id ? sendFirstMessage(post.user_id, text) : "You can't message the author of this post.")}
@@ -5406,7 +5452,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
             <button onClick={() => setView("profile")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
               <Avatar name={user.name} size={32} url={user.avatar_url || user.avatarUrl} />
             </button>
-            <button onClick={() => setMobileMenu(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#37352F", display: "none", padding: 11, margin: "0 -5px" }} className="mobile-menu-btn">
+            <button onClick={() => setMobileMenu(true)} aria-label="Menu" style={{ background: "none", border: "none", cursor: "pointer", color: "#37352F", display: "none", padding: 11, margin: "0 -5px" }} className="mobile-menu-btn">
               {Icons.menu({ size: 22 })}
             </button>
           </div>
@@ -5424,6 +5470,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
             {(waiting ? [
               { v: "home", icon: Icons.home, label: "Home" },
               { v: "help", icon: Icons.file, label: "Guides" },
+              { v: "news", icon: Icons.news, label: "News" },
               { v: "profile", icon: Icons.user, label: "Profile" },
             ] : [
               { v: "home", icon: Icons.home, label: "Home" },
@@ -5433,6 +5480,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
               { v: "help", icon: Icons.help, label: "Ask & Guides" },
               { v: "market", icon: Icons.shop, label: "Market" },
               { v: "travel", icon: Icons.plane, label: "Travel board" },
+              { v: "news", icon: Icons.news, label: "News" },
               { v: "messages", icon: Icons.message, label: "Messages" },
               { v: "profile", icon: Icons.user, label: "Profile" },
               user.ambassadorCity ? { v: "ambassador", icon: Icons.shield, label: "Ambassador panel" } : null,
@@ -5440,7 +5488,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
             ].filter(Boolean)).map((item) => (
               <button
                 key={item.v}
-                onClick={() => { if (item.v === "admin") { setMobileMenu(false); openAdminPanel(); return; } setView(item.v); setMobileMenu(false); if (item.v === "groups") setSelectedGroup(null); if (item.v === "travel") setTravelFocus(null); }}
+                onClick={() => { if (item.v === "admin") { setMobileMenu(false); openAdminPanel(); return; } setView(item.v); setMobileMenu(false); if (item.v === "groups") setSelectedGroup(null); if (item.v === "travel") setTravelFocus(null); if (item.v === "news") setNewsSlug(null); }}
                 style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", background: shownView === item.v ? "#EFEFED" : "transparent", color: shownView === item.v ? "#37352F" : "#9B9A97", cursor: "pointer", fontSize: 14, fontFamily: font, marginBottom: 4 }}
               >
                 {item.icon({ size: 18 })} {item.label}
@@ -5679,7 +5727,7 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
           </aside>
         )}
 
-        <div>{!waiting || shownView === "profile" ? renderContent()
+        <div>{!waiting || shownView === "profile" || shownView === "news" ? renderContent()
           : shownView === "help" ? <WaitingGuides />
           : <WaitingForReview user={user} onEditProfile={() => openProfileEditor()} onUpdateDetails={() => setVerifyOpen(true)} />}</div>
 
@@ -5727,6 +5775,20 @@ const Dashboard = ({ user, onLogout, onUserUpdate, termsVersion = null, onReview
                 </div>
               ))}
             </div>
+
+            {/* NEWS from our team */}
+            {newsPosts.length > 0 && (
+              <div style={{ marginTop: 28 }}>
+                <h4 style={{ fontSize: 11, fontWeight: 700, color: "#9B9A97", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14, fontFamily: font }}>News</h4>
+                {newsPosts.slice(0, 2).map((n) => (
+                  <a key={n.slug} href={newsPath(n.slug)} onClick={openNews(n.slug)} style={{ display: "block", marginBottom: 14, textDecoration: "none" }}>
+                    <span style={{ display: "block", fontSize: 11, color: "#9B9A97", fontFamily: font, marginBottom: 2 }}>{newsDate(n.published_at)}</span>
+                    <span style={{ display: "block", fontSize: 14, color: "#37352F", fontWeight: 600, fontFamily: font, lineHeight: 1.3 }}>{n.title}</span>
+                  </a>
+                ))}
+                <a href="/news" onClick={openNews(null)} style={{ color: "#5B9CFF", fontSize: 11, fontWeight: 600, fontFamily: font }}>All news →</a>
+              </div>
+            )}
 
             {/* PEOPLE IN YOUR CITY */}
             {user.location && (

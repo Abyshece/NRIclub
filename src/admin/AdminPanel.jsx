@@ -11,6 +11,7 @@ import MembersView from "./MembersView";
 import CommunitiesView from "./CommunitiesView";
 import AmbassadorsView from "./AmbassadorsView";
 import WhatsOnView from "./WhatsOnView";
+import NewsView from "./NewsView";
 import InboxView from "./InboxView";
 import OverviewView from "./OverviewView";
 import SecurityView from "./SecurityView";
@@ -328,6 +329,7 @@ export default function AdminPanel({ onLogout }) {
     { key: "communities", label: "Communities", icon: "globe", count: pendingGroups },
     { key: "ambassadors", label: "Ambassadors", icon: "star", count: ambassadorCounts?.new || 0 },
     { key: "whatson", label: "What's on", icon: "calendar" },
+    { key: "news", label: "News", icon: "note" },
     { key: "reports", label: "Reports", icon: "flag", count: openReports, hot: safetyOpen },
     { key: "bugs", label: "Feedback", icon: "bug", count: feedbackCount },
     { key: "inbox", label: "Inbox", icon: "mail", count: inboxUnread || 0 },
@@ -379,6 +381,8 @@ export default function AdminPanel({ onLogout }) {
     content = <ReportsView reports={reports} setReports={setReports} handledTotal={handledTotals.reports} moreOpen={moreOpen.reports.after ? moreOpen.reports.hidden : 0} loadingMore={loadingMore} onLoadMore={() => loadMoreOpen(false)} usersById={usersById} onMemberChange={onMemberChange} onReportsChange={onReportsChange} showToast={showToast} onReload={load} notices={notices} setNotices={setNotices} recorded={recorded} />;
   } else if (page === "whatson") {
     content = <WhatsOnView showToast={showToast} />;
+  } else if (page === "news") {
+    content = <NewsView showToast={showToast} />;
   } else if (page === "inbox") {
     content = <InboxView showToast={showToast} onUnread={setInboxUnread} />;
   } else if (page === "analytics") {

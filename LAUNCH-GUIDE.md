@@ -57,7 +57,9 @@ afterwards). Compliance round 1 is
 `2026-10-24-ambassador-applications/run_in_sql_editor.sql` (see
 "Ambassador applications: what to do" below); the compliance fixes of 26
 October 2026 are `2026-11-02-compliance-fixes/run_in_sql_editor.sql` (see
-"Compliance fixes: what to do" below). Since round 1, the site goes
+"Compliance fixes: what to do" below); News is
+`2026-11-03-news/run_in_sql_editor.sql` (see "News: what to do" below).
+Since round 1, the site goes
 live first and the SQL runs right after, the same day: the site works with
 the database before and after the update.
 
@@ -672,6 +674,53 @@ version 2026-10-26 and the Art. 9 consent version 2026-10-26 are published.
    L-1 to L-8 in `docs/compliance/questions-for-the-lawyer.md` to the next
    legal review.
 
+## News: what to do
+
+News for Indians in Germany, written by our team: nriclub.app/news (and
+/news/<address> for each post), the latest three on the homepage, "Latest
+news" on the members' Home (posts of the last 30 days) and News in the
+members' menu. Admin panel → **News** to write, preview, save as a draft,
+publish, copy for WhatsApp, take off the site and delete. The link preview
+(the card WhatsApp shows) and the text search engines read come from
+`api/news.js` the minute a post is published, without a new deploy. The
+words, topics and rules are in `src/content/news.js`.
+
+1. **Deploy the site, then run the SQL**:
+   `supabase/oneoff/2026-11-03-news/run_in_sql_editor.sql`, the whole file
+   at once (the migration `20261103000000_news.sql` with a check in front).
+   It refuses to run before the compliance fixes, and a second time ("The
+   news update has already run. Nothing to do."). Until it runs, /news says
+   there's no news yet and the admin panel's News says it needs the update.
+   Then run `NOTIFY pgrst, 'reload schema';`.
+2. **Nothing to set in Vercel**: `api/news.js` uses `VITE_SUPABASE_URL` and
+   `VITE_SUPABASE_ANON_KEY`, which the site already has.
+3. **Check**: write a short test post, preview it, publish it, open
+   nriclub.app/news/<address> signed out; `curl -s https://nriclub.app/news/<address> | grep og:`
+   shows its title and summary. Take it off the site: within a minute the
+   address says "This news post isn't here". Delete it.
+
+**Every post** (the admin panel says it too):
+- **Own words, official source.** Write it yourself from the official page
+  (BAMF, the Federal Foreign Office, Make it in Germany, the Indian embassy
+  or consulates, the tax office) and add that page under Sources. Facts are
+  free to use; a newspaper's text and its photos are not (German copyright,
+  including the press publishers' right): never copy them, never upload
+  them.
+- **General information, not advice.** Every post shows that note. Don't
+  answer individual cases ("can I…?") in our name: point people to the
+  authority, an adviser, or the community's questions.
+- **Check before you publish** (§ 19 MStV: news needs the care of a
+  journalist): the facts match the source, the dates are right, and any
+  change after publishing shows as "Updated". The Impressum already names
+  you as the person responsible for the content (§ 18 (2) MStV).
+- **Neutral**: no party politics; NRIClub is independent.
+- **Sharing in WhatsApp groups**: Copy for WhatsApp gives the title,
+  summary and a link that Analytics counts under Campaigns (campaign
+  "news"). Post it only in groups you're a member of, with the group
+  admin's OK (`docs/OUTREACH.md`).
+- **About one post a week** keeps the page alive; an old date at the top
+  looks abandoned.
+
 ## Before inviting the public
 
 Launch tasks from the Phase 1 review (2026-10-12):
@@ -754,7 +803,8 @@ python3 supabase/tests/rls_test.py "dbname=nriclub_test"
 
 The website analytics' collecting function and browser helpers have their
 own tests, without a database: `node --test tests/analytics.test.mjs`; so
-do the link previews (`api/preview.js`): `node --test tests/preview.test.mjs`.
+do the link previews (`api/preview.js`): `node --test tests/preview.test.mjs`,
+and the news pages (`api/news.js`): `node --test tests/news.test.mjs`.
 
 The migrations run in name order, each in one transaction:
 `20261012000000_nriclub_schema.sql`, `20261013000000_review_fixes.sql`,
