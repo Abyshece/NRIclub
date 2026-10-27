@@ -216,6 +216,7 @@ test("paths: ids become :id, public pages keep their names", () => {
   assert.equal(cleanPath("/guides/oci-card"), "/guides/oci-card");
   assert.equal(cleanPath("/city/M%C3%BCnchen"), "/city/münchen");
   assert.equal(cleanPath("/terms/2026-10-19"), "/terms/2026-10-19");
+  assert.equal(cleanPath("/news/blue-card-salary-2027"), "/news/blue-card-salary-2027");
   assert.equal(cleanPath("/u/00000000-0000-0000-0000-00000000000a"), "/u/:id");
   assert.equal(cleanPath("/messages/abc/def"), "/messages/:id");
   assert.equal(cleanPath("/post/123?x=1#y"), "/post/:id");

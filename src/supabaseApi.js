@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { PREVIEW_KINDS, isItemId, cleanPreview } from "./content/preview.js";
+import { NEWS_COLUMNS, cleanNews, isNewsSlug } from "./content/news.js";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -3659,6 +3660,46 @@ export async function adminHideWhatsOnEvent(id, hidden) {
 }
 export async function adminDeleteWhatsOnEvent(id) {
   return restCall("POST", "/rest/v1/rpc/admin_delete_whats_on_event", { p_id: id });
+}
+
+// News (the 2026-11-03 update, 20261103000000_news.sql): the published
+// posts, the latest first, as cleanNews in src/content/news.js has them.
+// Anyone can read them. Throws before the database update (no such table):
+// the site then says there's no news yet.
+export async function getNews(limit = 30) {
+  const n = Math.max(1, Math.min(100, Math.floor(limit) || 30));
+  const rows = await restCall("GET", `/rest/v1/news_posts?select=${NEWS_COLUMNS}&order=published_at.desc&limit=${n}`);
+  return (Array.isArray(rows) ? rows : []).map(cleanNews).filter(Boolean);
+}
+// One published post, or null (not there, not published, or taken off).
+export async function getNewsPost(slug) {
+  if (!isNewsSlug(slug)) return null;
+  const rows = await restCall("GET", `/rest/v1/news_posts?select=${NEWS_COLUMNS}&slug=eq.${slug}&limit=1`);
+  return cleanNews(Array.isArray(rows) ? rows[0] : null);
+}
+
+// Every post for the admin panel (drafts and posts taken off the site too,
+// with status and dates). null before the database update.
+export async function adminNewsPosts() {
+  try {
+    const rows = await restCall("POST", "/rest/v1/rpc/admin_news_posts", {});
+    return Array.isArray(rows) ? rows : [];
+  } catch (err) {
+    if (isMissingInDatabase(err)) return null;
+    throw err;
+  }
+}
+// Saves a post as a draft (isNew) or changes one: { slug, title, topic,
+// city, summary, body, sources: [{ name, url }] }. Returns the post.
+export async function adminSaveNewsPost(post, isNew) {
+  return restCall("POST", "/rest/v1/rpc/admin_save_news_post", { p_post: post, p_new: !!isNew });
+}
+// status: "published" or "hidden". Returns the post.
+export async function adminSetNewsStatus(slug, status) {
+  return restCall("POST", "/rest/v1/rpc/admin_set_news_status", { p_slug: slug, p_status: status });
+}
+export async function adminDeleteNewsPost(slug) {
+  return restCall("POST", "/rest/v1/rpc/admin_delete_news_post", { p_slug: slug });
 }
 
 // The Inbox (mail to hello@nriclub.app): filter "inbox" (not archived,

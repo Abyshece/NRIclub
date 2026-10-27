@@ -51,6 +51,8 @@ ADMIN_DELETE_MEMBER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "
                                    "20261101000000_admin_delete_member.sql")
 COMPLIANCE_FIXES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
                                 "20261102000000_compliance_fixes.sql")
+NEWS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "migrations",
+                    "20261103000000_news.sql")
 
 ALICE = "00000000-0000-0000-0000-00000000000a"
 BOB = "00000000-0000-0000-0000-00000000000b"
@@ -1365,6 +1367,7 @@ def main():
     public_previews()
     admin_delete_member()
     compliance_fixes()
+    news()
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
@@ -7003,6 +7006,175 @@ def compliance_fixes():
           expect=f"{TERMS_VERSION}|{PREVIOUS_TERMS_VERSION}|{ART9_VERSION}|2026-10-19,2026-10-23,2026-10-26")
     owner(f"UPDATE profile_private SET terms_version = '2026-10-23' WHERE id = '{ben}'; SELECT 1")
     check("... and a member on 2026-10-23 still takes part", takes_part, as_user=ben, expect="true|true|true|false")
+
+
+def news():
+    """News our team writes in the admin panel: public.news_posts (anyone
+    reads the published posts), public.admin_news_posts, admin_save_news_post,
+    admin_set_news_status and admin_delete_news_post: migration
+    20261103000000_news."""
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    with open(NEWS, encoding="utf-8") as f:
+        migration = f.read()
+    nika = "00000000-0000-0000-0000-000000001301"
+    approved_member(nika, "nika.news@example.com", "Nika N")
+
+    def post(**change):
+        p = {"slug": "blue-card-2027", "title": "  Blue Card: new salary thresholds for 2027 ",
+             "topic": "visa", "city": "", "summary": "The minimum salaries for the EU Blue Card change on 1 January 2027.",
+             "body": "  From 1 January 2027 the thresholds rise.\r\n\r\nWHAT CHANGES\n- the general threshold\n- the shortage threshold\n",
+             "sources": [{"name": " BAMF ", "url": "https://www.bamf.de/blue-card"}, {"name": "", "url": ""}]}
+        p.update(change)
+        return sq(json.dumps({k: v for k, v in p.items() if v is not None}))
+
+    save = lambda p, new="true": f"SELECT public.admin_save_news_post({p}::jsonb, {new})"
+    status = lambda slug, st: f"SELECT public.admin_set_news_status({sq(slug)}, {sq(st)})"
+    cols = "slug, title, topic, city, summary, sources, published_at IS NOT NULL, edited_at IS NOT NULL"
+    public_slugs = "SELECT COALESCE(string_agg(slug, ',' ORDER BY slug), '') FROM public.news_posts"
+    insert = ("INSERT INTO public.news_posts (slug, title, topic, summary, body, sources) VALUES ('x-x-x', 'Title', 'visa', "
+              "'A summary long enough.', 'Body', '[{\"name\": \"BAMF\", \"url\": \"https://bamf.de\"}]')")
+
+    # --- who may write -------------------------------------------------------------------------------------------
+    check("anon can't write posts", insert, role="anon", expect="error")
+    check("... nor members", insert, as_user=nika, expect="error")
+    check("... nor change or delete them",
+          "UPDATE public.news_posts SET title = 'x'; DELETE FROM public.news_posts", as_user=nika, expect="error")
+    check("members can't use the admin functions", save(post()), as_user=nika, error_has="Admins only")
+    check("... nor list the posts", "SELECT public.admin_news_posts()", as_user=nika, error_has="Admins only")
+    check("... nor publish or delete", status("blue-card-2027", "published"), as_user=nika, error_has="Admins only")
+    check("anon may not call them at all", "SELECT public.admin_news_posts()", role="anon", error_has="permission denied")
+
+    # --- a draft -------------------------------------------------------------------------------------------------
+    check("an admin saves a draft (text trimmed, the text keeps its lines, empty sources left out, not published)",
+          "SELECT concat_ws('|', r->>'slug', r->>'title', r->>'status', r->>'published_at', jsonb_array_length(r->'sources'), "
+          "r->'sources'->0->>'name', replace(r->>'body', E'\\n', '/')) "
+          f"FROM ({save(post())}) x(r)", as_user=ADMIN,
+          expect="blue-card-2027|Blue Card: new salary thresholds for 2027|draft|1|BAMF|"
+                 "From 1 January 2027 the thresholds rise.//WHAT CHANGES/- the general threshold/- the shortage threshold")
+    check("... anon doesn't see a draft", public_slugs, role="anon", expect="")
+    check("... nor members", public_slugs, as_user=nika, expect="")
+    check("... the admin panel lists it", "SELECT string_agg(p->>'slug' || ':' || (p->>'status'), ',') "
+          "FROM jsonb_array_elements(public.admin_news_posts()) p", as_user=ADMIN, expect="blue-card-2027:draft")
+    check("the same address twice is refused", save(post(title="Another title here")), as_user=ADMIN,
+          error_has="already exists")
+    check("a draft can't be hidden", status("blue-card-2027", "hidden"), as_user=ADMIN, error_has="isn't published")
+    check("only 'published' or 'hidden'", status("blue-card-2027", "draft"), as_user=ADMIN, error_has='Say "published" or "hidden"')
+    check("... an unknown post", status("no-such-post", "published"), as_user=ADMIN, error_has="Post not found")
+
+    # --- the rules -----------------------------------------------------------------------------------------------
+    for name, change, err in [
+        ("an address with capitals or spaces", {"slug": "Blue Card"}, "The address may have only"),
+        ("an address too short", {"slug": "ab"}, "The address may have only"),
+        ("an address with a double dash", {"slug": "blue--card"}, "The address may have only"),
+        ("no title", {"slug": "t-1", "title": "   "}, "Fill in the title"),
+        ("a title too short", {"slug": "t-2", "title": "Hi"}, "between 5 and 120"),
+        ("a title too long", {"slug": "t-3", "title": "x" * 121}, "between 5 and 120"),
+        ("an unknown topic", {"slug": "t-4", "topic": "politics"}, "Unknown topic"),
+        ("a city without letters", {"slug": "t-5", "city": "123"}, "Give the city by its name"),
+        ("a summary too short", {"slug": "t-6", "summary": "Short."}, "between 20 and 220"),
+        ("a summary too long", {"slug": "t-7", "summary": "y" * 221}, "between 20 and 220"),
+        ("text too long", {"slug": "t-8", "body": "z" * 12001}, "12,000 characters"),
+        ("no source", {"slug": "t-9", "sources": [{"name": " ", "url": ""}]}, "Add at least one source"),
+        ("no sources field", {"slug": "t-10", "sources": None}, "Add at least one source"),
+        ("a source without https", {"slug": "t-11", "sources": [{"name": "BAMF", "url": "http://bamf.de"}]}, "full https:// link"),
+        ("a source without a name", {"slug": "t-12", "sources": [{"name": "", "url": "https://bamf.de"}]}, "full https:// link"),
+        ("four sources", {"slug": "t-13", "sources": [{"name": f"S{i}", "url": "https://bamf.de"} for i in range(4)]}, "at most 3 sources"),
+        ("a source name too long", {"slug": "t-14", "sources": [{"name": "n" * 81, "url": "https://bamf.de"}]}, "full https:// link"),
+        ("sources that aren't a list", {"slug": "t-15", "sources": {"name": "BAMF"}}, "must be a list"),
+        ("a field that isn't text", {"slug": "t-16", "city": 5}, "must be text"),
+        ("an unknown field", {"slug": "t-17", "author": "me"}, "Unknown field: author"),
+    ]:
+        check(f"refused: {name}", save(post(**change)), as_user=ADMIN, error_has=err)
+    check("... none of them was saved", "SELECT count(*) FROM public.news_posts", expect="1")
+    check("the table's own checks hold for rows written as the owner too (sources)",
+          "INSERT INTO public.news_posts (slug, title, topic, summary, body, sources) VALUES ('own-1', 'Title', 'visa', "
+          "'A summary long enough.', 'Body', '[{\"name\": \"BAMF\", \"url\": \"https://bamf.de\", \"x\": 1}]')", expect="error")
+    check("... (a published post needs its date)",
+          "INSERT INTO public.news_posts (slug, title, topic, summary, body, sources, status) VALUES ('own-2', 'Title', 'visa', "
+          "'A summary long enough.', 'Body', '[{\"name\": \"BAMF\", \"url\": \"https://bamf.de\"}]', 'published')", expect="error")
+
+    # --- publishing ----------------------------------------------------------------------------------------------
+    check("an admin publishes it", f"SELECT concat_ws('|', r->>'status', r->>'published_at' IS NOT NULL) "
+          f"FROM ({status('blue-card-2027', 'published')}) x(r)", as_user=ADMIN, expect="published|t")
+    check("... anon reads it, with its sources", f"SELECT {cols} FROM public.news_posts", role="anon",
+          expect='blue-card-2027|Blue Card: new salary thresholds for 2027|visa||'
+                 'The minimum salaries for the EU Blue Card change on 1 January 2027.|[{"url": "https://www.bamf.de/blue-card", "name": "BAMF"}]|t|f')
+    check("... and members", public_slugs, as_user=nika, expect="blue-card-2027")
+    check("... but not who wrote it", "SELECT created_by FROM public.news_posts", role="anon", expect="error")
+    check("... nor its status", "SELECT status FROM public.news_posts", role="anon", expect="error")
+    check("... nor when it was saved", "SELECT updated_at FROM public.news_posts", as_user=nika, expect="error")
+    check("saving it unchanged doesn't mark it updated", f"SELECT r->>'edited_at' IS NULL FROM ({save(post(), 'false')}) x(r)",
+          as_user=ADMIN, expect="t")
+    check("changing its text does", f"SELECT r->>'edited_at' IS NOT NULL FROM ({save(post(body='New text.'), 'false')}) x(r)",
+          as_user=ADMIN, expect="t")
+    check("... the address can't change through a save (it is the post)", save(post(slug="blue-card-2028"), "false"),
+          as_user=ADMIN, error_has="Post not found")
+    owner_first = "SELECT published_at FROM public.news_posts WHERE slug = 'blue-card-2027'"
+    ok, first_published, _ = psql(owner_first)
+    check("an admin takes it off the site", f"SELECT ({status('blue-card-2027', 'hidden')})->>'status'; SET ROLE anon; {public_slugs}",
+          as_user=ADMIN, expect="hidden")
+    check("... anon doesn't see it", public_slugs, role="anon", expect="")
+    check("... publishing it again keeps the first date",
+          f"SELECT ({status('blue-card-2027', 'published')})->>'status'; RESET ROLE; {owner_first}", as_user=ADMIN,
+          expect=f"published\n{first_published}")
+    check("a second post: drafts first in the panel only by date, every post listed",
+          f"SELECT ({save(post(slug='oci-camp-munich', topic='consulate', city='Munich'))})->>'slug'; "
+          "SELECT string_agg(p->>'slug', ',') FROM jsonb_array_elements(public.admin_news_posts()) p",
+          as_user=ADMIN, expect="oci-camp-munich\noci-camp-munich,blue-card-2027")
+
+    # --- deleting --------------------------------------------------------------------------------------------------
+    check("an admin deletes a post", "SELECT public.admin_delete_news_post('oci-camp-munich')", as_user=ADMIN,
+          expect="oci-camp-munich")
+    check("... and again: not found", "SELECT public.admin_delete_news_post('oci-camp-munich')", as_user=ADMIN,
+          error_has="Post not found")
+    check("members can't delete", "SELECT public.admin_delete_news_post('blue-card-2027')", as_user=nika, error_has="Admins only")
+    check("... (still there)", "SELECT count(*) FROM public.news_posts WHERE slug = 'blue-card-2027'", expect="1")
+
+    # --- the topics are the site's ---------------------------------------------------------------------------------
+    topics = node_json("import { NEWS_TOPICS } from './src/content/news.js'; console.log(JSON.stringify(Object.keys(NEWS_TOPICS)))")
+    check("the topics are NEWS_TOPICS in src/content/news.js", "SELECT array_to_string(private.news_topics(), ',')",
+          expect=",".join(topics or ["(src/content/news.js couldn't be read)"]))
+    limits = node_json("import { NEWS_LIMITS } from './src/content/news.js'; console.log(JSON.stringify(NEWS_LIMITS))") or {}
+    verdict("the limits in src/content/news.js are the database's",
+            all(f"{v}" in migration for v in (limits.get("titleMax"), limits.get("summaryMax"), limits.get("body"), limits.get("slugMax")))
+            and "BETWEEN 5 AND 120" in migration and "BETWEEN 20 AND 220" in migration and "BETWEEN 3 AND 80" in migration
+            and limits.get("titleMin") == 5 and limits.get("summaryMin") == 20 and limits.get("slugMin") == 3, json.dumps(limits))
+    problems = node_json("import { newsProblem } from './src/content/news.js'; const ok = { slug: 'abc', title: 'Title', topic: 'visa', "
+                         "summary: 'A summary long enough.', body: 'Text', sources: [{ name: 'BAMF', url: 'https://bamf.de' }] }; "
+                         "console.log(JSON.stringify([newsProblem(ok), newsProblem({ ...ok, slug: 'a--b' }), "
+                         "newsProblem({ ...ok, sources: [{ name: 'BAMF', url: 'http://bamf.de' }] }), newsProblem({ ...ok, topic: 'x' })]))")
+    verdict("the admin panel's check (newsProblem) agrees on a few cases",
+            bool(problems) and problems[0] == "" and all(problems[1:]), json.dumps(problems))
+
+    # --- who may call what -----------------------------------------------------------------------------------------
+    check("the new functions run with an empty search path; the admin ones as the database (SECURITY DEFINER)",
+          "SELECT bool_and(proconfig = ARRAY['search_path=\"\"']) AND bool_and(prosecdef OR pronamespace = 'private'::regnamespace) "
+          "FROM pg_proc WHERE oid IN ('private.news_topics()'::regprocedure, 'private.news_sources_ok(jsonb)'::regprocedure, "
+          "'private.news_json(public.news_posts)'::regprocedure, 'public.admin_news_posts()'::regprocedure, "
+          "'public.admin_save_news_post(jsonb, boolean)'::regprocedure, 'public.admin_set_news_status(text, text)'::regprocedure, "
+          "'public.admin_delete_news_post(text)'::regprocedure)", expect="t")
+    check("anon can't call the admin functions; members can (they check is_admin themselves); news_json is the database's",
+          "SELECT NOT has_function_privilege('anon', 'public.admin_save_news_post(jsonb, boolean)', 'EXECUTE') "
+          "AND NOT has_function_privilege('anon', 'public.admin_delete_news_post(text)', 'EXECUTE') "
+          "AND has_function_privilege('authenticated', 'public.admin_set_news_status(text, text)', 'EXECUTE') "
+          "AND NOT has_function_privilege('authenticated', 'private.news_json(public.news_posts)', 'EXECUTE') "
+          "AND NOT has_function_privilege('anon', 'private.news_json(public.news_posts)', 'EXECUTE')", expect="t")
+
+    # --- the one-off file ------------------------------------------------------------------------------------------
+    with open(os.path.join(root, "supabase", "oneoff", "2026-11-03-news", "run_in_sql_editor.sql"), encoding="utf-8") as f:
+        oneoff = f.read()
+    marker = "-- ==== 20261103000000_news.sql ====\n"
+    guard = oneoff[:oneoff.index(marker)] if marker in oneoff else ""
+    verdict("the one-off file is its guard (after the compliance fixes, once) and then the migration as it is",
+            marker in oneoff and oneoff[oneoff.index(marker) + len(marker):] == migration
+            and "to_regprocedure('private.question_preview_allowed(text)') IS NULL" in guard
+            and "to_regclass('public.news_posts') IS NOT NULL" in guard, "the file differs")
+    check("... it refuses to run a second time, naming the update", oneoff, error_has="The news update has already run. Nothing to do.")
+    check("... and before the compliance fixes",
+          f"BEGIN; DROP TRIGGER no_sensitive_question_preview ON public.help_requests; "
+          f"DROP FUNCTION private.no_sensitive_question_preview(); DROP FUNCTION private.question_preview_allowed(text); "
+          f"{oneoff}; ROLLBACK", error_has="Run the compliance fixes update")
+    check("... the migration refuses a second run too", migration, error_has="This update has already run. Nothing to do.")
 
 
 if __name__ == "__main__":

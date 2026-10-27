@@ -5,8 +5,8 @@ import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
 import { PrivacySettingsLink } from "./ConsentBanner";
 
 // ============================================================================
-// The frame of the public pages (city pages, guides, What's on and the
-// legal pages): a thin saffron line, a header that stays in view with Log in
+// The frame of the public pages (city pages, guides, What's on, News and
+// the legal pages): a thin saffron line, a header that stays in view with Log in
 // and Join free, a hero, and a footer with the Terms, the Privacy Policy, the
 // Impressum and how to report illegal content.
 // ============================================================================
@@ -59,13 +59,14 @@ export function useCanonical(path) {
 
 // The bar along the top of the public pages; it stays in view while the page
 // scrolls (the page around it must not have overflow hidden, or it won't).
-// "Why NRIClub" (the homepage's #why) and "What's on" show where there's
-// room for them (the homepage's hero links to #why too; the footer has What's on).
+// "Why NRIClub" (the homepage's #why), "What's on" and "News" show where
+// there's room for them (the homepage's hero links to #why too; the footer
+// has What's on and News).
 export function PublicNav({ onLogin, onJoin, maxWidth = 1100, loginLabel = "Log in" }) {
   const btn = { fontSize: 14, fontWeight: 600, minHeight: 44, padding: "0 16px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
   return (
     <header style={{ position: "sticky", top: 0, zIndex: 20, background: "#fff", borderBottom: "1px solid #F0EFED" }}>
-      <style>{`html { scroll-padding-top: 72px; } @media (max-width: 359px) { .pub-logo-text { display: none; } } @media (max-width: 639px) { .pub-nav-link { display: none !important; } }`}</style>
+      <style>{`html { scroll-padding-top: 72px; } @media (max-width: 359px) { .pub-logo-text { display: none; } } @media (max-width: 639px) { .pub-nav-link { display: none !important; } } @media (max-width: 759px) { .pub-nav-news { display: none !important; } }`}</style>
       <nav aria-label="NRIClub" style={{ ...section, maxWidth, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 10, paddingBottom: 10 }}>
         <a href="/" aria-label="NRIClub home" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: INK, minHeight: 44 }}>
           <LogoMark size={28} />
@@ -74,6 +75,7 @@ export function PublicNav({ onLogin, onJoin, maxWidth = 1100, loginLabel = "Log 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <a href={window.location.pathname === "/" ? "#why" : "/#why"} className="pub-nav-link" style={{ display: "inline-flex", alignItems: "center", minHeight: 44, padding: "0 12px", fontSize: 14, fontWeight: 500, color: INK, textDecoration: "none", whiteSpace: "nowrap" }}>Why NRIClub</a>
           <a href="/whats-on" className="pub-nav-link" aria-current={/^\/whats-on\/?$/.test(window.location.pathname) ? "page" : undefined} style={{ display: "inline-flex", alignItems: "center", minHeight: 44, padding: "0 12px", fontSize: 14, fontWeight: 500, color: INK, textDecoration: "none", whiteSpace: "nowrap" }}>What's on</a>
+          <a href="/news" className="pub-nav-link pub-nav-news" aria-current={/^\/news\/?$/.test(window.location.pathname) ? "page" : undefined} style={{ display: "inline-flex", alignItems: "center", minHeight: 44, padding: "0 12px", fontSize: 14, fontWeight: 500, color: INK, textDecoration: "none", whiteSpace: "nowrap" }}>News</a>
           <button type="button" onClick={onLogin} style={{ ...btn, border: "1px solid #C9C8C5", background: "#fff", color: INK }}>{loginLabel}</button>
           {onJoin && <button type="button" onClick={onJoin} style={{ ...btn, border: "1px solid " + INK, background: INK, color: "#fff" }}>Join free</button>}
         </div>
@@ -101,6 +103,7 @@ export default function PublicShell({ onLogin, onJoin, loginLabel, hero, childre
           <a href="/#mission" style={footerLink}>Our mission</a>
           <a href="/guides" style={footerLink}>NRI guides</a>
           <a href="/whats-on" style={footerLink}>What's on in Germany</a>
+          <a href="/news" style={footerLink}>News</a>
           <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap" }}>

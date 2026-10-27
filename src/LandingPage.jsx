@@ -8,6 +8,8 @@ import { CITIES, isPausedCity } from "./content/cities";
 import { findCity } from "./content/findCity";
 import { HOME_PILL, HOME_LEAD, TRUST_LINE, POPULAR_CITIES, FEATURED_GUIDES, FOUNDER, SHARE_TEXT, WHATS_ON_TEASER } from "./content/home";
 import { hasImprint } from "./content/imprint";
+import { NEWS_PATH, NEWS_TOPICS, newsDate, newsDay, newsPath } from "./content/news";
+import { useNews } from "./newsLive";
 import { REPORT_HREF, REPORT_LINK_TEXT } from "./content/legal/reporting";
 import { PrivacySettingsLink } from "./ConsentBanner";
 import { PublicNav, Phrases, useCanonical, INK, MUTED, SAFFRON, GREEN, NAVY, SAFFRON_TEXT, GREEN_TEXT, TRICOLOUR_LINE, HERO_GLOW, SUPPORT_EMAIL, whatsappShare } from "./PublicShell";
@@ -159,6 +161,7 @@ export default function LandingPage({ onJoin, onLogin }) {
     api.getPublicCities().then((rows) => { if (Array.isArray(rows)) setGroups(rows.filter((g) => !isPausedCity(g.city))); }).catch(() => {});
     import("./content/essentials").then((m) => setGuides(m.ESSENTIALS)).catch(() => {});
   }, []);
+  const { posts: news } = useNews(); // our team's latest news ([] until there is some)
   const featured = (guides || []).length ? FEATURED_GUIDES.map((s) => guides.find((g) => g.slug === s)).filter(Boolean) : [];
 
   // A city with 5 or more members comes first; the rest are big cities
@@ -289,6 +292,32 @@ export default function LandingPage({ onJoin, onLogin }) {
           </p>
         </section>
 
+        {/* LATEST NEWS: only once there is some (src/content/news.js) */}
+        {news.length > 0 && (
+          <section aria-labelledby="lp-news" style={{ ...section, maxWidth: 880, paddingTop: 24, paddingBottom: 40 }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ ...eyebrow, color: SAFFRON_TEXT }}>News for Indians in Germany</div>
+              <h2 id="lp-news" style={h2}>What's changed lately.</h2>
+              <p style={{ ...lead, fontSize: 16, marginBottom: 22 }}>Visas, citizenship, taxes and the Indian embassy, in our own words with the official source.</p>
+            </div>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+              {news.slice(0, 3).map((n) => (
+                <li key={n.slug}>
+                  <a href={newsPath(n.slug)} style={{ display: "block", height: "100%", boxSizing: "border-box", padding: "14px 16px", borderRadius: 12, border: "1px solid #ECEBE8", color: INK, textDecoration: "none" }}>
+                    <span style={{ display: "block", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: SAFFRON_TEXT }}>
+                      {NEWS_TOPICS[n.topic]} · <time dateTime={newsDay(n.published_at)}>{newsDate(n.published_at)}</time>
+                    </span>
+                    <span style={{ display: "block", fontSize: 16, fontWeight: 700, lineHeight: 1.35, marginTop: 6 }}>{n.title}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+            <p style={{ textAlign: "center", margin: "18px 0 0" }}>
+              <a href={NEWS_PATH} style={{ display: "inline-block", padding: "10px 8px", fontSize: 15, fontWeight: 600, color: INK }}>All news →</a>
+            </p>
+          </section>
+        )}
+
         {/* FREE GUIDES */}
         <section aria-labelledby="lp-guides" style={{ ...section, maxWidth: 880, paddingTop: 24, paddingBottom: 64 }}>
           <div style={{ textAlign: "center" }}>
@@ -368,6 +397,7 @@ export default function LandingPage({ onJoin, onLogin }) {
           <a href="#mission" style={footerLink}>Our mission</a>
           <a href="/guides" style={footerLink}>NRI guides</a>
           <a href="/whats-on" style={footerLink}>What's on in Germany</a>
+          <a href={NEWS_PATH} style={footerLink}>News</a>
           <a href={`mailto:${SUPPORT_EMAIL}`} style={footerLink}>Contact: {SUPPORT_EMAIL}</a>
           <a href="/terms" style={footerLink}>Terms of Use</a>
           <a href="/privacy" style={footerLink}>Privacy Policy</a>

@@ -34,6 +34,7 @@ const ImpressumPage = lazy(() => import("./ImpressumPage"));
 const LegalPage = lazy(() => import("./LegalPage"));
 const ReportPage = lazy(() => import("./ReportPage"));
 const WhatsOnPage = lazy(() => import("./WhatsOnPage"));
+const NewsPage = lazy(() => import("./NewsPage"));
 const NotFoundPage = lazy(() => import("./NotFoundPage"));
 const PreviewPage = lazy(() => import("./PreviewPage"));
 
@@ -41,8 +42,9 @@ const PreviewPage = lazy(() => import("./PreviewPage"));
 // the admin site, which answers every address.
 const unknownPath = () => !isAdminRoute() && !isAppPath(window.location.pathname);
 
-// A public page's address: /city/<city>, /guides, /guides/<slug> or
-// /whats-on (members who open it get Events, see Dashboard.jsx); and a
+// A public page's address: /city/<city>, /guides, /guides/<slug>,
+// /whats-on (members who open it get Events, see Dashboard.jsx) or /news,
+// /news/<slug> (members get News in the app); and a
 // shared item's (/market/<id>, /events/<id>, /help/<id>, /travel/<id>),
 // whose preview page people without an account see (PreviewPage.jsx;
 // members get the item in the app).
@@ -61,6 +63,12 @@ const publicPage = () => {
   const guide = /^\/guides(?:\/([a-z0-9-]+))?\/?$/.exec(path);
   if (guide) return { kind: "guide", slug: guide[1] || "" };
   if (/^\/whats-on\/?$/.test(path)) return { kind: "whats-on" };
+  const news = /^\/news(?:\/([^/]+))?\/?$/.exec(path);
+  if (news) {
+    let slug = "";
+    try { slug = decodeURIComponent(news[1] || "").toLowerCase(); } catch (e) { slug = "-"; }
+    return { kind: "news", slug };
+  }
   if (/^\/impressum\/?$/.test(path) && hasImprint()) return { kind: "impressum" };
   return null;
 };
@@ -604,6 +612,7 @@ export default function App() {
       if (page?.kind === "city") return <CityPage city={page.city} onJoin={join} onLogin={login} />;
       if (page?.kind === "guide") return <GuidePage slug={page.slug} onJoin={join} onLogin={login} />;
       if (page?.kind === "whats-on") return <WhatsOnPage onJoin={join} onLogin={login} />;
+      if (page?.kind === "news") return <NewsPage slug={page.slug} onJoin={join} onLogin={login} />;
       if (page?.kind === "impressum") return <ImpressumPage onJoin={join} onLogin={login} />;
       // Join free and Log in keep the item's address, so once logged in, an
       // approved member lands on it (Dashboard.jsx).

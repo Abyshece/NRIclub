@@ -9,6 +9,7 @@ Links to use:
 - A city page: `https://nriclub.app/city/[city]`, in lower case with hyphens for spaces (for example `https://nriclub.app/city/berlin` or `https://nriclub.app/city/new-york-city`). It works without an account, shows the city's group, events and desi places, and has its own link preview ("Indians in Berlin · NRIClub"). Its **Become a city ambassador** button opens the application form (also on the home page).
 - The guides: `https://nriclub.app/guides`, short guides anyone can read (passport renewal, OCI, NRE/NRO accounts, taxes, sending money home and more), for example `https://nriclub.app/guides/oci-card-the-basics`.
 - What's on: `https://nriclub.app/whats-on`, Indian events in Germany by other organisers.
+- News: `https://nriclub.app/news`, our own short news for Indians in Germany (visas, citizenship, taxes, the embassy and consulates), each post with its official source. In the admin panel, News → **Copy for WhatsApp** gives a post's title, summary and a link that Analytics counts (campaign "news").
 - Your invite link: in NRIClub, open the ⚙ menu, then **Invite friends**. Give it to people who asked you about NRIClub or said yes when you met.
 
 No UK cities while the UK is paused (`compliance/uk-pause.md`).
@@ -59,6 +60,11 @@ with costs, and a complaint to the data protection authority.
    interest you can reasonably presume is enough. If they say no, don't
    call again.
 6. **Notice boards and posters** where the place agreed (ask in person).
+7. **A news post in a group, with the admin's OK.** Where a group's admin
+   agreed first (as above), a useful news post (a rule that changed, a
+   consulate notice) is the best thing to share: it helps on its own, and
+   the link leads to NRIClub. Once per post, no follow-ups, and stop if the
+   admin or the group asks you to.
 
 ## 3. Keep a note, and say where the details came from
 

@@ -293,7 +293,7 @@ export function privacyDoc() {
             ["How long", `the admin panel's inbox deletes each email, with our replies, automatically ${months(R.inboxMonths)} after it arrived. Requests about your rights and reports of illegal content, and our answers, we keep for ${R.requestEmailYears} years after the matter is closed, so we can show we handled them correctly: our team keeps a copy of these with our record of such requests and deletes it after those ${R.requestEmailYears} years. Other emails, and our replies, are deleted at the latest ${months(R.otherEmailMonths)} after the matter is closed.`],
           ] },
         ] },
-        { p: "Our public pages (the homepage, the city pages, the guides and What's on) contain no personal data of members. What's on lists public events in Germany by other organisers (section 5). A city page shows how many members its group has only once there are at least 5. The previews members choose to show open only through their links (\"Previews of what you share\" above)." },
+        { p: "Our public pages (the homepage, the city pages, the guides, What's on and News) contain no personal data of members. What's on lists public events in Germany by other organisers (section 5); News is written by our team and never says which admin wrote a post. A city page shows how many members its group has only once there are at least 5. The previews members choose to show open only through their links (\"Previews of what you share\" above)." },
       ] },
 
       { id: "sensitive", title: "3. Information that can show your origin, religion or health", blocks: [

@@ -52,7 +52,7 @@ const PAGEVIEW_DELAY_MS = 350;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Paths whose second part names a public page (/city/munich, /guides/oci,
 // /terms/2026-10-19); in all others it's an id, which becomes ":id".
-const NAMED_PAGES = new Set(["city", "guides", "terms"]);
+const NAMED_PAGES = new Set(["city", "guides", "terms", "news"]);
 const CLICKABLE = 'a[href], button, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [data-track]';
 
 // When storage can't be used (blocked, private mode): this page load only.
